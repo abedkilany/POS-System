@@ -170,7 +170,7 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
     if (!canAccess) {
       return _AccessDeniedScaffold(
         title: tr.text('delivery_notes'),
-        message: 'This section is not available for your current role.',
+        message: tr.text('no_access_current_role'),
       );
     }
     final notes = widget.store.deliveryNotes;
@@ -276,8 +276,8 @@ class _AccessDeniedScaffold extends StatelessWidget {
                 children: [
                   const Icon(Icons.lock_outline, size: 42),
                   const SizedBox(height: 12),
-                  const Text(
-                    'No access to this section.',
+                   Text(
+                     AppLocalizations.of(context).text('no_access_to_section'),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),

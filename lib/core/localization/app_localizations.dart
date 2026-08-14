@@ -19,11 +19,31 @@ class AppLocalizations {
   }
 
   late Map<String, dynamic> _localizedStrings;
+  late Map<String, String> _englishKeysByValue;
+  late List<MapEntry<String, String>> _englishTemplates;
 
   Future<void> load() async {
-    final jsonString = await rootBundle
+    final localizedJson = await rootBundle
         .loadString('assets/translations/${locale.languageCode}.json');
-    _localizedStrings = json.decode(jsonString) as Map<String, dynamic>;
+    final englishJson = locale.languageCode == 'en'
+        ? localizedJson
+        : await rootBundle.loadString('assets/translations/en.json');
+    _localizedStrings = json.decode(localizedJson) as Map<String, dynamic>;
+    final englishStrings = Map<String, dynamic>.from(
+        json.decode(englishJson) as Map<String, dynamic>);
+    _englishKeysByValue = <String, String>{
+      for (final entry in englishStrings.entries)
+        if (entry.value is String &&
+            !(entry.value as String).contains(RegExp(r'\{[^}]+\}')))
+          entry.value as String: entry.key,
+    };
+    _englishTemplates = englishStrings.entries
+        .where((entry) =>
+            entry.value is String &&
+            (entry.value as String).contains(RegExp(r'\{[^}]+\}')))
+        .map((entry) => MapEntry(entry.key, entry.value as String))
+        .toList(growable: false)
+      ..sort((left, right) => right.value.length.compareTo(left.value.length));
   }
 
   String text(String key) {
@@ -38,6 +58,35 @@ class AppLocalizations {
     return template;
   }
 
+  String? localizeEnglishMessage(String message) {
+    final exactKey = _englishKeysByValue[message];
+    if (exactKey != null) return text(exactKey);
+
+    final placeholderPattern = RegExp(r'\{([A-Za-z_][A-Za-z0-9_]*)\}');
+    for (final entry in _englishTemplates) {
+      final matches = placeholderPattern.allMatches(entry.value).toList();
+      if (matches.isEmpty) continue;
+      final expression = StringBuffer('^');
+      var cursor = 0;
+      for (final match in matches) {
+        expression
+            .write(RegExp.escape(entry.value.substring(cursor, match.start)));
+        expression.write(r'([\s\S]*?)');
+        cursor = match.end;
+      }
+      expression.write(RegExp.escape(entry.value.substring(cursor)));
+      expression.write(r'$');
+      final runtimeMatch = RegExp(expression.toString()).firstMatch(message);
+      if (runtimeMatch == null) continue;
+      final values = <String, Object?>{};
+      for (var index = 0; index < matches.length; index += 1) {
+        values[matches[index].group(1)!] = runtimeMatch.group(index + 1);
+      }
+      return format(entry.key, values);
+    }
+    return null;
+  }
+
   bool get isArabic => locale.languageCode == 'ar';
 
   TextDirection get textDirection =>
@@ -49,7 +98,8 @@ class _AppLocalizationsDelegate
   const _AppLocalizationsDelegate();
 
   @override
-  bool isSupported(Locale locale) => ['en', 'ar'].contains(locale.languageCode);
+  bool isSupported(Locale locale) =>
+      ['en', 'ar', 'fr'].contains(locale.languageCode);
 
   @override
   Future<AppLocalizations> load(Locale locale) async {
@@ -79,8 +129,7 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         'direct_sync_failed_while_sending_local_changes',
     'local sync failed while sending local changes.':
         'local_sync_failed_while_sending_local_changes',
-    'Pulling authoritative LAN changes...':
-        'pulling_authoritative_lan_changes',
+    'Pulling authoritative LAN changes...': 'pulling_authoritative_lan_changes',
     'Pulling authoritative Direct changes...':
         'pulling_authoritative_direct_changes',
     'Pulling authoritative local changes...':
@@ -105,8 +154,7 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         'snapshot_rebuilding_local_envelope',
     'Snapshot: downloading chunk {chunk}/{total}...':
         'snapshot_downloading_chunk',
-    'Snapshot: uploading chunk {chunk}/{total}...':
-        'snapshot_uploading_chunk',
+    'Snapshot: uploading chunk {chunk}/{total}...': 'snapshot_uploading_chunk',
     'Snapshot chunk {chunk}/{total} failed after retry: {error}':
         'snapshot_chunk_failed_after_retry',
     'Snapshot returned chunk {chunk}, expected {expected}.':
@@ -195,9 +243,39 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     'LAN push is not available in the web build.': 'lan_push_web_unavailable',
     'LAN repair is not available in the web build. Use Direct sync/API instead.':
         'lan_repair_web_unavailable',
+    'Sales last 7 days': 'dashboard_sales_last_7_days',
+    'Sales last 30 days': 'dashboard_sales_last_30_days',
+    'Expenses by type': 'dashboard_expenses_by_type',
+    'Top products': 'dashboard_top_products',
+    'Top customers': 'dashboard_top_customers',
+    'Sales vs profit': 'dashboard_sales_vs_profit',
+    'Receivables pressure': 'dashboard_receivables_pressure',
+    'Payables pressure': 'dashboard_payables_pressure',
+    'Sales': 'sales',
+    'Profit': 'profit',
+    'Current': 'current',
+    'Over 30': 'dashboard_over_30',
+    'Low stock': 'low_stock',
+    'Open receivables': 'dashboard_open_receivables',
+    'Open payables': 'dashboard_open_payables',
+    'High expense day': 'dashboard_high_expense_day',
+    'Backup attention': 'dashboard_backup_attention',
+    'Sync attention': 'dashboard_sync_attention',
+    'Blocking conflicts': 'dashboard_blocking_conflicts',
+    'Sync paused': 'dashboard_sync_paused',
+    'Sync pending': 'sync_pending',
+    'Sync ready': 'dashboard_sync_ready',
+    'Backup running': 'dashboard_backup_running',
+    'Backup needed': 'dashboard_backup_needed',
+    'Backup ready': 'dashboard_backup_ready',
+    'No successful backup yet': 'dashboard_no_successful_backup',
+    'No pending local sync work': 'dashboard_no_pending_sync_work',
   };
   final key = exact[value];
   if (key != null) return tr.text(key);
+
+  final translatedTemplate = tr.localizeEnglishMessage(value);
+  if (translatedTemplate != null) return translatedTemplate;
 
   if (value.contains('Direct sync is not enabled for this store.')) {
     return value.replaceFirst(
@@ -210,6 +288,54 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
       'Direct sync is not ready yet.',
       tr.text('direct_sync_not_ready_yet'),
     );
+  }
+
+  final lowStock = RegExp(r'^(\d+) product\(s\) need replenishment(?:: (.*))?$')
+      .firstMatch(value);
+  if (lowStock != null) {
+    return tr.format('dashboard_products_need_replenishment', {
+      'count': lowStock.group(1),
+      'names': lowStock.group(2) ?? '',
+    });
+  }
+  final receivables =
+      RegExp(r'^(.+) across (\d+) invoice\(s\)$').firstMatch(value);
+  if (receivables != null) {
+    return tr.format('dashboard_receivables_summary', {
+      'total': receivables.group(1),
+      'count': receivables.group(2),
+    });
+  }
+  final payables = RegExp(r'^(.+) across (\d+) bill\(s\)$').firstMatch(value);
+  if (payables != null) {
+    return tr.format('dashboard_payables_summary', {
+      'total': payables.group(1),
+      'count': payables.group(2),
+    });
+  }
+  final highExpense =
+      RegExp(r'^(.+) today vs (.+) daily average$').firstMatch(value);
+  if (highExpense != null) {
+    return tr.format('dashboard_high_expense_summary', {
+      'today': highExpense.group(1),
+      'average': highExpense.group(2),
+    });
+  }
+  final conflicts =
+      RegExp(r'^(\d+) blocking conflict\(s\) need review$').firstMatch(value);
+  if (conflicts != null) {
+    return tr.format(
+        'dashboard_blocking_conflicts_summary', {'count': conflicts.group(1)});
+  }
+  final pendingChanges =
+      RegExp(r'^(\d+) pending change\(s\)$').firstMatch(value);
+  if (pendingChanges != null) {
+    return tr.format(
+        'dashboard_pending_changes', {'count': pendingChanges.group(1)});
+  }
+  final lastBackup = RegExp(r'^Last backup at (.+)$').firstMatch(value);
+  if (lastBackup != null) {
+    return tr.format('dashboard_last_backup_at', {'date': lastBackup.group(1)});
   }
 
   String prefixed(String englishPrefix, String key) {
@@ -259,7 +385,8 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         .format('pulling_direct_changes_page', {'page': directPage.group(1)});
   }
 
-  final progressMatch = RegExp(r'^(LAN|Direct|local) sync completed\. Pushed (\d+) change\(s\), pulled (\d+) change\(s\)\.$')
+  final progressMatch = RegExp(
+          r'^(LAN|Direct|local) sync completed\. Pushed (\d+) change\(s\), pulled (\d+) change\(s\)\.$')
       .firstMatch(value);
   if (progressMatch != null) {
     final transport = progressMatch.group(1)!.toLowerCase();
@@ -268,8 +395,7 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
       'pulled': progressMatch.group(3),
     });
   }
-  final prepareMatch =
-      RegExp(r'^Preparing (.+) sync\.\.\.$').firstMatch(value);
+  final prepareMatch = RegExp(r'^Preparing (.+) sync\.\.\.$').firstMatch(value);
   if (prepareMatch != null) {
     final transport = prepareMatch.group(1)!.toLowerCase();
     return tr.format('preparing_${transport}_sync', {});
@@ -280,41 +406,37 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     final transport = pullMatch.group(1)!.toLowerCase();
     return tr.format('pulling_authoritative_${transport}_changes', {});
   }
-  final failedMatch = RegExp(r'^(.+) pull failed\. Trying snapshot repair\.\.\.$')
-      .firstMatch(value);
+  final failedMatch =
+      RegExp(r'^(.+) pull failed\. Trying snapshot repair\.\.\.$')
+          .firstMatch(value);
   if (failedMatch != null) {
     final transport = failedMatch.group(1)!.toLowerCase();
-    return tr.format(
-        '${transport}_pull_failed_trying_snapshot_repair',
-        {});
+    return tr.format('${transport}_pull_failed_trying_snapshot_repair', {});
   }
-  final syncDoneMatch =
-      RegExp(r'^(.+) sync completed\.$').firstMatch(value);
+  final syncDoneMatch = RegExp(r'^(.+) sync completed\.$').firstMatch(value);
   if (syncDoneMatch != null) {
     final transport = syncDoneMatch.group(1)!.toLowerCase();
     return tr.format('${transport}_sync_completed', {});
   }
-  final snapshotChunkMatch = RegExp(
-          r'^(.+): downloading chunk (\d+)/(\d+)\.\.\.$')
-      .firstMatch(value);
+  final snapshotChunkMatch =
+      RegExp(r'^(.+): downloading chunk (\d+)/(\d+)\.\.\.$').firstMatch(value);
   if (snapshotChunkMatch != null) {
     return tr.format('snapshot_downloading_chunk', {
       'chunk': snapshotChunkMatch.group(2),
       'total': snapshotChunkMatch.group(3),
     });
   }
-  final snapshotUploadMatch = RegExp(
-          r'^(.+): uploading chunk (\d+)/(\d+)\.\.\.$')
-      .firstMatch(value);
+  final snapshotUploadMatch =
+      RegExp(r'^(.+): uploading chunk (\d+)/(\d+)\.\.\.$').firstMatch(value);
   if (snapshotUploadMatch != null) {
     return tr.format('snapshot_uploading_chunk', {
       'chunk': snapshotUploadMatch.group(2),
       'total': snapshotUploadMatch.group(3),
     });
   }
-  final snapshotRetryMatch = RegExp(
-          r'^(.+) chunk (\d+)/(\d+) failed after retry: (.+)$')
-      .firstMatch(value);
+  final snapshotRetryMatch =
+      RegExp(r'^(.+) chunk (\d+)/(\d+) failed after retry: (.+)$')
+          .firstMatch(value);
   if (snapshotRetryMatch != null) {
     return tr.format('snapshot_chunk_failed_after_retry', {
       'chunk': snapshotRetryMatch.group(2),
@@ -322,9 +444,9 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
       'error': snapshotRetryMatch.group(4),
     });
   }
-  final snapshotMismatchMatch = RegExp(
-          r'^(.+) returned chunk (\d+), expected (\d+)\.$')
-      .firstMatch(value);
+  final snapshotMismatchMatch =
+      RegExp(r'^(.+) returned chunk (\d+), expected (\d+)\.$')
+          .firstMatch(value);
   if (snapshotMismatchMatch != null) {
     return tr.format('snapshot_chunk_mismatch', {
       'chunk': snapshotMismatchMatch.group(2),
@@ -363,8 +485,8 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         'Host direct push completed.', tr.text('host_direct_push_completed'));
   }
   if (value.startsWith('Client direct push completed.')) {
-    return value.replaceFirst(
-        'Client direct push completed.', tr.text('client_direct_push_completed'));
+    return value.replaceFirst('Client direct push completed.',
+        tr.text('client_direct_push_completed'));
   }
   if (value.startsWith('Direct pull stopped after')) {
     return value.replaceFirst(

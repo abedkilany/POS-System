@@ -950,7 +950,13 @@ class DirectControlPlaneService {
       VpsControlPlaneSettings settings) async {
     // Read the subscription entitlement from the server using the Host's
     // authenticated device/account session. Local cache is not authoritative.
-    if (!settings.isConfigured) return null;
+    // This read only needs the API origin and store identity. Requiring Direct
+    // to already be configured creates a circular lock for a Host that is
+    // trying to learn whether it may enable Direct for the first time.
+    if (settings.apiBaseUrl.trim().isEmpty ||
+        store.appIdentity.storeId.trim().isEmpty) {
+      return null;
+    }
     // Do not call listDevicesWithLimit here. The normal Direct control-plane
     // service intentionally uses a retired HTTP client; entitlement lookup is
     // still needed by the Sync settings page while the Host is on LAN.

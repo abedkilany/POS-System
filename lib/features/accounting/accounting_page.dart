@@ -74,9 +74,9 @@ class _AccountingPageState extends State<AccountingPage>
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewAccounting) {
-      return const _AccessDeniedScaffold(
-        title: 'Accounting',
-        message: 'You do not have access to accounting data.',
+      return _AccessDeniedScaffold(
+        title: tr.text('accounting'),
+        message: tr.text('no_access_accounting_data'),
       );
     }
     if (!widget.store.isCoreDataLoaded || !widget.store.isLedgerDataLoaded) {
@@ -2740,13 +2740,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: bindToCurrentDevice,
-                    title: Text(tr.isArabic
-                        ? '??? ????? ??????? ??????'
-                        : 'Link drawer to current device'),
+                    title: Text(tr.text('link_drawer_current_device')),
                     subtitle: Text(currentDeviceId.isEmpty
-                        ? (tr.isArabic
-                            ? '?? ???? Device ID ???? ??????'
-                            : 'No Device ID is currently available')
+                        ? tr.text('no_device_id_available')
                         : currentDeviceId),
                     onChanged: (value) =>
                         setDialogState(() => bindToCurrentDevice = value),
@@ -2867,12 +2863,10 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 alignment: AlignmentDirectional.centerStart,
                 child: Text(
                   currentDeviceId.isEmpty
-                      ? (tr.isArabic
-                          ? '?????: ?? ???? Device ID ?????? ??????.'
-                          : 'Warning: no Device ID is available for the current device.')
+                      ? tr.text('warning_no_device_id')
                       : (deviceDrawers.isEmpty
-                          ? '?? ??? ?????? ??? ??? ????? ???? ??????? ?? ??? ?? ???????.'
-                          : '??? ??????? ??? ?????? ??????.'),
+                          ? tr.text('no_drawer_linked_to_device')
+                          : tr.text('drawer_linked_to_device_found')),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -3564,24 +3558,17 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 initialValue: closeMode,
-                decoration: InputDecoration(
-                    labelText: tr.isArabic ? '????? ???????' : 'Close action'),
+                decoration: InputDecoration(labelText: tr.text('close_action')),
                 items: [
                   DropdownMenuItem(
                       value: 'close_only',
-                      child: Text(tr.isArabic
-                          ? '????? ??????? ???? ????? ?? ??? ?????'
-                          : 'Close the shift and keep cash in the same drawer')),
+                      child: Text(tr.text('close_shift_keep_cash'))),
                   DropdownMenuItem(
                       value: 'transfer_location',
-                      child: Text(tr.isArabic
-                          ? '????? ?????? ????? ??? ??? / ????? ???'
-                          : 'Close and transfer cash to another drawer / vault')),
+                      child: Text(tr.text('close_and_transfer_cash'))),
                   DropdownMenuItem(
                       value: 'handover_user',
-                      child: Text(tr.isArabic
-                          ? '????? ????? ???? ???? ????? ?????'
-                          : 'Handover to a new employee and open a new shift')),
+                      child: Text(tr.text('handover_and_open_shift'))),
                 ],
                 onChanged: (value) =>
                     setDialogState(() => closeMode = value ?? closeMode),
@@ -3590,7 +3577,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   initialValue: transferToId.isEmpty ? null : transferToId,
-                  decoration: const InputDecoration(labelText: '??????? ???'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('transfer_to')),
                   items: transferTargets
                       .map((location) => DropdownMenuItem(
                           value: location.id,
@@ -3606,7 +3594,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 DropdownButtonFormField<String>(
                   initialValue: nextUserId.isEmpty ? null : nextUserId,
                   decoration:
-                      const InputDecoration(labelText: '?????? ???????'),
+                      InputDecoration(labelText: tr.text('next_employee')),
                   items: handoverUsers.map((user) {
                     final label = user.fullName.trim().isNotEmpty
                         ? user.fullName.trim()

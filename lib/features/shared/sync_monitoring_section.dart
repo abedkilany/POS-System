@@ -640,13 +640,14 @@ class _SyncTraceDiagnosticsPanelState
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     if (!_showLog) {
       return Align(
         alignment: Alignment.centerLeft,
         child: OutlinedButton.icon(
           onPressed: () => setState(() => _showLog = true),
           icon: const Icon(Icons.terminal_outlined),
-          label: const Text('Show log'),
+          label: Text(tr.text('show_log')),
         ),
       );
     }
@@ -670,14 +671,14 @@ class _SyncTraceDiagnosticsPanelState
                   children: [
                     const Icon(Icons.route_outlined),
                     const SizedBox(width: 8),
-                    const Expanded(child: Text('Sync trace diagnostics')),
+                    Expanded(child: Text(tr.text('sync_trace_diagnostics'))),
                     IconButton(
-                      tooltip: 'Hide log',
+                      tooltip: tr.text('hide_log'),
                       onPressed: () => setState(() => _showLog = false),
                       icon: const Icon(Icons.visibility_off_outlined),
                     ),
                     IconButton(
-                      tooltip: 'Copy sync trace',
+                      tooltip: tr.text('copy_sync_trace'),
                       onPressed: text.isEmpty
                           ? null
                           : () async {
@@ -685,15 +686,16 @@ class _SyncTraceDiagnosticsPanelState
                                   ClipboardData(text: text));
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('Sync trace copied')),
+                                  SnackBar(
+                                      content:
+                                          Text(tr.text('sync_trace_copied'))),
                                 );
                               }
                             },
                       icon: const Icon(Icons.copy_outlined),
                     ),
                     IconButton(
-                      tooltip: 'Clear sync trace',
+                      tooltip: tr.text('clear_sync_trace'),
                       onPressed: text.isEmpty
                           ? null
                           : SyncDiagnosticsLog.clearSyncTrace,
@@ -1203,10 +1205,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final pendingCount = _pendingChangesCountForHostPeer(
-        store: store,
-        deviceId: deviceId,
-        state: state,
-        peerDevice: peerDevice);
+        store: store, deviceId: deviceId, state: state, peerDevice: peerDevice);
     final connection = _connectionStatusForHostPeer(context,
         deviceId: deviceId,
         state: state,

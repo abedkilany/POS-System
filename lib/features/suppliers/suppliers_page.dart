@@ -116,9 +116,9 @@ class _SuppliersPageState extends State<SuppliersPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewSuppliers) {
-      return const _AccessDeniedScaffold(
-        title: 'Suppliers',
-        message: 'You do not have access to supplier records.',
+        return _AccessDeniedScaffold(
+          title: tr.text('suppliers'),
+          message: tr.text('no_access_supplier_records'),
       );
     }
     final value = query.trim().toLowerCase();
@@ -529,10 +529,11 @@ class _SuppliersPageState extends State<SuppliersPage> {
     BuildContext context,
     Supplier supplier,
   ) async {
+    final tr = AppLocalizations.of(context);
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Direct sync trace: ${supplier.name}'),
+        title: Text(tr.format('direct_sync_trace', {'name': supplier.name})),
         content: SizedBox(
           width: 760,
           height: 440,
@@ -540,7 +541,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
             valueListenable: SyncDiagnosticsLog.lines,
             builder: (context, lines, _) {
               final text = lines.isEmpty
-                  ? 'Waiting for Direct sync trace...'
+                   ? tr.text('waiting_for_direct_sync_trace')
                   : lines.join('\n');
               return SingleChildScrollView(
                 child: SelectableText(
@@ -556,14 +557,14 @@ class _SuppliersPageState extends State<SuppliersPage> {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: SyncDiagnosticsLog.dump()));
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Trace copied.')),
+                 SnackBar(content: Text(tr.text('sync_trace_copied'))),
               );
             },
-            child: const Text('Copy trace'),
+             child: Text(tr.text('copy_trace')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Close'),
+             child: Text(tr.text('close')),
           ),
         ],
       ),

@@ -171,7 +171,8 @@ class SettingsBackupActions {
     try {
       await downloadTextFile(
           filename: filename,
-          content: store.exportRecoveryFileJson(controlPlaneApiUrl: direct.apiBaseUrl),
+          content: store.exportRecoveryFileJson(
+              controlPlaneApiUrl: direct.apiBaseUrl),
           dialogTitle: tr.text('save_recovery_file'),
           cancelMessage: tr.text('file_save_cancelled'));
       if (context.mounted) {
@@ -282,12 +283,20 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await DirectControlPlaneService(store)
-          .recoverExistingStoreIdentityFromDirect(
-        recoverySettings,
-        storeId: storeId,
-        branchId: branchId,
-      );
+      final recoveryClient = http.Client();
+      late final DirectStoreRecoveryResult result;
+      try {
+        result = await DirectControlPlaneService(
+          store,
+          client: recoveryClient,
+        ).recoverExistingStoreIdentityFromDirect(
+          recoverySettings,
+          storeId: storeId,
+          branchId: branchId,
+        );
+      } finally {
+        recoveryClient.close();
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
@@ -391,12 +400,20 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await DirectControlPlaneService(store).recoverExistingStoreFromDirect(
-        recoverySettings,
-        storeId: storeId,
-        branchId: branchId,
-      );
+      final recoveryClient = http.Client();
+      late final DirectStoreRecoveryResult result;
+      try {
+        result = await DirectControlPlaneService(
+          store,
+          client: recoveryClient,
+        ).recoverExistingStoreFromDirect(
+          recoverySettings,
+          storeId: storeId,
+          branchId: branchId,
+        );
+      } finally {
+        recoveryClient.close();
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),

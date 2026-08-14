@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-
-
 
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
@@ -25,9 +22,11 @@ class InvoicePdfService {
       await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'),
     );
     final isArabic = locale.languageCode == 'ar';
-    final labels = _InvoicePdfLabels(isArabic);
-    final textDirection = isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr;
-    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont));
+    final labels = _InvoicePdfLabels(locale.languageCode);
+    final textDirection =
+        isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr;
+    final pdf = pw.Document(
+        theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont));
 
     pdf.addPage(
       pw.MultiPage(
@@ -42,17 +41,25 @@ class InvoicePdfService {
               pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text(profile.name, style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
-                  if (profile.phone.isNotEmpty) pw.Text('${labels.phone}: ${profile.phone}'),
-                  if (profile.address.isNotEmpty) pw.Text('${labels.address}: ${profile.address}'),
+                  pw.Text(profile.name,
+                      style: pw.TextStyle(
+                          fontSize: 22, fontWeight: pw.FontWeight.bold)),
+                  if (profile.phone.isNotEmpty)
+                    pw.Text('${labels.phone}: ${profile.phone}'),
+                  if (profile.address.isNotEmpty)
+                    pw.Text('${labels.address}: ${profile.address}'),
                 ],
               ),
               pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.end,
                 children: [
-                  pw.Text(labels.invoice, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(labels.invoice,
+                      style: pw.TextStyle(
+                          fontSize: 20, fontWeight: pw.FontWeight.bold)),
                   pw.Text('${labels.no}: ${sale.invoiceNo}'),
-                  pw.Text('${labels.date}: ${sale.date.toLocal()}'.split('.').first),
+                  pw.Text('${labels.date}: ${sale.date.toLocal()}'
+                      .split('.')
+                      .first),
                   pw.Text('${labels.customer}: ${sale.customerName}'),
                 ],
               ),
@@ -64,12 +71,19 @@ class InvoicePdfService {
             headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
             cellAlignment: pw.Alignment.centerLeft,
             headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            headers: [labels.item, labels.qty, labels.unitPrice, labels.lineTotal],
+            headers: [
+              labels.item,
+              labels.qty,
+              labels.unitPrice,
+              labels.lineTotal
+            ],
             data: sale.items
                 .map(
                   (item) => [
                     item.productName,
-                    item.quantity % 1 == 0 ? item.quantity.toStringAsFixed(0) : item.quantity.toStringAsFixed(3),
+                    item.quantity % 1 == 0
+                        ? item.quantity.toStringAsFixed(0)
+                        : item.quantity.toStringAsFixed(3),
                     _formatMoney(item.unitPrice, profile),
                     _formatMoney(item.lineTotal, profile),
                   ],
@@ -82,14 +96,18 @@ class InvoicePdfService {
             child: pw.Container(
               width: 220,
               padding: const pw.EdgeInsets.all(12),
-              decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey400)),
+              decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: PdfColors.grey400)),
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  _summaryLine(labels.subtotal, _formatMoney(sale.subtotal, profile)),
-                  _summaryLine(labels.discount, _formatMoney(sale.discount, profile)),
+                  _summaryLine(
+                      labels.subtotal, _formatMoney(sale.subtotal, profile)),
+                  _summaryLine(
+                      labels.discount, _formatMoney(sale.discount, profile)),
                   pw.Divider(),
-                  _summaryLine(labels.total, _formatMoney(sale.total, profile), isBold: true),
+                  _summaryLine(labels.total, _formatMoney(sale.total, profile),
+                      isBold: true),
                 ],
               ),
             ),
@@ -103,17 +121,27 @@ class InvoicePdfService {
     return pdf.save();
   }
 
-  static Future<void> printInvoice({required Sale sale, required StoreProfile profile, Locale locale = const Locale('en')}) async {
-    final bytes = await buildInvoicePdf(sale: sale, profile: profile, locale: locale);
-    await Printing.layoutPdf(onLayout: (_) async => bytes, name: sale.invoiceNo);
+  static Future<void> printInvoice(
+      {required Sale sale,
+      required StoreProfile profile,
+      Locale locale = const Locale('en')}) async {
+    final bytes =
+        await buildInvoicePdf(sale: sale, profile: profile, locale: locale);
+    await Printing.layoutPdf(
+        onLayout: (_) async => bytes, name: sale.invoiceNo);
   }
 
-  static Future<void> shareInvoice({required Sale sale, required StoreProfile profile, Locale locale = const Locale('en')}) async {
-    final bytes = await buildInvoicePdf(sale: sale, profile: profile, locale: locale);
+  static Future<void> shareInvoice(
+      {required Sale sale,
+      required StoreProfile profile,
+      Locale locale = const Locale('en')}) async {
+    final bytes =
+        await buildInvoicePdf(sale: sale, profile: profile, locale: locale);
     await Printing.sharePdf(bytes: bytes, filename: '${sale.invoiceNo}.pdf');
   }
 
-  static pw.Widget _summaryLine(String title, String value, {bool isBold = false}) {
+  static pw.Widget _summaryLine(String title, String value,
+      {bool isBold = false}) {
     final style = isBold ? pw.TextStyle(fontWeight: pw.FontWeight.bold) : null;
     return pw.Padding(
       padding: const pw.EdgeInsets.only(bottom: 6),
@@ -130,8 +158,9 @@ class InvoicePdfService {
       final definition = profile.currencyByCode(code);
       final amount = code == 'USD'
           ? usdAmount
-          : usdAmount * (profile.exchangeRateForDate('USD', code)?.rate ??
-              (code == 'LBP' ? profile.usdToLbpRate : 1));
+          : usdAmount *
+              (profile.exchangeRateForDate('USD', code)?.rate ??
+                  (code == 'LBP' ? profile.usdToLbpRate : 1));
       final rounded = definition.roundingStep > 0
           ? roundCashAmount(
               amount,
@@ -158,26 +187,70 @@ class InvoicePdfService {
         return formatAs(profile.defaultSaleInvoiceCurrency);
     }
   }
-
 }
 
-
 class _InvoicePdfLabels {
-  const _InvoicePdfLabels(this.isArabic);
+  const _InvoicePdfLabels(this.languageCode);
 
-  final bool isArabic;
+  final String languageCode;
+  bool get isArabic => languageCode == 'ar';
+  bool get isFrench => languageCode == 'fr';
 
-  String get invoice => isArabic ? 'فاتورة' : 'Invoice';
-  String get phone => isArabic ? 'الهاتف' : 'Phone';
-  String get address => isArabic ? 'العنوان' : 'Address';
-  String get no => isArabic ? 'الرقم' : 'No';
+  String get invoice => isArabic
+      ? 'فاتورة'
+      : isFrench
+          ? 'Facture'
+          : 'Invoice';
+  String get phone => isArabic
+      ? 'الهاتف'
+      : isFrench
+          ? 'Téléphone'
+          : 'Phone';
+  String get address => isArabic
+      ? 'العنوان'
+      : isFrench
+          ? 'Adresse'
+          : 'Address';
+  String get no => isArabic
+      ? 'الرقم'
+      : isFrench
+          ? 'N°'
+          : 'No';
   String get date => isArabic ? 'التاريخ' : 'Date';
-  String get customer => isArabic ? 'العميل' : 'Customer';
-  String get item => isArabic ? 'الصنف' : 'Item';
-  String get qty => isArabic ? 'الكمية' : 'Qty';
-  String get unitPrice => isArabic ? 'سعر الوحدة' : 'Unit Price';
-  String get lineTotal => isArabic ? 'الإجمالي' : 'Line Total';
-  String get subtotal => isArabic ? 'المجموع الفرعي' : 'Subtotal';
-  String get discount => isArabic ? 'الخصم' : 'Discount';
+  String get customer => isArabic
+      ? 'العميل'
+      : isFrench
+          ? 'Client'
+          : 'Customer';
+  String get item => isArabic
+      ? 'الصنف'
+      : isFrench
+          ? 'Article'
+          : 'Item';
+  String get qty => isArabic
+      ? 'الكمية'
+      : isFrench
+          ? 'Qté'
+          : 'Qty';
+  String get unitPrice => isArabic
+      ? 'سعر الوحدة'
+      : isFrench
+          ? 'Prix unitaire'
+          : 'Unit Price';
+  String get lineTotal => isArabic
+      ? 'الإجمالي'
+      : isFrench
+          ? 'Total ligne'
+          : 'Line Total';
+  String get subtotal => isArabic
+      ? 'المجموع الفرعي'
+      : isFrench
+          ? 'Sous-total'
+          : 'Subtotal';
+  String get discount => isArabic
+      ? 'الخصم'
+      : isFrench
+          ? 'Remise'
+          : 'Discount';
   String get total => isArabic ? 'الإجمالي' : 'Total';
 }

@@ -104,15 +104,17 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
   }
 
   Future<void> _copyReport() async {
+    final tr = AppLocalizations.of(context);
     final report = await _buildReport();
     await Clipboard.setData(ClipboardData(text: report));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Diagnostic report copied.')),
+      SnackBar(content: Text(tr.text('diagnostic_report_copied'))),
     );
   }
 
   Future<void> _downloadDisplayedData() async {
+    final tr = AppLocalizations.of(context);
     final data = await _buildPageData();
     final ts = DateTime.now()
         .toUtc()
@@ -122,16 +124,17 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
     await downloadTextFile(
       filename: 'ventio_diagnostics_displayed_$ts.json',
       content: data,
-      dialogTitle: 'Save displayed diagnostics data',
-      cancelMessage: 'Save cancelled',
+      dialogTitle: tr.text('save_displayed_diagnostics_data'),
+      cancelMessage: tr.text('save_cancelled'),
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Displayed diagnostics data downloaded.')),
+      SnackBar(content: Text(tr.text('displayed_diagnostics_downloaded'))),
     );
   }
 
   Future<void> _downloadAllData() async {
+    final tr = AppLocalizations.of(context);
     final data = await _buildAllData();
     final ts = DateTime.now()
         .toUtc()
@@ -141,46 +144,52 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
     await downloadTextFile(
       filename: 'ventio_diagnostics_all_$ts.json',
       content: data,
-      dialogTitle: 'Save all diagnostics data',
-      cancelMessage: 'Save cancelled',
+      dialogTitle: tr.text('save_all_diagnostics_data'),
+      cancelMessage: tr.text('save_cancelled'),
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('All diagnostics data downloaded.')),
+      SnackBar(content: Text(tr.text('all_diagnostics_downloaded'))),
     );
   }
 
   Future<void> _cleanupOldLogs() async {
+    final tr = AppLocalizations.of(context);
     final deletedApp = await AppLogger.cleanup();
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-            'Removed $deletedApp non-important technical logs older than 14 days.'),
+        content: Text(tr.format('old_technical_logs_removed', {
+          'count': deletedApp,
+          'days': 14,
+        })),
       ),
     );
   }
 
   Future<void> _clearTechnicalLogs({bool includeImportant = true}) async {
+    final tr = AppLocalizations.of(context);
     await AppLogger.deleteAll(includeImportant: includeImportant);
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(includeImportant
-            ? 'Cleared all technical logs.'
-            : 'Cleared non-important technical logs.'),
+        content: Text(tr.text(includeImportant
+            ? 'all_technical_logs_cleared'
+            : 'non_important_technical_logs_cleared')),
       ),
     );
   }
 
   Future<void> _clearAuditLogs() async {
+    final tr = AppLocalizations.of(context);
     final deleted = await AuditLogger.deleteAll();
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Cleared $deleted audit logs.')),
+      SnackBar(
+          content: Text(tr.format('audit_logs_cleared', {'count': deleted}))),
     );
   }
 
@@ -251,25 +260,29 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
   }
 
   Future<void> _copyStartupTimingReport() async {
+    final tr = AppLocalizations.of(context);
     final report = StartupTimingService.buildTextReport();
     await Clipboard.setData(ClipboardData(text: report));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Startup timing report copied.')),
+      SnackBar(content: Text(tr.text('startup_timing_report_copied'))),
     );
   }
 
   Future<void> _saveStartupTimingReport() async {
+    final tr = AppLocalizations.of(context);
     final savedPath = await StartupTimingService.saveTextReport();
     if (!mounted) return;
     if (savedPath == null || savedPath.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Startup timing report was not saved.')),
+        SnackBar(content: Text(tr.text('startup_timing_report_not_saved'))),
       );
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Startup timing report saved: $savedPath')),
+      SnackBar(
+          content: Text(
+              tr.format('startup_timing_report_saved', {'path': savedPath}))),
     );
   }
 
@@ -338,6 +351,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
 
   Widget _buildStartupRecordTile(StartupTimingRecord record) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -363,13 +377,17 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  record.label,
+                  localizeRuntimeMessage(record.label, tr),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  'category=${record.category} | start=${_formatMs(record.startedAtMs)} | end=${_formatMs(record.endedAtMs)} | duration=${_formatMs(record.durationMs)}${record.failed ? ' | failed' : ''}',
-                ),
+                Text(tr.format('startup_timing_record_details', {
+                  'category': localizeRuntimeMessage(record.category, tr),
+                  'start': _formatMs(record.startedAtMs),
+                  'end': _formatMs(record.endedAtMs),
+                  'duration': _formatMs(record.durationMs),
+                  'status': record.failed ? tr.text('failed') : '',
+                })),
                 if (record.details.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   SelectableText(record.details),
@@ -383,6 +401,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
   }
 
   Widget _buildStartupTimingCard() {
+    final tr = AppLocalizations.of(context);
     final records = StartupTimingService.snapshot();
     final summary = StartupTimingService.startupSummaryJson();
     final totalElapsed = _asInt(summary['totalElapsedMs']) ?? 0;
@@ -415,8 +434,9 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
       ...categoryOrder.where(groupedRecords.containsKey),
       ...groupedRecords.keys.where((key) => !categoryOrder.contains(key)),
     ];
-    final readyLabel =
-        startupReadyMs == null ? 'pending' : _formatMs(startupReadyMs);
+    final readyLabel = startupReadyMs == null
+        ? tr.text('status_pending')
+        : _formatMs(startupReadyMs);
     final totalLabel = records.isEmpty ? '0 ms' : _formatMs(totalElapsed);
     return Card(
       child: Padding(
@@ -430,7 +450,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Startup performance',
+                    tr.text('startup_performance'),
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium
@@ -445,20 +465,23 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 Expanded(
                   child: Text(
                     records.isEmpty
-                        ? 'No startup timing data captured yet.'
-                        : '${records.length} timing records captured. Total session: $totalLabel',
+                        ? tr.text('no_startup_timing_data')
+                        : tr.format('startup_timing_records_summary', {
+                            'count': records.length,
+                            'total': totalLabel,
+                          }),
                   ),
                 ),
                 TextButton.icon(
                   onPressed: _copyStartupTimingReport,
                   icon: const Icon(Icons.copy, size: 18),
-                  label: const Text('Copy'),
+                  label: Text(tr.text('copy')),
                 ),
                 const SizedBox(width: 8),
                 TextButton.icon(
                   onPressed: _saveStartupTimingReport,
                   icon: const Icon(Icons.save_outlined, size: 18),
-                  label: const Text('Save'),
+                  label: Text(tr.text('save')),
                 ),
               ],
             ),
@@ -468,38 +491,38 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
               runSpacing: 12,
               children: [
                 _buildMetricChip(
-                  'Total session',
+                  tr.text('total_session'),
                   totalLabel,
                   icon: Icons.timer_outlined,
                 ),
                 if (startupMode.isNotEmpty)
                   _buildMetricChip(
-                    'Startup mode',
+                    tr.text('startup_mode'),
                     startupMode,
                     icon: Icons.layers_outlined,
                   ),
                 _buildMetricChip(
-                  'Ready to use',
+                  tr.text('ready_to_use'),
                   readyLabel,
                   icon: Icons.play_circle_outline,
                 ),
                 _buildMetricChip(
-                  'App init',
+                  tr.text('app_initialization'),
                   _formatMsOrPending(appInitializeMs),
                   icon: Icons.engineering_outlined,
                 ),
                 _buildMetricChip(
-                  'Store ready',
+                  tr.text('store_ready'),
                   _formatMsOrPending(storeReadyAtMs),
                   icon: Icons.check_circle_outline,
                 ),
                 _buildMetricChip(
-                  'First frame',
+                  tr.text('first_frame'),
                   _formatMsOrPending(firstFrameAtMs),
                   icon: Icons.visibility_outlined,
                 ),
                 _buildMetricChip(
-                  'Background warmup',
+                  tr.text('background_warmup'),
                   _formatMsOrPending(primeHeavyCachesMs),
                   icon: Icons.sync,
                 ),
@@ -508,15 +531,14 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
             const SizedBox(height: 12),
             if (records.isNotEmpty)
               Text(
-                'Ready to use is the later of store ready and first frame. The groups below show which startup step consumed time.',
+                tr.text('startup_performance_explanation'),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
               ),
             const SizedBox(height: 12),
             if (records.isEmpty)
-              const Text(
-                  'Open the app again and this section will show the startup trace.')
+              Text(tr.text('reopen_app_for_startup_trace'))
             else ...[
               Wrap(
                 spacing: 12,
@@ -524,7 +546,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 children: [
                   if (interestingRecords['localDatabaseInitialize'] != null)
                     _buildMetricChip(
-                      'Local DB bootstrap',
+                      tr.text('local_database_bootstrap'),
                       _formatMs(
                         _asInt((interestingRecords['localDatabaseInitialize']
                                 as Map)['durationMs']) ??
@@ -533,7 +555,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                     ),
                   if (interestingRecords['sqliteBootstrap'] != null)
                     _buildMetricChip(
-                      'SQLite bootstrap',
+                      tr.text('sqlite_bootstrap'),
                       _formatMs(
                         _asInt((interestingRecords['sqliteBootstrap']
                                 as Map)['durationMs']) ??
@@ -542,7 +564,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                     ),
                   if (interestingRecords['appStoreLegacyStartupLoad'] != null)
                     _buildMetricChip(
-                      'Legacy startup load',
+                      tr.text('legacy_startup_load'),
                       _formatMs(
                         _asInt((interestingRecords['appStoreLegacyStartupLoad']
                                 as Map)['durationMs']) ??
@@ -551,7 +573,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                     ),
                   if (interestingRecords['appStoreFastStartupLoad'] != null)
                     _buildMetricChip(
-                      'Fast startup load',
+                      tr.text('fast_startup_load'),
                       _formatMs(
                         _asInt((interestingRecords['appStoreFastStartupLoad']
                                 as Map)['durationMs']) ??
@@ -560,7 +582,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                     ),
                   if (interestingRecords['appStoreCoreDeferredStartup'] != null)
                     _buildMetricChip(
-                      'Deferred core load',
+                      tr.text('deferred_core_load'),
                       _formatMs(
                         _asInt((interestingRecords[
                                     'appStoreCoreDeferredStartup']
@@ -570,7 +592,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                     ),
                   if (interestingRecords['appStoreSyncDeferredStartup'] != null)
                     _buildMetricChip(
-                      'Sync deferred load',
+                      tr.text('sync_deferred_load'),
                       _formatMs(
                         _asInt((interestingRecords[
                                     'appStoreSyncDeferredStartup']
@@ -580,7 +602,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                     ),
                   if (interestingRecords['reportsPrewarm'] != null)
                     _buildMetricChip(
-                      'Reports prewarm',
+                      tr.text('reports_prewarm'),
                       _formatMs(
                         _asInt((interestingRecords['reportsPrewarm']
                                 as Map)['durationMs']) ??
@@ -589,7 +611,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                     ),
                   if (interestingRecords['accountingPrewarm'] != null)
                     _buildMetricChip(
-                      'Accounting prewarm',
+                      tr.text('accounting_prewarm'),
                       _formatMs(
                         _asInt((interestingRecords['accountingPrewarm']
                                 as Map)['durationMs']) ??
@@ -618,13 +640,16 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                         subtitle: Text(
-                          '${categoryRecords.length} steps · total ${_formatMs(categoryTotal)}',
+                          tr.format('startup_category_summary', {
+                            'count': categoryRecords.length,
+                            'total': _formatMs(categoryTotal),
+                          }),
                         ),
                         childrenPadding:
                             const EdgeInsets.fromLTRB(16, 0, 16, 16),
                         children: [
                           if (categoryRecords.isEmpty)
-                            const Text('No timings captured in this category.')
+                            Text(tr.text('no_category_timings'))
                           else
                             Column(
                               children: [
@@ -655,12 +680,12 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
     final tr = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Diagnostics / التشخيص'),
+        title: Text(tr.text('diagnostics')),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: 'Technical Logs'),
-            Tab(text: 'Audit Logs'),
+          tabs: [
+            Tab(text: tr.text('technical_logs')),
+            Tab(text: tr.text('audit_logs')),
           ],
         ),
         actions: [
@@ -672,17 +697,17 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
           IconButton(
             onPressed: _loading ? null : _copyReport,
             icon: const Icon(Icons.copy),
-            tooltip: 'Copy report',
+            tooltip: tr.text('copy_report'),
           ),
           IconButton(
             onPressed: _loading ? null : _downloadDisplayedData,
             icon: const Icon(Icons.file_download_outlined),
-            tooltip: 'Download displayed data',
+            tooltip: tr.text('download_displayed_data'),
           ),
           IconButton(
             onPressed: _loading ? null : _downloadAllData,
             icon: const Icon(Icons.download_outlined),
-            tooltip: 'Download all data',
+            tooltip: tr.text('download_all_data'),
           ),
         ],
       ),
@@ -699,21 +724,22 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                   width: 260,
                   child: TextField(
                     controller: _searchController,
-                    decoration: const InputDecoration(
-                      labelText: 'Search',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: tr.text('search'),
+                      border: const OutlineInputBorder(),
                     ),
                     onSubmitted: (_) => _refresh(),
                   ),
                 ),
                 DropdownButton<String>(
                   value: _selectedArea,
-                  hint: const Text('Area'),
+                  hint: Text(tr.text('area')),
                   items: _areas
                       .map(
                         (value) => DropdownMenuItem<String>(
                           value: value,
-                          child: Text(value.isEmpty ? 'All areas' : value),
+                          child: Text(
+                              value.isEmpty ? tr.text('all_areas') : value),
                         ),
                       )
                       .toList(),
@@ -724,11 +750,11 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 ),
                 DropdownButton<AppLogLevel?>(
                   value: _selectedLevel,
-                  hint: const Text('Level'),
+                  hint: Text(tr.text('level')),
                   items: <DropdownMenuItem<AppLogLevel?>>[
-                    const DropdownMenuItem<AppLogLevel?>(
+                    DropdownMenuItem<AppLogLevel?>(
                       value: null,
-                      child: Text('All levels'),
+                      child: Text(tr.text('all_levels')),
                     ),
                     for (final level in AppLogLevel.values)
                       DropdownMenuItem<AppLogLevel?>(
@@ -743,12 +769,13 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 ),
                 DropdownButton<String>(
                   value: _selectedEntityType,
-                  hint: const Text('Entity type'),
+                  hint: Text(tr.text('entity_type')),
                   items: _entityTypes
                       .map(
                         (value) => DropdownMenuItem<String>(
                           value: value,
-                          child: Text(value.isEmpty ? 'All entities' : value),
+                          child: Text(
+                              value.isEmpty ? tr.text('all_entities') : value),
                         ),
                       )
                       .toList(),
@@ -760,17 +787,17 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 OutlinedButton.icon(
                   onPressed: _loading ? null : _cleanupOldLogs,
                   icon: const Icon(Icons.cleaning_services_outlined),
-                  label: const Text('Delete old non-important logs'),
+                  label: Text(tr.text('delete_old_non_important_logs')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _loading ? null : () => _clearTechnicalLogs(),
                   icon: const Icon(Icons.delete_outline),
-                  label: const Text('Clear all technical logs'),
+                  label: Text(tr.text('clear_all_technical_logs')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _loading ? null : _clearAuditLogs,
                   icon: const Icon(Icons.rule_outlined),
-                  label: const Text('Clear audit logs'),
+                  label: Text(tr.text('clear_audit_logs')),
                 ),
               ],
             ),
@@ -784,12 +811,12 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
               children: [
                 _LogsList<AppLogRecord>(
                   items: _appLogs,
-                  emptyText: 'No technical logs found.',
+                  emptyText: tr.text('no_technical_logs_found'),
                   itemBuilder: (context, item) => _AppLogTile(item: item),
                 ),
                 _LogsList<AuditLogRecord>(
                   items: _auditLogs,
-                  emptyText: 'No audit logs found.',
+                  emptyText: tr.text('no_audit_logs_found'),
                   itemBuilder: (context, item) => _AuditLogTile(item: item),
                 ),
               ],
@@ -833,6 +860,7 @@ class _AppLogTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final color = switch (item.level) {
       AppLogLevel.debug => Colors.grey,
       AppLogLevel.info => Colors.blue,
@@ -852,7 +880,7 @@ class _AppLogTile extends StatelessWidget {
             Text(
               '${item.createdAt.toLocal()}  •  ${item.level.name}  •  ${item.storeId.isEmpty ? '' : item.storeId}',
             ),
-            if (item.isImportant) const Text('Important'),
+            if (item.isImportant) Text(tr.text('important')),
           ],
         ),
         trailing: Chip(label: Text(item.level.name)),
@@ -868,6 +896,7 @@ class _AuditLogTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return Card(
       child: ListTile(
         leading: const Icon(Icons.rule_outlined),
@@ -880,7 +909,7 @@ class _AuditLogTile extends StatelessWidget {
               Text('${item.fieldName}: ${item.oldValue} -> ${item.newValue}'),
             if (item.details.isNotEmpty) Text(item.details),
             Text(item.createdAt.toLocal().toString()),
-            if (item.isImportant) const Text('Important'),
+            if (item.isImportant) Text(tr.text('important')),
           ],
         ),
         trailing: Text(item.userName.isEmpty ? item.userId : item.userName),

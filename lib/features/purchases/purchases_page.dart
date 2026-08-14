@@ -304,9 +304,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewPurchases) {
-      return const _AccessDeniedScaffold(
-        title: 'Purchases',
-        message: 'You do not have access to purchase records.',
+        return _AccessDeniedScaffold(
+          title: tr.text('purchases'),
+          message: tr.text('no_access_purchase_records'),
       );
     }
     final normalizedQuery = _searchController.text.trim().toLowerCase();
@@ -985,7 +985,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
               child: OutlinedButton.icon(
                 onPressed: () => _loadMorePurchases(totalCount),
                 icon: const Icon(Icons.expand_more),
-                label: Text(tr.isArabic ? 'عرض المزيد' : 'Load more'),
+                label: Text(tr.text('load_more')),
               ),
             ),
           ],

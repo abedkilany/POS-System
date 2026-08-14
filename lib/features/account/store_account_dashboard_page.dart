@@ -518,7 +518,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
             onSelected: widget.onLocaleChanged,
             itemBuilder: (context) {
               final currentLocale = Localizations.localeOf(context);
-              final isArabic = currentLocale.languageCode == 'ar';
+              final languageCode = currentLocale.languageCode;
               return [
                 PopupMenuItem<Locale>(
                   value: const Locale('en'),
@@ -526,7 +526,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                     const Text('🇺🇸'),
                     const SizedBox(width: 10),
                     Expanded(child: Text(tr.text('language_english'))),
-                    if (!isArabic) const Icon(Icons.check, size: 18),
+                    if (languageCode == 'en') const Icon(Icons.check, size: 18),
                   ]),
                 ),
                 PopupMenuItem<Locale>(
@@ -535,7 +535,16 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                     const Text('🇱🇧'),
                     const SizedBox(width: 10),
                     Expanded(child: Text(tr.text('language_arabic'))),
-                    if (isArabic) const Icon(Icons.check, size: 18),
+                    if (languageCode == 'ar') const Icon(Icons.check, size: 18),
+                  ]),
+                ),
+                PopupMenuItem<Locale>(
+                  value: const Locale('fr'),
+                  child: Row(children: [
+                    const Text('🇫🇷'),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(tr.text('language_french'))),
+                    if (languageCode == 'fr') const Icon(Icons.check, size: 18),
                   ]),
                 ),
               ];

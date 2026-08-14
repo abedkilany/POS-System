@@ -65,9 +65,9 @@ class ReportsPage extends StatelessWidget {
       builder: (context, _) {
         final tr = AppLocalizations.of(context);
         if (!store.canViewReports) {
-          return const _AccessDeniedScaffold(
-            title: 'Reports',
-            message: 'You do not have access to reports.',
+            return _AccessDeniedScaffold(
+              title: tr.text('reports'),
+              message: tr.text('no_access_reports'),
           );
         }
         if (!store.isCoreDataLoaded || !store.isLedgerDataLoaded) {

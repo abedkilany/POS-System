@@ -246,9 +246,9 @@ class _MaintenancePageState extends State<MaintenancePage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewMaintenance) {
-      return const _AccessDeniedScaffold(
-        title: 'Maintenance',
-        message: 'You do not have access to maintenance tools.',
+      return _AccessDeniedScaffold(
+        title: tr.text('maintenance'),
+        message: tr.text('no_access_maintenance_tools'),
       );
     }
     final summary = _summary;
@@ -486,7 +486,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       )
                   : null,
               icon: const Icon(Icons.monitor_heart_outlined),
-              label: const Text('Diagnostics / التشخيص'),
+              label: Text(tr.text('diagnostics')),
             ),
             OutlinedButton.icon(
               onPressed: widget.store.canManageDatabase

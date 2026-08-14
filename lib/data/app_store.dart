@@ -2222,12 +2222,13 @@ class AppStore extends ChangeNotifier {
 
   Future<Locale> loadLocale() async {
     final raw = LocalDatabaseService.getString(_localeKey) ?? 'en';
-    return ['en', 'ar'].contains(raw) ? Locale(raw) : const Locale('en');
+    return ['en', 'ar', 'fr'].contains(raw) ? Locale(raw) : const Locale('en');
   }
 
   Future<void> saveLocale(Locale locale) async {
-    final languageCode =
-        ['en', 'ar'].contains(locale.languageCode) ? locale.languageCode : 'en';
+    final languageCode = ['en', 'ar', 'fr'].contains(locale.languageCode)
+        ? locale.languageCode
+        : 'en';
     await LocalDatabaseService.setString(_localeKey, languageCode);
   }
 

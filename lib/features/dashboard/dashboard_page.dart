@@ -163,12 +163,6 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  String _t(AppLocalizations tr, String key, String ar, String en) {
-    final value = tr.text(key);
-    if (value != key) return value;
-    return tr.isArabic ? ar : en;
-  }
-
   String _formatDate(DateTime value) {
     return DateFormat('yyyy-MM-dd').format(value.toLocal());
   }
@@ -313,7 +307,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _KpiData(
         title: tr.text('today_sales'),
         value: _money(state.todaySalesTotal),
-        note: _t(tr, 'dashboard_better_than_yesterday', 'أداء اليوم', 'Today'),
+        note: tr.text('dashboard_better_than_yesterday'),
         icon: Icons.shopping_cart_outlined,
         color: const Color(0xFF2563EB),
       ),
@@ -321,17 +315,15 @@ class _DashboardPageState extends State<DashboardPage> {
         title: tr.text('net_profit'),
         value: _money(state.todayProfitTotal),
         note: state.todayProfitTotal >= 0
-            ? _t(tr, 'dashboard_positive_profit', 'ربح موجب', 'Positive profit')
-            : _t(tr, 'dashboard_negative_profit', 'تحتاج مراجعة',
-                'Needs review'),
+            ? tr.text('dashboard_positive_profit')
+            : tr.text('dashboard_negative_profit'),
         icon: Icons.trending_up_rounded,
         color: const Color(0xFF16A34A),
       ),
       _KpiData(
         title: tr.text('today_invoices'),
         value: '${state.todayInvoiceCount}',
-        note: _t(tr, 'dashboard_invoice_count_note', 'فاتورة اليوم',
-            'Invoices today'),
+        note: tr.text('dashboard_invoice_count_note'),
         icon: Icons.receipt_long_outlined,
         color: const Color(0xFF8B5CF6),
       ),
@@ -340,8 +332,7 @@ class _DashboardPageState extends State<DashboardPage> {
         value: state.isHydrated ? _money(state.currentCashTotal) : '—',
         note: state.isHydrated
             ? tr.text('cash')
-            : _t(tr, 'dashboard_preparing_indicator', 'جارٍ التجهيز',
-                'Preparing'),
+            : tr.text('dashboard_preparing_indicator'),
         icon: Icons.account_balance_wallet_outlined,
         color: const Color(0xFFF97316),
       ),
@@ -354,18 +345,9 @@ class _DashboardPageState extends State<DashboardPage> {
           _HeroHeader(
             storeName: state.storeName,
             date: _formatDate(state.generatedAt),
-            title: _t(
-              tr,
-              'dashboard_good_morning',
-              'صباح الخير، ${state.storeName}',
-              'Good morning, ${state.storeName}',
-            ),
-            subtitle: _t(
-              tr,
-              'dashboard_business_summary',
-              'إليك ملخص أعمالك لهذا اليوم',
-              'Here is your business summary for today',
-            ),
+            title:
+                tr.format('dashboard_good_morning', {'store': state.storeName}),
+            subtitle: tr.text('dashboard_business_summary'),
             sales: _money(state.todaySalesTotal),
             syncStatus: state.syncStatus,
             backupStatus: state.backupStatus,
@@ -378,12 +360,7 @@ class _DashboardPageState extends State<DashboardPage> {
               child: PageDataLoadIndicator(
                 loadedCount: 1,
                 totalCount: 2,
-                label: _t(
-                  tr,
-                  'dashboard_preparing_indicator',
-                  'جارٍ تجهيز بيانات اللوحة',
-                  'Preparing dashboard data',
-                ),
+                label: tr.text('dashboard_preparing_indicator'),
               ),
             ),
           ],
@@ -419,17 +396,13 @@ class _DashboardPageState extends State<DashboardPage> {
               final isWide = constraints.maxWidth >= 980;
               final chart = _MainChartPanel(
                 series: mainChart,
-                title: mainChart?.title ??
-                    _t(tr, 'sales_chart', 'مؤشر المبيعات', 'Sales trend'),
+                title: mainChart == null
+                    ? tr.text('sales_chart')
+                    : localizeRuntimeMessage(mainChart.title, tr),
                 formatValue: mainChart == null
                     ? (_) => ''
                     : (item) => _chartValue(mainChart, item),
-                emptyLabel: _t(
-                  tr,
-                  'no_data_available',
-                  'لا توجد بيانات كافية للعرض',
-                  'No data available',
-                ),
+                emptyLabel: tr.text('no_data_available'),
               );
               final alerts = _AlertsPanel(
                 title: tr.text('dashboard_alerts'),
@@ -471,17 +444,17 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 18),
           _SystemStatusPanel(
-            title: _t(tr, 'system_status', 'حالة النظام', 'System status'),
+            title: tr.text('system_status'),
             items: [
               _SystemStatusData(
                 title: tr.text('sync_status'),
-                value: state.syncStatus.title,
+                value: localizeRuntimeMessage(state.syncStatus.title, tr),
                 icon: Icons.sync_rounded,
                 color: _statusColor(context, state.syncStatus.level),
               ),
               _SystemStatusData(
                 title: tr.text('current_backup_status'),
-                value: state.backupStatus.title,
+                value: localizeRuntimeMessage(state.backupStatus.title, tr),
                 icon: Icons.sync,
                 color: _statusColor(context, state.backupStatus.level),
               ),
@@ -589,6 +562,7 @@ class _HeroHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     final scheme = theme.colorScheme;
     return _PremiumSurface(
       padding: const EdgeInsets.all(24),
@@ -653,14 +627,14 @@ class _HeroHeader extends StatelessWidget {
                 runSpacing: 10,
                 children: [
                   _StatusPill(
-                    title: syncStatus.title,
-                    subtitle: syncStatus.detail,
+                    title: localizeRuntimeMessage(syncStatus.title, tr),
+                    subtitle: localizeRuntimeMessage(syncStatus.detail, tr),
                     icon: Icons.sync_rounded,
                     color: statusColor(syncStatus.level),
                   ),
                   _StatusPill(
-                    title: backupStatus.title,
-                    subtitle: backupStatus.detail,
+                    title: localizeRuntimeMessage(backupStatus.title, tr),
+                    subtitle: localizeRuntimeMessage(backupStatus.detail, tr),
                     icon: Icons.sync,
                     color: statusColor(backupStatus.level),
                   ),
@@ -995,6 +969,7 @@ class _MainChartPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     final items = series?.items ?? const <DashboardChartItem>[];
     return _PremiumSurface(
       padding: const EdgeInsets.all(22),
@@ -1024,7 +999,7 @@ class _MainChartPanel extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Text(
-                    '${item.label}  ${formatValue(item)}',
+                    '${localizeRuntimeMessage(item.label, tr)}  ${formatValue(item)}',
                     style: theme.textTheme.labelMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -1055,6 +1030,7 @@ class _AlertsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     return _PremiumSurface(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -1100,7 +1076,7 @@ class _AlertsPanel extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              alert.title,
+                              localizeRuntimeMessage(alert.title, tr),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.titleSmall?.copyWith(
@@ -1109,7 +1085,7 @@ class _AlertsPanel extends StatelessWidget {
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              alert.message,
+                              localizeRuntimeMessage(alert.message, tr),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodySmall,

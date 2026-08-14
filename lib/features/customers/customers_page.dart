@@ -114,9 +114,9 @@ class _CustomersPageState extends State<CustomersPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewCustomers) {
-      return const _AccessDeniedScaffold(
-        title: 'Customers',
-        message: 'You do not have access to customer records.',
+        return _AccessDeniedScaffold(
+          title: tr.text('customers'),
+          message: tr.text('no_access_customer_records'),
       );
     }
     final value = query.trim().toLowerCase();

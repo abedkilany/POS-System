@@ -771,9 +771,9 @@ class _SalesPageState extends State<SalesPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewSales) {
-      return const _AccessDeniedScaffold(
-        title: 'Sales',
-        message: 'You do not have access to sales data.',
+      return _AccessDeniedScaffold(
+        title: tr.text('sales_page'),
+        message: tr.text('no_access_sales_data'),
       );
     }
     return FutureBuilder<void>(
@@ -1210,20 +1210,22 @@ class _SalesPageState extends State<SalesPage> {
         final drawer = status?.drawer;
         final isLoading = snapshot.connectionState != ConnectionState.done;
         final colorScheme = Theme.of(context).colorScheme;
-        final title = openSession == null
-            ? 'لا توجد وردية نقدية مفتوحة'
-            : 'الوردية النقدية مفتوحة';
+        final title = tr.text(
+            openSession == null ? 'no_open_cash_shift' : 'cash_shift_is_open');
         final subtitle = openSession == null
             ? (drawer == null
-                ? (tr.isArabic
-                    ? 'لا يوجد درج نقدية مربوط أو معرف لهذا الجهاز.'
-                    : 'No cash drawer is linked or defined for this device.')
-                : (tr.isArabic
-                    ? 'الدرج: ${drawer.name} • افتح وردية قبل البيع النقدي.'
-                    : 'Drawer: ${drawer.name} • Open a shift before cash sales.'))
-            : (tr.isArabic
-                ? '${openSession.name} • ${openSession.accountName.isEmpty ? 'درج نقدية' : openSession.accountName} • المتوقع: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}'
-                : '${openSession.name} • ${openSession.accountName.isEmpty ? 'Cash drawer' : openSession.accountName} • Expected: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}');
+                ? tr.text('no_cash_drawer_for_device')
+                : tr.format('drawer_open_shift_before_cash_sales', {
+                    'name': drawer.name,
+                  }))
+            : tr.format('open_cash_shift_summary', {
+                'name': openSession.name,
+                'drawer': openSession.accountName.isEmpty
+                    ? tr.text('cash_drawer')
+                    : openSession.accountName,
+                'total': formatUsdReferenceAmount(
+                    openSession.credit, widget.store.storeProfile),
+              });
         return Card(
           elevation: 0,
           color: openSession == null
@@ -1271,7 +1273,7 @@ class _SalesPageState extends State<SalesPage> {
                         ? null
                         : () => _openSaleDrawerDialog(status),
                     icon: const Icon(Icons.lock_open_outlined),
-                    label: Text(tr.isArabic ? 'فتح وردية' : 'Open shift'),
+                    label: Text(tr.text('open_shift')),
                   )
                 else
                   Wrap(
@@ -1282,8 +1284,7 @@ class _SalesPageState extends State<SalesPage> {
                             ? null
                             : () => _closeSaleDrawerDialog(openSession, status),
                         icon: const Icon(Icons.lock_outline),
-                        label: Text(
-                            tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
+                        label: Text(tr.text('close_handover')),
                       ),
                     ],
                   ),
@@ -1316,7 +1317,7 @@ class _SalesPageState extends State<SalesPage> {
                 ? null
                 : () => _openSaleDrawerDialog(status),
             icon: const Icon(Icons.lock_open_outlined),
-            label: Text(tr.isArabic ? 'فتح وردية' : 'Open shift'),
+            label: Text(tr.text('open_shift')),
           );
         }
         return OutlinedButton.icon(
@@ -1324,7 +1325,7 @@ class _SalesPageState extends State<SalesPage> {
               ? null
               : () => _closeSaleDrawerDialog(openSession, status),
           icon: const Icon(Icons.lock_outline),
-          label: Text(tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
+          label: Text(tr.text('close_handover')),
         );
       },
     );
@@ -1349,8 +1350,8 @@ class _SalesPageState extends State<SalesPage> {
               ? Icons.lock_open_outlined
               : Icons.lock_outline,
           label: openSession == null
-              ? (tr.isArabic ? 'فتح وردية' : 'Open shift')
-              : (tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
+              ? tr.text('open_shift')
+              : tr.text('close_handover'),
           onTap: status == null
               ? () {}
               : openSession == null
@@ -1373,10 +1374,7 @@ class _SalesPageState extends State<SalesPage> {
       if (openSession == null) {
         if (status.drawers.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                  'لا يوجد درج نقدية معرف. أضف درج نقدية أولاً من الإعدادات المالية.'),
-            ),
+            SnackBar(content: Text(tr.text('add_cash_drawer_first'))),
           );
           return;
         }
@@ -1408,7 +1406,7 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: Text(tr.isArabic ? 'فتح وردية نقدية' : 'Open cash shift'),
+          title: Text(tr.text('open_cash_shift')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1416,8 +1414,8 @@ class _SalesPageState extends State<SalesPage> {
                 DropdownButtonFormField<String>(
                   initialValue:
                       selectedDrawerId.isEmpty ? null : selectedDrawerId,
-                  decoration: InputDecoration(
-                      labelText: tr.isArabic ? 'درج النقدية' : 'Cash drawer'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('cash_drawer')),
                   items: drawers
                       .map((item) => DropdownMenuItem(
                             value: item.id,
@@ -1432,17 +1430,14 @@ class _SalesPageState extends State<SalesPage> {
                   controller: controller,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                      labelText:
-                          tr.isArabic ? 'مبلغ الافتتاح' : 'Opening amount'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('opening_amount')),
                 ),
                 if (sources.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(tr.isArabic
-                        ? 'تحويل مبلغ الافتتاح من صندوق آخر'
-                        : 'Transfer opening amount from another drawer'),
+                    title: Text(tr.text('transfer_opening_amount')),
                     value: useFundingSource,
                     onChanged: (value) =>
                         setDialogState(() => useFundingSource = value),
@@ -1451,9 +1446,8 @@ class _SalesPageState extends State<SalesPage> {
                     DropdownButtonFormField<String>(
                       initialValue:
                           selectedFundingId.isEmpty ? null : selectedFundingId,
-                      decoration: InputDecoration(
-                          labelText:
-                              tr.isArabic ? 'مصدر المبلغ' : 'Funding source'),
+                      decoration:
+                          InputDecoration(labelText: tr.text('funding_source')),
                       items: sources
                           .map((item) => DropdownMenuItem(
                                 value: item.id,
@@ -1476,7 +1470,7 @@ class _SalesPageState extends State<SalesPage> {
               onPressed: selectedDrawerId.isEmpty
                   ? null
                   : () => Navigator.pop(dialogContext, true),
-              child: Text(tr.isArabic ? 'فتح' : 'Open'),
+              child: Text(tr.text('open')),
             ),
           ],
         ),
@@ -1501,10 +1495,7 @@ class _SalesPageState extends State<SalesPage> {
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(tr.isArabic
-                  ? 'تم فتح الوردية النقدية'
-                  : 'Cash shift opened')),
+          SnackBar(content: Text(tr.text('cash_shift_opened'))),
         );
       }
     } catch (error) {
@@ -1539,48 +1530,39 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: Text(
-              tr.isArabic ? 'إغلاق / تسليم الوردية' : 'Close / handover shift'),
+          title: Text(tr.text('close_handover_shift')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                    '${tr.isArabic ? 'المتوقع' : 'Expected'}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
+                    '${tr.text('expected')}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
                 const SizedBox(height: 12),
                 TextField(
                   controller: counted,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                      labelText:
-                          tr.isArabic ? 'المبلغ المعدود' : 'Counted amount'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('counted_amount')),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: closeMode,
-                  decoration: InputDecoration(
-                      labelText:
-                          tr.isArabic ? 'طريقة الإغلاق' : 'Close action'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('close_action')),
                   items: [
                     DropdownMenuItem(
                       value: 'keep_drawer',
-                      child: Text(tr.isArabic
-                          ? 'إغلاق فقط وترك النقد بنفس الدرج'
-                          : 'Close only and keep cash in the same drawer'),
+                      child: Text(tr.text('close_only_keep_cash')),
                     ),
                     DropdownMenuItem(
                       value: 'transfer_location',
-                      child: Text(tr.isArabic
-                          ? 'إغلاق وتحويل النقد إلى درج/صندوق آخر'
-                          : 'Close and transfer cash to another drawer / vault'),
+                      child: Text(tr.text('close_and_transfer_cash')),
                     ),
                     DropdownMenuItem(
                       value: 'handover_user',
-                      child: Text(tr.isArabic
-                          ? 'تسليم لموظف جديد وفتح وردية جديدة'
-                          : 'Handover to a new employee and open a new shift'),
+                      child: Text(tr.text('handover_and_open_shift')),
                     ),
                   ],
                   onChanged: (value) =>
@@ -1591,9 +1573,7 @@ class _SalesPageState extends State<SalesPage> {
                   DropdownButtonFormField<String>(
                     initialValue: transferToId.isEmpty ? null : transferToId,
                     decoration: InputDecoration(
-                        labelText: tr.isArabic
-                            ? 'الدرج / الصندوق المستلم'
-                            : 'Receiving drawer / vault'),
+                        labelText: tr.text('receiving_drawer_vault')),
                     items: transferTargets
                         .map((item) => DropdownMenuItem(
                               value: item.id,
@@ -1609,9 +1589,7 @@ class _SalesPageState extends State<SalesPage> {
                   DropdownButtonFormField<String>(
                     initialValue: nextUserId.isEmpty ? null : nextUserId,
                     decoration: InputDecoration(
-                        labelText: tr.isArabic
-                            ? 'الموظف المستلم'
-                            : 'Receiving employee'),
+                        labelText: tr.text('receiving_employee')),
                     items: handoverUsers
                         .map((user) => DropdownMenuItem(
                               value: user.id,
@@ -1623,9 +1601,7 @@ class _SalesPageState extends State<SalesPage> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    tr.isArabic
-                        ? 'سيتم إغلاق الوردية الحالية وفتح وردية جديدة للموظف المستلم بنفس المبلغ المعدود.'
-                        : 'The current shift will be closed and a new shift will be opened for the receiving employee with the same counted amount.',
+                    tr.text('handover_shift_explanation'),
                     style: Theme.of(dialogContext).textTheme.bodySmall,
                   ),
                 ],
@@ -1703,10 +1679,7 @@ class _SalesPageState extends State<SalesPage> {
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(tr.isArabic
-                  ? 'تم تحديث الوردية النقدية'
-                  : 'Cash shift updated')),
+          SnackBar(content: Text(tr.text('cash_shift_updated'))),
         );
       }
     } catch (error) {
@@ -1740,7 +1713,7 @@ class _SalesPageState extends State<SalesPage> {
                     onPressed:
                         widget.store.canSell ? _showSaleShiftQuickAction : null,
                     icon: const Icon(Icons.point_of_sale_outlined),
-                    label: Text(tr.isArabic ? 'إدارة الوردية' : 'Manage shift'),
+                    label: Text(tr.text('manage_shift')),
                   ),
                 OutlinedButton.icon(
                   onPressed: _showInvoicesSheet,
@@ -3673,12 +3646,15 @@ class _SalesPageState extends State<SalesPage> {
                                     onPressed: widget.store.hasPermission(
                                             AppPermission.salesPrint)
                                         ? () => _handleInvoiceAction(
-                                            () => _printThermalInvoice(context, sale),
-                                            failureMessageKey: 'thermal_print_failed',
-                                          )
+                                              () => _printThermalInvoice(
+                                                  context, sale),
+                                              failureMessageKey:
+                                                  'thermal_print_failed',
+                                            )
                                         : null,
                                     icon: const Icon(Icons.print_outlined),
-                                    label: Text(tr.text('print_thermal_invoice')),
+                                    label:
+                                        Text(tr.text('print_thermal_invoice')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: widget.store.hasPermission(
@@ -3732,7 +3708,7 @@ class _SalesPageState extends State<SalesPage> {
                 child: OutlinedButton.icon(
                   onPressed: onLoadMore,
                   icon: const Icon(Icons.expand_more),
-                  label: const Text('Load more'),
+                  label: Text(tr.text('load_more')),
                 ),
               ),
             ],
@@ -3827,9 +3803,10 @@ class _SalesPageState extends State<SalesPage> {
                                   summary.total, widget.store.storeProfile)),
                           children: [
                             if (!expanded)
-                              const Padding(
-                                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                                child: Text('Tap to load details'),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                child: Text(tr.text('tap_to_load_details')),
                               )
                             else
                               FutureBuilder<Sale?>(
@@ -3840,7 +3817,7 @@ class _SalesPageState extends State<SalesPage> {
                                   final sale = snapshot.data;
                                   if (snapshot.connectionState ==
                                       ConnectionState.waiting) {
-                                    return const Padding(
+                                    return Padding(
                                       padding:
                                           EdgeInsets.fromLTRB(16, 0, 16, 12),
                                       child: Center(
@@ -3855,10 +3832,11 @@ class _SalesPageState extends State<SalesPage> {
                                     );
                                   }
                                   if (sale == null) {
-                                    return const Padding(
+                                    return Padding(
                                       padding:
                                           EdgeInsets.fromLTRB(16, 0, 16, 12),
-                                      child: Text('No sale details found'),
+                                      child: Text(
+                                          tr.text('no_sale_details_found')),
                                     );
                                   }
                                   return _buildInvoiceDetailsContent(
@@ -3880,7 +3858,7 @@ class _SalesPageState extends State<SalesPage> {
                 child: OutlinedButton.icon(
                   onPressed: onLoadMore,
                   icon: const Icon(Icons.expand_more),
-                  label: const Text('Load more'),
+                  label: Text(tr.text('load_more')),
                 ),
               ),
             ],
@@ -3930,9 +3908,9 @@ class _SalesPageState extends State<SalesPage> {
               OutlinedButton.icon(
                 onPressed: widget.store.hasPermission(AppPermission.salesPrint)
                     ? () => _handleInvoiceAction(
-                        () => _printThermalInvoice(context, sale),
-                        failureMessageKey: 'thermal_print_failed',
-                      )
+                          () => _printThermalInvoice(context, sale),
+                          failureMessageKey: 'thermal_print_failed',
+                        )
                     : null,
                 icon: const Icon(Icons.print_outlined),
                 label: Text(tr.text('print_thermal_invoice')),
@@ -4524,9 +4502,7 @@ class _SalesPageState extends State<SalesPage> {
                         PageDataLoadIndicator(
                           loadedCount: visibleProducts.length,
                           totalCount: filteredProducts.length,
-                          label: tr.isArabic
-                              ? 'جارٍ تجهيز نتائج البحث'
-                              : 'Preparing search results',
+                          label: tr.text('preparing_search_results'),
                         ),
                       ],
                     ),
@@ -4697,9 +4673,7 @@ class _SalesPageState extends State<SalesPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(tr.isArabic
-            ? 'تفاصيل خطأ حفظ الفاتورة'
-            : 'Invoice save error details'),
+        title: Text(tr.text('invoice_save_error_details')),
         content: SizedBox(
           width: 680,
           child: SingleChildScrollView(
@@ -4712,11 +4686,7 @@ class _SalesPageState extends State<SalesPage> {
                   style: Theme.of(dialogContext).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  tr.isArabic
-                      ? 'هذه رسالة تتبع مؤقتة. انسخها وأرسلها للمراجعة لمعرفة أين يفشل الحفظ بالضبط.'
-                      : 'This is a temporary trace message. Copy it and send it for review to find exactly where saving fails.',
-                ),
+                Text(tr.text('invoice_save_trace_explanation')),
                 const SizedBox(height: 12),
                 Container(
                   constraints: const BoxConstraints(maxHeight: 360),
@@ -4749,14 +4719,11 @@ class _SalesPageState extends State<SalesPage> {
               await Clipboard.setData(ClipboardData(text: debugText));
               if (!dialogContext.mounted) return;
               ScaffoldMessenger.of(dialogContext).showSnackBar(
-                SnackBar(
-                    content: Text(tr.isArabic
-                        ? 'تم نسخ تفاصيل الخطأ'
-                        : 'Error details copied')),
+                SnackBar(content: Text(tr.text('error_details_copied'))),
               );
             },
             icon: const Icon(Icons.copy),
-            label: Text(tr.isArabic ? 'نسخ' : 'Copy'),
+            label: Text(tr.text('copy')),
           ),
         ],
       ),
@@ -5255,7 +5222,8 @@ class _SalesPageState extends State<SalesPage> {
   Future<void> _printThermalInvoice(BuildContext context, Sale sale) async {
     final settings = widget.store.storeProfile.thermalPrinter;
     if (!settings.enabled) {
-      throw StateError(AppLocalizations.of(context).text('thermal_printer_not_configured'));
+      throw StateError(
+          AppLocalizations.of(context).text('thermal_printer_not_configured'));
     }
     if (settings.type == 'virtual') {
       final service = ThermalPrinterService();
@@ -5271,7 +5239,9 @@ class _SalesPageState extends State<SalesPage> {
         );
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${AppLocalizations.of(context).text('virtual_print_captured')} #${job.id}')),
+            SnackBar(
+                content: Text(
+                    '${AppLocalizations.of(context).text('virtual_print_captured')} #${job.id}')),
           );
         }
       } finally {

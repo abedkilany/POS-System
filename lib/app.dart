@@ -103,7 +103,7 @@ class _VentioAppState extends State<VentioApp> {
       await StartupTimingService.measure(
         'ventio_app.initialize',
         () async {
-        await _store.initialize(hydrateHeavyData: false);
+          await _store.initialize(hydrateHeavyData: false);
           final savedTheme = await _store.loadThemeMode();
           final savedLocale = await _store.loadLocale();
           if (mounted) {
@@ -283,7 +283,7 @@ class _VentioAppState extends State<VentioApp> {
           darkTheme: AppTheme.darkTheme,
           themeMode: _themeMode,
           locale: _locale,
-          supportedLocales: const [Locale('en'), Locale('ar')],
+          supportedLocales: const [Locale('en'), Locale('ar'), Locale('fr')],
           localizationsDelegates: const [
             AppLocalizations.delegate,
             GlobalMaterialLocalizations.delegate,
@@ -291,58 +291,65 @@ class _VentioAppState extends State<VentioApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _startupError.isNotEmpty
-              ? Scaffold(
-                  body: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 560),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Icon(Icons.error_outline,
-                                size: 56,
-                                color: Theme.of(context).colorScheme.error),
-                            const SizedBox(height: 16),
-                            Text(
-                              'تعذّر تشغيل التطبيق',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.headlineSmall,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _startupError,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                          ],
+              ? Builder(builder: (context) {
+                  final tr = AppLocalizations.of(context);
+                  return Scaffold(
+                    body: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 560),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline,
+                                  size: 56,
+                                  color: Theme.of(context).colorScheme.error),
+                              const SizedBox(height: 16),
+                              Text(
+                                tr.text('app_startup_failed'),
+                                textAlign: TextAlign.center,
+                                style:
+                                    Theme.of(context).textTheme.headlineSmall,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                localizeRuntimeMessage(_startupError, tr),
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                )
+                  );
+                })
               : _store.isReady
-                  ? LoginGatePage(
-                      store: _store,
-                      onLocaleChanged: _changeLocale,
-                      child: PageTimingScope(
-                        key: const ValueKey('MainShellScope'),
-                        pageKey: 'MainShell',
-                        pageLabel: 'Main shell',
-                        child: MainShell(
-                          store: _store,
-                          onLogout: _stopSyncForLogout,
-                          onLocaleChanged: _changeLocale,
-                          onThemeModeChanged: _changeThemeMode,
-                          themeMode: _themeMode,
-                          onSyncSettingsChanged: () async {
-                            _syncStarted = false;
-                            unawaited(_startSyncAfterLogin());
-                          },
+                  ? Builder(builder: (context) {
+                      final tr = AppLocalizations.of(context);
+                      return LoginGatePage(
+                        store: _store,
+                        onLocaleChanged: _changeLocale,
+                        child: PageTimingScope(
+                          key: const ValueKey('MainShellScope'),
+                          pageKey: 'MainShell',
+                          pageLabel: tr.text('main_shell'),
+                          child: MainShell(
+                            store: _store,
+                            onLogout: _stopSyncForLogout,
+                            onLocaleChanged: _changeLocale,
+                            onThemeModeChanged: _changeThemeMode,
+                            themeMode: _themeMode,
+                            onSyncSettingsChanged: () async {
+                              _syncStarted = false;
+                              unawaited(_startSyncAfterLogin());
+                            },
+                          ),
                         ),
-                      ),
-                    )
+                      );
+                    })
                   : const Scaffold(
                       body: Center(child: CircularProgressIndicator())),
         );
@@ -385,7 +392,9 @@ class LocalAutoBackupIndicator extends StatelessWidget {
         return Padding(
           padding: const EdgeInsetsDirectional.only(end: 4),
           child: Tooltip(
-            message: message.isEmpty ? 'Local backup' : message,
+            message: message.isEmpty
+                ? AppLocalizations.of(context).text('local_backup')
+                : message,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
               decoration: BoxDecoration(
@@ -413,10 +422,10 @@ class LocalAutoBackupIndicator extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     status.isRunning
-                        ? 'Backup'
+                        ? AppLocalizations.of(context).text('backup_running')
                         : hasError
-                            ? 'Backup issue'
-                            : 'Backed up',
+                            ? AppLocalizations.of(context).text('backup_issue')
+                            : AppLocalizations.of(context).text('backed_up'),
                     style: theme.textTheme.labelMedium
                         ?.copyWith(fontWeight: FontWeight.w700, color: color),
                   ),
@@ -924,11 +933,11 @@ class _MainShellState extends State<MainShell> {
     final items = [
       if (isPlatformAdmin)
         _ShellItem(
-            label: 'Subscribers',
+            label: tr.text('subscribers'),
             icon: Icons.admin_panel_settings_outlined,
             selectedIcon: Icons.admin_panel_settings,
-            page: timedPage('AdminSubscribersPage', 'Admin subscribers',
-                const AdminSubscribersPage())),
+            page: timedPage('AdminSubscribersPage',
+                tr.text('admin_subscribers'), const AdminSubscribersPage())),
       if (widget.store.canAccessPage('dashboard'))
         _ShellItem(
             label: tr.text('dashboard'),
@@ -1056,10 +1065,11 @@ class _MainShellState extends State<MainShell> {
     ];
     if (items.isEmpty) {
       items.add(_ShellItem(
-        label: 'Access denied',
+        label: tr.text('access_denied'),
         icon: Icons.lock_outline,
         selectedIcon: Icons.lock,
-        page: timedPage('_NoAccessPage', 'No access', const _NoAccessPage()),
+        page: timedPage(
+            '_NoAccessPage', tr.text('no_access'), const _NoAccessPage()),
       ));
     }
     final resolvedItems = items;
@@ -1092,6 +1102,8 @@ class _MainShellState extends State<MainShell> {
                     widget.onLocaleChanged(const Locale('en'));
                   } else if (value == 'language_ar') {
                     widget.onLocaleChanged(const Locale('ar'));
+                  } else if (value == 'language_fr') {
+                    widget.onLocaleChanged(const Locale('fr'));
                   } else if (value == 'logout') {
                     await widget.onLogout?.call();
                     await AccountAuthCache.clear();
@@ -1100,7 +1112,7 @@ class _MainShellState extends State<MainShell> {
                 },
                 itemBuilder: (context) {
                   final currentLocale = Localizations.localeOf(context);
-                  final isArabic = currentLocale.languageCode == 'ar';
+                  final languageCode = currentLocale.languageCode;
                   return [
                     if ((widget.store.activeUser?.fullName ?? '')
                         .trim()
@@ -1116,7 +1128,8 @@ class _MainShellState extends State<MainShell> {
                         const Text('🇺🇸'),
                         const SizedBox(width: 10),
                         Expanded(child: Text(tr.text('language_english'))),
-                        if (!isArabic) const Icon(Icons.check, size: 18),
+                        if (languageCode == 'en')
+                          const Icon(Icons.check, size: 18),
                       ]),
                     ),
                     PopupMenuItem<String>(
@@ -1125,7 +1138,18 @@ class _MainShellState extends State<MainShell> {
                         const Text('🇱🇧'),
                         const SizedBox(width: 10),
                         Expanded(child: Text(tr.text('language_arabic'))),
-                        if (isArabic) const Icon(Icons.check, size: 18),
+                        if (languageCode == 'ar')
+                          const Icon(Icons.check, size: 18),
+                      ]),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'language_fr',
+                      child: Row(children: [
+                        const Text('🇫🇷'),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(tr.text('language_french'))),
+                        if (languageCode == 'fr')
+                          const Icon(Icons.check, size: 18),
                       ]),
                     ),
                     const PopupMenuDivider(),
@@ -1186,15 +1210,15 @@ class _NoAccessPage extends StatelessWidget {
                   const Icon(Icons.lock_outline, size: 42),
                   const SizedBox(height: 12),
                   Text(
-                    'No accessible pages',
+                    AppLocalizations.of(context).text('no_accessible_pages'),
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
                         ?.copyWith(fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'This account does not have permissions to open any section.',
+                  Text(
+                    AppLocalizations.of(context).text('no_access_to_sections'),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -1429,6 +1453,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   Future<_TransportSnapshot> _readDirectStatus() async {
+    final tr = AppLocalizations.of(context);
     final identity = widget.store.appIdentity;
     final settings = DirectSyncSettings.load();
     final directEnabledForRole = identity.isHost
@@ -1445,7 +1470,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
             : _TransportState.notConfigured,
         message: settings.isConfigured
             ? _t('connection_state_disabled')
-            : 'Direct is not configured.',
+            : _t('direct_not_configured_message'),
       );
     }
 
@@ -1457,7 +1482,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           label: 'Direct',
           state: _TransportState.online,
           message: status.message.isEmpty
-              ? 'Direct Host is reachable.'
+              ? _t('direct_host_reachable_message')
               : status.message,
           lastSeenAt: status.lastSeenAt ?? DateTime.now(),
         );
@@ -1467,7 +1492,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         label: 'Direct',
         state: _TransportState.offline,
         message: status.message.isEmpty
-            ? 'Direct Host is not reachable.'
+            ? _t('direct_host_not_reachable')
             : status.message,
         lastSeenAt: status.lastSeenAt,
       );
@@ -1475,7 +1500,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       return _TransportSnapshot(
         label: 'Direct',
         state: _TransportState.error,
-        message: 'Direct connection check failed: $error',
+        message: tr.format('direct_connection_check_failed', {'error': error}),
       );
     }
   }
@@ -1561,9 +1586,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           state: _TransportState.checking,
           message: _t('connection_lan_checking')),
       direct: _TransportSnapshot(
-          label: 'Direct',
+          label: _t('direct'),
           state: _TransportState.checking,
-          message: 'Checking Direct connection...'),
+          message: _t('checking_direct_connection')),
       syncHealth: _TransportSnapshot(
           label: _t('connection_sync_health'),
           state: _TransportState.checking,
@@ -1829,7 +1854,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       '${_t('pending_changes')}: ${_snapshot.pendingChanges}',
       '${_t('last_successful_sync')}: ${_timeText(syncHealth.lastSuccessfulSyncAt)}',
       "${_t('connection_lan')}: ${_stateText(lan.state)}${_lastSeenText(lan.lastSeenAt)} — ${lan.message}",
-      "Direct: ${_stateText(direct.state)}${_lastSeenText(direct.lastSeenAt)} — ${direct.message}",
+      "${_t('direct')}: ${_stateText(direct.state)}${_lastSeenText(direct.lastSeenAt)} — ${direct.message}",
     ].join('\n');
 
     return Padding(

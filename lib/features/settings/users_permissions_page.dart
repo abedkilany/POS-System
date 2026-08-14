@@ -26,7 +26,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     if (!canManageRoles && !canManageUsers) {
       return _AccessDeniedScaffold(
         title: tr.text('users_permissions'),
-        message: 'This page is not available for your current role.',
+        message: tr.text('page_no_access_current_role'),
       );
     }
     return Scaffold(
@@ -60,7 +60,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   title: Text(role.name),
                   subtitle: Text(role.isAdmin
                       ? tr.text('all_permissions')
-                      : '${role.permissions.length} permissions'),
+                      : tr.format('permissions_count',
+                          {'count': role.permissions.length})),
                   trailing: role.isSystem
                       ? null
                       : Wrap(
@@ -162,9 +163,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     if (message.contains('Store Owner permissions are locked')) {
       return 'صلاحيات المدير الأساسي مقفلة ولا يمكن تعديلها.';
     }
-    return message.isEmpty
-        ? 'حدث خطأ أثناء حفظ المستخدم.'
-        : message;
+    return message.isEmpty ? 'حدث خطأ أثناء حفظ المستخدم.' : message;
   }
 
   Future<void> _editRole({UserRole? role}) async {
@@ -203,8 +202,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                         child: ExpansionTile(
                           initiallyExpanded: group.id == 'users',
                           title: Text(group.title),
-                          subtitle:
-                              Text('${group.permissions.length} permissions'),
+                          subtitle: Text(tr.format('permissions_count',
+                              {'count': group.permissions.length})),
                           childrenPadding:
                               const EdgeInsets.fromLTRB(12, 0, 12, 12),
                           children: [
@@ -401,8 +400,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                         child: ExpansionTile(
                           initiallyExpanded: group.id == 'users',
                           title: Text(group.title),
-                          subtitle:
-                              Text('${group.permissions.length} permissions'),
+                          subtitle: Text(tr.format('permissions_count',
+                              {'count': group.permissions.length})),
                           childrenPadding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
                           children: [
@@ -586,26 +585,18 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text(tr.isArabic
-              ? 'تأكيد الحساب السحابي'
-              : 'Confirm direct account'),
+          title: Text(tr.text('confirm_direct_account')),
           content: SizedBox(
             width: VentioResponsive.modalMaxWidth(context, 420),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  tr.isArabic
-                      ? 'جلسة السحابة غير متاحة أو منتهية. أدخل حساب المدير الأساسي السحابي للمتابعة دون مغادرة الصفحة.'
-                      : 'The direct session is unavailable or expired. Enter the primary direct admin account to continue without leaving this page.',
-                ),
+                Text(tr.text('direct_session_reauth_desc')),
                 const SizedBox(height: 16),
                 TextField(
                   controller: loginController,
-                  decoration: InputDecoration(
-                      labelText: tr.isArabic
-                          ? 'الحساب السحابي'
-                          : 'Direct account'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('direct_account')),
                   enabled: !isSubmitting,
                 ),
                 const SizedBox(height: 12),
@@ -613,9 +604,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   controller: passwordController,
                   obscureText: true,
                   decoration: InputDecoration(
-                      labelText: tr.isArabic
-                          ? 'كلمة المرور الحالية'
-                          : 'Current password'),
+                      labelText: tr.text('account_current_password')),
                   enabled: !isSubmitting,
                 ),
                 if (errorMessage != null) ...[
@@ -634,7 +623,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
               onPressed: isSubmitting
                   ? null
                   : () => Navigator.pop(dialogContext, false),
-              child: Text(tr.isArabic ? 'إلغاء' : 'Cancel'),
+              child: Text(tr.text('cancel')),
             ),
             FilledButton(
               onPressed: isSubmitting
@@ -644,9 +633,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                           loginController.text.trim().toLowerCase();
                       final password = passwordController.text;
                       if (loginName.isEmpty || password.trim().isEmpty) {
-                        setDialogState(() => errorMessage = tr.isArabic
-                            ? 'أدخل الحساب وكلمة المرور.'
-                            : 'Enter the account and password.');
+                        setDialogState(() => errorMessage =
+                            tr.text('enter_account_and_password'));
                         return;
                       }
                       setDialogState(() {
@@ -662,10 +650,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                           setDialogState(() {
                             isSubmitting = false;
                             errorMessage = result.message.isEmpty
-                                ? (tr.isArabic
-                                    ? 'فشل تسجيل الدخول إلى السحابة.'
-                                    : 'Direct login failed.')
-                                : result.message;
+                                ? tr.text('direct_login_failed')
+                                : localizeRuntimeMessage(result.message, tr);
                           });
                           return;
                         }
@@ -689,7 +675,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : Text(tr.isArabic ? 'تأكيد' : 'Confirm'),
+                  : Text(tr.text('confirm')),
             ),
           ],
         ),
@@ -776,6 +762,7 @@ class _AccessDeniedScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: Center(
@@ -791,8 +778,8 @@ class _AccessDeniedScaffold extends StatelessWidget {
                   children: [
                     const Icon(Icons.lock_outline, size: 42),
                     const SizedBox(height: 12),
-                    const Text(
-                      'No access to this page.',
+                    Text(
+                      tr.text('no_access_to_page'),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),

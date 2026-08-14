@@ -2094,7 +2094,6 @@ class _StressLabPageState extends State<StressLabPage> {
       'Maintenance refresh repair completed without mutating data.',
       'Maintenance refresh repair did not return a usable result.',
     );
-
   }
 
   Future<void> _runSettingsSurfaceScenario() async {
@@ -5779,14 +5778,14 @@ class _StressLabPageState extends State<StressLabPage> {
     final slowPageRows = pageRows.where((item) => item.isWarn).length;
     final failedPageRows = pageRows.where((item) => item.isFail).length;
     _auditCheck(
-        _dual('Ø§Ù„Ø£Ø¯Ø§Ø¡', 'Performance'),
+        _dual('الأداء', 'Performance'),
         'Page readiness measurement coverage',
         pageRows.length >= 6,
         'Page readiness probes captured ${pageRows.length} heavy page preparation measurements.',
         'Only ${pageRows.length} page readiness probes were captured.',
         warning: true);
     _auditCheck(
-        _dual('Ø§Ù„Ø£Ø¯Ø§Ø¡', 'Performance'),
+        _dual('الأداء', 'Performance'),
         'Heavy page readiness time',
         slowPageRows == 0 && failedPageRows == 0,
         'No heavy page readiness probe crossed the configured warning threshold.',
@@ -6104,7 +6103,7 @@ class _StressLabPageState extends State<StressLabPage> {
                               title: Text(
                                   '${_reportLabel(item.section, tr)} — ${_reportLabel(item.name, tr)}'),
                               subtitle: Text(
-                                  '${localizeRuntimeMessage(item.details, tr)}\n${tr.isArabic ? 'المدة' : 'Duration'}: ${item.elapsedMs} ms'),
+                                  '${localizeRuntimeMessage(item.details, tr)}\n${tr.text('duration')}: ${item.elapsedMs} ms'),
                               isThreeLine: true,
                               trailing: Text(_reportLabel(item.status, tr)),
                             ),

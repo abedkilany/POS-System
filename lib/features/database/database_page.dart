@@ -109,9 +109,9 @@ class _DatabasePageState extends State<DatabasePage> {
   Widget build(BuildContext context) {
     if (!widget.store.canManageDatabase &&
         !widget.store.hasPermission(AppPermission.databaseView)) {
-      return const _AccessDeniedScaffold(
-        title: 'Database',
-        message: 'You do not have access to database tools.',
+      return _AccessDeniedScaffold(
+        title: _t('database_page'),
+        message: _t('no_access_database_tools'),
       );
     }
     final allKeys = _entries.keys.toList()..sort();

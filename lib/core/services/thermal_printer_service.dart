@@ -151,8 +151,12 @@ class ThermalPrinterService {
       ...sale.items.map((item) =>
           '${item.productName} x ${_formatQuantity(item.quantity)} = ${_formatMoney(item.lineTotal, profile)}'),
       'Subtotal: ${_formatMoney(sale.subtotal, profile)}',
-      if (sale.discount > 0) 'Discount: ${_formatMoney(sale.discount, profile)}',
-      'TOTAL: ${_formatMoney(sale.total, profile, forceCurrencies: const ['USD', 'LBP'])}',
+      if (sale.discount > 0)
+        'Discount: ${_formatMoney(sale.discount, profile)}',
+      'TOTAL: ${_formatMoney(sale.total, profile, forceCurrencies: const [
+            'USD',
+            'LBP'
+          ])}',
       profile.footerNote,
     ];
     final width = paperWidth == ThermalPaperWidth.mm58 ? 32 : 48;
@@ -189,8 +193,8 @@ class VirtualPrinterJob {
   final StoreProfile profile;
   final Locale locale;
 
-  bool get hasEscPosHeader => bytes.length >= 3 &&
-      bytes[0] == 0x1b && bytes[1] == 0x40;
+  bool get hasEscPosHeader =>
+      bytes.length >= 3 && bytes[0] == 0x1b && bytes[1] == 0x40;
   bool get hasCutCommand => bytes.contains(0x1d) && bytes.contains(0x56);
 }
 
@@ -250,7 +254,9 @@ class ThermalReceiptWidget extends StatelessWidget {
     final textDirection = isArabic ? TextDirection.rtl : TextDirection.ltr;
     final labels = isArabic
         ? const _ThermalLabels.ar()
-        : const _ThermalLabels.en();
+        : locale.languageCode.toLowerCase() == 'fr'
+            ? const _ThermalLabels.fr()
+            : const _ThermalLabels.en();
 
     return Material(
       color: Colors.white,
@@ -303,7 +309,7 @@ class ThermalReceiptWidget extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: Text(
-                                '${_formatQuantity(item.quantity)} x ${_formatMoney(item.unitPrice, profile)}',
+                                  '${_formatQuantity(item.quantity)} x ${_formatMoney(item.unitPrice, profile)}',
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -324,9 +330,11 @@ class ThermalReceiptWidget extends StatelessWidget {
                     ),
                   ),
                   const Divider(color: Colors.black, thickness: 1),
-                  _summaryRow(labels.subtotal, _formatMoney(sale.subtotal, profile)),
+                  _summaryRow(
+                      labels.subtotal, _formatMoney(sale.subtotal, profile)),
                   if (sale.discount > 0)
-                    _summaryRow(labels.discount, _formatMoney(sale.discount, profile)),
+                    _summaryRow(
+                        labels.discount, _formatMoney(sale.discount, profile)),
                   _summaryRow(
                     labels.total,
                     _formatMoney(sale.total, profile),
@@ -335,7 +343,10 @@ class ThermalReceiptWidget extends StatelessWidget {
                   if (profile.priceDisplayMode == 'multiple' ||
                       profile.priceDisplayCurrencies.length > 1)
                     Text(
-                      '${labels.total}: ${_formatMoney(sale.total, profile, forceCurrencies: const ['USD', 'LBP'])}',
+                      '${labels.total}: ${_formatMoney(sale.total, profile, forceCurrencies: const [
+                            'USD',
+                            'LBP'
+                          ])}',
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
@@ -391,6 +402,15 @@ class _ThermalLabels {
         discount = 'الخصم',
         total = 'الإجمالي',
         thankYou = 'شكراً لزيارتكم';
+
+  const _ThermalLabels.fr()
+      : invoice = 'Facture',
+        date = 'Date',
+        customer = 'Client',
+        subtotal = 'Sous-total',
+        discount = 'Remise',
+        total = 'Total',
+        thankYou = 'Merci de votre visite';
 
   final String invoice;
   final String date;

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/app_brand.dart';
@@ -51,9 +52,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
   bool _firstReadyMarked = false;
   String _onlineSessionPassword = '';
   late final VoidCallback _storeListener;
-
-  DirectControlPlaneService get _controlPlaneService =>
-      DirectControlPlaneService(widget.store);
 
   void _handleStoreChanged() {
     if (!mounted) return;
@@ -289,12 +287,20 @@ class _LoginGatePageState extends State<LoginGatePage> {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await _controlPlaneService.recoverExistingStoreIdentityFromDirect(
-        recoverySettings,
-        storeId: storeId,
-        branchId: branchId,
-      );
+      final recoveryClient = http.Client();
+      late final DirectStoreRecoveryResult result;
+      try {
+        result = await DirectControlPlaneService(
+          widget.store,
+          client: recoveryClient,
+        ).recoverExistingStoreIdentityFromDirect(
+          recoverySettings,
+          storeId: storeId,
+          branchId: branchId,
+        );
+      } finally {
+        recoveryClient.close();
+      }
       SyncDiagnosticsLog.add(
         '[RECOVER_IDENTITY] result ok=${result.ok} '
         'storeId=${result.identity?.storeId ?? storeId} '
@@ -500,11 +506,33 @@ class _LoginGatePageState extends State<LoginGatePage> {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await _controlPlaneService.recoverExistingStoreFromDirect(
-        recoverySettings,
-        storeId: storeId,
-        branchId: branchId,
-      );
+      final recoveryClient = http.Client();
+      late final DirectStoreRecoveryResult result;
+      try {
+        final recoveryService = DirectControlPlaneService(
+          widget.store,
+          client: recoveryClient,
+        );
+        final identityMismatch =
+            widget.store.appIdentity.storeId.trim().toUpperCase() != storeId;
+        // When business data already exists and only a test/probe identity is
+        // wrong, repair the identity without replacing local data by a remote
+        // snapshot. Full recovery remains available for an empty matching
+        // Store installation.
+        result = identityMismatch && widget.store.hasLocalStoreData
+            ? await recoveryService.recoverExistingStoreIdentityFromDirect(
+                recoverySettings,
+                storeId: storeId,
+                branchId: branchId,
+              )
+            : await recoveryService.recoverExistingStoreFromDirect(
+                recoverySettings,
+                storeId: storeId,
+                branchId: branchId,
+              );
+      } finally {
+        recoveryClient.close();
+      }
       SyncDiagnosticsLog.add(
         '[RECOVER_DATA] result ok=${result.ok} '
         'storeId=${result.identity?.storeId ?? storeId} '
@@ -1123,7 +1151,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         ),
                       const SizedBox(height: 20),
                       Text(
-                        'Version ${AppBrand.versionName} (build ${AppBrand.buildNumber})',
+                        tr.format('version_build', {
+                          'version': AppBrand.versionName,
+                          'build': AppBrand.buildNumber,
+                        }),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Theme.of(context)
                                   .colorScheme
@@ -1209,8 +1240,7 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: tr.text('store_name'),
-                          helperText:
-                              'Use letters/numbers only, no spaces. Example: oday',
+                          helperText: tr.text('store_slug_helper'),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -1221,8 +1251,7 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: tr.text('new_username'),
-                          helperText:
-                              'Example: user. Online login becomes user@store.',
+                          helperText: tr.text('username_online_helper'),
                         ),
                       ),
                       const SizedBox(height: 12),

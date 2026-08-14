@@ -146,9 +146,9 @@ class _QuotationsPageState extends State<QuotationsPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewQuotations) {
-      return const _AccessDeniedScaffold(
-        title: 'Quotations',
-        message: 'You do not have access to quotation records.',
+      return _AccessDeniedScaffold(
+        title: tr.text('quotations'),
+        message: tr.text('no_access_quotation_records'),
       );
     }
     return FutureBuilder<void>(

@@ -27,6 +27,7 @@ import hostHeartbeat from '../server_api/sync/host-heartbeat.js';
 import pairingClaim from '../server_api/sync/pairing/claim.js';
 import pairingCreate from '../server_api/sync/pairing/create.js';
 import pairingStatus from '../server_api/sync/pairing/status.js';
+import recoveryClaim from '../server_api/sync/recovery/claim.js';
 import signal from '../server_api/sync/signal.js';
 import { directRealtimeTicketHandler, realtimeTicketHandler } from '../server_api/sync/realtime.js';
 import googleDriveAuthStart from '../server_api/google-drive/auth-start.js';
@@ -56,6 +57,7 @@ const routes = new Map([
   ['sync/pairing/claim', pairingClaim],
   ['sync/pairing/create', pairingCreate],
   ['sync/pairing/status', pairingStatus],
+  ['sync/recovery/claim', recoveryClaim],
   ['sync/signal', signal],
   ['sync/realtime-ticket', realtimeTicketHandler],
   ['sync/direct-ticket', directRealtimeTicketHandler],

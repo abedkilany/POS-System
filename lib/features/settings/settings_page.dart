@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -43,6 +44,12 @@ import 'users_permissions_page.dart';
 
 part 'settings_page_backup.dart';
 part 'settings_page_sync_shared.dart';
+part 'settings_general.dart';
+part 'settings_currency.dart';
+part 'settings_printer.dart';
+part 'settings_sync.dart';
+part 'settings_devices.dart';
+part 'settings_security.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage(
@@ -58,6 +65,12 @@ class SettingsPage extends StatelessWidget {
   final ThemeMode themeMode;
   final AppStore store;
   final Future<void> Function()? onSyncSettingsChanged;
+
+  bool get _supportsKeyboardShortcuts =>
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.macOS;
 
   @override
   Widget build(BuildContext context) {
@@ -82,17 +95,17 @@ class SettingsPage extends StatelessWidget {
       if (canAccessGeneralSettings)
         _SettingsSection(
           nav: _SettingsNavData(
-              icon: Icons.store_outlined,
-              label: tr.text('store_information'),
-              description: tr.text('store_information_desc')),
+              icon: Icons.tune_outlined,
+              label: tr.text('settings_general'),
+              description: tr.text('settings_general_desc')),
           pageBuilder: (context) =>
-              _settingsList(context, _generalCards(context)),
+              _settingsList(context, _organizedGeneralCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
           nav: _SettingsNavData(
               icon: Icons.description_outlined,
-              label: tr.text('document_settings'),
+              label: tr.text('settings_documents'),
               description: tr.text('document_settings_desc')),
           pageBuilder: (context) =>
               _settingsList(context, _documentCards(context)),
@@ -101,16 +114,16 @@ class SettingsPage extends StatelessWidget {
         _SettingsSection(
           nav: _SettingsNavData(
               icon: Icons.account_tree_outlined,
-              label: tr.text('branches'),
-              description: tr.text('branches_desc')),
+              label: tr.text('settings_branches_warehouses'),
+              description: tr.text('settings_branches_warehouses_desc')),
           pageBuilder: (context) =>
-              _settingsList(context, _branchCards(context)),
+              _settingsList(context, _organizedBranchCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
           nav: _SettingsNavData(
               icon: Icons.receipt_long_outlined,
-              label: tr.text('tax_settings'),
+              label: tr.text('settings_taxes'),
               description: tr.text('tax_settings_desc')),
           pageBuilder: (context) => _settingsList(context, _taxCards(context)),
         ),
@@ -118,19 +131,19 @@ class SettingsPage extends StatelessWidget {
         _SettingsSection(
           nav: _SettingsNavData(
               icon: Icons.currency_exchange_outlined,
-              label: tr.text('currencies'),
+              label: tr.text('settings_currency_pricing'),
               description: tr.text('currencies_pricing_desc')),
           pageBuilder: (context) =>
-              _settingsList(context, _financialCards(context)),
+              _settingsList(context, _organizedCurrencyCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
           nav: _SettingsNavData(
-              icon: Icons.account_balance_wallet_outlined,
-              label: tr.text('banks_cash_drawers'),
-              description: tr.text('banks_cash_drawers_desc')),
+              icon: Icons.print_outlined,
+              label: tr.text('settings_printers'),
+              description: tr.text('settings_printers_desc')),
           pageBuilder: (context) =>
-              _settingsList(context, _cashBankCards(context)),
+              _settingsList(context, _printerCards(context)),
         ),
       if (canAccessSyncSettings)
         _SettingsSection(
@@ -138,34 +151,49 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.sync_outlined,
               label: tr.text('sync'),
               description: tr.text('sync_nav_desc')),
-          pageBuilder: (context) => _settingsList(context, _syncCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _organizedSyncCards(context)),
+        ),
+      if (canAccessSyncSettings || canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.devices_other_outlined,
+              label: tr.text('settings_devices'),
+              description: tr.text('settings_devices_desc')),
+          pageBuilder: (context) =>
+              _settingsList(context, _deviceCards(context)),
         ),
       if (canAccessBackupSettings)
         _SettingsSection(
           nav: _SettingsNavData(
               icon: Icons.backup_outlined,
-              label: tr.text('backup_restore'),
+              label: tr.text('settings_backups'),
               description: tr.text('backup_preview_desc')),
           pageBuilder: (context) =>
               _settingsList(context, _backupCards(context)),
         ),
-      if (store.canManageUsers)
+      if (store.hasAnyPermission(<String>{
+        AppPermission.usersManage,
+        AppPermission.rolesManage,
+        AppPermission.permissionsManage,
+      }))
         _SettingsSection(
           nav: _SettingsNavData(
               icon: Icons.admin_panel_settings_outlined,
-              label: tr.text('users_permissions'),
-              description: tr.text('users_permissions_desc')),
+              label: tr.text('settings_security_permissions'),
+              description: tr.text('settings_security_permissions_desc')),
           pageBuilder: (context) =>
-              _settingsList(context, _adminCards(context)),
+              _settingsList(context, _securityCards(context)),
         ),
-      _SettingsSection(
-        nav: _SettingsNavData(
-            icon: Icons.keyboard_command_key_outlined,
-            label: tr.text('keyboard_shortcuts'),
-            description: tr.text('keyboard_shortcuts_desc')),
-        pageBuilder: (context) =>
-            _settingsList(context, _shortcutCards(context)),
-      ),
+      if (_supportsKeyboardShortcuts)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.keyboard_command_key_outlined,
+              label: tr.text('keyboard_shortcuts'),
+              description: tr.text('keyboard_shortcuts_desc')),
+          pageBuilder: (context) =>
+              _settingsList(context, _shortcutCards(context)),
+        ),
       _SettingsSection(
         nav: _SettingsNavData(
             icon: Icons.info_outline,
@@ -405,8 +433,6 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
-      _SystemIdentityCard(store: store),
-      _thermalPrinterCard(context),
       Card(
         child: Padding(
           padding: VentioResponsive.pageInsets(context),
@@ -456,6 +482,9 @@ class SettingsPage extends StatelessWidget {
                   ButtonSegment<Locale>(
                       value: const Locale('ar'),
                       label: Text(tr.text('language_arabic'))),
+                  ButtonSegment<Locale>(
+                      value: const Locale('fr'),
+                      label: Text(tr.text('language_french'))),
                 ],
                 selected: {tr.locale},
                 onSelectionChanged: (selection) =>
@@ -465,7 +494,6 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
       ),
-      const _ScannerFeedbackSettingsCard(),
     ];
   }
 
@@ -573,6 +601,7 @@ class SettingsPage extends StatelessWidget {
   }
 
   Future<void> _editThermalPrinter(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
     final current = store.storeProfile.thermalPrinter;
     final nameController = TextEditingController(text: current.name);
     final ipController = TextEditingController(text: current.ip);
@@ -607,14 +636,17 @@ class SettingsPage extends StatelessWidget {
                       decoration: InputDecoration(
                           labelText:
                               AppLocalizations.of(context).text('connection')),
-                      items: const [
+                      items: [
                         DropdownMenuItem(
-                            value: 'network', child: Text('Network')),
+                            value: 'network', child: Text(tr.text('network'))),
                         DropdownMenuItem(
-                            value: 'bluetooth', child: Text('Bluetooth')),
-                        DropdownMenuItem(value: 'usb', child: Text('USB')),
+                            value: 'bluetooth',
+                            child: Text(tr.text('bluetooth'))),
                         DropdownMenuItem(
-                            value: 'virtual', child: Text('Virtual printer')),
+                            value: 'usb', child: Text(tr.text('usb'))),
+                        DropdownMenuItem(
+                            value: 'virtual',
+                            child: Text(tr.text('virtual_printer'))),
                       ],
                       onChanged: (value) =>
                           setState(() => type = value ?? 'network'),
@@ -995,32 +1027,6 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  List<Widget> _cashBankCards(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    return [
-      _SectionCard(
-        icon: Icons.account_balance_wallet_outlined,
-        title: tr.text('banks_cash_drawers'),
-        subtitle: tr.text('banks_cash_drawers_desc'),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              tr.text('banks_cash_drawers_helper'),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            _SaleWarehouseSettingsCard(store: store),
-            const SizedBox(height: 16),
-            _CurrentDeviceCashDrawerSettingsCard(store: store),
-          ],
-        ),
-      ),
-    ];
-  }
-
   List<Widget> _financialCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
@@ -1118,7 +1124,6 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
-      _CurrentDeviceCashDrawerSettingsCard(store: store),
       _SectionCard(
         icon: Icons.trending_up_outlined,
         title: tr.text('exchange_rates'),
@@ -1376,8 +1381,7 @@ class SettingsPage extends StatelessWidget {
           child: ListTile(
             leading: const Icon(Icons.lock_outline),
             title: Text(tr.text('users_permissions')),
-            subtitle: const Text(
-                'You do not have access to user or role management.'),
+            subtitle: Text(tr.text('no_access_user_role_management')),
           ),
         ),
       ];
@@ -3950,8 +3954,8 @@ class _CurrentDeviceCashDrawerSettingsCardState
             children: [
               _InfoGrid(
                 items: [
-                  _InfoGridItem(
-                      Icons.devices_outlined, 'Device ID', currentDevice),
+                  _InfoGridItem(Icons.devices_outlined, tr.text('device_id'),
+                      currentDevice),
                   _InfoGridItem(
                     Icons.storefront_outlined,
                     tr.text('branch'),
@@ -4098,7 +4102,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   bool? _directSyncPlanAllowed;
 
-  bool get _directSyncPlanDenied => _directSyncPlanAllowed != true;
+  bool get _directSyncPlanChecking => _directSyncPlanAllowed == null;
+  bool get _directSyncPlanDenied => _directSyncPlanAllowed == false;
   bool get _directSyncPlanAllowsUi => _directSyncPlanAllowed == true;
   bool get _effectiveDirectEnabled => _directEnabled && _directSyncPlanAllowsUi;
 
@@ -4127,7 +4132,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         : SyncMode.lanOnly;
     _clientSyncModeDirty = false;
     _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-    _directEnabled = identity.isDirectEnabled && _directSyncPlanAllowed == true;
+    _directEnabled = identity.isDirectEnabled;
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
     _lanIntervalController.text = lan.intervalSeconds.toString();
@@ -4239,21 +4244,32 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       // still has valid store/device credentials. Ask the server directly for
       // this store's Direct Sync entitlement using device auth.
       if (planAllowed != true) {
-        final fallbackAllowed = await _controlPlaneService()
-            .checkDirectSyncPlanAccess(VpsControlPlaneSettings.load());
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] directPlanAccess:fallback '
-          'allowed=$fallbackAllowed '
-          'previous=${boolLabel(planAllowed)}',
-        );
-        if (fallbackAllowed != null) planAllowed = fallbackAllowed;
+        // The account session may be expired or concurrently refreshing in
+        // another screen. Retry the store entitlement endpoint before
+        // deciding that Direct is unavailable.
+        for (var attempt = 1; attempt <= 3 && planAllowed != true; attempt++) {
+          final fallbackAllowed = await _controlPlaneService()
+              .checkDirectSyncPlanAccess(VpsControlPlaneSettings.load());
+          SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] directPlanAccess:fallback '
+            'attempt=$attempt allowed=$fallbackAllowed '
+            'previous=${boolLabel(planAllowed)}',
+          );
+          if (fallbackAllowed != null) {
+            planAllowed = fallbackAllowed;
+            break;
+          }
+          if (attempt < 3) {
+            await Future<void>.delayed(Duration(milliseconds: 350 * attempt));
+          }
+        }
       }
 
       if (!mounted) return;
       final identity = widget.store.appIdentity;
       setState(() {
         _directSyncPlanAllowed = planAllowed;
-        _directEnabled = identity.isDirectEnabled && planAllowed != false;
+        _directEnabled = identity.isDirectEnabled;
       });
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] directPlanAccess:final '
@@ -5852,7 +5868,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                             ButtonSegment<SyncMode>(
                                 value: SyncMode.directConnected,
                                 icon: const Icon(Icons.link_outlined),
-                                label: const Text('Direct')),
+                                label: Text(tr.text('direct'))),
                           ],
                           selected: {dialogMode},
                           onSelectionChanged: dialogBusy
@@ -6052,6 +6068,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final lanConfigured =
         isHost ? _lanEnabledForHost : _isLanClientConfigured(lan);
     final directPlanDenied = _directSyncPlanDenied;
+    final directPlanChecking = _directSyncPlanChecking;
     final directPlanAllowsUi = _directSyncPlanAllowsUi;
     final directConfigured = isHost
         ? _effectiveDirectEnabled
@@ -6134,11 +6151,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             icon: Icons.link_outlined,
             title: 'Direct',
             subtitle: isHost
-                ? (directPlanDenied
-                    ? tr.text('direct_sync_plan_locked_short')
-                    : (directConfigured
-                        ? tr.text('connection_state_active')
-                        : tr.text('connection_state_disabled')))
+                ? (directPlanChecking
+                    ? tr.text('working')
+                    : directPlanDenied
+                        ? tr.text('direct_sync_plan_locked_short')
+                        : (directConfigured
+                            ? tr.text('connection_state_active')
+                            : tr.text('connection_state_disabled')))
                 : _clientTransportStatusLabel(context,
                     active: directActive, configured: directConfigured),
             active: directActive,
@@ -6157,31 +6176,36 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                       ],
                       Switch(
                         value: _effectiveDirectEnabled,
-                        onChanged: (_busy || directPlanDenied)
-                            ? null
-                            : (value) {
-                                setState(() => _directEnabled = value);
-                                unawaited(_saveSyncSettings());
-                              },
+                        onChanged:
+                            (_busy || directPlanChecking || directPlanDenied)
+                                ? null
+                                : (value) {
+                                    setState(() => _directEnabled = value);
+                                    unawaited(_saveSyncSettings());
+                                  },
                       ),
                     ],
                   )
                 : (!directConfigured
                     ? TextButton.icon(
-                        onPressed: (_busy || directPlanDenied)
-                            ? null
-                            : () => _openConnectToStoreDialog(
-                                SyncMode.directConnected),
+                        onPressed:
+                            (_busy || directPlanChecking || directPlanDenied)
+                                ? null
+                                : () => _openConnectToStoreDialog(
+                                    SyncMode.directConnected),
                         icon: Icon(directPlanAllowsUi
                             ? Icons.add_link_outlined
                             : Icons.lock_outline),
                         label: Text(directPlanAllowsUi
                             ? tr.text('connect_to_store')
-                            : 'Direct is unavailable'))
+                            : tr.text('direct_unavailable')),
+                      )
                     : null),
             children: isHost
                 ? [
-                    if (directPlanDenied)
+                    if (directPlanChecking)
+                      const Center(child: CircularProgressIndicator())
+                    else if (directPlanDenied)
                       _softNotice(
                         context,
                         Icons.lock_outline,
@@ -6256,7 +6280,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 ButtonSegment<SyncMode>(
                     value: SyncMode.directConnected,
                     icon: const Icon(Icons.link_outlined),
-                    label: const Text('Direct'),
+                    label: Text(tr.text('direct')),
                     enabled: canSwitchToDirect),
               ],
               selected: {_clientSyncMode},
@@ -6606,7 +6630,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 OutlinedButton.icon(
                   onPressed: () => setState(() => _showLanPairingCode = true),
                   icon: const Icon(Icons.visibility_outlined),
-                  label: const Text('Show code'),
+                  label: Text(tr.text('show_code')),
                 ),
               if (_latestDirectPairingCode.trim().isNotEmpty &&
                   !_showDirectPairingCode)
@@ -6614,7 +6638,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   onPressed: () =>
                       setState(() => _showDirectPairingCode = true),
                   icon: const Icon(Icons.visibility_outlined),
-                  label: const Text('Show code'),
+                  label: Text(tr.text('show_code')),
                 ),
             ],
           ),
@@ -7061,7 +7085,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               TextButton.icon(
                 onPressed: () => setState(() => _showLanPairingCode = false),
                 icon: const Icon(Icons.visibility_off_outlined),
-                label: const Text('Hide code'),
+                label: Text(tr.text('hide_code')),
               ),
             ],
           ),
@@ -7117,13 +7141,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Widget _temporaryDirectDiagnostics() {
+    final tr = AppLocalizations.of(context);
     if (!_showDirectDiagnostics) {
       return Align(
         alignment: Alignment.centerLeft,
         child: OutlinedButton.icon(
           onPressed: () => setState(() => _showDirectDiagnostics = true),
           icon: const Icon(Icons.terminal_outlined),
-          label: const Text('Show log'),
+          label: Text(tr.text('show_log')),
         ),
       );
     }
@@ -7144,16 +7169,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   children: [
                     const Icon(Icons.bug_report_outlined),
                     const SizedBox(width: 8),
-                    const Expanded(
-                        child: Text('Direct diagnostics (temporary)')),
+                    Expanded(
+                        child: Text(tr.text('direct_diagnostics_temporary'))),
                     IconButton(
-                      tooltip: 'Hide log',
+                      tooltip: tr.text('hide_log'),
                       onPressed: () =>
                           setState(() => _showDirectDiagnostics = false),
                       icon: const Icon(Icons.visibility_off_outlined),
                     ),
                     IconButton(
-                      tooltip: 'Copy diagnostics',
+                      tooltip: tr.text('copy_diagnostics'),
                       onPressed: text.isEmpty
                           ? null
                           : () async {
@@ -7161,8 +7186,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                                   ClipboardData(text: text));
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('Diagnostics copied')),
+                                  SnackBar(
+                                      content:
+                                          Text(tr.text('diagnostics_copied'))),
                                 );
                               }
                             },
@@ -7172,7 +7198,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 ),
                 const SizedBox(height: 8),
                 SelectableText(
-                  text.isEmpty ? 'No Direct diagnostics yet.' : text,
+                  text.isEmpty ? tr.text('no_direct_diagnostics_yet') : text,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontFamily: 'monospace',
                         height: 1.35,
@@ -7231,7 +7257,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               TextButton.icon(
                 onPressed: () => setState(() => _showDirectPairingCode = false),
                 icon: const Icon(Icons.visibility_off_outlined),
-                label: const Text('Hide code'),
+                label: Text(tr.text('hide_code')),
               ),
             ],
           ),

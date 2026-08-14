@@ -178,7 +178,7 @@ class _InventoryPageState extends State<InventoryPage>
     if (!widget.store.canViewInventory) {
       return _InventoryAccessDenied(
         title: tr.text('inventory'),
-        message: 'This section is not available for your current role.',
+        message: tr.text('no_access_current_role'),
       );
     }
     if (!widget.store.isCoreDataLoaded) {
@@ -227,7 +227,7 @@ class _InventoryPageState extends State<InventoryPage>
         !canViewWasteLoss) {
       return _InventoryAccessDenied(
         title: tr.text('inventory'),
-        message: 'This section is not available for your current role.',
+        message: tr.text('no_access_current_role'),
       );
     }
 
@@ -1009,9 +1009,9 @@ class _WarehousesTabState extends State<_WarehousesTab> {
       AppPermission.inventoryWarehousesManage,
       AppPermission.productsEdit,
     })) {
-      return const _InventorySectionDenied(
-        title: 'Warehouses',
-        message: 'Warehouse management is not available for your current role.',
+      return _InventorySectionDenied(
+        title: tr.text('warehouses'),
+        message: tr.text('warehouse_management_no_access'),
       );
     }
     final warehouses = widget.store.warehouses;
@@ -1133,10 +1133,9 @@ class _MovementsListState extends State<_MovementsList> {
       AppPermission.reportsView,
       AppPermission.productsEdit,
     })) {
-      return const _InventorySectionDenied(
-        title: 'Stock movements',
-        message:
-            'Stock movement history is not available for your current role.',
+      return _InventorySectionDenied(
+        title: tr.text('stock_movements'),
+        message: tr.text('stock_movement_history_no_access'),
       );
     }
     if (LocalDatabaseService.canQueryBusinessSqlite) {
@@ -1255,7 +1254,7 @@ class _MovementsListState extends State<_MovementsList> {
             child: OutlinedButton.icon(
               onPressed: onLoadMore,
               icon: const Icon(Icons.expand_more),
-              label: const Text('Load more'),
+              label: Text(tr.text('load_more')),
             ),
           ),
         ],
@@ -1389,10 +1388,9 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
       AppPermission.reportsView,
       AppPermission.productsEdit,
     })) {
-      return const _InventorySectionDenied(
-        title: 'Auto corrections',
-        message:
-            'Auto correction review is not available for your current role.',
+      return _InventorySectionDenied(
+        title: tr.text('auto_corrections'),
+        message: tr.text('auto_correction_review_no_access'),
       );
     }
     if (LocalDatabaseService.canQueryBusinessSqlite) {
@@ -1586,7 +1584,7 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
             child: OutlinedButton.icon(
               onPressed: onLoadMore,
               icon: const Icon(Icons.expand_more),
-              label: const Text('Load more'),
+              label: Text(tr.text('load_more')),
             ),
           ),
         ],
@@ -1736,9 +1734,9 @@ class _StockCountTabState extends State<_StockCountTab> {
       AppPermission.inventoryCountsManage,
       AppPermission.productsEdit,
     })) {
-      return const _InventorySectionDenied(
-        title: 'Stock count',
-        message: 'Stock count actions are not available for your current role.',
+      return _InventorySectionDenied(
+        title: tr.text('stock_count'),
+        message: tr.text('stock_count_actions_no_access'),
       );
     }
     final sessions = widget.store.inventoryCountSessions;
@@ -2114,15 +2112,15 @@ class _WasteLossReportDbState extends State<_WasteLossReportDb> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     if (!widget.store.hasAnyPermission(<String>{
       AppPermission.inventoryWasteView,
       AppPermission.reportsView,
       AppPermission.productsEdit,
     })) {
-      return const _InventorySectionDenied(
-        title: 'Waste loss report',
-        message:
-            'Waste and loss reporting is not available for your current role.',
+      return _InventorySectionDenied(
+        title: tr.text('waste_loss_report'),
+        message: tr.text('waste_loss_reporting_no_access'),
       );
     }
     if (!LocalDatabaseService.canQueryBusinessSqlite) {
@@ -2243,7 +2241,7 @@ class _WasteLossReportView extends StatelessWidget {
             child: OutlinedButton.icon(
               onPressed: onLoadMore,
               icon: const Icon(Icons.expand_more),
-              label: const Text('Load more'),
+              label: Text(tr.text('load_more')),
             ),
           ),
         ],
@@ -2266,10 +2264,9 @@ class _WasteLossReport extends StatelessWidget {
       AppPermission.reportsView,
       AppPermission.productsEdit,
     })) {
-      return const _InventorySectionDenied(
-        title: 'Waste loss report',
-        message:
-            'Waste and loss reporting is not available for your current role.',
+      return _InventorySectionDenied(
+        title: tr.text('waste_loss_report'),
+        message: tr.text('waste_loss_reporting_no_access'),
       );
     }
     final lossMovements = _rowsCache.getOrCompute(

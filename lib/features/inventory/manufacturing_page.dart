@@ -27,9 +27,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       AppPermission.inventoryManufacturingManage,
       AppPermission.productsEdit,
     })) {
-      return const _AccessDeniedScaffold(
-        title: 'Manufacturing',
-        message: 'You do not have access to manufacturing tools.',
+      return _AccessDeniedScaffold(
+        title: _t('manufacturing_orders'),
+        message: _t('no_access_manufacturing_tools'),
       );
     }
     return AnimatedBuilder(

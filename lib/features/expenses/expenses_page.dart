@@ -123,9 +123,9 @@ class _ExpensesPageState extends State<ExpensesPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewExpenses) {
-      return const _AccessDeniedScaffold(
-        title: 'Expenses',
-        message: 'You do not have access to expense records.',
+        return _AccessDeniedScaffold(
+          title: tr.text('expenses'),
+          message: tr.text('no_access_expense_records'),
       );
     }
     if (!widget.store.isCoreDataLoaded) {
