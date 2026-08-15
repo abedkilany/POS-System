@@ -1,4 +1,3 @@
-import 'unified_sync_orchestration.dart';
 import 'sync_transport_adapter.dart';
 
 /// Transport-agnostic sync engine.
@@ -65,17 +64,5 @@ class UnifiedSyncEngine {
   Future<UnifiedSyncResult> syncNow({
     void Function(double value, String label)? onProgress,
   }) =>
-      runUnifiedSyncOrchestration(
-        label: label,
-        pushRequest: UnifiedSyncPushRequest(
-          deviceId: transport.deviceId,
-          deviceToken: transport.deviceToken,
-        ),
-        pushPending: transport.pushPending,
-        pullChanges: transport.pullChanges,
-        rebuildFromHostSnapshot: transport.rebuildFromHostSnapshot,
-        compactAfterSuccessfulSync: transport.compactAfterSuccessfulSync,
-        onProgress: onProgress,
-        pullFailureMessage: '$label pull failed.',
-      );
+      transport.syncNow(onProgress: onProgress);
 }

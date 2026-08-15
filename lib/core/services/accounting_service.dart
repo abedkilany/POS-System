@@ -283,11 +283,12 @@ class AccountingService {
     }
   }
 
-  static Future<void> recordPurchase(Purchase purchase) async {
+  static Future<bool> recordPurchase(Purchase purchase,
+      {String accountingReferenceId = ''}) async {
     if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) {
-      return;
+      return true;
     }
-    if (!isAvailable) return;
+    if (!isAvailable) return true;
     final accounts = await readDefaultAccountMap();
     final accountingCurrency = _moneyProfile.baseCurrency;
     final rawTotal = _cleanAmount(purchase.subtotal);
@@ -360,10 +361,13 @@ class AccountingService {
         partyName: purchase.supplierName,
       ));
     }
+    final referenceId = accountingReferenceId.trim().isEmpty
+        ? purchase.id
+        : accountingReferenceId.trim();
     final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: purchase.date,
       referenceType: 'purchase',
-      referenceId: purchase.id,
+      referenceId: referenceId,
       referenceNo: purchase.purchaseNo,
       description: 'فاتورة مشتريات ${purchase.purchaseNo}',
       createdBy: purchase.lastModifiedByDeviceId,
@@ -374,6 +378,31 @@ class AccountingService {
     if (entryId.isNotEmpty && cashPurchaseLocation != null && paid > 0) {
       await _moveCashLocationBalance(
           cashPurchaseLocation.id, -paid, purchase.date);
+    }
+    return entryId.isNotEmpty;
+  }
+
+  /// Validates cash prerequisites before a purchase is persisted. Cash
+  /// purchases must not be allowed to create stock or supplier-ledger rows
+  /// when there is no open drawer to receive the matching cash movement.
+  static Future<void> validatePurchasePayment({
+    required String paymentMethod,
+    required double paidAmount,
+    required String deviceId,
+    required String branchId,
+  }) async {
+    if (!isAvailable ||
+        paidAmount <= 0 ||
+        !_isCashPaymentMethod(paymentMethod)) {
+      return;
+    }
+    final drawer = await _openCashDrawerLocationForDevice(
+      deviceId: deviceId,
+      branchId: branchId,
+    );
+    if (drawer == null) {
+      throw StateError(
+          'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل دفع نقدي.');
     }
   }
 
@@ -766,6 +795,34 @@ class AccountingService {
             Variable<String>(branchId),
           ],
         );
+      }
+      // Keep the operational cash drawer balance aligned with the journal
+      // reversal. The journal account and the drawer balance are separate
+      // records, so reversing only the journal leaves cash reports stale.
+      for (final line in reversalLines) {
+        final delta = _cleanAmount(line.debit - line.credit);
+        if (delta.abs() < 0.01) continue;
+        final cashLocations = await db.customSelect(
+          '''
+          SELECT id
+          FROM cash_locations
+          WHERE account_id = ? AND type = 'cash_drawer'
+            AND deleted_at = '' AND is_active = 1
+          ''',
+          variables: <Variable<Object>>[
+            Variable<String>(line.accountId),
+          ],
+        ).get();
+        for (final location in cashLocations) {
+          await db.customUpdate(
+            'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
+            variables: <Variable<Object>>[
+              Variable<double>(delta),
+              Variable<String>(now),
+              Variable<String>(location.data['id']?.toString() ?? ''),
+            ],
+          );
+        }
       }
       await db.customUpdate(
         '''
@@ -1956,6 +2013,71 @@ class AccountingService {
       branchId: branchId,
       lines: lines,
     ));
+    _notifyMutation();
+  }
+
+  /// Records the balance that existed at the moment the business started.
+  /// This is deliberately separate from a transfer or a purchase so the
+  /// opening amount is visible and cannot be mistaken for operating activity.
+  static Future<void> recordOpeningCashLocationBalance({
+    required String cashLocationId,
+    required double amount,
+    String storeId = '',
+    String branchId = '',
+    String createdBy = '',
+    String notes = '',
+  }) async {
+    if (!isAvailable) return;
+    final cleanAmount = _roundMoney(amount);
+    if (cleanAmount <= 0) {
+      throw ArgumentError('Opening balance must be greater than zero.');
+    }
+    final location = await _cashLocationSnapshot(cashLocationId);
+    final referenceId = 'opening-balance-${location.id}';
+    final existing = await _db.customSelect(
+      '''
+      SELECT id FROM journal_entries
+      WHERE reference_type = 'opening_balance' AND reference_id = ?
+        AND deleted_at = ''
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(referenceId)],
+    ).getSingleOrNull();
+    if (existing != null) {
+      throw StateError('An opening balance already exists for this location.');
+    }
+    final accounts = await readDefaultAccountMap();
+    final equityAccount = (accounts['default_equity_account_id']?.trim().isNotEmpty == true)
+        ? accounts['default_equity_account_id']!.trim()
+        : 'acc_equity';
+    await createPostedEntry(JournalEntryDraft(
+      entryDate: DateTime.now(),
+      referenceType: 'opening_balance',
+      referenceId: referenceId,
+      referenceNo: 'OPEN-${location.id}',
+      description: notes.trim().isEmpty
+          ? 'Opening balance - ${location.name}'
+          : notes.trim(),
+      source: 'opening_balance',
+      createdBy: createdBy,
+      storeId: storeId,
+      branchId: branchId,
+      lines: <JournalLineDraft>[
+        JournalLineDraft(
+          accountId: location.accountId,
+          debit: cleanAmount,
+          credit: 0,
+          memo: 'Opening balance - ${location.name}',
+        ),
+        JournalLineDraft(
+          accountId: equityAccount,
+          debit: 0,
+          credit: cleanAmount,
+          memo: 'Opening balance source',
+        ),
+      ],
+    ));
+    await _moveCashLocationBalance(location.id, cleanAmount, DateTime.now());
     _notifyMutation();
   }
 

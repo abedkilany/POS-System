@@ -635,6 +635,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                   widget.store.canManagePurchases
                               ? () => _deleteDraftPurchase(context, purchase.id)
                               : null,
+                          onEdit: (purchase.status == 'Draft' ||
+                                      purchase.isReceived) &&
+                                  widget.store.canManagePurchases
+                              ? () => _openPurchaseDialog(context,
+                                  editing: purchase)
+                              : null,
                           onPermanentDelete:
                               purchase.status.toLowerCase() == 'cancelled' &&
                                       widget.store.hasPermission(
@@ -1400,6 +1406,17 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       icon: const Icon(Icons.copy_all_outlined),
                       label: Text(tr.text('duplicate_purchase')),
                     ),
+                    if ((!purchase.isCancelled) &&
+                        (purchase.status == 'Draft' || purchase.isReceived) &&
+                        widget.store.canManagePurchases)
+                      FilledButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _openPurchaseDialog(context, editing: purchase);
+                        },
+                        icon: const Icon(Icons.edit_outlined),
+                        label: Text(tr.text('edit_purchase')),
+                      ),
                     if (!purchase.isReceived && !purchase.isCancelled)
                       FilledButton.icon(
                         onPressed: () {
@@ -1465,13 +1482,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
   }
 
   Future<void> _openPurchaseDialog(BuildContext context,
-      {Purchase? template}) async {
+      {Purchase? template, Purchase? editing}) async {
     if (!widget.store.canManagePurchases) return;
     final tr = AppLocalizations.of(context);
     final formKey = GlobalKey<FormState>();
-    final items = template == null
+    final source = editing ?? template;
+    final items = source == null
         ? <PurchaseItem>[]
-        : List<PurchaseItem>.of(template.items);
+        : List<PurchaseItem>.of(source.items);
     final sqliteProducts = await LocalDatabaseService.queryProductsFromSqlite(
       limit: 250,
       activeOnly: true,
@@ -1487,16 +1505,16 @@ class _PurchasesPageState extends State<PurchasesPage> {
             .toList();
     var purchaseSuppliers = sqliteSuppliers?.items ??
         widget.store.suppliers.toList(growable: false);
-    String supplierId = template?.supplierId ??
+    String supplierId = source?.supplierId ??
         (purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.id : '');
-    String supplierName = template?.supplierName ??
+    String supplierName = source?.supplierName ??
         (purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.name : '');
     final initialWarehouse = widget.store.resolveWarehouseForPurchase(
-      warehouseId: template?.warehouseId ?? '',
+      warehouseId: source?.warehouseId ?? '',
     );
     String selectedWarehouseId = initialWarehouse.id;
-    String selectedWarehouseName = template?.warehouseName.isNotEmpty == true
-        ? template!.warehouseName
+    String selectedWarehouseName = source?.warehouseName.isNotEmpty == true
+        ? source!.warehouseName
         : initialWarehouse.name;
     if (supplierId.isNotEmpty &&
         !purchaseSuppliers.any((supplier) => supplier.id == supplierId)) {
@@ -1517,11 +1535,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final qtyFocusNode = FocusNode();
     final costFocusNode = FocusNode();
     final paidAmountFocusNode = FocusNode();
-    String paymentStatus = 'paid';
-    String paymentMethod = 'Cash';
+    String paymentStatus = source?.paymentStatus ?? 'paid';
+    String paymentMethod = source?.paymentMethod ?? 'Cash';
     String costCurrency = selectedProduct?.costCurrency ??
         widget.store.storeProfile.defaultProductCurrency;
     bool receiveNow = false;
+    if (editing != null) {
+      paidAmountController.text = editing.paidAmount.toStringAsFixed(2);
+    }
 
     SupplierProductPrice? selectedSupplierPriceFor(Product product) {
       return supplierId.isEmpty
@@ -2469,16 +2490,44 @@ class _PurchasesPageState extends State<PurchasesPage> {
               SnackBar(content: Text(tr.text('invalid_paid_amount'))));
           return;
         }
-        await widget.store.createPurchase(
-            supplierId: supplierId,
-            supplierName: supplierName,
-            items: purchaseItems,
-            receiveNow: receiveNow,
-            paymentStatus: paymentStatus,
-            paymentMethod: paymentMethod,
-            paidAmount: paidAmount,
-            warehouseId: selectedWarehouseId,
-            warehouseName: selectedWarehouseName);
+        if (editing != null) {
+          if (editing.isReceived) {
+            await widget.store.editReceivedPurchase(
+                id: editing.id,
+                supplierId: supplierId,
+                supplierName: supplierName,
+                items: purchaseItems,
+                paymentStatus: paymentStatus,
+                paymentMethod: paymentMethod,
+                paidAmount: paidAmount,
+                note: editing.note,
+                warehouseId: selectedWarehouseId,
+                warehouseName: selectedWarehouseName);
+          } else {
+            await widget.store.updatePurchaseDraft(
+                id: editing.id,
+                supplierId: supplierId,
+                supplierName: supplierName,
+                items: purchaseItems,
+                paymentStatus: paymentStatus,
+                paymentMethod: paymentMethod,
+                paidAmount: paidAmount,
+                note: editing.note,
+                warehouseId: selectedWarehouseId,
+                warehouseName: selectedWarehouseName);
+          }
+        } else {
+          await widget.store.createPurchase(
+              supplierId: supplierId,
+              supplierName: supplierName,
+              items: purchaseItems,
+              receiveNow: receiveNow,
+              paymentStatus: paymentStatus,
+              paymentMethod: paymentMethod,
+              paidAmount: paidAmount,
+              warehouseId: selectedWarehouseId,
+              warehouseName: selectedWarehouseName);
+        }
         if (dialogContext.mounted) {
           await updateSupplierPricesFromItemsIfNeeded(
               dialogContext, purchaseItems);
@@ -2487,9 +2536,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
         if (!mounted) return;
         ScaffoldMessenger.of(this.context).showSnackBar(
           SnackBar(
-              content: Text(template == null
-                  ? tr.text('purchase_saved')
-                  : tr.text('duplicate_purchase_saved_as_draft'))),
+              content: Text(editing != null
+                  ? tr.text('purchase_updated')
+                  : template == null
+                      ? tr.text('purchase_saved')
+                      : tr.text('duplicate_purchase_saved_as_draft'))),
         );
         setState(() {});
       } catch (error) {
@@ -2609,10 +2660,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
                               children: [
                                 Expanded(
                                     child: Text(
-                                        template == null
-                                            ? tr.text('new_purchase')
-                                            : tr.text(
-                                                'duplicate_purchase_draft'),
+                                         editing != null
+                                             ? tr.text('edit_purchase')
+                                             : template == null
+                                                 ? tr.text('new_purchase')
+                                                 : tr.text(
+                                                     'duplicate_purchase_draft'),
                                         style: Theme.of(context)
                                             .textTheme
                                             .headlineSmall)),
@@ -3517,6 +3570,7 @@ class _PurchaseTile extends StatelessWidget {
     this.onReceive,
     this.onCancel,
     this.onDeleteDraft,
+    this.onEdit,
     this.onPermanentDelete,
     this.onDuplicate,
   });
@@ -3528,6 +3582,7 @@ class _PurchaseTile extends StatelessWidget {
       onReceive,
       onCancel,
       onDeleteDraft,
+      onEdit,
       onPermanentDelete,
       onDuplicate;
 
@@ -3574,12 +3629,19 @@ class _PurchaseTile extends StatelessWidget {
       tooltip: tr.text('actions'),
       onSelected: (value) {
         if (value == 'duplicate') onDuplicate?.call();
+        if (value == 'edit') onEdit?.call();
         if (value == 'receive') onReceive?.call();
         if (value == 'return') onCancel?.call();
         if (value == 'delete_draft') onDeleteDraft?.call();
         if (value == 'permanent_delete') onPermanentDelete?.call();
       },
       itemBuilder: (context) => [
+        if (onEdit != null)
+          PopupMenuItem(
+              value: 'edit',
+              child: ListTile(
+                  leading: const Icon(Icons.edit_outlined),
+                  title: Text(tr.text('edit_purchase')))),
         PopupMenuItem(
             value: 'duplicate',
             child: ListTile(

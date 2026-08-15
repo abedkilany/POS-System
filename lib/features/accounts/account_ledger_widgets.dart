@@ -7,19 +7,27 @@ import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/account_transaction.dart';
 
-String accountBalanceText(BuildContext context, AppStore store, String accountType, String accountId) {
+String accountBalanceText(BuildContext context, AppStore store,
+    String accountType, String accountId) {
   final tr = AppLocalizations.of(context);
   final balance = store.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return tr.text('account_settled');
   final amount = formatUsdReferenceAmount(balance.abs(), store.storeProfile);
-  if (accountType == 'customer') return balance > 0 ? '${tr.text('account_receivable')}: $amount' : '${tr.text('account_credit')}: $amount';
-  return balance > 0 ? '${tr.text('account_advance')}: $amount' : '${tr.text('account_payable')}: $amount';
+  if (accountType == 'customer')
+    return balance > 0
+        ? '${tr.text('account_receivable')}: $amount'
+        : '${tr.text('account_credit')}: $amount';
+  return balance > 0
+      ? '${tr.text('account_advance')}: $amount'
+      : '${tr.text('account_payable')}: $amount';
 }
 
-Color accountBalanceColor(BuildContext context, AppStore store, String accountType, String accountId) {
+Color accountBalanceColor(BuildContext context, AppStore store,
+    String accountType, String accountId) {
   final balance = store.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return Theme.of(context).colorScheme.primary;
-  if (accountType == 'customer') return balance > 0 ? Colors.orange.shade700 : Colors.green.shade700;
+  if (accountType == 'customer')
+    return balance > 0 ? Colors.orange.shade700 : Colors.green.shade700;
   return balance < 0 ? Colors.orange.shade700 : Colors.green.shade700;
 }
 
@@ -34,7 +42,11 @@ Future<void> showAccountLedgerSheet({
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => _AccountLedgerSheet(store: store, accountType: accountType, accountId: accountId, accountName: accountName),
+    builder: (_) => _AccountLedgerSheet(
+        store: store,
+        accountType: accountType,
+        accountId: accountId,
+        accountName: accountName),
   );
 }
 
@@ -47,9 +59,24 @@ Future<void> showAccountPaymentDialog({
 }) async {
   final result = await showDialog<_PaymentDraft>(
     context: context,
-    builder: (_) => _PaymentDialog(accountType: accountType, accountName: accountName),
+    builder: (_) =>
+        _PaymentDialog(accountType: accountType, accountName: accountName),
   );
   if (result == null) return;
+  if (accountType == 'supplier' &&
+      result.referenceNo.trim().isEmpty &&
+      result.note.trim().isEmpty) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text('payment_reference_required'),
+          ),
+        ),
+      );
+    }
+    return;
+  }
   final now = DateTime.now();
   final isCustomer = accountType == 'customer';
   await store.addOrUpdateAccountTransaction(AccountTransaction(
@@ -67,12 +94,17 @@ Future<void> showAccountPaymentDialog({
     note: result.note,
   ));
   if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('payment_saved'))));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(AppLocalizations.of(context).text('payment_saved'))));
   }
 }
 
 class _AccountLedgerSheet extends StatelessWidget {
-  const _AccountLedgerSheet({required this.store, required this.accountType, required this.accountId, required this.accountName});
+  const _AccountLedgerSheet(
+      {required this.store,
+      required this.accountType,
+      required this.accountId,
+      required this.accountName});
 
   final AppStore store;
   final String accountType, accountId, accountName;
@@ -93,23 +125,33 @@ class _AccountLedgerSheet extends StatelessWidget {
           children: [
             Row(
               children: [
-                Expanded(child: Text(accountName, style: Theme.of(context).textTheme.headlineSmall)),
-                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                Expanded(
+                    child: Text(accountName,
+                        style: Theme.of(context).textTheme.headlineSmall)),
+                IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close)),
               ],
             ),
             const SizedBox(height: 8),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.account_balance_wallet_outlined),
-                title: Text(AppLocalizations.of(context).text('current_balance')),
-                subtitle: Text(_balanceDescription(context, accountType, balance)),
-                trailing: Text(formatUsdReferenceAmount(balance.abs(), store.storeProfile), style: Theme.of(context).textTheme.titleMedium),
+                title:
+                    Text(AppLocalizations.of(context).text('current_balance')),
+                subtitle:
+                    Text(_balanceDescription(context, accountType, balance)),
+                trailing: Text(
+                    formatUsdReferenceAmount(balance.abs(), store.storeProfile),
+                    style: Theme.of(context).textTheme.titleMedium),
               ),
             ),
             const SizedBox(height: 8),
             Expanded(
               child: rows.isEmpty
-                  ? Center(child: Text(AppLocalizations.of(context).text('no_account_transactions')))
+                  ? Center(
+                      child: Text(AppLocalizations.of(context)
+                          .text('no_account_transactions')))
                   : ListView.builder(
                       scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
                       keyboardDismissBehavior:
@@ -117,7 +159,8 @@ class _AccountLedgerSheet extends StatelessWidget {
                       controller: scrollController,
                       itemExtent: 72.0,
                       itemCount: rows.length,
-                      itemBuilder: (context, index) => _TransactionTile(store: store, transaction: rows[index]),
+                      itemBuilder: (context, index) => _TransactionTile(
+                          store: store, transaction: rows[index]),
                     ),
             ),
           ],
@@ -126,11 +169,17 @@ class _AccountLedgerSheet extends StatelessWidget {
     );
   }
 
-  String _balanceDescription(BuildContext context, String type, double balance) {
+  String _balanceDescription(
+      BuildContext context, String type, double balance) {
     final tr = AppLocalizations.of(context);
     if (balance.abs() < 0.0001) return tr.text('account_settled_description');
-    if (type == 'customer') return balance > 0 ? tr.text('amount_to_collect_from_customer') : tr.text('customer_credit_balance');
-    return balance < 0 ? tr.text('amount_to_pay_supplier') : tr.text('supplier_advance_balance');
+    if (type == 'customer')
+      return balance > 0
+          ? tr.text('amount_to_collect_from_customer')
+          : tr.text('customer_credit_balance');
+    return balance < 0
+        ? tr.text('amount_to_pay_supplier')
+        : tr.text('supplier_advance_balance');
   }
 }
 
@@ -142,7 +191,8 @@ class _TransactionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final amount = transaction.debit > 0 ? transaction.debit : transaction.credit;
+    final amount =
+        transaction.debit > 0 ? transaction.debit : transaction.credit;
     final sign = transaction.debit > 0 ? '+' : '-';
     return ListTile(
       dense: true,
@@ -153,7 +203,8 @@ class _TransactionTile extends StatelessWidget {
         transaction.referenceNo,
         transaction.note,
       ].where((part) => part.trim().isNotEmpty).join(' • ')),
-      trailing: Text('$sign ${formatUsdReferenceAmount(amount, store.storeProfile)}'),
+      trailing:
+          Text('$sign ${formatUsdReferenceAmount(amount, store.storeProfile)}'),
     );
   }
 
@@ -197,11 +248,16 @@ class _TransactionTile extends StatelessWidget {
     }
   }
 
-  String _dateText(DateTime date) => '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  String _dateText(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 }
 
 class _PaymentDraft {
-  const _PaymentDraft({required this.amount, required this.note, required this.referenceNo, required this.paymentMethod});
+  const _PaymentDraft(
+      {required this.amount,
+      required this.note,
+      required this.referenceNo,
+      required this.paymentMethod});
   final double amount;
   final String note;
   final String referenceNo;
@@ -242,7 +298,8 @@ class _PaymentDialogState extends State<_PaymentDialog> {
         vertical: 24,
       ),
       constraints: BoxConstraints(maxWidth: dialogWidth),
-      title: Text(isCustomer ? tr.text('receive_payment') : tr.text('pay_supplier')),
+      title: Text(
+          isCustomer ? tr.text('receive_payment') : tr.text('pay_supplier')),
       content: SizedBox(
         width: dialogWidth,
         child: ResponsiveDialogBox(
@@ -252,45 +309,70 @@ class _PaymentDialogState extends State<_PaymentDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Align(alignment: AlignmentDirectional.centerStart, child: Text(widget.accountName, style: Theme.of(context).textTheme.titleMedium)),
+                Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(widget.accountName,
+                        style: Theme.of(context).textTheme.titleMedium)),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: amountController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(labelText: tr.text('amount')),
                   validator: (value) {
                     final amount = double.tryParse((value ?? '').trim());
-                    if (amount == null || amount <= 0) return tr.text('enter_valid_amount');
+                    if (amount == null || amount <= 0)
+                      return tr.text('enter_valid_amount');
                     return null;
                   },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: paymentMethod,
-                  decoration: InputDecoration(labelText: tr.text('payment_method')),
+                  decoration:
+                      InputDecoration(labelText: tr.text('payment_method')),
                   items: [
-                    DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
-                    DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
-                    DropdownMenuItem(value: 'Wish', child: Text(tr.text('payment_wish'))),
-                    DropdownMenuItem(value: 'Check', child: Text(tr.text('payment_check'))),
+                    DropdownMenuItem(
+                        value: 'Cash', child: Text(tr.text('payment_cash'))),
+                    DropdownMenuItem(
+                        value: 'Card', child: Text(tr.text('payment_card'))),
+                    DropdownMenuItem(
+                        value: 'Wish', child: Text(tr.text('payment_wish'))),
+                    DropdownMenuItem(
+                        value: 'Check', child: Text(tr.text('payment_check'))),
                   ],
-                  onChanged: (value) => setState(() => paymentMethod = value ?? 'Cash'),
+                  onChanged: (value) =>
+                      setState(() => paymentMethod = value ?? 'Cash'),
                 ),
                 const SizedBox(height: 12),
-                TextFormField(controller: referenceController, decoration: InputDecoration(labelText: tr.text('reference_no_optional'))),
+                TextFormField(
+                    controller: referenceController,
+                    decoration: InputDecoration(
+                        labelText: tr.text('reference_no_optional'))),
                 const SizedBox(height: 12),
-                TextFormField(controller: noteController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
+                TextFormField(
+                    controller: noteController,
+                    decoration: InputDecoration(labelText: tr.text('notes')),
+                    maxLines: 3),
               ],
             ),
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('cancel'))),
         FilledButton(
           onPressed: () {
             if (!formKey.currentState!.validate()) return;
-            Navigator.pop(context, _PaymentDraft(amount: double.parse(amountController.text.trim()), referenceNo: referenceController.text.trim(), note: noteController.text.trim(), paymentMethod: paymentMethod));
+            Navigator.pop(
+                context,
+                _PaymentDraft(
+                    amount: double.parse(amountController.text.trim()),
+                    referenceNo: referenceController.text.trim(),
+                    note: noteController.text.trim(),
+                    paymentMethod: paymentMethod));
           },
           child: Text(tr.text('save')),
         ),

@@ -502,8 +502,8 @@ class AppStore extends ChangeNotifier {
   Future<void>? _productDerivedDataFlushInFlight;
   final Map<String, Future<void>> _pendingSaleAccountingTasks =
       <String, Future<void>>{};
-  final Map<String, Future<void>> _pendingPurchaseAccountingTasks =
-      <String, Future<void>>{};
+  final Map<String, Future<bool>> _pendingPurchaseAccountingTasks =
+      <String, Future<bool>>{};
   final Map<String, Future<void>> _pendingExpenseAccountingTasks =
       <String, Future<void>>{};
   Future<void> _saleAccountingQueue = Future<void>.value();
@@ -6219,19 +6219,19 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  Future<void> _schedulePurchaseAccounting(Purchase purchase) async {
-    if (!AccountingService.isAvailable) return;
+  Future<bool> _schedulePurchaseAccounting(Purchase purchase) async {
+    if (!AccountingService.isAvailable) return true;
     final purchaseId = purchase.id.trim();
-    if (purchaseId.isEmpty) return;
+    if (purchaseId.isEmpty) return false;
     while (_pendingPurchaseAccountingTasks.length >=
         _maxPurchaseAccountingBacklog) {
       final pending = _pendingPurchaseAccountingTasks.values.toList();
       if (pending.isEmpty) break;
       await Future.any<void>(
-        pending.map((task) => task.catchError((_) {})),
+        pending.map((task) => task.catchError((_) => false)),
       );
     }
-    final future = _purchaseAccountingQueue.then(
+    final future = _purchaseAccountingQueue.then<bool>(
       (_) => _postPurchaseAccounting(purchase),
       onError: (_) => _postPurchaseAccounting(purchase),
     );
@@ -6247,11 +6247,12 @@ class AppStore extends ChangeNotifier {
         }
       }),
     );
+    return future;
   }
 
-  Future<void> _postPurchaseAccounting(Purchase purchase) async {
+  Future<bool> _postPurchaseAccounting(Purchase purchase) async {
     try {
-      await _traceAsync<void>(
+      return await _traceAsync<bool>(
         'purchases.createPurchase',
         'accounting_post',
         () => AccountingService.recordPurchase(purchase),
@@ -6277,6 +6278,7 @@ class AppStore extends ChangeNotifier {
           isImportant: true,
         ),
       );
+      return false;
     }
   }
 
@@ -8832,12 +8834,23 @@ class AppStore extends ChangeNotifier {
     bool isReturn = false,
   }) {
     if (purchase.supplierId.trim().isEmpty) return;
-    final total = purchase.items.fold<double>(
-      0,
-      (sum, item) => sum + item.lineTotal,
+    // Reverse the amounts that were actually posted, rather than rebuilding
+    // them from the current Purchase object. A purchase can have been edited
+    // or migrated after posting; using its current lines can otherwise create
+    // a partial or oversized supplier reversal.
+    final invoiceId = '${purchase.id}-purchase-invoice';
+    final invoiceIndex = _accountTransactions.indexWhere(
+      (transaction) => transaction.id == invoiceId,
     );
+    if (invoiceIndex == -1) return;
+    final total = _accountTransactions[invoiceIndex].credit;
     if (total <= 0) return;
-    final paid = purchase.paidAmount.clamp(0, total).toDouble();
+    final paymentId = '${purchase.id}-purchase-payment';
+    final paid = _accountTransactions
+        .where((transaction) => transaction.id == paymentId)
+        .fold<double>(0, (sum, transaction) => sum + transaction.debit)
+        .clamp(0, total)
+        .toDouble();
     final note = reason.trim().isEmpty
         ? (isReturn
             ? 'Purchase return ${purchase.purchaseNo}'
@@ -11505,6 +11518,12 @@ class AppStore extends ChangeNotifier {
         : normalizedPaymentStatus == 'credit'
             ? 0.0
             : (paidAmount ?? 0).clamp(0, purchaseTotal).toDouble();
+    await AccountingService.validatePurchasePayment(
+      paymentMethod: normalizedPaymentMethod,
+      paidAmount: normalizedPaidAmount,
+      deviceId: _deviceId,
+      branchId: appIdentity.branchId,
+    );
     final resolvedWarehouse = resolveWarehouseForPurchase(
       warehouseId: warehouseId,
     );
@@ -11667,8 +11686,9 @@ class AppStore extends ChangeNotifier {
         _traceSync('purchases.createPurchase', 'update_stock_cache', () {
           _applyProductStockCompatibilityDeltas(receiptMovements);
         });
-        await _schedulePurchaseAccounting(purchase);
       }
+      final accountingPosted =
+          receiveNow ? await _schedulePurchaseAccounting(purchase) : true;
       _traceSync('purchases.createPurchase', 'memory_ledger_and_sync', () {
         _putPurchaseAtIndex(purchase, _purchases.length);
         _recordSyncChange(
@@ -11677,7 +11697,7 @@ class AppStore extends ChangeNotifier {
           operation: 'create',
           payload: purchase.toJson(),
         );
-        if (receiveNow) {
+        if (receiveNow && accountingPosted) {
           _recordPurchaseLedger(purchase, now);
         }
       });
@@ -11694,7 +11714,6 @@ class AppStore extends ChangeNotifier {
     );
     if (receiveNow) {
       _applyPurchaseStock(purchase, now);
-      _recordPurchaseLedger(purchase, now);
     }
     await _saveDirty(
       purchases: true,
@@ -11706,7 +11725,11 @@ class AppStore extends ChangeNotifier {
       sync: true,
     );
     if (receiveNow) {
-      await _schedulePurchaseAccounting(purchase);
+      final accountingPosted = await _schedulePurchaseAccounting(purchase);
+      if (accountingPosted) {
+        _recordPurchaseLedger(purchase, now);
+        await _saveDirty(accountTransactions: true);
+      }
     }
     unawaited(
       AppLogger.info(
@@ -11750,6 +11773,279 @@ class AppStore extends ChangeNotifier {
     return purchase;
   }
 
+  Future<Purchase> updatePurchaseDraft({
+    required String id,
+    required String supplierId,
+    required String supplierName,
+    required List<PurchaseItem> items,
+    required String paymentStatus,
+    required String paymentMethod,
+    double? paidAmount,
+    String note = '',
+    String warehouseId = '',
+    String warehouseName = '',
+  }) async {
+    requirePermission(AppPermission.suppliersManage);
+    if (items.isEmpty) throw ArgumentError('Purchase must contain at least one item.');
+    final index = _purchaseIndexForId(id);
+    final current = index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
+    if (current == null) throw ArgumentError('Purchase not found.');
+    if (current.isReceived || current.isCancelled) {
+      throw StateError('Only draft purchases can be edited.');
+    }
+    for (final item in items) {
+      if (item.quantity <= 0 || item.conversionToBase <= 0 || item.unitCost < 0) {
+        throw ArgumentError('Invalid purchase item values.');
+      }
+      if (_findProductById(item.productId) == null) {
+        throw ArgumentError('Product not found: ${item.productName}');
+      }
+    }
+    final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+    final normalizedStatus = paymentStatus.trim().toLowerCase() == 'credit'
+        ? 'credit'
+        : paymentStatus.trim().toLowerCase() == 'partial'
+            ? 'partial'
+            : 'paid';
+    final normalizedPaid = normalizedStatus == 'paid'
+        ? total
+        : normalizedStatus == 'credit'
+            ? 0.0
+            : (paidAmount ?? 0).clamp(0, total).toDouble();
+    final warehouse = resolveWarehouseForPurchase(warehouseId: warehouseId);
+    final updated = _withSyncMeta<Purchase>(
+      current.copyWith(
+        supplierId: supplierId,
+        supplierName: supplierName,
+        items: items,
+        note: note,
+        paymentStatus: normalizedStatus,
+        paymentMethod: paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim(),
+        paidAmount: normalizedPaid,
+        warehouseId: warehouse.id,
+        warehouseName: warehouseName.trim().isEmpty ? warehouse.name : warehouseName.trim(),
+        status: 'Draft',
+      ),
+      DateTime.now(),
+      isCreate: false,
+    );
+    final sqliteDb = SqliteMigrationManager.database;
+    if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
+      await BusinessSqliteStore.upsertEntityPayloads(
+        sqliteDb,
+        _purchasesKey,
+        <Map<String, dynamic>>[updated.toJson()],
+        sortIndices: <int?>[index == -1 ? 0 : index],
+      );
+    }
+    _putPurchaseAtIndex(updated, index == -1 ? _purchases.length : index);
+    _recordSyncChange(
+      entityType: 'purchase',
+      entityId: updated.id,
+      operation: 'update',
+      payload: updated.toJson(),
+    );
+    if (!(LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null)) {
+      await _saveDirty(purchases: true, sync: true);
+    }
+    _touchPurchasesData();
+    notifyListeners();
+    return updated;
+  }
+
+  /// Corrects a received purchase in place. The original stock and journal
+  /// entries remain in history and are reversed with an edit-specific reason;
+  /// the replacement is posted under a new accounting revision reference.
+  Future<Purchase> editReceivedPurchase({
+    required String id,
+    required String supplierId,
+    required String supplierName,
+    required List<PurchaseItem> items,
+    required String paymentStatus,
+    required String paymentMethod,
+    double? paidAmount,
+    String note = '',
+    String warehouseId = '',
+    String warehouseName = '',
+  }) async {
+    requirePermission(AppPermission.suppliersManage);
+    final index = _purchaseIndexForId(id);
+    final current = index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
+    if (current == null) throw ArgumentError('Purchase not found.');
+    if (!current.isReceived || current.isCancelled) {
+      throw StateError('Only received purchase invoices can be edited.');
+    }
+    if (items.isEmpty) throw ArgumentError('Purchase must contain at least one item.');
+    if (items.any((item) => _findProductById(item.productId)?.expiryTrackingEnabled == true)) {
+      throw StateError('Edit is unavailable for batch-tracked products until batch reassignment is supported.');
+    }
+    if (_inventoryCostingMethod == InventoryCostingMethod.fifo &&
+        _purchaseHasConsumedCostLayers(current.id)) {
+      throw StateError('This purchase cannot be edited after its stock was used in sales.');
+    }
+    for (final item in items) {
+      if (item.quantity <= 0 || item.conversionToBase <= 0 || item.unitCost < 0) {
+        throw ArgumentError('Invalid purchase item values.');
+      }
+      if (_findProductById(item.productId) == null) {
+        throw ArgumentError('Product not found: ${item.productName}');
+      }
+    }
+    final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+    final normalizedStatus = paymentStatus.trim().toLowerCase() == 'credit'
+        ? 'credit'
+        : paymentStatus.trim().toLowerCase() == 'partial'
+            ? 'partial'
+            : 'paid';
+    final normalizedPaid = normalizedStatus == 'paid'
+        ? total
+        : normalizedStatus == 'credit'
+            ? 0.0
+            : (paidAmount ?? 0).clamp(0, total).toDouble();
+    await AccountingService.validatePurchasePayment(
+      paymentMethod: paymentMethod,
+      paidAmount: normalizedPaid,
+      deviceId: current.deviceId,
+      branchId: current.branchId,
+    );
+    final warehouse = resolveWarehouseForPurchase(warehouseId: warehouseId);
+    final now = DateTime.now();
+    final editVersion = current.version + 1;
+    final updated = _withSyncMeta<Purchase>(
+      current.copyWith(
+        supplierId: supplierId,
+        supplierName: supplierName,
+        items: items,
+        note: note,
+        paymentStatus: normalizedStatus,
+        paymentMethod: paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim(),
+        paidAmount: normalizedPaid,
+        warehouseId: warehouse.id,
+        warehouseName: warehouseName.trim().isEmpty ? warehouse.name : warehouseName.trim(),
+        version: editVersion,
+        status: 'Received',
+      ),
+      now,
+    );
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Received purchase correction requires the SQLite accounting store.');
+    }
+    final stockService = StockTransactionService(
+      sqliteDb,
+      deviceId: _deviceId,
+      defaultStoreId: appIdentity.storeId,
+      defaultBranchId: appIdentity.branchId,
+      defaultSyncTarget: _stockTransactionSyncTarget,
+    );
+    final replacementMovements = <StockMovement>[];
+    await sqliteDb.transaction(() async {
+      for (var lineIndex = 0; lineIndex < current.items.length; lineIndex++) {
+        final item = current.items[lineIndex];
+        final original = StockMovement(
+          id: [current.id, lineIndex.toString(), item.productId, 'purchase-receive'].join('-'),
+          productId: item.productId,
+          productName: item.productName,
+          type: 'purchase_receive',
+          quantity: item.baseQuantity,
+          date: current.date,
+          referenceId: current.id,
+          referenceNo: current.purchaseNo,
+          reason: 'Purchase received',
+          unitCost: item.unitCostPerBase,
+          warehouseId: current.warehouseId,
+          warehouseName: current.warehouseName,
+          movementGroupId: current.id,
+          documentLineId: '${current.id}-line-$lineIndex',
+          idempotencyKey: '${current.id}:purchase_receive:$lineIndex',
+          createdAt: current.createdAt,
+          updatedAt: current.updatedAt,
+          deviceId: current.deviceId,
+          storeId: current.storeId,
+          branchId: current.branchId,
+        );
+        await stockService.recordReversalInTransaction(
+          originalMovement: original,
+          operationType: 'purchase_edit_correction',
+          documentType: 'purchase',
+          documentId: '${current.id}:edit:$editVersion',
+          reason: 'Purchase corrected',
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          deviceId: _deviceId,
+        );
+      }
+      for (var lineIndex = 0; lineIndex < updated.items.length; lineIndex++) {
+        final item = updated.items[lineIndex];
+        final movement = StockMovement(
+          id: '${updated.id}-edit-$editVersion-$lineIndex-${item.productId}-purchase-receive',
+          productId: item.productId,
+          productName: item.productName,
+          type: 'purchase_receive',
+          quantity: item.baseQuantity,
+          date: now,
+          referenceId: updated.id,
+          referenceNo: updated.purchaseNo,
+          reason: 'Purchase corrected',
+          unitCost: item.unitCostPerBase,
+          warehouseId: updated.warehouseId,
+          warehouseName: updated.warehouseName,
+          movementGroupId: '${updated.id}:edit:$editVersion',
+          documentLineId: '${updated.id}:edit:$editVersion-line-$lineIndex',
+          idempotencyKey: '${updated.id}:edit:$editVersion:$lineIndex',
+          createdAt: now,
+          updatedAt: now,
+          deviceId: _deviceId,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+        );
+        replacementMovements.add(movement);
+      }
+      await stockService.recordMovementsInTransaction(
+        operationType: 'purchase_edit_correction',
+        documentType: 'purchase',
+        documentId: '${updated.id}:edit:$editVersion',
+        movementGroupId: '${updated.id}:edit:$editVersion',
+        idempotencyKey: '${updated.id}:edit:$editVersion',
+        movements: replacementMovements,
+        storeId: updated.storeId,
+        branchId: updated.branchId,
+        deviceId: _deviceId,
+      );
+      await BusinessSqliteStore.upsertEntityPayloads(
+        sqliteDb,
+        _purchasesKey,
+        <Map<String, dynamic>>[updated.toJson()],
+        sortIndices: <int?>[index == -1 ? 0 : index],
+      );
+    });
+    _mirrorAuthoritativeStockMovements(replacementMovements);
+    await AccountingService.reverseEntryForReference(
+      referenceType: 'purchase',
+      referenceId: current.id,
+      reason: 'Purchase corrected',
+      createdBy: _deviceId,
+    );
+    await AccountingService.recordPurchase(
+      updated,
+      accountingReferenceId: '${updated.id}:edit:$editVersion',
+    );
+    _recordPurchaseCancelLedger(current, now, reason: 'Purchase corrected');
+    _recordPurchaseLedger(updated, now);
+    _putPurchaseAtIndex(updated, index == -1 ? _purchases.length : index);
+    _recordSyncChange(
+      entityType: 'purchase',
+      entityId: updated.id,
+      operation: 'correct',
+      payload: updated.toJson(),
+    );
+    await _refreshProductStockCompatibilityCache(
+        <String>{...current.items.map((item) => item.productId), ...items.map((item) => item.productId)});
+    _touchPurchasesData();
+    notifyListeners();
+    return updated;
+  }
+
   Future<void> receivePurchase(
     String id, {
     Map<int, List<BatchAllocation>> batchAllocationsByLine =
@@ -11761,6 +12057,12 @@ class AppStore extends ChangeNotifier {
         index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
     if (purchase == null) throw ArgumentError('Purchase not found.');
     if (purchase.isReceived || purchase.isCancelled) return;
+    await AccountingService.validatePurchasePayment(
+      paymentMethod: purchase.paymentMethod,
+      paidAmount: purchase.paidAmount,
+      deviceId: purchase.deviceId,
+      branchId: purchase.branchId,
+    );
     final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final now = DateTime.now();
@@ -11921,8 +12223,10 @@ class AppStore extends ChangeNotifier {
         payload: received.toJson(),
       );
       _applyProductStockCompatibilityDeltas(receiptMovements);
-      _recordPurchaseLedger(received, now);
-      await _schedulePurchaseAccounting(received);
+      final accountingPosted = await _schedulePurchaseAccounting(received);
+      if (accountingPosted) {
+        _recordPurchaseLedger(received, now);
+      }
       _touchPurchasesData();
       notifyListeners();
       return;
@@ -11940,7 +12244,6 @@ class AppStore extends ChangeNotifier {
       payload: received.toJson(),
     );
     _applyPurchaseStock(received, now);
-    _recordPurchaseLedger(received, now);
     await _saveDirty(
       purchases: true,
       products: true,
@@ -11949,7 +12252,11 @@ class AppStore extends ChangeNotifier {
       accountTransactions: true,
       sync: true,
     );
-    await _schedulePurchaseAccounting(received);
+    final accountingPosted = await _schedulePurchaseAccounting(received);
+    if (accountingPosted) {
+      _recordPurchaseLedger(received, now);
+      await _saveDirty(accountTransactions: true);
+    }
     unawaited(
       AppLogger.info(
         area: 'purchases',
@@ -12141,6 +12448,12 @@ class AppStore extends ChangeNotifier {
         'Only received purchase invoices can be returned. Delete draft invoices instead.',
       );
     }
+    await AccountingService.validatePurchasePayment(
+      paymentMethod: purchase.paymentMethod,
+      paidAmount: purchase.paidAmount,
+      deviceId: purchase.deviceId,
+      branchId: purchase.branchId,
+    );
     final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final now = DateTime.now();
@@ -12390,6 +12703,12 @@ class AppStore extends ChangeNotifier {
         'Only received purchase invoices can be cancelled. Delete draft invoices instead.',
       );
     }
+    await AccountingService.validatePurchasePayment(
+      paymentMethod: purchase.paymentMethod,
+      paidAmount: purchase.paidAmount,
+      deviceId: purchase.deviceId,
+      branchId: purchase.branchId,
+    );
     final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final now = DateTime.now();

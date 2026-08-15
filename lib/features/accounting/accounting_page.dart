@@ -2936,6 +2936,107 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     }
   }
 
+  Future<void> _openingBalancesDialog() async {
+    final tr = AppLocalizations.of(context);
+    final locations = await AccountingService.listActiveCashLocations();
+    if (!mounted) return;
+    if (locations.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('no_cash_locations'))),
+      );
+      return;
+    }
+    final amount = TextEditingController();
+    final notes = TextEditingController();
+    var selectedId = locations.first.id;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(tr.text('opening_balances')),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(tr.text('opening_balances_desc')),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedId,
+                decoration: InputDecoration(
+                    labelText: tr.text('cash_location')),
+                items: locations
+                    .map((item) => DropdownMenuItem<String>(
+                          value: item.id,
+                          child: Text(_localizedAccountingName(item.name, tr)),
+                        ))
+                    .toList(),
+                onChanged: (value) => setDialogState(
+                    () => selectedId = value ?? selectedId),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: amount,
+                keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true),
+                decoration: InputDecoration(
+                    labelText: tr.text('opening_balance')),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: notes,
+                decoration: InputDecoration(labelText: tr.text('notes')),
+              ),
+              const SizedBox(height: 8),
+              Text(tr.text('opening_balance_once_hint'),
+                  style: Theme.of(context).textTheme.bodySmall),
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(tr.text('save'))),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+    final value = double.tryParse(amount.text.trim()) ?? 0;
+    if (value <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(tr.text('positive_amount_required'))));
+      }
+      return;
+    }
+    try {
+      final user = widget.store.activeUser;
+      await AccountingService.recordOpeningCashLocationBalance(
+        cashLocationId: selectedId,
+        amount: value,
+        storeId: widget.store.appIdentity.storeId,
+        branchId: widget.store.appIdentity.branchId,
+        createdBy: user?.fullName.trim().isNotEmpty == true
+            ? user!.fullName.trim()
+            : widget.store.currentRole,
+        notes: notes.text,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(tr.text('opening_balance_saved'))));
+        _refresh(force: true);
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      amount.dispose();
+      notes.dispose();
+    }
+  }
+
   Future<void> _createCashTransferDialog() async {
     final tr = AppLocalizations.of(context);
     final amount = TextEditingController(text: '0');
@@ -3867,6 +3968,12 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                                   : null,
                               icon: const Icon(Icons.compare_arrows_outlined),
                               label: Text(tr.text('cash_transfer'))),
+                          FilledButton.tonalIcon(
+                              onPressed: canManageAccounting
+                                  ? _openingBalancesDialog
+                                  : null,
+                              icon: const Icon(Icons.account_balance_outlined),
+                              label: Text(tr.text('opening_balances'))),
                         ],
                       ),
                       if (!canManageAccounting) ...[
@@ -3988,6 +4095,12 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                                 : null,
                             icon: const Icon(Icons.compare_arrows_outlined),
                             label: Text(tr.text('cash_transfer'))),
+                        FilledButton.tonalIcon(
+                            onPressed: canManageAccounting
+                                ? _openingBalancesDialog
+                                : null,
+                            icon: const Icon(Icons.account_balance_outlined),
+                            label: Text(tr.text('opening_balances'))),
                         FilledButton.tonalIcon(
                             onPressed: canManageAccounting
                                 ? _createPaymentAccountDialog

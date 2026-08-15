@@ -34,6 +34,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   final Map<String, DirectPeerHostEndpoint> _hostEndpoints =
       <String, DirectPeerHostEndpoint>{};
   bool _hostListenerStarting = false;
+  Future<void>? _hostStartFuture;
   bool _hostRestartScheduled = false;
   bool _hostStopRequested = false;
   StreamSubscription<Map<String, dynamic>>? _clientEventSubscription;
@@ -226,7 +227,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedSyncResult> testConnection() async {
     if (store.appIdentity.isHost) {
-      _startHostListener();
+      await _startHostListener();
       return UnifiedSyncResult(
         ok: true,
         message: 'Direct Host is ready for peer connections.',
@@ -489,18 +490,24 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     );
   }
 
-  void _startHostListener() {
+  Future<void> _startHostListener() {
     _attachStoreListener();
     _hostStopRequested = false;
     if (_hostRestartScheduled ||
         _hostListenerStarting ||
         _hostManager != null ||
         !store.appIdentity.isHost) {
-      return;
+      return _hostStartFuture ?? Future<void>.value();
     }
     _hostListenerStarting = true;
     if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
-    unawaited(_openHostManager());
+    final future = _openHostManager();
+    _hostStartFuture = future;
+    return future.whenComplete(() {
+      if (identical(_hostStartFuture, future)) {
+        _hostStartFuture = null;
+      }
+    });
   }
 
   Future<void> _openHostManager() async {
