@@ -43,13 +43,108 @@ import '../../models/sale.dart';
 import '../../models/store_profile.dart';
 import '../../models/stock_movement.dart';
 import '../../models/inventory_batch.dart';
+import '../../models/inventory_cost_layer.dart';
+import '../../models/inventory_count.dart';
+import '../../models/product_costing.dart';
+import '../../models/product_pricing.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/manufacturing.dart';
+import '../../models/sync_change.dart';
+import '../../models/sync_queue_item.dart';
 import '../../models/user_role.dart';
 import '../barcode/barcode_scanner_page.dart';
 import '../maintenance/maintenance_models.dart';
 import '../maintenance/maintenance_service.dart';
+
+Map<String, Object?> _validateStressBackupJson(String raw) {
+  final decoded = jsonDecode(raw);
+  if (decoded is! Map) {
+    return <String, Object?>{'valid': false, 'keys': 0};
+  }
+  final payload = Map<String, dynamic>.from(decoded);
+  const requiredCollections = <String>[
+    'products',
+    'customers',
+    'suppliers',
+    'sales',
+    'purchases',
+    'expenses',
+  ];
+  final missing = requiredCollections
+      .where((key) => payload[key] is! List)
+      .toList(growable: false);
+  return <String, Object?>{
+    'valid': missing.isEmpty,
+    'keys': payload.length,
+    'missing': missing,
+  };
+}
+
+/// Exercises the same entity decoding used by backup import, without writing
+/// anything to the live store.  A real import is deliberately not run from
+/// Stress Lab because it would replace the business data being audited.
+Map<String, Object?> _validateStressBackupRestoreReadiness(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      return <String, Object?>{
+        'ready': false,
+        'error': 'root is not an object'
+      };
+    }
+    final payload = Map<String, dynamic>.from(decoded);
+    var decodedRecords = 0;
+
+    void decodeList(String key, void Function(Map<String, dynamic>) decoder) {
+      final value = payload[key];
+      if (value == null) return;
+      if (value is! List) throw FormatException('$key is not a list');
+      for (final item in value) {
+        if (item is! Map) throw FormatException('$key contains a non-object');
+        decoder(Map<String, dynamic>.from(item));
+        decodedRecords++;
+      }
+    }
+
+    if (payload['storeProfile'] is Map) {
+      StoreProfile.fromJson(
+          Map<String, dynamic>.from(payload['storeProfile'] as Map));
+    }
+    decodeList('products', Product.fromJson);
+    decodeList('customers', Customer.fromJson);
+    decodeList('sales', Sale.fromJson);
+    decodeList('saleQuotations', SaleQuotation.fromJson);
+    decodeList('deliveryNotes', DeliveryNote.fromJson);
+    decodeList('billsOfMaterials', BillOfMaterials.fromJson);
+    decodeList('manufacturingOrders', ManufacturingOrder.fromJson);
+    decodeList('suppliers', Supplier.fromJson);
+    decodeList('supplierProductPrices', SupplierProductPrice.fromJson);
+    decodeList('priceLists', PriceList.fromJson);
+    decodeList('productPrices', ProductPrice.fromJson);
+    decodeList('productPriceOverrides', ProductPriceOverride.fromJson);
+    decodeList('productCosts', ProductCost.fromJson);
+    decodeList('costingMethodHistory', CostingMethodHistory.fromJson);
+    decodeList('inventoryCostLayers', InventoryCostLayer.fromJson);
+    decodeList('categories', CatalogItem.fromJson);
+    decodeList('brands', CatalogItem.fromJson);
+    decodeList('units', CatalogItem.fromJson);
+    decodeList('expenses', Expense.fromJson);
+    decodeList('purchases', Purchase.fromJson);
+    decodeList('stockMovements', StockMovement.fromJson);
+    decodeList('inventoryCounts', InventoryCountSession.fromJson);
+    decodeList('warehouses', Warehouse.fromJson);
+    decodeList('accountTransactions', AccountTransaction.fromJson);
+    decodeList('roles', UserRole.fromJson);
+    decodeList('users', AppUser.fromJson);
+    decodeList('syncChanges', SyncChange.fromJson);
+    decodeList('syncQueue', SyncQueueItem.fromJson);
+
+    return <String, Object?>{'ready': true, 'decodedRecords': decodedRecords};
+  } catch (error) {
+    return <String, Object?>{'ready': false, 'error': error.toString()};
+  }
+}
 
 class _StressAuditStep {
   const _StressAuditStep({
@@ -58,6 +153,7 @@ class _StressAuditStep {
     required this.status,
     required this.details,
     required this.elapsedMs,
+    this.performance,
   });
 
   final String section;
@@ -65,10 +161,92 @@ class _StressAuditStep {
   final String status;
   final String details;
   final int elapsedMs;
+  final _StressPerfMetrics? performance;
 
   bool get isPass => status == 'PASS';
   bool get isWarn => status == 'WARN';
   bool get isFail => status == 'FAIL';
+}
+
+class _StressPerfMetrics {
+  const _StressPerfMetrics({
+    required this.count,
+    required this.failed,
+    required this.avgMs,
+    required this.p50Ms,
+    required this.p95Ms,
+    required this.p99Ms,
+    required this.maxMs,
+    required this.stableStartMs,
+    required this.stableEndMs,
+    required this.slowdown,
+    required this.warmupExcluded,
+    required this.above100Ms,
+    required this.above500Ms,
+    required this.above1s,
+    required this.above5s,
+    this.bottleneckPhase = '',
+    this.bottleneckSlowdown = 1,
+  });
+
+  final int count;
+  final int failed;
+  final double avgMs;
+  final double p50Ms;
+  final double p95Ms;
+  final double p99Ms;
+  final int maxMs;
+  final double stableStartMs;
+  final double stableEndMs;
+  final double slowdown;
+  final int warmupExcluded;
+  final int above100Ms;
+  final int above500Ms;
+  final int above1s;
+  final int above5s;
+  final String bottleneckPhase;
+  final double bottleneckSlowdown;
+
+  _StressPerfMetrics withBottleneck(String phase, double phaseSlowdown) =>
+      _StressPerfMetrics(
+        count: count,
+        failed: failed,
+        avgMs: avgMs,
+        p50Ms: p50Ms,
+        p95Ms: p95Ms,
+        p99Ms: p99Ms,
+        maxMs: maxMs,
+        stableStartMs: stableStartMs,
+        stableEndMs: stableEndMs,
+        slowdown: slowdown,
+        warmupExcluded: warmupExcluded,
+        above100Ms: above100Ms,
+        above500Ms: above500Ms,
+        above1s: above1s,
+        above5s: above5s,
+        bottleneckPhase: phase,
+        bottleneckSlowdown: phaseSlowdown,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'count': count,
+        'failed': failed,
+        'avgMs': avgMs,
+        'p50Ms': p50Ms,
+        'p95Ms': p95Ms,
+        'p99Ms': p99Ms,
+        'maxMs': maxMs,
+        'stableStartMs': stableStartMs,
+        'stableEndMs': stableEndMs,
+        'slowdown': slowdown,
+        'warmupExcluded': warmupExcluded,
+        'above100Ms': above100Ms,
+        'above500Ms': above500Ms,
+        'above1s': above1s,
+        'above5s': above5s,
+        'bottleneckPhase': bottleneckPhase,
+        'bottleneckSlowdown': bottleneckSlowdown,
+      };
 }
 
 class _StressAssertionResult {
@@ -180,6 +358,7 @@ class _StressPerfStats {
   int totalMs = 0;
   int minMs = 1 << 30;
   int maxMs = 0;
+  final List<int> _samples = <int>[];
   final List<int> _bucketTotals = <int>[];
   final List<int> _bucketCounts = <int>[];
 
@@ -188,6 +367,7 @@ class _StressPerfStats {
     totalMs += elapsedMs;
     if (elapsedMs < minMs) minMs = elapsedMs;
     if (elapsedMs > maxMs) maxMs = elapsedMs;
+    _samples.add(elapsedMs);
     final bucket = max<int>(0, (count - 1) ~/ bucketSize);
     while (_bucketTotals.length <= bucket) {
       _bucketTotals.add(0);
@@ -204,16 +384,59 @@ class _StressPerfStats {
   double get avgMs => count == 0 ? 0 : totalMs / count;
   double get opsPerSecond => totalMs <= 0 ? 0 : count * 1000 / totalMs;
 
-  double get firstBucketAvg => _bucketCounts.isEmpty || _bucketCounts.first == 0
-      ? avgMs
-      : _bucketTotals.first / _bucketCounts.first;
-  double get lastBucketAvg => _bucketCounts.isEmpty || _bucketCounts.last == 0
-      ? avgMs
-      : _bucketTotals.last / _bucketCounts.last;
+  double _percentile(double percentile) {
+    if (_samples.isEmpty) return 0;
+    final sorted = List<int>.from(_samples)..sort();
+    final index = ((sorted.length - 1) * percentile).round();
+    return sorted[index].toDouble();
+  }
+
+  ({double startMs, double endMs, int warmup}) get stableTrend {
+    if (_samples.isEmpty) return (startMs: 0, endMs: 0, warmup: 0);
+    final warmup = _samples.length >= 1000 ? bucketSize : 0;
+    final available = _samples.length - warmup;
+    final window = min<int>(bucketSize, max<int>(1, available ~/ 10));
+    final start = _samples.skip(warmup).take(window);
+    final end = _samples.skip(_samples.length - window);
+    final startMs = start.fold<int>(0, (sum, value) => sum + value) / window;
+    final endMs = end.fold<int>(0, (sum, value) => sum + value) / window;
+    return (startMs: startMs, endMs: endMs, warmup: warmup);
+  }
+
   double get slowdownRatio =>
-      firstBucketAvg <= 0 ? 1 : lastBucketAvg / firstBucketAvg;
+      stableTrend.startMs <= 0 ? 1 : stableTrend.endMs / stableTrend.startMs;
+  double get stableSlowdownDeltaMs =>
+      max(0, stableTrend.endMs - stableTrend.startMs);
   bool get hasSlowdownWarning =>
-      count >= bucketSize * 3 && slowdownRatio >= 1.8;
+      count >= bucketSize * 3 &&
+      slowdownRatio >= 1.25 &&
+      stableSlowdownDeltaMs >= 5;
+  bool get hasSlowdownFailure =>
+      count >= bucketSize * 3 &&
+      slowdownRatio >= 1.75 &&
+      stableSlowdownDeltaMs >= 25;
+  bool get hasLatencyOutlier => _samples.any((value) => value >= 5000);
+  bool get hasTailLatencyWarning =>
+      _percentile(0.99) >= 1000 || hasLatencyOutlier;
+  bool get hasTailLatencyFailure => _percentile(0.99) >= 5000;
+
+  _StressPerfMetrics get metrics => _StressPerfMetrics(
+        count: count,
+        failed: failed,
+        avgMs: avgMs,
+        p50Ms: _percentile(0.50),
+        p95Ms: _percentile(0.95),
+        p99Ms: _percentile(0.99),
+        maxMs: maxMs,
+        stableStartMs: stableTrend.startMs,
+        stableEndMs: stableTrend.endMs,
+        slowdown: slowdownRatio,
+        warmupExcluded: stableTrend.warmup,
+        above100Ms: _samples.where((value) => value >= 100).length,
+        above500Ms: _samples.where((value) => value >= 500).length,
+        above1s: _samples.where((value) => value >= 1000).length,
+        above5s: _samples.where((value) => value >= 5000).length,
+      );
 
   String get curve {
     if (_bucketCounts.isEmpty) return 'curve=none';
@@ -229,7 +452,12 @@ class _StressPerfStats {
   }
 
   String get summary =>
-      'count=$count failed=$failed total=${totalMs}ms avg=${avgMs.toStringAsFixed(2)}ms min=${minMs == (1 << 30) ? 0 : minMs}ms max=${maxMs}ms ops/s=${opsPerSecond.toStringAsFixed(1)} $curve';
+      'count=$count failed=$failed total=${totalMs}ms avg=${avgMs.toStringAsFixed(2)}ms '
+      'p50=${metrics.p50Ms.toStringAsFixed(1)}ms p95=${metrics.p95Ms.toStringAsFixed(1)}ms '
+      'p99=${metrics.p99Ms.toStringAsFixed(1)}ms min=${minMs == (1 << 30) ? 0 : minMs}ms max=${maxMs}ms '
+      'ops/s=${opsPerSecond.toStringAsFixed(1)} stableStart=${metrics.stableStartMs.toStringAsFixed(1)}ms '
+      'stableEnd=${metrics.stableEndMs.toStringAsFixed(1)}ms warmupExcluded=${metrics.warmupExcluded} '
+      'outliers(100ms=${metrics.above100Ms},500ms=${metrics.above500Ms},1s=${metrics.above1s},5s=${metrics.above5s}) $curve';
 }
 
 class _PageReadinessProbeResult {
@@ -435,22 +663,44 @@ class _StressLabPageState extends State<StressLabPage> {
   int _lastPressureProgressEvery = 50;
   int? _auditBackupBytes;
   int? _auditBackupKeyCount;
+  bool? _auditBackupValid;
+  bool? _auditBackupRestoreReady;
   final List<_StressAuditStep> _report = <_StressAuditStep>[];
   final List<_StressAssertionResult> _assertions = <_StressAssertionResult>[];
 
   AppStore get store => widget.store;
 
-  Future<({int bytes, int keys})> _ensureAuditBackupSnapshot() async {
+  Future<({int bytes, int keys, bool valid, bool restoreReady})>
+      _ensureAuditBackupSnapshot() async {
     final cachedBytes = _auditBackupBytes;
     final cachedKeys = _auditBackupKeyCount;
-    if (cachedBytes != null && cachedKeys != null) {
-      return (bytes: cachedBytes, keys: cachedKeys);
+    final cachedValid = _auditBackupValid;
+    final cachedRestoreReady = _auditBackupRestoreReady;
+    if (cachedBytes != null &&
+        cachedKeys != null &&
+        cachedValid != null &&
+        cachedRestoreReady != null) {
+      return (
+        bytes: cachedBytes,
+        keys: cachedKeys,
+        valid: cachedValid,
+        restoreReady: cachedRestoreReady,
+      );
     }
     final raw = await store.exportBackupJson();
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    final snapshot = (bytes: raw.length, keys: decoded.keys.length);
+    final validation = await compute(_validateStressBackupJson, raw);
+    final restoreReadiness =
+        await compute(_validateStressBackupRestoreReadiness, raw);
+    final snapshot = (
+      bytes: raw.length,
+      keys: validation['keys'] as int? ?? 0,
+      valid: validation['valid'] == true,
+      restoreReady: restoreReadiness['ready'] == true,
+    );
     _auditBackupBytes = snapshot.bytes;
     _auditBackupKeyCount = snapshot.keys;
+    _auditBackupValid = snapshot.valid;
+    _auditBackupRestoreReady = snapshot.restoreReady;
     return snapshot;
   }
 
@@ -513,6 +763,20 @@ class _StressLabPageState extends State<StressLabPage> {
     stats.sort((a, b) => b.totalMs.compareTo(a.totalMs));
     final top = stats.take(5).map((stat) => stat.summary).join(' || ');
     return 'traceTop=$top';
+  }
+
+  _StressTraceStat? _traceBottleneck() {
+    final candidates = _traceStats.values
+        .where(
+            (stat) => stat.count >= 10 && stat.trend.endMs > stat.trend.startMs)
+        .toList(growable: false);
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) {
+      final aGrowth = a.trend.endMs - a.trend.startMs;
+      final bGrowth = b.trend.endMs - b.trend.startMs;
+      return bGrowth.compareTo(aGrowth);
+    });
+    return candidates.first;
   }
 
   void _resetPerformanceCapture() {
@@ -735,6 +999,14 @@ class _StressLabPageState extends State<StressLabPage> {
         _addLog(
             'REPORT_PERFORMANCE_SNAPSHOT index=${i + 1} capturedAt=${snapshot.capturedAt.toIso8601String()} ${snapshot.snapshotLine}');
       }
+    }
+    for (final row in _report.where((item) => item.performance != null)) {
+      _addLog('REPORT_OPERATION_PERFORMANCE ${jsonEncode(<String, Object?>{
+            'section': row.section,
+            'name': row.name,
+            'status': row.status,
+            ...row.performance!.toJson(),
+          })}');
     }
     _addLog('REPORT_SECTION_COUNT=${sections.length}');
     for (final section in sections) {
@@ -1389,7 +1661,7 @@ class _StressLabPageState extends State<StressLabPage> {
       _dual('قاعدة البيانات', 'Database'),
       _dual('نمط القاعدة والنسخ الاحتياطي', 'Database snapshot and backup'),
       databaseEntries.isNotEmpty &&
-          (await _ensureAuditBackupSnapshot()).bytes > 0,
+          (await _ensureAuditBackupSnapshot()).restoreReady,
       _dual(
         'تمت قراءة ${databaseEntries.length} مفتاح/جداول وإنتاج نسخة احتياطية قابلة للتصدير.',
         'Read ${databaseEntries.length} keys/tables and produced an exportable backup.',
@@ -3344,18 +3616,34 @@ class _StressLabPageState extends State<StressLabPage> {
       }
     }
     swTotal.stop();
-    final status = stats.failed == 0
-        ? (stats.hasSlowdownWarning ? 'WARN' : 'PASS')
-        : 'FAIL';
+    final bottleneck = _traceBottleneck();
+    final performance = bottleneck == null
+        ? stats.metrics
+        : stats.metrics.withBottleneck(
+            '${bottleneck.section}.${bottleneck.phase}',
+            bottleneck.trend.slowdown,
+          );
+    final status = stats.failed > 0 ||
+            stats.hasSlowdownFailure ||
+            stats.hasTailLatencyFailure
+        ? 'FAIL'
+        : stats.hasSlowdownWarning || stats.hasTailLatencyWarning
+            ? 'WARN'
+            : 'PASS';
     final traceSummary = _traceSummaryForSection(section);
     final details =
-        '${stats.summary} totalWall=${swTotal.elapsedMilliseconds}ms${firstError == null ? '' : ' firstError=$firstError'}${stats.hasSlowdownWarning ? ' slowdownWarning=true' : ''} ${traceSummary == 'trace=none' ? '' : traceSummary}';
+        '${stats.summary} totalWall=${swTotal.elapsedMilliseconds}ms${firstError == null ? '' : ' firstError=$firstError'}'
+        '${stats.hasSlowdownWarning ? ' slowdownWarning=true' : ''}${stats.hasLatencyOutlier ? ' latencyOutlier=true' : ''} '
+        'bottleneck=${performance.bottleneckPhase.isEmpty ? 'none' : performance.bottleneckPhase} '
+        'bottleneckSlowdown=${performance.bottleneckSlowdown.toStringAsFixed(2)}x '
+        '${traceSummary == 'trace=none' ? '' : traceSummary}';
     _report.add(_StressAuditStep(
         section: section,
         name: name,
         status: status,
         details: details,
-        elapsedMs: swTotal.elapsedMilliseconds));
+        elapsedMs: swTotal.elapsedMilliseconds,
+        performance: performance));
     _addLog('PERF_STEP $status [$section] $name $details');
   }
 
@@ -3401,18 +3689,34 @@ class _StressLabPageState extends State<StressLabPage> {
       await Future<void>.delayed(Duration.zero);
     }
     swTotal.stop();
-    final status = stats.failed == 0
-        ? (stats.hasSlowdownWarning ? 'WARN' : 'PASS')
-        : 'FAIL';
+    final bottleneck = _traceBottleneck();
+    final performance = bottleneck == null
+        ? stats.metrics
+        : stats.metrics.withBottleneck(
+            '${bottleneck.section}.${bottleneck.phase}',
+            bottleneck.trend.slowdown,
+          );
+    final status = stats.failed > 0 ||
+            stats.hasSlowdownFailure ||
+            stats.hasTailLatencyFailure
+        ? 'FAIL'
+        : stats.hasSlowdownWarning || stats.hasTailLatencyWarning
+            ? 'WARN'
+            : 'PASS';
     final traceSummary = _traceSummaryForSection(section);
     final details =
-        '${stats.summary} totalWall=${swTotal.elapsedMilliseconds}ms${firstError == null ? '' : ' firstError=$firstError'}${stats.hasSlowdownWarning ? ' slowdownWarning=true' : ''} batchSize=$batchSize ${traceSummary == 'trace=none' ? '' : traceSummary}';
+        '${stats.summary} totalWall=${swTotal.elapsedMilliseconds}ms${firstError == null ? '' : ' firstError=$firstError'}'
+        '${stats.hasSlowdownWarning ? ' slowdownWarning=true' : ''}${stats.hasLatencyOutlier ? ' latencyOutlier=true' : ''} '
+        'batchSize=$batchSize bottleneck=${performance.bottleneckPhase.isEmpty ? 'none' : performance.bottleneckPhase} '
+        'bottleneckSlowdown=${performance.bottleneckSlowdown.toStringAsFixed(2)}x '
+        '${traceSummary == 'trace=none' ? '' : traceSummary}';
     _report.add(_StressAuditStep(
         section: section,
         name: name,
         status: status,
         details: details,
-        elapsedMs: swTotal.elapsedMilliseconds));
+        elapsedMs: swTotal.elapsedMilliseconds,
+        performance: performance));
     _addLog('PERF_STEP $status [$section] $name $details');
   }
 
@@ -4078,6 +4382,19 @@ class _StressLabPageState extends State<StressLabPage> {
             progressEvery: progressEvery);
       }
 
+      await _auditStep(
+        _dual('المشتريات', 'Purchases'),
+        _dual(
+            'تفريغ طابور القيود المحاسبية', 'Drain purchase accounting queue'),
+        () async {
+          final sw = Stopwatch()..start();
+          await store.waitForPendingAccounting();
+          sw.stop();
+          return 'drainedIn=${sw.elapsedMilliseconds}ms';
+        },
+        successDetails: (value) => value,
+      );
+
       if (salePool.isNotEmpty) {
         final salesWarehouseId = store.resolveWarehouseForSale().id;
         final salesPerProduct = (count / salePool.length).ceil();
@@ -4170,6 +4487,8 @@ class _StressLabPageState extends State<StressLabPage> {
       _log.clear();
       _auditBackupBytes = null;
       _auditBackupKeyCount = null;
+      _auditBackupValid = null;
+      _auditBackupRestoreReady = null;
       _currentBatchId =
           'audit_${DateTime.now().millisecondsSinceEpoch}_${_roleLabel().toLowerCase()}';
     });
@@ -4684,7 +5003,11 @@ class _StressLabPageState extends State<StressLabPage> {
       await _auditStep(_dual('النسخ الاحتياطي', 'Backup'),
           _dual('توليد Backup JSON', 'Generate backup JSON'), () async {
         final backup = await _ensureAuditBackupSnapshot();
-        return '${backup.bytes} bytes, keys=${backup.keys}';
+        if (!backup.valid || !backup.restoreReady) {
+          throw StateError(
+              'Generated backup failed restore-readiness validation.');
+        }
+        return '${backup.bytes} bytes, keys=${backup.keys}, structurallyValid=true, restoreReady=true';
       },
           successDetails: (value) => _dual(
               'نجح توليد النسخة الاحتياطية: $value.',
@@ -5533,9 +5856,11 @@ class _StressLabPageState extends State<StressLabPage> {
     expect(
         'BACKUP-001',
         'Backup',
-        backupSnapshot.bytes > 0,
-        'Backup JSON can be generated after stress run.',
-        'backupBytes=${backupSnapshot.bytes}');
+        backupSnapshot.bytes > 0 &&
+            backupSnapshot.valid &&
+            backupSnapshot.restoreReady,
+        'Backup JSON can be generated and decoded for restore after stress run.',
+        'backupBytes=${backupSnapshot.bytes} structurallyValid=${backupSnapshot.valid} restoreReady=${backupSnapshot.restoreReady}');
 
     final passed = _assertions.where((item) => item.passed).length;
     final blockingFailed =
@@ -5792,6 +6117,31 @@ class _StressLabPageState extends State<StressLabPage> {
   }
 
   String _investigatePerformanceSlowdown() {
+    final slowRows = _report
+        .where(
+            (item) => item.performance != null && (item.isWarn || item.isFail))
+        .toList(growable: false);
+    if (slowRows.isEmpty) {
+      const details =
+          'Performance investigation OK: no structured pressure metric crossed a threshold.';
+      _addLog('INVESTIGATION_PERFORMANCE $details');
+      return details;
+    }
+    final evidence = slowRows
+        .map((row) => jsonEncode(<String, Object?>{
+              'section': row.section,
+              'name': row.name,
+              'status': row.status,
+              ...row.performance!.toJson(),
+            }))
+        .join(' || ');
+    final details =
+        'slowSections=${slowRows.length} structuredEvidence=$evidence possibleCause=${slowRows.map((row) => row.performance!.bottleneckPhase).where((value) => value.isNotEmpty).join(',')}';
+    _addLog('INVESTIGATION_PERFORMANCE $details');
+    return details;
+  }
+
+  String _investigatePerformanceSlowdownLegacy() {
     final slowRows = _report
         .where((item) => _sectionMatches(item.section, 'ضغط') && item.isWarn)
         .toList(growable: false);
@@ -6261,7 +6611,11 @@ class _StressLabPageState extends State<StressLabPage> {
       'Stock movements SQLite query/count/page',
       () => _measureSqlitePageReadiness<StockMovement>(
         query: () => LocalDatabaseService.queryStockMovementsFromSqlite(
-          query: query,
+          // Stock movements are written through the transaction service and
+          // are not guaranteed to have a freshly rebuilt text-search entry.
+          // Probe the real paginated screen path instead of reporting an
+          // artificial empty search result for the current audit id.
+          query: '',
           limit: 50,
           offset: 0,
           sortMode: 'newest',

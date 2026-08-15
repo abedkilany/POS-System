@@ -854,6 +854,7 @@ class StockTransactionService {
       updatedAt: now,
     );
 
+    final localOnly = target == 'local';
     final change = SyncChange(
       id: movement.id,
       entityType: 'stock_movement',
@@ -864,7 +865,8 @@ class StockTransactionService {
       payload: movement.toJson(),
       storeId: movement.storeId.isEmpty ? defaultStoreId : movement.storeId,
       branchId: movement.branchId.isEmpty ? defaultBranchId : movement.branchId,
-      isSynced: false,
+      isSynced: localOnly,
+      syncedAt: localOnly ? now : null,
       storeEpoch: 1,
       sequence: sequence,
     );
@@ -873,7 +875,7 @@ class StockTransactionService {
       INSERT OR REPLACE INTO sync_events
         (id, entity_type, entity_id, operation, device_id, store_id, branch_id,
          payload_json, is_synced, created_at, synced_at, store_epoch, sequence)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       variables: <Variable<Object>>[
         Variable<String>(change.id),
@@ -884,11 +886,14 @@ class StockTransactionService {
         Variable<String>(change.storeId),
         Variable<String>(change.branchId),
         Variable<String>(_payloadJson(change.payload)),
+        Variable<int>(localOnly ? 1 : 0),
         Variable<String>(change.createdAt.toIso8601String()),
+        Variable<String>(localOnly ? now.toIso8601String() : ''),
         Variable<int>(change.storeEpoch),
         Variable<int>(change.sequence),
       ],
     );
+    if (localOnly) return insertedMovement.movementId;
     await db.customInsert(
       '''
       INSERT OR REPLACE INTO pending_sync_changes

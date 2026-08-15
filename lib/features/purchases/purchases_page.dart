@@ -13,6 +13,7 @@ import '../../core/utils/revision_cache.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/services/purchase_pdf_service.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../data/app_store.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -1384,6 +1385,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
                   runSpacing: 8,
                   alignment: WrapAlignment.end,
                   children: [
+                    if (widget.store
+                        .hasPermission(AppPermission.purchasesPrint))
+                      OutlinedButton.icon(
+                        onPressed: () => _printPurchase(context, purchase),
+                        icon: const Icon(Icons.print_outlined),
+                        label: Text(tr.text('print_invoice')),
+                      ),
                     OutlinedButton.icon(
                       onPressed: () {
                         Navigator.pop(context);
@@ -1438,6 +1446,22 @@ class _PurchasesPageState extends State<PurchasesPage> {
         );
       },
     );
+  }
+
+  Future<void> _printPurchase(BuildContext context, Purchase purchase) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      await PurchasePdfService.printPurchase(
+        purchase: purchase,
+        profile: widget.store.storeProfile,
+        locale: tr.locale,
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('pdf_action_failed'))),
+      );
+    }
   }
 
   Future<void> _openPurchaseDialog(BuildContext context,

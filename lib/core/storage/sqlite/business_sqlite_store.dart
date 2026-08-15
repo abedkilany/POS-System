@@ -417,10 +417,13 @@ class BusinessSqliteStore {
     final safeOffset = _safeOffset(offset);
     final usesTextSearch = normalized.isNotEmpty;
     final queryLimit = usesTextSearch ? safeLimit + 1 : safeLimit;
-    // The total must represent the complete filtered result set, including
-    // text-search queries. Estimating it from the current page makes the
-    // first page report a smaller total whenever more than `limit` rows match.
-    final totalFuture = _countWhere(db, 'products', whereSql, variables);
+    // Text searches can match many thousands of products. Counting every
+    // match before displaying the first page turns a responsive search into a
+    // full table scan. Use the extra row fetched below to report whether more
+    // results exist; exact totals remain available for non-search views.
+    final totalFuture = usesTextSearch
+        ? null
+        : _countWhere(db, 'products', whereSql, variables);
     final allowLegacyFallback = !await _warehouseInventoryBackfillCompleted(db);
     final rows = await db.customSelect('''
       SELECT id, name, code, name_en AS nameEn, name_ar AS nameAr,
@@ -484,7 +487,9 @@ class BusinessSqliteStore {
                 purchaseUnitsByProduct: purchaseUnitsByProduct,
               ))
           .toList(growable: false),
-      totalCount: await totalFuture,
+      totalCount: usesTextSearch
+          ? safeOffset + pageRows.length + (hasMoreSearchRows ? 1 : 0)
+          : await totalFuture!,
       limit: safeLimit,
       offset: safeOffset,
     );
@@ -672,7 +677,10 @@ class BusinessSqliteStore {
       'SELECT COUNT(*) AS value FROM daily_metrics',
     );
     if (metricsRows == 0) {
-      await refreshSummaryTables(db, reference: reference, force: true);
+      // Reports only need daily metrics here. Rebuilding the global search
+      // index as part of first report open scans every product, sale, and stock
+      // movement and was the dominant cost in large databases.
+      await refreshDailyMetrics(db);
     }
     final today = DateTime(reference.year, reference.month, reference.day);
     final tomorrow = today.add(const Duration(days: 1));
@@ -860,6 +868,15 @@ class BusinessSqliteStore {
     await db.transaction(() async {
       await _rebuildDailyMetrics(db);
       await _rebuildSearchIndex(db);
+    });
+  }
+
+  /// Rebuilds the report aggregates without touching the global text-search
+  /// index. Use this from report reads when an upgrade has not created metrics
+  /// yet; full rebuilds remain reserved for recovery/sync maintenance.
+  static Future<void> refreshDailyMetrics(VentioDriftDatabase db) async {
+    await db.transaction(() async {
+      await _rebuildDailyMetrics(db);
     });
   }
 
