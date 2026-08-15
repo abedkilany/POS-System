@@ -138,71 +138,89 @@ class BarcodeLabelPdfService {
       ),
       child: pw.Column(
         children: [
-          pw.Text(
-            product.name,
-            maxLines: 1,
-            overflow: pw.TextOverflow.clip,
-            style: pw.TextStyle(
-                fontSize: options.fontSize, fontWeight: pw.FontWeight.bold),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text(
+              product.name,
+              maxLines: 1,
+              overflow: pw.TextOverflow.clip,
+              textAlign: pw.TextAlign.right,
+              style: pw.TextStyle(
+                  fontSize: options.fontSize, fontWeight: pw.FontWeight.bold),
+            ),
           ),
           pw.SizedBox(height: 2),
           pw.Expanded(
-            child: pw.Row(
-              crossAxisAlignment: pw.CrossAxisAlignment.center,
-              children: [
-                pw.Expanded(
-                  flex: 3,
-                  child: pw.Column(
-                    mainAxisAlignment: pw.MainAxisAlignment.center,
-                    children: [
-                      pw.BarcodeWidget(
-                        barcode: pw.Barcode.code128(),
-                        data: product.barcode,
-                        width: width - 62,
-                        height: barcodeHeight,
-                        drawText: false,
-                      ),
-                      pw.SizedBox(height: 2),
-                      pw.Text(
-                        product.barcode,
-                        style: pw.TextStyle(
-                          fontSize: options.fontSize - 1,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                pw.SizedBox(width: 4),
-                pw.SizedBox(
-                  width: 48,
-                  child: pw.Column(
-                    mainAxisAlignment: pw.MainAxisAlignment.center,
-                    children: [
-                      if (hasLogo)
-                        pw.Image(
-                          pw.MemoryImage(options.logoBytes!),
-                          width: 46,
-                          height: 30,
-                          fit: pw.BoxFit.contain,
-                        ),
-                      if (hasWeight) ...[
-                        pw.SizedBox(height: 3),
-                        pw.Text(
-                          options.weight.trim(),
-                          maxLines: 1,
-                          overflow: pw.TextOverflow.clip,
-                          style: pw.TextStyle(
-                            fontSize: options.fontSize,
-                            fontWeight: pw.FontWeight.bold,
+            child: pw.Directionality(
+              textDirection: pw.TextDirection.ltr,
+              child: pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  pw.SizedBox(
+                    width: 60,
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      mainAxisAlignment: pw.MainAxisAlignment.center,
+                      children: [
+                        if (hasLogo)
+                          pw.Container(
+                            width: 60,
+                            height: 40,
+                            alignment: pw.Alignment.center,
+                            child: pw.Image(
+                              pw.MemoryImage(options.logoBytes!),
+                              width: 60,
+                              height: 40,
+                              fit: pw.BoxFit.contain,
+                            ),
                           ),
-                          textAlign: pw.TextAlign.center,
+                        if (hasWeight) ...[
+                          pw.SizedBox(height: 3),
+                          pw.Text(
+                            options.weight.trim(),
+                            maxLines: 1,
+                            overflow: pw.TextOverflow.clip,
+                            style: pw.TextStyle(
+                              fontSize: options.fontSize - 1,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                            textAlign: pw.TextAlign.center,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  pw.SizedBox(width: 4),
+                  pw.Expanded(
+                    child: pw.Column(
+                      mainAxisAlignment: pw.MainAxisAlignment.center,
+                      children: [
+                        pw.BarcodeWidget(
+                          barcode: pw.Barcode.code128(),
+                          data: product.barcode,
+                          width: double.infinity,
+                          height: barcodeHeight,
+                          drawText: false,
+                        ),
+                        pw.SizedBox(height: 2),
+                        pw.Directionality(
+                          textDirection: pw.TextDirection.ltr,
+                          child: pw.Text(
+                            product.barcode,
+                            maxLines: 1,
+                            softWrap: false,
+                            textAlign: pw.TextAlign.center,
+                            style: pw.TextStyle(
+                              fontSize: options.fontSize - 1,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
                         ),
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           if (hasDates)
