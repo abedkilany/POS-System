@@ -32,6 +32,7 @@ import 'features/inventory/inventory_page.dart';
 import 'features/inventory/manufacturing_page.dart';
 import 'features/maintenance/maintenance_page.dart';
 import 'features/products/products_page.dart';
+import 'features/barcode/barcode_labels_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
@@ -957,6 +958,13 @@ class _MainShellState extends State<MainShell> {
             selectedIcon: Icons.inventory_2,
             page: timedPage('ProductsPage', tr.text('products'),
                 ProductsPage(store: widget.store))),
+      if (widget.store.canAccessPage('products'))
+        _ShellItem(
+            label: tr.text('barcode_labels'),
+            icon: Icons.qr_code_2_outlined,
+            selectedIcon: Icons.qr_code_2,
+            page: timedPage('BarcodeLabelsPage', tr.text('barcode_labels'),
+                BarcodeLabelsPage(store: widget.store))),
       if (widget.store.canAccessPage('customers'))
         _ShellItem(
             label: tr.text('customers'),

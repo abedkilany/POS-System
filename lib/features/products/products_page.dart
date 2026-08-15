@@ -1148,31 +1148,40 @@ class _ProductDialogState extends State<_ProductDialog> {
                     ),
                     const SizedBox(height: 12),
                     _ResponsiveFields(children: [
-                      TextFormField(
-                        controller: barcodeController,
-                        decoration: InputDecoration(
-                          labelText: tr.text('barcode'),
-                          suffixIcon: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                tooltip: tr.text('generate_barcode'),
-                                onPressed: _generateBarcode,
-                                icon: const Icon(Icons.qr_code_2_outlined),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: barcodeController,
+                            decoration: InputDecoration(
+                              labelText: tr.text('barcode'),
+                              suffixIcon: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: tr.text('copy_barcode'),
+                                    onPressed: _copyBarcode,
+                                    icon: const Icon(Icons.copy_outlined),
+                                  ),
+                                  IconButton(
+                                    tooltip: tr.text('scan_with_camera'),
+                                    onPressed: _scanBarcodeWithCamera,
+                                    icon: const Icon(Icons.camera_alt_outlined),
+                                  ),
+                                ],
                               ),
-                              IconButton(
-                                tooltip: tr.text('copy_barcode'),
-                                onPressed: _copyBarcode,
-                                icon: const Icon(Icons.copy_outlined),
-                              ),
-                              IconButton(
-                                tooltip: tr.text('scan_with_camera'),
-                                onPressed: _scanBarcodeWithCamera,
-                                icon: const Icon(Icons.camera_alt_outlined),
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: OutlinedButton.icon(
+                              onPressed: _generateBarcode,
+                              icon: const Icon(Icons.qr_code_2_outlined),
+                              label: Text(tr.text('generate_barcode')),
+                            ),
+                          ),
+                        ],
                       ),
                       TextFormField(
                           controller: nameEnController,
@@ -1443,7 +1452,24 @@ class _ProductDialogState extends State<_ProductDialog> {
   }
 
   void _generateBarcode() {
-    final value = DateTime.now().microsecondsSinceEpoch.toString();
+    final used = widget.store.products
+        .where((item) => item.id != widget.product?.id)
+        .map((item) => item.barcode.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet();
+    var seed = DateTime.now().microsecondsSinceEpoch % 1000000000000;
+    String value;
+    do {
+      final body = seed.toString().padLeft(12, '0');
+      var sum = 0;
+      for (var index = 0; index < body.length; index++) {
+        final digit = int.parse(body[index]);
+        sum += digit * (index.isEven ? 1 : 3);
+      }
+      final checkDigit = (10 - (sum % 10)) % 10;
+      value = '$body$checkDigit';
+      seed = (seed + 1) % 1000000000000;
+    } while (used.contains(value));
     setState(() => barcodeController.text = value);
   }
 
