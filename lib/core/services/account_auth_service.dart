@@ -24,6 +24,7 @@ class AccountAuthResult {
     this.accountToken = '',
     this.refreshToken = '',
     this.directSyncEnabled = false,
+    this.resetCode = '',
   });
 
   final bool ok;
@@ -43,6 +44,7 @@ class AccountAuthResult {
   final String accountToken;
   final String refreshToken;
   final bool directSyncEnabled;
+  final String resetCode;
 
   factory AccountAuthResult.fromJson(Map<String, dynamic> json) {
     return AccountAuthResult(
@@ -73,6 +75,7 @@ class AccountAuthResult {
           (json['refreshToken'] ?? json['refresh_token'] ?? '').toString(),
       directSyncEnabled: json['directSyncEnabled'] == true ||
           json['direct_sync_enabled'] == true,
+      resetCode: (json['resetCode'] ?? json['reset_code'] ?? '').toString(),
     );
   }
 }
@@ -392,7 +395,25 @@ class AccountAuthService {
     return _decode(response);
   }
 
-  Future<void> logout({String accountToken = '', String refreshToken = ''}) async {
+  Future<AccountAuthResult> confirmSupportPasswordReset({
+    required String loginName,
+    required String resetCode,
+    required String newPassword,
+  }) async {
+    final response = await _client.post(
+      _endpoint('/api/auth/password-reset'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'loginName': loginName.trim().toLowerCase(),
+        'resetCode': resetCode.trim().toUpperCase(),
+        'newPassword': newPassword,
+      }),
+    );
+    return _decode(response);
+  }
+
+  Future<void> logout(
+      {String accountToken = '', String refreshToken = ''}) async {
     if (accountToken.trim().isEmpty && refreshToken.trim().isEmpty) return;
     await _client.post(
       _endpoint('/api/auth/logout'),
@@ -429,7 +450,6 @@ class AccountAuthService {
     );
     return _decode(response);
   }
-
 
   Future<AccountAuthResult> updateOwnerProfile({
     required String accountToken,
@@ -542,6 +562,29 @@ class AccountAuthService {
         'devicesLimit': devicesLimit,
         'directSyncEnabled': directSyncEnabled,
         'trialEndsAt': trialEndsAt?.toUtc().toIso8601String() ?? '',
+      }),
+    );
+    return _decode(response);
+  }
+
+  Future<AccountAuthResult> createAdminPasswordReset({
+    required String adminToken,
+    required AdminSubscriber subscriber,
+    String reason = '',
+  }) async {
+    if (adminToken.trim().isEmpty) {
+      return const AccountAuthResult(
+          ok: false, message: 'Please sign in again as admin@ventio.');
+    }
+    final response = await _client.post(
+      _endpoint('/api/admin/password-reset'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${adminToken.trim()}',
+      },
+      body: jsonEncode({
+        'accountId': subscriber.accountId,
+        'reason': reason.trim(),
       }),
     );
     return _decode(response);

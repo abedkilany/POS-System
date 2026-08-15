@@ -651,6 +651,155 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
   }
 
+  Future<void> _openSupportPasswordReset() async {
+    final cache = _authCache ?? AccountAuthCache.load();
+    final suggestedLogin = _usernameController.text.trim().contains('@')
+        ? _usernameController.text.trim().toLowerCase()
+        : (cache?.loginName.trim().isNotEmpty == true
+            ? cache!.loginName.trim().toLowerCase()
+            : _usernameController.text.trim().toLowerCase());
+    final loginController = TextEditingController(text: suggestedLogin);
+    final codeController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmController = TextEditingController();
+    String? error;
+    final draft = await showDialog<_PasswordResetDraft>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title:
+              Text(AppLocalizations.of(context).text('password_reset_title')),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  AppLocalizations.of(context).text('password_reset_help'),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: loginController,
+                  decoration: InputDecoration(
+                    labelText:
+                        AppLocalizations.of(context).text('account_login_name'),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: codeController,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)
+                        .text('password_reset_code'),
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: newPasswordController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)
+                        .text('account_new_password'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: confirmController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)
+                        .text('account_confirm_new_password'),
+                  ),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(AppLocalizations.of(context).text('cancel')),
+            ),
+            FilledButton(
+              onPressed: () {
+                final loginName = loginController.text.trim().toLowerCase();
+                final password = newPasswordController.text;
+                if (!loginName.contains('@')) {
+                  setDialogState(() => error = AppLocalizations.of(context)
+                      .text('password_reset_login_required'));
+                  return;
+                }
+                if (codeController.text.trim().isEmpty || password.length < 6) {
+                  setDialogState(() => error = AppLocalizations.of(context)
+                      .text('password_reset_fields_required'));
+                  return;
+                }
+                if (password != confirmController.text) {
+                  setDialogState(() => error = AppLocalizations.of(context)
+                      .text('password_reset_passwords_do_not_match'));
+                  return;
+                }
+                Navigator.of(dialogContext).pop(_PasswordResetDraft(
+                  loginName: loginName,
+                  code: codeController.text.trim().toUpperCase(),
+                  password: password,
+                ));
+              },
+              child: Text(
+                  AppLocalizations.of(context).text('password_reset_submit')),
+            ),
+          ],
+        ),
+      ),
+    );
+    loginController.dispose();
+    codeController.dispose();
+    newPasswordController.dispose();
+    if (draft == null || !mounted) return;
+    setState(() => _loggingIn = true);
+    try {
+      final result = await AccountAuthService().confirmSupportPasswordReset(
+        loginName: draft.loginName,
+        resetCode: draft.code,
+        newPassword: draft.password,
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(result.message)));
+        return;
+      }
+      final localUsername = draft.loginName.split('@').first;
+      await widget.store.applySupportPasswordResetToLocalUser(
+        username: localUsername,
+        newPassword: draft.password,
+      );
+      if (!mounted) return;
+      _usernameController.text = localUsername;
+      _passwordController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                AppLocalizations.of(context).text('password_reset_success'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _loggingIn = false);
+    }
+  }
+
   Future<void> _completeInitialSetup() async {
     final password = _passwordController.text.trim();
     final username = _normalizeLoginPart(_usernameController.text);
@@ -1087,15 +1236,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
                       Align(
                         alignment: AlignmentDirectional.centerEnd,
                         child: TextButton(
-                          onPressed: _loggingIn
-                              ? null
-                              : () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content: Text(tr.text(
-                                            'password_recovery_not_configured'))),
-                                  );
-                                },
+                          onPressed:
+                              _loggingIn ? null : _openSupportPasswordReset,
                           child: Text(tr.text('forgot_password')),
                         ),
                       ),
@@ -1175,6 +1317,18 @@ class _LoginGatePageState extends State<LoginGatePage> {
       ),
     );
   }
+}
+
+class _PasswordResetDraft {
+  const _PasswordResetDraft({
+    required this.loginName,
+    required this.code,
+    required this.password,
+  });
+
+  final String loginName;
+  final String code;
+  final String password;
 }
 
 class _InitialAdminSetupCard extends StatefulWidget {

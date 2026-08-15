@@ -1466,16 +1466,22 @@ class SqliteSyncStateService {
           break;
         case 'app_identity':
           if (change.entityId == context.deviceId) {
-            final incomingIdentity =
-                AppIdentity.fromJson(change.payload).copyWith(
+            final incomingIdentity = AppIdentity.fromJson(change.payload);
+            // The device role is local authority. It must never be changed by
+            // a replayed/remote app_identity event: a stale Host payload could
+            // otherwise turn a Client into a Host during sync. Official Host
+            // transfer is handled separately through the host_transfer flow.
+            final safeIdentity = incomingIdentity.copyWith(
               deviceId: context.deviceId,
               platform: context.appIdentity.platform,
+              deviceRole: context.appIdentity.deviceRole,
+              hostDeviceId: context.appIdentity.hostDeviceId,
               updatedAt: DateTime.now(),
             );
             await BusinessSqliteStore.saveKeyJson(
               db,
               _appIdentityKey,
-              _encodePayloadJson(incomingIdentity.toJson()),
+              _encodePayloadJson(safeIdentity.toJson()),
             );
             refreshKeys.add(_appIdentityKey);
           }

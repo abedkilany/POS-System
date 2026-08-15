@@ -2533,6 +2533,31 @@ class BusinessSqliteStore {
   ) async {
     final normalized = code.trim().toLowerCase();
     if (normalized.isEmpty) return null;
+    // A barcode assigned to a sale unit must win over a product-level
+    // barcode/code match. Otherwise a derived pack (e.g. 240 g) can be
+    // resolved as the base product (e.g. kg) when codes overlap.
+    final unitRows = await db.customSelect('''
+      SELECT psu.product_id AS productId, psu.unit_id AS unitId
+      FROM product_sale_units psu
+      INNER JOIN products p ON p.id = psu.product_id
+      WHERE p.deleted_at = ''
+        AND p.is_active = 1
+        AND lower(psu.barcode) = ?
+      ORDER BY p.updated_at DESC, psu.line_no ASC, psu.id ASC
+      LIMIT 1
+    ''', variables: <Variable<Object>>[
+      Variable<String>(normalized),
+    ]).get();
+    if (unitRows.isNotEmpty) {
+      final productId = unitRows.first.read<String>('productId');
+      final product = await readProductById(db, productId);
+      if (product != null) {
+        return <String, Object?>{
+          'product': product.toJson(),
+          'unitId': unitRows.first.read<String>('unitId'),
+        };
+      }
+    }
     final productRows = await db.customSelect('''
       SELECT id, 'base' AS unitId
       FROM products
@@ -2554,26 +2579,7 @@ class BusinessSqliteStore {
         'unitId': productRows.first.read<String>('unitId'),
       };
     }
-    final unitRows = await db.customSelect('''
-      SELECT psu.product_id AS productId, psu.id AS unitId
-      FROM product_sale_units psu
-      INNER JOIN products p ON p.id = psu.product_id
-      WHERE p.deleted_at = ''
-        AND p.is_active = 1
-        AND lower(psu.barcode) = ?
-      ORDER BY p.updated_at DESC, psu.line_no ASC, psu.id ASC
-      LIMIT 1
-    ''', variables: <Variable<Object>>[
-      Variable<String>(normalized),
-    ]).get();
-    if (unitRows.isEmpty) return null;
-    final productId = unitRows.first.read<String>('productId');
-    final product = await readProductById(db, productId);
-    if (product == null) return null;
-    return <String, Object?>{
-      'product': product.toJson(),
-      'unitId': unitRows.first.read<String>('unitId'),
-    };
+    return null;
   }
 
   static Future<List<Sale>> readSales(VentioDriftDatabase db) async {

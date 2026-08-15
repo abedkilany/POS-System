@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
@@ -197,8 +198,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                       const SizedBox(height: 12),
                       TextField(
                           controller: storeNameController,
-                          decoration:
-                              InputDecoration(labelText: tr.text('store_name'))),
+                          decoration: InputDecoration(
+                              labelText: tr.text('store_name'))),
                       const SizedBox(height: 12),
                       TextField(
                           controller: fullNameController,
@@ -214,9 +215,11 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                   labelText: tr.text('account_status')),
                               items: [
                                 DropdownMenuItem(
-                                    value: 'active', child: Text(tr.text('active'))),
+                                    value: 'active',
+                                    child: Text(tr.text('active'))),
                                 DropdownMenuItem(
-                                    value: 'blocked', child: Text(tr.text('blocked'))),
+                                    value: 'blocked',
+                                    child: Text(tr.text('blocked'))),
                                 DropdownMenuItem(
                                     value: 'suspended',
                                     child: Text(tr.text('suspended'))),
@@ -233,9 +236,11 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                   InputDecoration(labelText: tr.text('plan')),
                               items: [
                                 DropdownMenuItem(
-                                    value: 'trial', child: Text(tr.text('trial'))),
+                                    value: 'trial',
+                                    child: Text(tr.text('trial'))),
                                 DropdownMenuItem(
-                                    value: 'basic', child: Text(tr.text('basic'))),
+                                    value: 'basic',
+                                    child: Text(tr.text('basic'))),
                                 DropdownMenuItem(
                                     value: 'pro', child: Text(tr.text('pro'))),
                               ],
@@ -255,18 +260,23 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                   labelText: tr.text('subscription_status')),
                               items: [
                                 DropdownMenuItem(
-                                    value: 'trial', child: Text(tr.text('trial'))),
+                                    value: 'trial',
+                                    child: Text(tr.text('trial'))),
                                 DropdownMenuItem(
-                                    value: 'active', child: Text(tr.text('active'))),
+                                    value: 'active',
+                                    child: Text(tr.text('active'))),
                                 DropdownMenuItem(
-                                    value: 'expired', child: Text(tr.text('expired'))),
+                                    value: 'expired',
+                                    child: Text(tr.text('expired'))),
                                 DropdownMenuItem(
-                                    value: 'past_due', child: Text(tr.text('past_due'))),
+                                    value: 'past_due',
+                                    child: Text(tr.text('past_due'))),
                                 DropdownMenuItem(
                                     value: 'cancelled',
                                     child: Text(tr.text('cancelled'))),
                                 DropdownMenuItem(
-                                    value: 'blocked', child: Text(tr.text('blocked'))),
+                                    value: 'blocked',
+                                    child: Text(tr.text('blocked'))),
                               ],
                               onChanged: (value) => setDialogState(
                                   () => subscriptionStatus = value ?? 'trial'),
@@ -323,13 +333,13 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                     final trialEndsAt =
                         trialText.isEmpty ? null : DateTime.tryParse(trialText);
                     if (username.isEmpty || username.contains(' ')) {
-                      setDialogState(() => localError =
-                          tr.text('username_required_no_spaces'));
+                      setDialogState(() =>
+                          localError = tr.text('username_required_no_spaces'));
                       return;
                     }
                     if (storeName.isEmpty) {
-                      setDialogState(() =>
-                          localError = tr.text('store_name_required'));
+                      setDialogState(
+                          () => localError = tr.text('store_name_required'));
                       return;
                     }
                     if (storeSlug.isEmpty || storeSlug.contains(' ')) {
@@ -338,8 +348,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                       return;
                     }
                     if (limit < 0) {
-                      setDialogState(() =>
-                          localError = tr.text('device_limit_cannot_be_negative'));
+                      setDialogState(() => localError =
+                          tr.text('device_limit_cannot_be_negative'));
                       return;
                     }
                     if (trialText.isNotEmpty && trialEndsAt == null) {
@@ -431,6 +441,84 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     await _load();
   }
 
+  Future<void> _issuePasswordReset(AdminSubscriber subscriber) async {
+    final tr = AppLocalizations.of(context);
+    final reasonController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('issue_password_reset')),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(tr.text('issue_password_reset_confirm')),
+              const SizedBox(height: 14),
+              TextField(
+                controller: reasonController,
+                decoration: InputDecoration(
+                  labelText: tr.text('issue_password_reset_reason'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(tr.text('issue_password_reset')),
+          ),
+        ],
+      ),
+    );
+    final reason = reasonController.text.trim();
+    reasonController.dispose();
+    if (confirmed != true || !mounted) return;
+    final cache = AccountAuthCache.load();
+    final result = await _service.createAdminPasswordReset(
+      adminToken: _platformAccessToken(cache),
+      subscriber: subscriber,
+      reason: reason,
+    );
+    if (!mounted) return;
+    if (!result.ok) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(result.message)));
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('reset_code_issued')),
+        content: SelectableText(result.resetCode),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: result.resetCode));
+              if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(tr.text('reset_code_copied'))),
+                );
+              }
+            },
+            icon: const Icon(Icons.copy),
+            label: Text(tr.text('copy')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(tr.text('close')),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -497,7 +585,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             DataColumn(label: Text(tr.text('subscriber'))),
                             DataColumn(label: Text(tr.text('store'))),
                             DataColumn(label: Text(tr.text('plan'))),
-                            DataColumn(label: Text(tr.text('subscription_status'))),
+                            DataColumn(
+                                label: Text(tr.text('subscription_status'))),
                             DataColumn(label: Text(tr.text('trial'))),
                             DataColumn(label: Text(tr.text('devices'))),
                             DataColumn(label: Text(tr.text('direct_sync'))),
@@ -512,7 +601,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                     subscriber: subscriber)),
                                 DataCell(_StoreCell(subscriber: subscriber)),
                                 DataCell(_PlanBadge(plan: subscriber.plan)),
-                DataCell(_StatusBadge(
+                                DataCell(_StatusBadge(
                                   label: subscriber.subscriptionStatus.isEmpty
                                       ? tr.text('unknown')
                                       : subscriber.subscriptionStatus,
@@ -554,6 +643,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                 DataCell(_ActionsCell(
                                   onEdit: () => _editSubscriber(subscriber),
                                   onDelete: () => _deleteSubscriber(subscriber),
+                                  onResetPassword: () =>
+                                      _issuePasswordReset(subscriber),
                                 )),
                               ],
                             );
@@ -659,11 +750,17 @@ class _OverviewGrid extends StatelessWidget {
             value: accounts,
             icon: Icons.people_alt_outlined),
         _SummaryCard(
-            label: tr.text('stores'), value: stores, icon: Icons.storefront_outlined),
+            label: tr.text('stores'),
+            value: stores,
+            icon: Icons.storefront_outlined),
         _SummaryCard(
-            label: tr.text('trial_status'), value: trials, icon: Icons.hourglass_top_outlined),
+            label: tr.text('trial_status'),
+            value: trials,
+            icon: Icons.hourglass_top_outlined),
         _SummaryCard(
-            label: tr.text('active'), value: active, icon: Icons.verified_outlined),
+            label: tr.text('active'),
+            value: active,
+            icon: Icons.verified_outlined),
         _SummaryCard(
             label: tr.text('expired_trials'),
             value: expiredTrials,
@@ -721,19 +818,24 @@ class _SubscribersToolbar extends StatelessWidget {
               isDense: true,
             ),
             items: [
-              DropdownMenuItem(value: 'all', child: Text(tr.text('all_statuses'))),
+              DropdownMenuItem(
+                  value: 'all', child: Text(tr.text('all_statuses'))),
               DropdownMenuItem(value: 'trial', child: Text(tr.text('trial'))),
               DropdownMenuItem(value: 'active', child: Text(tr.text('active'))),
-              DropdownMenuItem(value: 'expired', child: Text(tr.text('expired'))),
-              DropdownMenuItem(value: 'blocked', child: Text(tr.text('blocked'))),
-              DropdownMenuItem(value: 'cancelled', child: Text(tr.text('cancelled'))),
+              DropdownMenuItem(
+                  value: 'expired', child: Text(tr.text('expired'))),
+              DropdownMenuItem(
+                  value: 'blocked', child: Text(tr.text('blocked'))),
+              DropdownMenuItem(
+                  value: 'cancelled', child: Text(tr.text('cancelled'))),
             ],
             onChanged: onStatusChanged,
           ),
         ),
         Chip(
           avatar: const Icon(Icons.filter_list, size: 18),
-          label: Text(tr.format('shown_of_total', {'count': count, 'total': total})),
+          label: Text(
+              tr.format('shown_of_total', {'count': count, 'total': total})),
           backgroundColor: theme.colorScheme.surfaceContainerHighest,
         ),
       ],
@@ -885,10 +987,15 @@ class _TrialCell extends StatelessWidget {
 }
 
 class _ActionsCell extends StatelessWidget {
-  const _ActionsCell({required this.onEdit, required this.onDelete});
+  const _ActionsCell({
+    required this.onEdit,
+    required this.onDelete,
+    required this.onResetPassword,
+  });
 
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onResetPassword;
 
   @override
   Widget build(BuildContext context) {
@@ -896,6 +1003,13 @@ class _ActionsCell extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        Tooltip(
+          message: tr.text('issue_password_reset'),
+          child: IconButton(
+            icon: const Icon(Icons.password_outlined),
+            onPressed: onResetPassword,
+          ),
+        ),
         Tooltip(
           message: tr.text('edit_subscriber'),
           child: IconButton(

@@ -12,9 +12,11 @@ import authRegister from '../server_api/auth/register.js';
 import authLogin from '../server_api/auth/login.js';
 import authSession from '../server_api/auth/session.js';
 import authLogout from '../server_api/auth/logout.js';
+import authPasswordReset from '../server_api/auth/password-reset.js';
 import accountChangePassword from '../server_api/account/change-password.js';
 import accountOwnerProfile from '../server_api/account/owner-profile.js';
 import adminSubscribers from '../server_api/admin/subscribers.js';
+import adminPasswordReset from '../server_api/admin/password-reset.js';
 import deviceRevoke from '../server_api/sync/device-revoke.js';
 import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
 import deviceSuspend from '../server_api/sync/device-suspend.js';
@@ -42,9 +44,11 @@ const routes = new Map([
   ['auth/login', authLogin],
   ['auth/session', authSession],
   ['auth/logout', authLogout],
+  ['auth/password-reset', authPasswordReset],
   ['account/change-password', accountChangePassword],
   ['account/owner-profile', accountOwnerProfile],
   ['admin/subscribers', adminSubscribers],
+  ['admin/password-reset', adminPasswordReset],
   ['sync/device-revoke', deviceRevoke],
   ['sync/device-wipe-ack', deviceWipeAck],
   ['sync/device-suspend', deviceSuspend],

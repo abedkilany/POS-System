@@ -46,7 +46,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
               AppPermission.inventoryManufacturingManage,
               AppPermission.productsEdit,
             })
-                ? _showCreateBomDialog
+                ? () => _showBomDialog()
                 : null,
             icon: const Icon(Icons.add),
             label: Text(_t('new_bom')),
@@ -90,10 +90,25 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                           'components': bom.components.length,
                           'cost': bom.unitCost.toStringAsFixed(2)
                         })),
-                        trailing: FilledButton.icon(
-                          onPressed: () => _showCompleteOrderDialog(bom),
-                          icon: const Icon(Icons.play_arrow),
-                          label: Text(_t('produce')),
+                        trailing: Wrap(
+                          spacing: 4,
+                          children: [
+                            IconButton(
+                              tooltip: _t('edit'),
+                              onPressed: () => _showBomDialog(bom: bom),
+                              icon: const Icon(Icons.edit_outlined),
+                            ),
+                            IconButton(
+                              tooltip: _t('delete'),
+                              onPressed: () => _confirmDeleteBom(bom),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                            FilledButton.icon(
+                              onPressed: () => _showCompleteOrderDialog(bom),
+                              icon: const Icon(Icons.play_arrow),
+                              label: Text(_t('produce')),
+                            ),
+                          ],
                         ),
                       ),
                     )),
@@ -127,7 +142,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
     );
   }
 
-  Future<void> _showCreateBomDialog() async {
+  Future<void> _showBomDialog({BillOfMaterials? bom}) async {
     if (!widget.store.hasAnyPermission(<String>{
       AppPermission.inventoryManufacturingManage,
       AppPermission.productsEdit,
@@ -168,13 +183,23 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       return products.first;
     }
 
-    Product output = products.first;
-    final nameController = TextEditingController(text: 'BOM - ${output.name}');
-    final outputQtyController = TextEditingController(text: '1');
-    final componentProductIds = <String>[firstAlternativeProduct(output.id).id];
-    final componentQtyControllers = <TextEditingController>[
-      TextEditingController(text: '1')
+    Product output = productById[bom?.outputProductId] ?? products.first;
+    final nameController =
+        TextEditingController(text: bom?.name ?? 'BOM - ${output.name}');
+    final outputQtyController =
+        TextEditingController(text: (bom?.outputQuantity ?? 1).toString());
+    final componentProductIds = <String>[
+      for (final item in bom?.components ?? const <BillOfMaterialsLine>[])
+        item.productId
     ];
+    final componentQtyControllers = <TextEditingController>[
+      for (final item in bom?.components ?? const <BillOfMaterialsLine>[])
+        TextEditingController(text: item.quantity.toString())
+    ];
+    if (componentProductIds.isEmpty) {
+      componentProductIds.add(firstAlternativeProduct(output.id).id);
+      componentQtyControllers.add(TextEditingController(text: '1'));
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -182,7 +207,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
         builder: (context, setDialogState) {
           final componentItems = componentItemsFor(output.id);
           return AlertDialog(
-            title: Text(_t('new_bom')),
+            title: Text(bom == null ? _t('new_bom') : _t('edit')),
             content: SizedBox(
               width: 520,
               child: SingleChildScrollView(
@@ -213,7 +238,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                               componentProductIds[i] = replacementId;
                             }
                           }
-                          nameController.text = 'BOM - ${selected.name}';
+                          if (bom == null) {
+                            nameController.text = 'BOM - ${selected.name}';
+                          }
                         });
                       },
                     ),
@@ -302,12 +329,51 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
             quantity: double.tryParse(componentQtyControllers[i].text) ?? 0,
             unitCost: product.usdCost));
       }
-      await widget.store.createBillOfMaterials(
-        name: nameController.text,
-        outputProductId: output.id,
-        outputQuantity: double.tryParse(outputQtyController.text) ?? 1,
-        components: components,
-      );
+      if (bom == null) {
+        await widget.store.createBillOfMaterials(
+          name: nameController.text,
+          outputProductId: output.id,
+          outputQuantity: double.tryParse(outputQtyController.text) ?? 1,
+          components: components,
+        );
+      } else {
+        await widget.store.updateBillOfMaterials(
+          id: bom.id,
+          name: nameController.text,
+          outputProductId: output.id,
+          outputQuantity: double.tryParse(outputQtyController.text) ?? 1,
+          components: components,
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(localizedErrorText(AppLocalizations.of(context), error))));
+    }
+  }
+
+  Future<void> _confirmDeleteBom(BillOfMaterials bom) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_t('delete')),
+        content: Text('${_t('bom_name')}: ${bom.name}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(_t('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(_t('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.store.deleteBillOfMaterials(bom.id);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

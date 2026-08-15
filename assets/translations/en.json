@@ -2566,5 +2566,19 @@
   "no_expiry_batches": "No expiry-tracked stock is available.",
   "no_expiration_date": "No expiration date",
   "expired": "Expired",
-  "days": "days"
+  "days": "days",
+  "password_reset_title": "Reset online owner password",
+  "password_reset_help": "Ask Ventio support for a one-time reset code, then enter it here.",
+  "password_reset_code": "Support reset code",
+  "password_reset_login_required": "Enter the online login name as username@store.",
+  "password_reset_fields_required": "Enter the reset code and a password of at least 6 characters.",
+  "password_reset_passwords_do_not_match": "The passwords do not match.",
+  "password_reset_submit": "Reset password",
+  "password_reset_success": "Password reset successfully. You can sign in with the new password.",
+  "issue_password_reset": "Issue reset permission",
+  "issue_password_reset_reason": "Reason (optional)",
+  "issue_password_reset_confirm": "Create a one-time reset code for this owner?",
+  "reset_code_issued": "One-time reset code",
+  "reset_code_expires": "This code expires in 15 minutes and can be used once.",
+  "reset_code_copied": "Reset code copied."
 }

@@ -2567,5 +2567,19 @@
   "no_expiry_batches": "لا يوجد مخزون خاضع لتتبع الصلاحية.",
   "no_expiration_date": "دون تاريخ صلاحية",
   "expired": "منتهي الصلاحية",
-  "days": "أيام"
+  "days": "أيام",
+  "password_reset_title": "إعادة تعيين كلمة مرور المالك الإلكتروني",
+  "password_reset_help": "اطلب من إدارة Ventio رمز إعادة تعيين يُستخدم مرة واحدة، ثم أدخله هنا.",
+  "password_reset_code": "رمز إعادة التعيين من الإدارة",
+  "password_reset_login_required": "أدخل اسم الدخول الإلكتروني بالشكل username@store.",
+  "password_reset_fields_required": "أدخل الرمز وكلمة مرور من 6 أحرف على الأقل.",
+  "password_reset_passwords_do_not_match": "كلمتا المرور غير متطابقتين.",
+  "password_reset_submit": "إعادة تعيين كلمة المرور",
+  "password_reset_success": "تمت إعادة تعيين كلمة المرور. يمكنك تسجيل الدخول بالكلمة الجديدة.",
+  "issue_password_reset": "إصدار إذن إعادة تعيين",
+  "issue_password_reset_reason": "السبب (اختياري)",
+  "issue_password_reset_confirm": "هل تريد إنشاء رمز إعادة تعيين لمرة واحدة لهذا المالك؟",
+  "reset_code_issued": "رمز إعادة التعيين لمرة واحدة",
+  "reset_code_expires": "ينتهي الرمز خلال 15 دقيقة ويمكن استخدامه مرة واحدة فقط.",
+  "reset_code_copied": "تم نسخ رمز إعادة التعيين."
 }

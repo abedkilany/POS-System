@@ -3252,7 +3252,7 @@ class _SalesPageState extends State<SalesPage> {
                               const SizedBox(width: 6),
                             ],
                             Expanded(
-                                child: Text(item.product.name,
+                                child: Text(item.displayName,
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleSmall)),
@@ -3282,7 +3282,7 @@ class _SalesPageState extends State<SalesPage> {
                         color: Theme.of(context).colorScheme.onErrorContainer,
                       )
                     : null,
-                title: Text(item.product.name),
+                title: Text(item.displayName),
                 subtitle: Text(
                     '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
                 onTap: () {
@@ -4021,7 +4021,7 @@ class _SalesPageState extends State<SalesPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(item.product.name,
+                Text(item.displayName,
                     style: Theme.of(context).textTheme.titleLarge,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis),
@@ -4481,6 +4481,12 @@ class _SalesPageState extends State<SalesPage> {
           final visibleProducts = filteredProducts
               .take(math.min(visibleCount, filteredProducts.length))
               .toList(growable: false);
+          final searchOptions = <({Product product, ProductSaleUnit unit})>[];
+          for (final product in visibleProducts) {
+            for (final unit in product.effectiveSaleUnits) {
+              searchOptions.add((product: product, unit: unit));
+            }
+          }
           return SafeArea(
             child: Padding(
               padding: EdgeInsets.only(
@@ -4500,8 +4506,11 @@ class _SalesPageState extends State<SalesPage> {
                               style: Theme.of(context).textTheme.titleLarge),
                         ),
                         PageDataLoadIndicator(
-                          loadedCount: visibleProducts.length,
-                          totalCount: filteredProducts.length,
+                          loadedCount: searchOptions.length,
+                          totalCount: filteredProducts.fold<int>(
+                              0,
+                              (total, product) =>
+                                  total + product.effectiveSaleUnits.length),
                           label: tr.text('preparing_search_results'),
                         ),
                       ],
@@ -4531,16 +4540,21 @@ class _SalesPageState extends State<SalesPage> {
                     ),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: visibleProducts.isEmpty
+                      child: searchOptions.isEmpty
                           ? Center(child: Text(tr.text('no_products')))
                           : ListView.separated(
-                              itemCount: visibleProducts.length,
+                              itemCount: searchOptions.length,
                               separatorBuilder: (_, __) =>
                                   const Divider(height: 1),
                               itemBuilder: (context, index) {
-                                final product = visibleProducts[index];
+                                final option = searchOptions[index];
+                                final product = option.product;
+                                final unit = option.unit;
+                                final unitName = unit.name.trim().isNotEmpty
+                                    ? unit.name.trim()
+                                    : product.unit;
                                 return ListTile(
-                                  title: Text(product.name,
+                                  title: Text('${product.name} — $unitName',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   subtitle: Text(
@@ -4548,8 +4562,9 @@ class _SalesPageState extends State<SalesPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   trailing: Text(formatUsdReferenceAmount(
-                                      widget.store
-                                          .defaultProductUsdPrice(product),
+                                      widget.store.defaultProductUsdPrice(
+                                          product,
+                                          unitId: unit.id),
                                       widget.store.storeProfile)),
                                   onTap: () {
                                     Navigator.pop(sheetContext);
@@ -4557,7 +4572,7 @@ class _SalesPageState extends State<SalesPage> {
                                     _searchController.clear();
                                     _resetProductSearchReveal();
                                     FocusScope.of(context).unfocus();
-                                    _addProduct(product);
+                                    _addProduct(product, saleUnit: unit);
                                   },
                                 );
                               },
@@ -5138,7 +5153,7 @@ class _SalesPageState extends State<SalesPage> {
             .map(
               (item) => SaleItem(
                 productId: item.product.id,
-                productName: item.product.name,
+                productName: item.displayName,
                 unitPrice: item.unitPrice,
                 quantity: item.quantity,
                 unitName: item.unitName,
@@ -5498,7 +5513,7 @@ class _HeldSaleItem {
 
   factory _HeldSaleItem.fromDraft(_DraftSaleItem item) => _HeldSaleItem(
         productId: item.product.id,
-        productName: item.product.name,
+        productName: item.displayName,
         quantity: item.quantity,
         saleUnitId: item.saleUnit.id,
         saleUnit: item.saleUnit,
@@ -5545,6 +5560,10 @@ class _DraftSaleItem {
   double get baseQuantity => quantity * conversionToBase;
   String get unitName =>
       saleUnit.name.trim().isNotEmpty ? saleUnit.name : product.unit;
+  String get displayName =>
+      saleUnit.id == 'base' || saleUnit.name.trim().isEmpty
+          ? product.name
+          : saleUnit.name.trim();
   double get lineTotal => quantity * unitPrice;
   bool get needsAutoCorrection =>
       product.trackStock && baseQuantity > product.stock;

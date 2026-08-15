@@ -5567,6 +5567,31 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Applies a server-approved password reset to the matching local owner.
+  /// The server reset is the authority; this only keeps Offline Login in sync
+  /// after the support-issued one-time reset has been consumed successfully.
+  Future<bool> applySupportPasswordResetToLocalUser({
+    required String username,
+    required String newPassword,
+  }) async {
+    final normalized = username.trim().toLowerCase();
+    final cleanPassword = newPassword.trim();
+    if (normalized.isEmpty || cleanPassword.length < 6) return false;
+    final index = _users.indexWhere(
+      (user) =>
+          user.isActive && user.username.trim().toLowerCase() == normalized,
+    );
+    if (index < 0) return false;
+    final current = _users[index];
+    _users[index] = current.copyWith(
+      passwordHash: await _hashPasswordAsync(cleanPassword),
+      updatedAt: DateTime.now(),
+    );
+    await _saveRolesAndUsers();
+    notifyListeners();
+    return true;
+  }
+
   Future<bool> verifyAdminPassword(String password) async {
     final user = _activeUser;
     if (user == null || !isAdmin) return false;
@@ -11786,15 +11811,19 @@ class AppStore extends ChangeNotifier {
     String warehouseName = '',
   }) async {
     requirePermission(AppPermission.suppliersManage);
-    if (items.isEmpty) throw ArgumentError('Purchase must contain at least one item.');
+    if (items.isEmpty)
+      throw ArgumentError('Purchase must contain at least one item.');
     final index = _purchaseIndexForId(id);
-    final current = index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
+    final current =
+        index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
     if (current == null) throw ArgumentError('Purchase not found.');
     if (current.isReceived || current.isCancelled) {
       throw StateError('Only draft purchases can be edited.');
     }
     for (final item in items) {
-      if (item.quantity <= 0 || item.conversionToBase <= 0 || item.unitCost < 0) {
+      if (item.quantity <= 0 ||
+          item.conversionToBase <= 0 ||
+          item.unitCost < 0) {
         throw ArgumentError('Invalid purchase item values.');
       }
       if (_findProductById(item.productId) == null) {
@@ -11820,10 +11849,13 @@ class AppStore extends ChangeNotifier {
         items: items,
         note: note,
         paymentStatus: normalizedStatus,
-        paymentMethod: paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim(),
+        paymentMethod:
+            paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim(),
         paidAmount: normalizedPaid,
         warehouseId: warehouse.id,
-        warehouseName: warehouseName.trim().isEmpty ? warehouse.name : warehouseName.trim(),
+        warehouseName: warehouseName.trim().isEmpty
+            ? warehouse.name
+            : warehouseName.trim(),
         status: 'Draft',
       ),
       DateTime.now(),
@@ -11870,21 +11902,28 @@ class AppStore extends ChangeNotifier {
   }) async {
     requirePermission(AppPermission.suppliersManage);
     final index = _purchaseIndexForId(id);
-    final current = index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
+    final current =
+        index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
     if (current == null) throw ArgumentError('Purchase not found.');
     if (!current.isReceived || current.isCancelled) {
       throw StateError('Only received purchase invoices can be edited.');
     }
-    if (items.isEmpty) throw ArgumentError('Purchase must contain at least one item.');
-    if (items.any((item) => _findProductById(item.productId)?.expiryTrackingEnabled == true)) {
-      throw StateError('Edit is unavailable for batch-tracked products until batch reassignment is supported.');
+    if (items.isEmpty)
+      throw ArgumentError('Purchase must contain at least one item.');
+    if (items.any((item) =>
+        _findProductById(item.productId)?.expiryTrackingEnabled == true)) {
+      throw StateError(
+          'Edit is unavailable for batch-tracked products until batch reassignment is supported.');
     }
     if (_inventoryCostingMethod == InventoryCostingMethod.fifo &&
         _purchaseHasConsumedCostLayers(current.id)) {
-      throw StateError('This purchase cannot be edited after its stock was used in sales.');
+      throw StateError(
+          'This purchase cannot be edited after its stock was used in sales.');
     }
     for (final item in items) {
-      if (item.quantity <= 0 || item.conversionToBase <= 0 || item.unitCost < 0) {
+      if (item.quantity <= 0 ||
+          item.conversionToBase <= 0 ||
+          item.unitCost < 0) {
         throw ArgumentError('Invalid purchase item values.');
       }
       if (_findProductById(item.productId) == null) {
@@ -11918,10 +11957,13 @@ class AppStore extends ChangeNotifier {
         items: items,
         note: note,
         paymentStatus: normalizedStatus,
-        paymentMethod: paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim(),
+        paymentMethod:
+            paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim(),
         paidAmount: normalizedPaid,
         warehouseId: warehouse.id,
-        warehouseName: warehouseName.trim().isEmpty ? warehouse.name : warehouseName.trim(),
+        warehouseName: warehouseName.trim().isEmpty
+            ? warehouse.name
+            : warehouseName.trim(),
         version: editVersion,
         status: 'Received',
       ),
@@ -11929,7 +11971,8 @@ class AppStore extends ChangeNotifier {
     );
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
-      throw StateError('Received purchase correction requires the SQLite accounting store.');
+      throw StateError(
+          'Received purchase correction requires the SQLite accounting store.');
     }
     final stockService = StockTransactionService(
       sqliteDb,
@@ -11943,7 +11986,12 @@ class AppStore extends ChangeNotifier {
       for (var lineIndex = 0; lineIndex < current.items.length; lineIndex++) {
         final item = current.items[lineIndex];
         final original = StockMovement(
-          id: [current.id, lineIndex.toString(), item.productId, 'purchase-receive'].join('-'),
+          id: [
+            current.id,
+            lineIndex.toString(),
+            item.productId,
+            'purchase-receive'
+          ].join('-'),
           productId: item.productId,
           productName: item.productName,
           type: 'purchase_receive',
@@ -12039,8 +12087,10 @@ class AppStore extends ChangeNotifier {
       operation: 'correct',
       payload: updated.toJson(),
     );
-    await _refreshProductStockCompatibilityCache(
-        <String>{...current.items.map((item) => item.productId), ...items.map((item) => item.productId)});
+    await _refreshProductStockCompatibilityCache(<String>{
+      ...current.items.map((item) => item.productId),
+      ...items.map((item) => item.productId)
+    });
     _touchPurchasesData();
     notifyListeners();
     return updated;
@@ -13803,8 +13853,103 @@ class AppStore extends ChangeNotifier {
       payload: bom.toJson(),
     );
     await _saveDirty(billsOfMaterials: true, sync: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
     return bom;
+  }
+
+  Future<BillOfMaterials> updateBillOfMaterials({
+    required String id,
+    required String name,
+    required String outputProductId,
+    required double outputQuantity,
+    required List<BillOfMaterialsLine> components,
+    String notes = '',
+  }) async {
+    requirePermission(AppPermission.productsEdit);
+    final index = _billsOfMaterials.indexWhere((item) => item.id == id);
+    if (index == -1 || _billsOfMaterials[index].isDeleted) {
+      throw ArgumentError('BOM was not found.');
+    }
+    if (name.trim().isEmpty) throw ArgumentError('BOM name is required.');
+    if (outputQuantity <= 0) {
+      throw ArgumentError('Output quantity must be greater than zero.');
+    }
+    if (components.isEmpty) {
+      throw ArgumentError('BOM must contain at least one component.');
+    }
+    final output = _findProductById(outputProductId);
+    if (output == null) throw ArgumentError('Output product was not found.');
+    final cleanedComponents = <BillOfMaterialsLine>[];
+    for (final component in components) {
+      if (component.quantity <= 0) {
+        throw ArgumentError('Component quantity must be greater than zero.');
+      }
+      if (component.productId == outputProductId) {
+        throw ArgumentError(
+          'Output product cannot be used as a component in the same BOM.',
+        );
+      }
+      final product = _findProductById(component.productId);
+      if (product == null) {
+        throw ArgumentError('Component product was not found.');
+      }
+      cleanedComponents.add(component.copyWith(
+        productName: product.name,
+        unitCost: _safeUsdCost(product),
+      ));
+    }
+    final now = DateTime.now();
+    final updated = _withSyncMeta<BillOfMaterials>(
+      _billsOfMaterials[index].copyWith(
+        name: name.trim(),
+        outputProductId: output.id,
+        outputProductName: output.name,
+        outputQuantity: outputQuantity,
+        components: cleanedComponents,
+        notes: notes.trim(),
+        updatedAt: now,
+      ),
+      now,
+      isCreate: false,
+    );
+    _billsOfMaterials[index] = updated;
+    _recordSyncChange(
+      entityType: 'bill_of_materials',
+      entityId: updated.id,
+      operation: 'update',
+      payload: updated.toJson(),
+    );
+    await _saveDirty(billsOfMaterials: true, sync: true);
+    _invalidateDerivedDataCaches();
+    notifyListeners();
+    return updated;
+  }
+
+  Future<void> deleteBillOfMaterials(String id) async {
+    requirePermission(AppPermission.productsEdit);
+    final index = _billsOfMaterials.indexWhere((item) => item.id == id);
+    if (index == -1 || _billsOfMaterials[index].isDeleted) return;
+    final now = DateTime.now();
+    final deleted = _withSyncMeta<BillOfMaterials>(
+      _billsOfMaterials[index].copyWith(
+        isActive: false,
+        deletedAt: now,
+        updatedAt: now,
+      ),
+      now,
+      isCreate: false,
+    );
+    _billsOfMaterials[index] = deleted;
+    _recordSyncChange(
+      entityType: 'bill_of_materials',
+      entityId: deleted.id,
+      operation: 'delete',
+      payload: deleted.toJson(),
+    );
+    await _saveDirty(billsOfMaterials: true, sync: true);
+    _invalidateDerivedDataCaches();
+    notifyListeners();
   }
 
   Future<ManufacturingOrder> completeManufacturingOrder({
