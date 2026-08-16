@@ -1399,6 +1399,13 @@ class _ProductDialogState extends State<_ProductDialog> {
                     _SaleUnitsEditor(
                       saleUnits: saleUnitDrafts,
                       storeProfile: widget.store.storeProfile,
+                      existingBarcodes: widget.store.products
+                          .where((item) => item.id != widget.product?.id)
+                          .expand((item) => <String>[
+                                item.barcode,
+                                ...item.saleUnits.map((unit) => unit.barcode),
+                              ])
+                          .toSet(),
                       onChanged: (items) =>
                           setState(() => saleUnitDrafts = items),
                     ),
@@ -2511,11 +2518,33 @@ class _SaleUnitsEditor extends StatelessWidget {
   const _SaleUnitsEditor(
       {required this.saleUnits,
       required this.storeProfile,
+      required this.existingBarcodes,
       required this.onChanged});
 
   final List<_SaleUnitDraft> saleUnits;
   final StoreProfile storeProfile;
+  final Set<String> existingBarcodes;
   final ValueChanged<List<_SaleUnitDraft>> onChanged;
+
+  void _generateUnitBarcode(_SaleUnitDraft unit) {
+    final used = <String>{
+      ...existingBarcodes.map((value) => value.trim()),
+      ...saleUnits.map((item) => item.barcode.trim()),
+    }..remove('');
+    var seed = DateTime.now().microsecondsSinceEpoch % 1000000000000;
+    String value;
+    do {
+      final body = seed.toString().padLeft(12, '0');
+      var sum = 0;
+      for (var index = 0; index < body.length; index++) {
+        sum += int.parse(body[index]) * (index.isEven ? 1 : 3);
+      }
+      value = '$body${(10 - (sum % 10)) % 10}';
+      seed = (seed + 1) % 1000000000000;
+    } while (used.contains(value));
+    unit.barcode = value;
+    onChanged(List<_SaleUnitDraft>.from(saleUnits));
+  }
 
   Future<void> _scanUnitBarcode(
       BuildContext context, _SaleUnitDraft unit) async {
@@ -2646,10 +2675,21 @@ class _SaleUnitsEditor extends StatelessWidget {
                           initialValue: unit.barcode,
                           decoration: InputDecoration(
                             labelText: tr.text('unit_barcode'),
-                            suffixIcon: IconButton(
-                              tooltip: tr.text('scan_with_camera'),
-                              onPressed: () => _scanUnitBarcode(context, unit),
-                              icon: const Icon(Icons.camera_alt_outlined),
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: tr.text('generate_barcode'),
+                                  onPressed: () => _generateUnitBarcode(unit),
+                                  icon: const Icon(Icons.qr_code_2_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: tr.text('scan_with_camera'),
+                                  onPressed: () =>
+                                      _scanUnitBarcode(context, unit),
+                                  icon: const Icon(Icons.camera_alt_outlined),
+                                ),
+                              ],
                             ),
                           ),
                           onChanged: (value) => unit.barcode = value,

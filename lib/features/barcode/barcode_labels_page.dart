@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
-import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:printing/printing.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/barcode_label_pdf_service.dart';
 import '../../data/app_store.dart';
 import '../../models/product.dart';
+import '../../models/store_profile.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 
@@ -26,12 +28,16 @@ class BarcodeLabelsPage extends StatefulWidget {
 class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
   final _searchController = TextEditingController();
   final _quantities = <String, int>{};
+  final _quantityControllers = <String, TextEditingController>{};
   String _query = '';
   bool _generating = false;
 
   @override
   void dispose() {
     _searchController.dispose();
+    for (final controller in _quantityControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -54,11 +60,34 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
   void _toggle(Product product, bool selected) {
     setState(() {
       _quantities[product.id] = selected ? 1 : 0;
+      if (selected) {
+        _quantityController(product).text = '1';
+      } else {
+        _quantityControllers.remove(product.id)?.dispose();
+      }
     });
   }
 
+  TextEditingController _quantityController(Product product) {
+    return _quantityControllers.putIfAbsent(
+      product.id,
+      () => TextEditingController(text: '${_quantities[product.id] ?? 1}'),
+    );
+  }
+
   void _changeQuantity(Product product, int value) {
-    setState(() => _quantities[product.id] = value.clamp(0, 999));
+    final quantity = value.clamp(0, 999);
+    setState(() => _quantities[product.id] = quantity);
+    if (quantity > 0) {
+      final controller = _quantityController(product);
+      final text = '$quantity';
+      if (controller.text != text) {
+        controller.value = TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        );
+      }
+    }
   }
 
   String _newBarcode() {
@@ -166,6 +195,8 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
       context: context,
       builder: (dialogContext) => _BarcodePrintOptionsDialog(
         initial: lastOptions,
+        previewProduct: selected.first.product,
+        profile: widget.store.storeProfile,
       ),
     );
     if (!mounted || options == null) return;
@@ -205,11 +236,31 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
         logoBytes = null;
       }
     }
+    final savedOffsets = <String, Offset>{};
+    try {
+      final rawOffsets = prefs.getString('barcode_label_element_offsets');
+      if (rawOffsets != null) {
+        final decoded = jsonDecode(rawOffsets) as Map<String, dynamic>;
+        for (final entry in decoded.entries) {
+          final value = entry.value as Map<String, dynamic>;
+          savedOffsets[entry.key] = Offset(
+            (value['dx'] as num).toDouble(),
+            (value['dy'] as num).toDouble(),
+          );
+        }
+      }
+    } catch (_) {}
     return BarcodeLabelPrintOptions(
+      marginMm: prefs.getDouble('barcode_label_margin_mm') ?? 1.5,
+      fontSize: prefs.getDouble('barcode_label_font_size') ?? 8,
+      barcodeHeight: prefs.getDouble('barcode_label_height') ?? 24,
+      barcodeWidth: prefs.getDouble('barcode_label_width') ?? 60,
+      logoWidth: prefs.getDouble('barcode_label_logo_width') ?? 60,
       productionDate: prefs.getString('barcode_label_production_date') ?? '',
       expiryDate: prefs.getString('barcode_label_expiry_date') ?? '',
       weight: prefs.getString('barcode_label_weight') ?? '',
       logoBytes: logoBytes,
+      elementOffsets: savedOffsets,
     );
   }
 
@@ -217,6 +268,18 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         'barcode_label_production_date', options.productionDate);
+    await prefs.setDouble('barcode_label_margin_mm', options.marginMm);
+    await prefs.setDouble('barcode_label_font_size', options.fontSize);
+    await prefs.setDouble('barcode_label_height', options.barcodeHeight);
+    await prefs.setDouble('barcode_label_width', options.barcodeWidth);
+    await prefs.setDouble('barcode_label_logo_width', options.logoWidth);
+    await prefs.setString(
+      'barcode_label_element_offsets',
+      jsonEncode(options.elementOffsets.map(
+        (key, value) =>
+            MapEntry(key, <String, double>{'dx': value.dx, 'dy': value.dy}),
+      )),
+    );
     await prefs.setString('barcode_label_expiry_date', options.expiryDate);
     await prefs.setString('barcode_label_weight', options.weight);
     if (options.logoBytes != null && options.logoBytes!.isNotEmpty) {
@@ -308,7 +371,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
                             : tr.text('barcode_missing')),
                         trailing: hasBarcode
                             ? SizedBox(
-                                width: 125,
+                                width: 170,
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.end,
                                   children: [
@@ -317,7 +380,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
                                       onPressed: () => _generateFor(product),
                                       icon: const Icon(Icons.autorenew),
                                     ),
-                                    if (selected) ...[
+                                    if (selected)
                                       IconButton(
                                         onPressed: () => _changeQuantity(
                                             product,
@@ -325,7 +388,37 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
                                         icon: const Icon(
                                             Icons.remove_circle_outline),
                                       ),
-                                      Text('${_quantities[product.id] ?? 1}'),
+                                    if (selected)
+                                      SizedBox(
+                                        width: 44,
+                                        child: TextFormField(
+                                          controller:
+                                              _quantityController(product),
+                                          textAlign: TextAlign.center,
+                                          keyboardType: TextInputType.number,
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter
+                                                .digitsOnly,
+                                          ],
+                                          decoration: const InputDecoration(
+                                            isDense: true,
+                                            contentPadding:
+                                                EdgeInsets.symmetric(
+                                                    horizontal: 6,
+                                                    vertical: 10),
+                                          ),
+                                          onChanged: (value) {
+                                            final quantity =
+                                                int.tryParse(value);
+                                            if (quantity != null &&
+                                                quantity >= 1) {
+                                              _changeQuantity(
+                                                  product, quantity);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    if (selected)
                                       IconButton(
                                         onPressed: () => _changeQuantity(
                                             product,
@@ -333,7 +426,6 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
                                         icon: const Icon(
                                             Icons.add_circle_outline),
                                       ),
-                                    ],
                                   ],
                                 ),
                               )
@@ -355,9 +447,14 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
 }
 
 class _BarcodePrintOptionsDialog extends StatefulWidget {
-  const _BarcodePrintOptionsDialog({required this.initial});
+  const _BarcodePrintOptionsDialog(
+      {required this.initial,
+      required this.previewProduct,
+      required this.profile});
 
   final BarcodeLabelPrintOptions initial;
+  final Product previewProduct;
+  final StoreProfile profile;
 
   @override
   State<_BarcodePrintOptionsDialog> createState() =>
@@ -408,6 +505,10 @@ class _BarcodePrintOptionsDialogState
   late double margin;
   late double fontSize;
   late double barcodeHeight;
+  late double barcodeWidth;
+  late double logoWidth;
+  String positionElement = 'barcode';
+  late Map<String, Offset> elementOffsets;
   Uint8List? logoBytes;
   String logoName = '';
   late final TextEditingController productionDateController;
@@ -420,6 +521,13 @@ class _BarcodePrintOptionsDialogState
     margin = widget.initial.marginMm;
     fontSize = widget.initial.fontSize;
     barcodeHeight = widget.initial.barcodeHeight;
+    barcodeWidth = widget.initial.barcodeWidth;
+    logoWidth = widget.initial.logoWidth;
+    elementOffsets = Map<String, Offset>.from(widget.initial.elementOffsets);
+    logoBytes = widget.initial.logoBytes;
+    if (logoBytes != null && logoBytes!.isNotEmpty) {
+      logoName = 'Saved logo';
+    }
     productionDateController =
         TextEditingController(text: widget.initial.productionDate);
     expiryDateController =
@@ -435,81 +543,171 @@ class _BarcodePrintOptionsDialogState
     super.dispose();
   }
 
+  Widget _buildInlinePreview() {
+    return SizedBox(
+      height: 235,
+      child: PdfPreview(
+        build: (_) => BarcodeLabelPdfService.buildPdf(
+          items: [
+            BarcodeLabelItem(product: widget.previewProduct, quantity: 1)
+          ],
+          profile: widget.profile,
+          locale: Localizations.localeOf(context),
+          options: BarcodeLabelPrintOptions(
+            marginMm: margin,
+            fontSize: fontSize,
+            barcodeHeight: barcodeHeight,
+            barcodeWidth: barcodeWidth,
+            logoWidth: logoWidth,
+            elementOffsets: elementOffsets,
+            productionDate: productionDateController.text.trim(),
+            expiryDate: expiryDateController.text.trim(),
+            weight: weightController.text.trim(),
+            logoBytes: logoBytes,
+          ),
+        ),
+        canChangePageFormat: false,
+        canChangeOrientation: false,
+        useActions: false,
+        allowSharing: false,
+        allowPrinting: false,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('إعدادات ملصق الباركود'),
       content: SizedBox(
         width: 420,
+        height: MediaQuery.sizeOf(context).height * 0.62,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('مقاس الملصق مضبوط على 50 × 30 mm'),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    logoName.isEmpty ? 'Optional black & white logo' : logoName,
-                    overflow: TextOverflow.ellipsis,
+            _buildInlinePreview(),
+            Expanded(
+              child: ListView(
+                children: [
+                  const Text('مقاس الملصق مضبوط على 50 × 30 mm'),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          logoName.isEmpty
+                              ? 'Optional black & white logo'
+                              : logoName,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _pickLogo,
+                        icon: const Icon(Icons.image_outlined),
+                        label: const Text('Choose logo'),
+                      ),
+                      if (logoBytes != null)
+                        IconButton(
+                          tooltip: 'Remove logo',
+                          onPressed: () => setState(() {
+                            logoBytes = null;
+                            logoName = '';
+                          }),
+                          icon: const Icon(Icons.clear),
+                        ),
+                    ],
                   ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _pickLogo,
-                  icon: const Icon(Icons.image_outlined),
-                  label: const Text('Choose logo'),
-                ),
-                if (logoBytes != null)
-                  IconButton(
-                    tooltip: 'Remove logo',
-                    onPressed: () => setState(() {
-                      logoBytes = null;
-                      logoName = '';
-                    }),
-                    icon: const Icon(Icons.clear),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: productionDateController,
+                    onChanged: (_) => setState(() {}),
+                    keyboardType: TextInputType.datetime,
+                    decoration: const InputDecoration(
+                      labelText: 'Production date',
+                      hintText: 'DD/MM/YYYY',
+                      isDense: true,
+                    ),
                   ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: productionDateController,
-              keyboardType: TextInputType.datetime,
-              decoration: const InputDecoration(
-                labelText: 'Production date',
-                hintText: 'DD/MM/YYYY',
-                isDense: true,
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: expiryDateController,
+                    onChanged: (_) => setState(() {}),
+                    keyboardType: TextInputType.datetime,
+                    decoration: const InputDecoration(
+                      labelText: 'Expiry date',
+                      hintText: 'DD/MM/YYYY',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: weightController,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: 'Weight',
+                      hintText: 'e.g. 250g or 1kg',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _slider('الهامش: ${margin.toStringAsFixed(1)} mm', margin, 0,
+                      8, (v) => setState(() => margin = v)),
+                  _slider('حجم الخط: ${fontSize.toStringAsFixed(0)}', fontSize,
+                      5, 12, (v) => setState(() => fontSize = v)),
+                  _slider(
+                      'ارتفاع الباركود: ${barcodeHeight.toStringAsFixed(0)}',
+                      barcodeHeight,
+                      18,
+                      40,
+                      (v) => setState(() => barcodeHeight = v)),
+                  _slider(
+                      'Barcode width: ${barcodeWidth.toStringAsFixed(0)}',
+                      barcodeWidth,
+                      25,
+                      110,
+                      (v) => setState(() => barcodeWidth = v)),
+                  if (logoBytes != null) ...[
+                    const SizedBox(height: 8),
+                    _slider(
+                        'Logo size: ${logoWidth.toStringAsFixed(0)}',
+                        logoWidth,
+                        25,
+                        100,
+                        (v) => setState(() => logoWidth = v)),
+                  ],
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: positionElement,
+                    decoration: const InputDecoration(
+                      labelText: 'Move element',
+                      isDense: true,
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'productName', child: Text('Product name')),
+                      DropdownMenuItem(
+                          value: 'barcode', child: Text('Barcode')),
+                      DropdownMenuItem(value: 'logo', child: Text('Logo')),
+                      DropdownMenuItem(value: 'weight', child: Text('Weight')),
+                      DropdownMenuItem(value: 'dates', child: Text('Dates')),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => positionElement = value ?? 'barcode'),
+                  ),
+                  _slider(
+                      'Move right / left: ${_elementOffset.dx.toStringAsFixed(0)}',
+                      _elementOffset.dx + 20,
+                      0,
+                      40,
+                      (value) => _setElementOffset(dx: value - 20)),
+                  _slider(
+                      'Move up / down: ${_elementOffset.dy.toStringAsFixed(0)}',
+                      _elementOffset.dy + 20,
+                      0,
+                      40,
+                      (value) => _setElementOffset(dy: value - 20)),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: expiryDateController,
-              keyboardType: TextInputType.datetime,
-              decoration: const InputDecoration(
-                labelText: 'Expiry date',
-                hintText: 'DD/MM/YYYY',
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: weightController,
-              decoration: const InputDecoration(
-                labelText: 'Weight',
-                hintText: 'e.g. 250g or 1kg',
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 8),
-            _slider('الهامش: ${margin.toStringAsFixed(1)} mm', margin, 0, 8,
-                (v) => setState(() => margin = v)),
-            _slider('حجم الخط: ${fontSize.toStringAsFixed(0)}', fontSize, 5, 12,
-                (v) => setState(() => fontSize = v)),
-            _slider(
-                'ارتفاع الباركود: ${barcodeHeight.toStringAsFixed(0)}',
-                barcodeHeight,
-                18,
-                40,
-                (v) => setState(() => barcodeHeight = v)),
           ],
         ),
       ),
@@ -536,6 +734,9 @@ class _BarcodePrintOptionsDialogState
                 marginMm: margin,
                 fontSize: fontSize,
                 barcodeHeight: barcodeHeight,
+                barcodeWidth: barcodeWidth,
+                logoWidth: logoWidth,
+                elementOffsets: elementOffsets,
                 productionDate: productionDate,
                 expiryDate: expiryDate,
                 weight: weightController.text.trim(),
@@ -543,10 +744,20 @@ class _BarcodePrintOptionsDialogState
               ),
             );
           },
-          child: const Text('معاينة'),
+          child: const Text('طباعة'),
         ),
       ],
     );
+  }
+
+  Offset get _elementOffset => elementOffsets[positionElement] ?? Offset.zero;
+
+  void _setElementOffset({double? dx, double? dy}) {
+    final current = _elementOffset;
+    setState(() {
+      elementOffsets[positionElement] =
+          Offset(dx ?? current.dx, dy ?? current.dy);
+    });
   }
 
   Future<void> _pickLogo() async {

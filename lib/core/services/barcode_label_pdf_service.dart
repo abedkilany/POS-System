@@ -21,10 +21,13 @@ class BarcodeLabelPrintOptions {
     this.marginMm = 1.5,
     this.fontSize = 8,
     this.barcodeHeight = 24,
+    this.barcodeWidth = 60,
+    this.logoWidth = 60,
     this.productionDate = '',
     this.expiryDate = '',
     this.weight = '',
     this.logoBytes,
+    this.elementOffsets = const <String, Offset>{},
   });
 
   final double labelWidthMm;
@@ -32,10 +35,13 @@ class BarcodeLabelPrintOptions {
   final double marginMm;
   final double fontSize;
   final double barcodeHeight;
+  final double barcodeWidth;
+  final double logoWidth;
   final String productionDate;
   final String expiryDate;
   final String weight;
   final Uint8List? logoBytes;
+  final Map<String, Offset> elementOffsets;
 }
 
 class BarcodeLabelPdfService {
@@ -95,17 +101,20 @@ class BarcodeLabelPdfService {
     Locale locale = const Locale('en'),
     BarcodeLabelPrintOptions options = const BarcodeLabelPrintOptions(),
   }) async {
-    final bytes = await buildPdf(
-      items: items,
-      profile: profile,
-      locale: locale,
-      options: options,
-    );
-    if (!context.mounted) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => _BarcodePreviewPage(bytes: bytes, options: options),
+    await Printing.layoutPdf(
+      onLayout: (_) => buildPdf(
+        items: items,
+        profile: profile,
+        locale: locale,
+        options: options,
       ),
+      name: 'barcode-labels',
+      format: PdfPageFormat(
+        options.labelWidthMm * PdfPageFormat.mm,
+        options.labelHeightMm * PdfPageFormat.mm,
+      ),
+      dynamicLayout: false,
+      usePrinterSettings: false,
     );
   }
 
@@ -129,6 +138,9 @@ class BarcodeLabelPdfService {
     final barcodeHeight = hasDates
         ? options.barcodeHeight.clamp(18.0, 22.0).toDouble()
         : options.barcodeHeight;
+    final barcodeWidth = options.barcodeWidth
+        .clamp(24.0, (width - options.logoWidth - 16).clamp(24.0, 130.0))
+        .toDouble();
     return pw.Container(
       width: width,
       height: height,
@@ -138,15 +150,19 @@ class BarcodeLabelPdfService {
       ),
       child: pw.Column(
         children: [
-          pw.Align(
-            alignment: pw.Alignment.centerRight,
-            child: pw.Text(
-              product.name,
-              maxLines: 1,
-              overflow: pw.TextOverflow.clip,
-              textAlign: pw.TextAlign.right,
-              style: pw.TextStyle(
-                  fontSize: options.fontSize, fontWeight: pw.FontWeight.bold),
+          _positioned(
+            options,
+            'productName',
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                product.name,
+                maxLines: 1,
+                overflow: pw.TextOverflow.clip,
+                textAlign: pw.TextAlign.right,
+                style: pw.TextStyle(
+                    fontSize: options.fontSize, fontWeight: pw.FontWeight.bold),
+              ),
             ),
           ),
           pw.SizedBox(height: 2),
@@ -157,34 +173,42 @@ class BarcodeLabelPdfService {
                 crossAxisAlignment: pw.CrossAxisAlignment.center,
                 children: [
                   pw.SizedBox(
-                    width: 60,
+                    width: options.logoWidth,
                     child: pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.center,
                       mainAxisAlignment: pw.MainAxisAlignment.center,
                       children: [
                         if (hasLogo)
-                          pw.Container(
-                            width: 60,
-                            height: 40,
-                            alignment: pw.Alignment.center,
-                            child: pw.Image(
-                              pw.MemoryImage(options.logoBytes!),
-                              width: 60,
-                              height: 40,
-                              fit: pw.BoxFit.contain,
+                          _positioned(
+                            options,
+                            'logo',
+                            pw.Container(
+                              width: options.logoWidth,
+                              height: options.logoWidth * 2 / 3,
+                              alignment: pw.Alignment.center,
+                              child: pw.Image(
+                                pw.MemoryImage(options.logoBytes!),
+                                width: options.logoWidth,
+                                height: options.logoWidth * 2 / 3,
+                                fit: pw.BoxFit.contain,
+                              ),
                             ),
                           ),
                         if (hasWeight) ...[
                           pw.SizedBox(height: 3),
-                          pw.Text(
-                            options.weight.trim(),
-                            maxLines: 1,
-                            overflow: pw.TextOverflow.clip,
-                            style: pw.TextStyle(
-                              fontSize: options.fontSize - 1,
-                              fontWeight: pw.FontWeight.bold,
+                          _positioned(
+                            options,
+                            'weight',
+                            pw.Text(
+                              options.weight.trim(),
+                              maxLines: 1,
+                              overflow: pw.TextOverflow.clip,
+                              style: pw.TextStyle(
+                                fontSize: options.fontSize - 1,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                              textAlign: pw.TextAlign.center,
                             ),
-                            textAlign: pw.TextAlign.center,
                           ),
                         ],
                       ],
@@ -195,12 +219,18 @@ class BarcodeLabelPdfService {
                     child: pw.Column(
                       mainAxisAlignment: pw.MainAxisAlignment.center,
                       children: [
-                        pw.BarcodeWidget(
-                          barcode: pw.Barcode.code128(),
-                          data: product.barcode,
-                          width: double.infinity,
-                          height: barcodeHeight,
-                          drawText: false,
+                        _positioned(
+                          options,
+                          'barcode',
+                          pw.Center(
+                            child: pw.BarcodeWidget(
+                              barcode: pw.Barcode.code128(),
+                              data: product.barcode,
+                              width: barcodeWidth,
+                              height: barcodeHeight,
+                              drawText: false,
+                            ),
+                          ),
                         ),
                         pw.SizedBox(height: 2),
                         pw.Directionality(
@@ -224,15 +254,19 @@ class BarcodeLabelPdfService {
             ),
           ),
           if (hasDates)
-            pw.Padding(
-              padding: const pw.EdgeInsets.only(top: 2),
-              child: pw.Text(
-                dateText,
-                maxLines: 1,
-                overflow: pw.TextOverflow.clip,
-                style: const pw.TextStyle(
-                  fontSize: 6.5,
-                  fontWeight: pw.FontWeight.bold,
+            _positioned(
+              options,
+              'dates',
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 2),
+                child: pw.Text(
+                  dateText,
+                  maxLines: 1,
+                  overflow: pw.TextOverflow.clip,
+                  style: const pw.TextStyle(
+                    fontSize: 6.5,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
               ),
             ),
@@ -240,59 +274,17 @@ class BarcodeLabelPdfService {
       ),
     );
   }
-}
 
-class _BarcodePreviewPage extends StatelessWidget {
-  const _BarcodePreviewPage({required this.bytes, required this.options});
-
-  final Uint8List bytes;
-  final BarcodeLabelPrintOptions options;
-
-  Future<void> _print(BuildContext context) async {
-    final navigator = Navigator.of(context);
-    navigator.pop();
-    // Let the preview route finish closing before opening the native Windows
-    // dialog. Otherwise the dialog can be placed behind the preview window.
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
-      name: 'barcode-labels',
-      format: PdfPageFormat(
-        options.labelWidthMm * PdfPageFormat.mm,
-        options.labelHeightMm * PdfPageFormat.mm,
-      ),
-      dynamicLayout: false,
-      usePrinterSettings: true,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Barcode preview'),
-        leading: IconButton(
-          tooltip: 'Close',
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.close),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Print',
-            onPressed: () => _print(context),
-            icon: const Icon(Icons.print),
-          ),
-        ],
-      ),
-      body: PdfPreview(
-        build: (_) async => bytes,
-        pdfFileName: 'barcode-labels.pdf',
-        canChangePageFormat: false,
-        canChangeOrientation: false,
-        useActions: false,
-        allowSharing: false,
-        allowPrinting: false,
-      ),
+  static pw.Widget _positioned(
+    BarcodeLabelPrintOptions options,
+    String element,
+    pw.Widget child,
+  ) {
+    final offset = options.elementOffsets[element] ?? Offset.zero;
+    if (offset == Offset.zero) return child;
+    return pw.Transform.translate(
+      offset: PdfPoint(offset.dx, -offset.dy),
+      child: child,
     );
   }
 }
