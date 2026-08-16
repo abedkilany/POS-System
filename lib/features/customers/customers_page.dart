@@ -114,9 +114,9 @@ class _CustomersPageState extends State<CustomersPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewCustomers) {
-        return _AccessDeniedScaffold(
-          title: tr.text('customers'),
-          message: tr.text('no_access_customer_records'),
+      return _AccessDeniedScaffold(
+        title: tr.text('customers'),
+        message: tr.text('no_access_customer_records'),
       );
     }
     final value = query.trim().toLowerCase();
@@ -211,6 +211,18 @@ class _CustomersPageState extends State<CustomersPage> {
       _customerRevealTimer = null;
       _visibleCustomerCount = math.min(totalCount, _visibleCustomerCount + 100);
     });
+  }
+
+  Future<void> _openCustomerPayment(Customer customer) async {
+    await showAccountPaymentDialog(
+      context: context,
+      store: widget.store,
+      accountType: 'customer',
+      accountId: customer.id,
+      accountName: customer.name,
+    );
+    if (!mounted) return;
+    setState(() {});
   }
 
   Widget _buildCustomersView(
@@ -350,12 +362,9 @@ class _CustomersPageState extends State<CustomersPage> {
                                                       .customersPaymentManage,
                                                   AppPermission.customersManage,
                                                 })) {
-                                              showAccountPaymentDialog(
-                                                  context: context,
-                                                  store: widget.store,
-                                                  accountType: 'customer',
-                                                  accountId: customer.id,
-                                                  accountName: customer.name);
+                                              unawaited(
+                                                _openCustomerPayment(customer),
+                                              );
                                             }
                                             if (value == 'edit' &&
                                                 widget
@@ -418,16 +427,9 @@ class _CustomersPageState extends State<CustomersPage> {
                                                       .customersPaymentManage,
                                                   AppPermission.customersManage,
                                                 })
-                                                    ? () =>
-                                                        showAccountPaymentDialog(
-                                                            context: context,
-                                                            store: widget.store,
-                                                            accountType:
-                                                                'customer',
-                                                            accountId:
-                                                                customer.id,
-                                                            accountName:
-                                                                customer.name)
+                                                    ? () => unawaited(
+                                                        _openCustomerPayment(
+                                                            customer))
                                                     : null,
                                                 icon: const Icon(
                                                     Icons.payments_outlined),

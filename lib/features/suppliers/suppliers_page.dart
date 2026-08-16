@@ -116,9 +116,9 @@ class _SuppliersPageState extends State<SuppliersPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewSuppliers) {
-        return _AccessDeniedScaffold(
-          title: tr.text('suppliers'),
-          message: tr.text('no_access_supplier_records'),
+      return _AccessDeniedScaffold(
+        title: tr.text('suppliers'),
+        message: tr.text('no_access_supplier_records'),
       );
     }
     final value = query.trim().toLowerCase();
@@ -209,6 +209,18 @@ class _SuppliersPageState extends State<SuppliersPage> {
       _supplierRevealTimer = null;
       _visibleSupplierCount = math.min(totalCount, _visibleSupplierCount + 100);
     });
+  }
+
+  Future<void> _openSupplierPayment(Supplier supplier) async {
+    await showAccountPaymentDialog(
+      context: context,
+      store: widget.store,
+      accountType: 'supplier',
+      accountId: supplier.id,
+      accountName: supplier.name,
+    );
+    if (!mounted) return;
+    setState(() {});
   }
 
   Widget _buildSuppliersView(
@@ -355,12 +367,9 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                       .suppliersPaymentManage,
                                                   AppPermission.suppliersManage,
                                                 })) {
-                                              showAccountPaymentDialog(
-                                                  context: context,
-                                                  store: widget.store,
-                                                  accountType: 'supplier',
-                                                  accountId: supplier.id,
-                                                  accountName: supplier.name);
+                                              unawaited(
+                                                _openSupplierPayment(supplier),
+                                              );
                                             }
                                             if (value == 'edit' &&
                                                 widget
@@ -423,16 +432,9 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                       .suppliersPaymentManage,
                                                   AppPermission.suppliersManage,
                                                 })
-                                                    ? () =>
-                                                        showAccountPaymentDialog(
-                                                            context: context,
-                                                            store: widget.store,
-                                                            accountType:
-                                                                'supplier',
-                                                            accountId:
-                                                                supplier.id,
-                                                            accountName:
-                                                                supplier.name)
+                                                    ? () => unawaited(
+                                                        _openSupplierPayment(
+                                                            supplier))
                                                     : null,
                                                 icon: const Icon(
                                                     Icons.payments_outlined),
@@ -541,7 +543,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
             valueListenable: SyncDiagnosticsLog.lines,
             builder: (context, lines, _) {
               final text = lines.isEmpty
-                   ? tr.text('waiting_for_direct_sync_trace')
+                  ? tr.text('waiting_for_direct_sync_trace')
                   : lines.join('\n');
               return SingleChildScrollView(
                 child: SelectableText(
@@ -557,14 +559,14 @@ class _SuppliersPageState extends State<SuppliersPage> {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: SyncDiagnosticsLog.dump()));
               ScaffoldMessenger.of(context).showSnackBar(
-                 SnackBar(content: Text(tr.text('sync_trace_copied'))),
+                SnackBar(content: Text(tr.text('sync_trace_copied'))),
               );
             },
-             child: Text(tr.text('copy_trace')),
+            child: Text(tr.text('copy_trace')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext),
-             child: Text(tr.text('close')),
+            child: Text(tr.text('close')),
           ),
         ],
       ),

@@ -25,6 +25,7 @@ import '../core/storage/sqlite/business_sqlite_store.dart';
 import '../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../core/storage/sqlite/sync_sqlite_store.dart';
 import '../core/utils/currency_utils.dart';
+import 'backup_inventory_normalizer.dart';
 
 import '../models/account_transaction.dart';
 import '../models/catalog_item.dart';
@@ -15628,6 +15629,12 @@ class AppStore extends ChangeNotifier {
         await LocalDatabaseService.getInventoryMigrationAdjustmentsFromSqlite();
     final sqliteStockMovements =
         await LocalDatabaseService.getStockMovementsFromSqlite();
+    final sqliteWarehouses =
+        await LocalDatabaseService.getWarehousesFromSqlite();
+    final exportWarehouses =
+        sqliteWarehouses != null && sqliteWarehouses.isNotEmpty
+            ? sqliteWarehouses
+            : _warehouses;
     return {
       'version': 12,
       'generatedAt': DateTime.now().toIso8601String(),
@@ -15765,7 +15772,7 @@ class AppStore extends ChangeNotifier {
           : inventoryReconciliations.map((item) => item.toJson()).toList(),
       'inventoryMigrationAdjustments':
           inventoryMigrationAdjustments ?? <dynamic>[],
-      'warehouses': _warehouses
+      'warehouses': exportWarehouses
           .map(
             (item) => includeDeviceAndSyncState
                 ? item.toJson()
@@ -15919,6 +15926,12 @@ class AppStore extends ChangeNotifier {
         await LocalDatabaseService.getInventoryMigrationAdjustmentsFromSqlite();
     final sqliteStockMovements =
         await LocalDatabaseService.getStockMovementsFromSqlite();
+    final sqliteWarehouses =
+        await LocalDatabaseService.getWarehousesFromSqlite();
+    final exportWarehouses =
+        sqliteWarehouses != null && sqliteWarehouses.isNotEmpty
+            ? sqliteWarehouses
+            : _warehouses;
     final all = <String, List<dynamic>>{
       '_meta': <dynamic>[
         <String, dynamic>{
@@ -15942,7 +15955,7 @@ class AppStore extends ChangeNotifier {
       'categories': _categories.map((item) => item.toJson()).toList(),
       'brands': _brands.map((item) => item.toJson()).toList(),
       'units': _units.map((item) => item.toJson()).toList(),
-      'warehouses': _warehouses.map((item) => item.toJson()).toList(),
+      'warehouses': exportWarehouses.map((item) => item.toJson()).toList(),
       'products': _products.map((item) => item.toJson()).toList(),
       'customers': _customers.map((item) => item.toJson()).toList(),
       'suppliers': _suppliers.map((item) => item.toJson()).toList(),
@@ -16593,11 +16606,17 @@ class AppStore extends ChangeNotifier {
     if (appIdentity.isClient) {
       throw StateError('Import Backup is only available on the Host device.');
     }
-    final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+    var decoded = jsonDecode(rawJson) as Map<String, dynamic>;
     bool wants(String id) =>
         selectedSectionIds == null || selectedSectionIds.contains(id);
     final customImport = selectedSectionIds != null;
     final currentIdentityBeforeImport = appIdentity;
+    decoded = normalizeBackupInventoryForStore(
+      decoded,
+      storeId: currentIdentityBeforeImport.storeId,
+      branchId: currentIdentityBeforeImport.branchId,
+      deviceId: _deviceId,
+    );
     final preservePairedHostIdentity = currentIdentityBeforeImport.isHost;
     final liveHostConnectionEntries = preservePairedHostIdentity
         ? Map<String, String>.fromEntries(

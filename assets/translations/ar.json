@@ -1532,6 +1532,7 @@
   "purchase_cancelled": "تم إلغاء الشراء.",
   "purchase_deleted": "تم حذف مسودة الشراء.",
   "purchase_details": "تفاصيل الشراء",
+  "purchase_currency_helper": "تُستخدم لجميع تكاليف المنتجات في فاتورة الشراء هذه.",
   "purchase_invoice": "فاتورة شراء",
   "purchase_permanently_deleted": "تم حذف فاتورة الشراء الملغاة نهائياً من الواجهة.",
   "purchase_received": "تم استلام الشراء وتحديث المخزون.",

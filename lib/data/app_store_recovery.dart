@@ -14,12 +14,18 @@ class AppStoreRecoveryService {
       throw StateError('Import Backup is only available on the Host device.');
     }
 
-    final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+    var decoded = jsonDecode(rawJson) as Map<String, dynamic>;
     final customImport = selectedSectionIds != null;
     bool wants(String id) =>
         selectedSectionIds == null || selectedSectionIds.contains(id);
 
     final currentIdentityBeforeImport = store.appIdentity;
+    decoded = normalizeBackupInventoryForStore(
+      decoded,
+      storeId: currentIdentityBeforeImport.storeId,
+      branchId: currentIdentityBeforeImport.branchId,
+      deviceId: store.deviceId,
+    );
     final preservePairedHostIdentity = currentIdentityBeforeImport.isHost;
     final liveHostConnectionEntries = preservePairedHostIdentity
         ? Map<String, String>.fromEntries(

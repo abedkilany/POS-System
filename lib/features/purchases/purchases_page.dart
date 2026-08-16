@@ -1487,9 +1487,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final tr = AppLocalizations.of(context);
     final formKey = GlobalKey<FormState>();
     final source = editing ?? template;
-    final items = source == null
-        ? <PurchaseItem>[]
-        : List<PurchaseItem>.of(source.items);
+    final items =
+        source == null ? <PurchaseItem>[] : List<PurchaseItem>.of(source.items);
     final sqliteProducts = await LocalDatabaseService.queryProductsFromSqlite(
       limit: 250,
       activeOnly: true,
@@ -1523,22 +1522,30 @@ class _PurchasesPageState extends State<PurchasesPage> {
       supplierName =
           purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.name : '';
     }
-    Product? selectedProduct =
-        purchaseProducts.isNotEmpty ? purchaseProducts.first : null;
-    ProductSaleUnit? selectedUnit =
-        selectedProduct?.effectivePurchaseUnits.first;
+    Product? selectedProduct;
+    ProductSaleUnit? selectedUnit;
     final qtyController = TextEditingController(text: '1');
     final costController = TextEditingController();
     final productSearchController = TextEditingController();
     final paidAmountController = TextEditingController();
     final dialogShortcutFocusNode = FocusNode();
+    final productSearchFocusNode = FocusNode();
     final qtyFocusNode = FocusNode();
     final costFocusNode = FocusNode();
+    final addLineFocusNode = FocusNode();
     final paidAmountFocusNode = FocusNode();
+    var productSearchFocusRequested = false;
     String paymentStatus = source?.paymentStatus ?? 'paid';
     String paymentMethod = source?.paymentMethod ?? 'Cash';
-    String costCurrency = selectedProduct?.costCurrency ??
-        widget.store.storeProfile.defaultProductCurrency;
+    final sourceCurrency = items
+        .map((item) => item.unitCostCurrency.trim().toUpperCase())
+        .firstWhere(
+          (currency) => currency == 'USD' || currency == 'LBP',
+          orElse: () => '',
+        );
+    String costCurrency = sourceCurrency.isEmpty
+        ? widget.store.storeProfile.defaultProductCurrency
+        : sourceCurrency;
     bool receiveNow = false;
     if (editing != null) {
       paidAmountController.text = editing.paidAmount.toStringAsFixed(2);
@@ -1569,16 +1576,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
           product.usdCost;
     }
 
-    String suggestedCostCurrency(Product product) {
-      final supplierPrice = selectedSupplierPriceFor(product);
-      return supplierPrice?.currency ??
-          suggestedPurchaseItem(product)?.unitCostCurrency ??
-          widget.store
-              .lastPurchaseItemForProduct(product.id)
-              ?.unitCostCurrency ??
-          product.costCurrency;
-    }
-
     void applySuggestedSupplierPrice() {
       final product = selectedProduct;
       final unit = selectedUnit;
@@ -1586,7 +1583,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
         costController.text = '0';
         return;
       }
-      costCurrency = suggestedCostCurrency(product);
       final suggested = suggestedBaseCost(product) * unit.conversionToBase;
       final displayCost = fromUsdReferencePrice(
           suggested, costCurrency, widget.store.storeProfile);
@@ -1594,7 +1590,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
           displayCost.toStringAsFixed(costCurrency == 'LBP' ? 0 : 2);
     }
 
-    selectedUnit = selectedProduct?.effectivePurchaseUnits.first;
     applySuggestedSupplierPrice();
 
     String priceHintForSelectedProduct() {
@@ -1750,8 +1745,29 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
 
     Future<void> createQuickProduct(StateSetter setDialogState) async {
+      final formKey = GlobalKey<FormState>();
       final nameController = TextEditingController();
       final barcodeQuickController = TextEditingController();
+      var unit = '';
+      String generateBarcode() {
+        final used = widget.store.products
+            .map((item) => item.barcode.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet();
+        var seed = DateTime.now().microsecondsSinceEpoch % 1000000000000;
+        String value;
+        do {
+          final body = seed.toString().padLeft(12, '0');
+          var sum = 0;
+          for (var index = 0; index < body.length; index++) {
+            sum += int.parse(body[index]) * (index.isEven ? 1 : 3);
+          }
+          value = '$body${(10 - (sum % 10)) % 10}';
+          seed = (seed + 1) % 1000000000000;
+        } while (used.contains(value));
+        return value;
+      }
+
       final created = await showModalBottomSheet<Product>(
         context: context,
         isScrollControlled: true,
@@ -1763,60 +1779,100 @@ class _PurchasesPageState extends State<PurchasesPage> {
             top: 20,
             bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 20,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(tr.text('add_product'),
-                  style: Theme.of(sheetContext).textTheme.titleLarge),
-              const SizedBox(height: 16),
-              TextField(
-                  controller: nameController,
-                  decoration:
-                      InputDecoration(labelText: tr.text('product_name')),
-                  autofocus: true),
-              const SizedBox(height: 12),
-              TextField(
-                controller: barcodeQuickController,
-                decoration: InputDecoration(
-                  labelText: tr.text('barcode'),
-                  suffixIcon: IconButton(
-                    tooltip: tr.text('scan_with_camera'),
-                    onPressed: () async {
-                      final code = await _scanBarcodeWithCamera();
-                      if (code == null) return;
-                      barcodeQuickController.text = code;
-                    },
-                    icon: const Icon(Icons.camera_alt_outlined),
+          child: StatefulBuilder(
+            builder: (sheetContext, setSheetState) => Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(tr.text('add_product'),
+                      style: Theme.of(sheetContext).textTheme.titleLarge),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: nameController,
+                    decoration: InputDecoration(
+                        labelText: '${tr.text('product_name')} *'),
+                    validator: (value) => (value ?? '').trim().isEmpty
+                        ? tr.text('required')
+                        : null,
+                    autofocus: true,
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: barcodeQuickController,
+                    decoration: InputDecoration(
+                      labelText: '${tr.text('barcode')} *',
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: tr.text('generate_barcode'),
+                            onPressed: () =>
+                                barcodeQuickController.text = generateBarcode(),
+                            icon: const Icon(Icons.qr_code_2_outlined),
+                          ),
+                          IconButton(
+                            tooltip: tr.text('scan_with_camera'),
+                            onPressed: () async {
+                              final code = await _scanBarcodeWithCamera();
+                              if (code == null) return;
+                              barcodeQuickController.text = code;
+                            },
+                            icon: const Icon(Icons.camera_alt_outlined),
+                          ),
+                        ],
+                      ),
+                    ),
+                    validator: (value) => (value ?? '').trim().isEmpty
+                        ? tr.text('required')
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: unit.isEmpty ? null : unit,
+                    decoration:
+                        InputDecoration(labelText: '${tr.text('unit')} *'),
+                    items: widget.store.units
+                        .map((item) =>
+                            item.code.isNotEmpty ? item.code : item.nameEn)
+                        .where((value) => value.trim().isNotEmpty)
+                        .map((value) =>
+                            DropdownMenuItem(value: value, child: Text(value)))
+                        .toList(),
+                    onChanged: (value) =>
+                        setSheetState(() => unit = value ?? ''),
+                    validator: (value) => (value ?? '').trim().isEmpty
+                        ? tr.text('required')
+                        : null,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.save_outlined),
+                    label: Text(tr.text('save')),
+                    onPressed: () {
+                      if (!formKey.currentState!.validate()) return;
+                      final now = DateTime.now().microsecondsSinceEpoch;
+                      Navigator.pop(
+                          sheetContext,
+                          Product(
+                            id: 'product_$now',
+                            name: nameController.text.trim(),
+                            code: 'PRD-$now',
+                            barcode: barcodeQuickController.text.trim(),
+                            price: 0,
+                            cost: 0,
+                            stock: 0,
+                            category: 'General',
+                            unit: unit,
+                            trackStock: true,
+                            isActive: true,
+                          ));
+                    },
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                icon: const Icon(Icons.save_outlined),
-                label: Text(tr.text('save')),
-                onPressed: () {
-                  final name = nameController.text.trim();
-                  if (name.isEmpty) return;
-                  final now = DateTime.now().microsecondsSinceEpoch;
-                  Navigator.pop(
-                      sheetContext,
-                      Product(
-                        id: 'product_$now',
-                        name: name,
-                        code: 'PRD-$now',
-                        barcode: barcodeQuickController.text.trim(),
-                        price: 0,
-                        cost: 0,
-                        stock: 0,
-                        category: 'General',
-                        unit: tr.text('unit'),
-                        trackStock: true,
-                        isActive: true,
-                      ));
-                },
-              ),
-            ],
+            ),
           ),
         ),
       );
@@ -1841,14 +1897,30 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
 
     Future<void> editPurchaseLine(
-        PurchaseItem item, StateSetter setDialogState) async {
+      PurchaseItem item,
+      StateSetter setDialogState,
+      BuildContext purchaseDialogContext,
+    ) async {
       final productMatches =
           purchaseProducts.where((p) => p.id == item.productId).toList();
-      if (productMatches.isEmpty) return;
-      final product = productMatches.first;
-      ProductSaleUnit editUnit = product.effectivePurchaseUnits.firstWhere(
+      final product = productMatches.isEmpty ? null : productMatches.first;
+      final availableUnits = product?.effectivePurchaseUnits ??
+          <ProductSaleUnit>[
+            ProductSaleUnit(
+              id: item.purchaseUnitId,
+              name: item.purchaseUnitName.isEmpty
+                  ? tr.text('unit')
+                  : item.purchaseUnitName,
+              conversionToBase: item.conversionToBase,
+              price: item.unitCost,
+              originalPrice: item.originalUnitCost ?? item.unitCost,
+              originalCurrency: item.unitCostCurrency,
+              isDefault: true,
+            ),
+          ];
+      ProductSaleUnit editUnit = availableUnits.firstWhere(
           (unit) => unit.id == item.purchaseUnitId,
-          orElse: () => product.effectivePurchaseUnits.first);
+          orElse: () => availableUnits.first);
       String editCurrency = item.unitCostCurrency;
       final editQtyController =
           TextEditingController(text: _formatQuantity(item.quantity));
@@ -1858,7 +1930,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       item.unitCost, editCurrency, widget.store.storeProfile))
               .toStringAsFixed(editCurrency == 'LBP' ? 0 : 2));
       final updated = await showModalBottomSheet<PurchaseItem>(
-        context: context,
+        context: purchaseDialogContext,
+        useRootNavigator: true,
         isScrollControlled: true,
         useSafeArea: true,
         enableDrag: false,
@@ -1900,14 +1973,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             initialValue: editUnit.id,
                             decoration: InputDecoration(
                                 labelText: tr.text('purchase_unit')),
-                            items: product.effectivePurchaseUnits
+                            items: availableUnits
                                 .map((unit) => DropdownMenuItem(
                                     value: unit.id,
                                     child: Text(
                                         '${unit.name} × ${_formatQuantity(unit.conversionToBase)}')))
                                 .toList(),
                             onChanged: (value) {
-                              final matches = product.effectivePurchaseUnits
+                              final matches = availableUnits
                                   .where((unit) => unit.id == value)
                                   .toList();
                               if (matches.isNotEmpty) {
@@ -1967,15 +2040,16 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                         editUnit.conversionToBase <= 0) {
                                       return;
                                     }
-                                    if (!product.allowsDecimalQuantity &&
+                                    if (product != null &&
+                                        !product.allowsDecimalQuantity &&
                                         qty % 1 != 0) {
                                       return;
                                     }
                                     Navigator.pop(
                                         editContext,
                                         PurchaseItem(
-                                          productId: product.id,
-                                          productName: product.name,
+                                          productId: item.productId,
+                                          productName: item.productName,
                                           quantity: qty,
                                           purchaseUnitId: editUnit.id,
                                           purchaseUnitName: editUnit.name,
@@ -2083,23 +2157,23 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     }
 
-    void addPurchaseLine(Product product, ProductSaleUnit unit, double qty,
+    bool addPurchaseLine(Product product, ProductSaleUnit unit, double qty,
         double enteredCost, String currency, StateSetter setDialogState) {
       if (qty <= 0) {
         showPurchaseError(tr.text('invalid_purchase_quantity'));
-        return;
+        return false;
       }
       if (enteredCost < 0) {
         showPurchaseError(tr.text('unit_cost_required'));
-        return;
+        return false;
       }
       if (unit.conversionToBase <= 0) {
         showPurchaseError(tr.text('invalid_purchase_unit_conversion'));
-        return;
+        return false;
       }
       if (!product.allowsDecimalQuantity && qty % 1 != 0) {
         showPurchaseError(tr.text('countable_whole_quantity_required'));
-        return;
+        return false;
       }
       final cost =
           toUsdReferencePrice(enteredCost, currency, widget.store.storeProfile);
@@ -2116,6 +2190,21 @@ class _PurchasesPageState extends State<PurchasesPage> {
         exchangeRateAtEntry: widget.store.storeProfile.usdToLbpRate,
       ));
       setDialogState(() {});
+      return true;
+    }
+
+    void resetProductEntryAfterAdd(StateSetter setDialogState) {
+      selectedProduct = null;
+      selectedUnit = null;
+      productSearchController.clear();
+      qtyController.text = '1';
+      costController.clear();
+      setDialogState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (dialogShortcutFocusNode.canRequestFocus) {
+          productSearchFocusNode.requestFocus();
+        }
+      });
     }
 
     void addSelectedPurchaseLine(StateSetter setDialogState) {
@@ -2124,8 +2213,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
       if (product == null || unit == null) return;
       final qty = double.tryParse(qtyController.text.trim()) ?? 0;
       final enteredCost = double.tryParse(costController.text.trim()) ?? -1;
-      addPurchaseLine(
-          product, unit, qty, enteredCost, costCurrency, setDialogState);
+      final added = addPurchaseLine(
+        product,
+        unit,
+        qty,
+        enteredCost,
+        costCurrency,
+        setDialogState,
+      );
+      if (added) resetProductEntryAfterAdd(setDialogState);
     }
 
     ({Product product, ProductSaleUnit unit})? findPurchaseProductByBarcode(
@@ -2159,6 +2255,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
         applySuggestedSupplierPrice();
         BarcodeFeedbackService.play(force: true);
         setDialogState(() {});
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          qtyFocusNode.requestFocus();
+        });
         return;
       }
 
@@ -2326,6 +2425,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       productSearchController.text = picked.product.name;
       applySuggestedSupplierPrice();
       setDialogState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        qtyFocusNode.requestFocus();
+      });
     }
 
     Future<List<PurchaseItem>?> collectRequiredBatchAllocations(
@@ -2606,6 +2708,26 @@ class _PurchasesPageState extends State<PurchasesPage> {
           ModalRoute.of(dialogContext)?.isCurrent != true) {
         return false;
       }
+      if (event is KeyDownEvent &&
+          (event.logicalKey == LogicalKeyboardKey.enter ||
+              event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+        if (qtyFocusNode.hasFocus) {
+          costFocusNode.requestFocus();
+          return true;
+        }
+        if (costFocusNode.hasFocus) {
+          addLineFocusNode.requestFocus();
+          return true;
+        }
+        if (addLineFocusNode.hasFocus) {
+          addSelectedPurchaseLine(setDialogState);
+          return true;
+        }
+        if (productSearchFocusNode.hasFocus) {
+          choosePurchaseProduct(setDialogState);
+          return true;
+        }
+      }
       return handlePurchaseDialogShortcutKey(
               event, dialogContext, setDialogState) ==
           KeyEventResult.handled;
@@ -2660,12 +2782,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
                               children: [
                                 Expanded(
                                     child: Text(
-                                         editing != null
-                                             ? tr.text('edit_purchase')
-                                             : template == null
-                                                 ? tr.text('new_purchase')
-                                                 : tr.text(
-                                                     'duplicate_purchase_draft'),
+                                        editing != null
+                                            ? tr.text('edit_purchase')
+                                            : template == null
+                                                ? tr.text('new_purchase')
+                                                : tr.text(
+                                                    'duplicate_purchase_draft'),
                                         style: Theme.of(context)
                                             .textTheme
                                             .headlineSmall)),
@@ -2841,6 +2963,33 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                             '${tr.text('warehouse')}: ${selectedWarehouseName.isEmpty ? selectedWarehouseId : selectedWarehouseName}',
                                           ),
                                           SizedBox(height: gap),
+                                          DropdownButtonFormField<String>(
+                                            initialValue: costCurrency,
+                                            decoration: InputDecoration(
+                                              labelText: tr.text('currency'),
+                                              helperText: tr.text(
+                                                  'purchase_currency_helper'),
+                                            ),
+                                            items: const [
+                                              DropdownMenuItem(
+                                                value: 'USD',
+                                                child: Text('USD'),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: 'LBP',
+                                                child: Text('LBP'),
+                                              ),
+                                            ],
+                                            onChanged: items.isNotEmpty
+                                                ? null
+                                                : (value) {
+                                                    costCurrency =
+                                                        value ?? 'USD';
+                                                    applySuggestedSupplierPrice();
+                                                    setDialogState(() {});
+                                                  },
+                                          ),
+                                          SizedBox(height: gap),
                                           SwitchListTile(
                                             contentPadding: EdgeInsets.zero,
                                             value: receiveNow,
@@ -2938,6 +3087,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                     }
 
                                     Widget productEntrySection() {
+                                      if (!productSearchFocusRequested) {
+                                        productSearchFocusRequested = true;
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                          productSearchFocusNode.requestFocus();
+                                        });
+                                      }
                                       final conversion =
                                           selectedUnitConversionSummary();
                                       final selectedProductTitle =
@@ -2964,65 +3120,81 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                         title: tr.text('add_product'),
                                         icon: Icons.add_box_outlined,
                                         children: [
-                                          InkWell(
-                                            borderRadius:
-                                                BorderRadius.circular(16),
-                                            onTap: () => choosePurchaseProduct(
-                                                setDialogState),
-                                            child: InputDecorator(
-                                              decoration: InputDecoration(
-                                                labelText:
-                                                    tr.text('search_product'),
-                                                prefixIcon:
-                                                    const Icon(Icons.search),
-                                                suffixIcon: Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
+                                          Focus(
+                                            focusNode: productSearchFocusNode,
+                                            onKeyEvent: (node, event) {
+                                              if (event is KeyDownEvent &&
+                                                  event.logicalKey ==
+                                                      LogicalKeyboardKey
+                                                          .enter) {
+                                                choosePurchaseProduct(
+                                                    setDialogState);
+                                                return KeyEventResult.handled;
+                                              }
+                                              return KeyEventResult.ignored;
+                                            },
+                                            child: InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                              onTap: () =>
+                                                  choosePurchaseProduct(
+                                                      setDialogState),
+                                              child: InputDecorator(
+                                                decoration: InputDecoration(
+                                                  labelText:
+                                                      tr.text('search_product'),
+                                                  prefixIcon:
+                                                      const Icon(Icons.search),
+                                                  suffixIcon: Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      IconButton(
+                                                        tooltip: tr.text(
+                                                            'scan_with_camera'),
+                                                        onPressed: () =>
+                                                            choosePurchaseProduct(
+                                                                setDialogState,
+                                                                scanFirst:
+                                                                    true),
+                                                        icon: const Icon(Icons
+                                                            .camera_alt_outlined),
+                                                      ),
+                                                      IconButton(
+                                                        tooltip: tr.text(
+                                                            'add_product'),
+                                                        onPressed: () =>
+                                                            createQuickProduct(
+                                                                setDialogState),
+                                                        icon: const Icon(Icons
+                                                            .add_box_outlined),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
                                                   children: [
-                                                    IconButton(
-                                                      tooltip: tr.text(
-                                                          'scan_with_camera'),
-                                                      onPressed: () =>
-                                                          choosePurchaseProduct(
-                                                              setDialogState,
-                                                              scanFirst: true),
-                                                      icon: const Icon(Icons
-                                                          .camera_alt_outlined),
-                                                    ),
-                                                    IconButton(
-                                                      tooltip: tr
-                                                          .text('add_product'),
-                                                      onPressed: () =>
-                                                          createQuickProduct(
-                                                              setDialogState),
-                                                      icon: const Icon(Icons
-                                                          .add_box_outlined),
-                                                    ),
+                                                    Text(selectedProductTitle,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis),
+                                                    if (selectedProductSubtitle
+                                                        .isNotEmpty) ...[
+                                                      const SizedBox(height: 2),
+                                                      Text(
+                                                        selectedProductSubtitle,
+                                                        maxLines: 2,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall,
+                                                      ),
+                                                    ],
                                                   ],
                                                 ),
-                                              ),
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(selectedProductTitle,
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow
-                                                          .ellipsis),
-                                                  if (selectedProductSubtitle
-                                                      .isNotEmpty) ...[
-                                                    const SizedBox(height: 2),
-                                                    Text(
-                                                      selectedProductSubtitle,
-                                                      maxLines: 2,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: Theme.of(context)
-                                                          .textTheme
-                                                          .bodySmall,
-                                                    ),
-                                                  ],
-                                                ],
                                               ),
                                             ),
                                           ),
@@ -3068,6 +3240,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     const TextInputType
                                                         .numberWithOptions(
                                                         decimal: true),
+                                                onFieldSubmitted: (_) =>
+                                                    costFocusNode
+                                                        .requestFocus(),
                                                 onChanged: (_) =>
                                                     setDialogState(() {}),
                                               );
@@ -3086,26 +3261,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     const TextInputType
                                                         .numberWithOptions(
                                                         decimal: true),
-                                              );
-                                              final currencyField =
-                                                  DropdownButtonFormField<
-                                                      String>(
-                                                initialValue: costCurrency,
-                                                decoration: InputDecoration(
-                                                    labelText:
-                                                        tr.text('currency')),
-                                                items: const [
-                                                  DropdownMenuItem(
-                                                      value: 'USD',
-                                                      child: Text('USD')),
-                                                  DropdownMenuItem(
-                                                      value: 'LBP',
-                                                      child: Text('LBP')),
-                                                ],
-                                                onChanged: (value) =>
-                                                    setDialogState(() =>
-                                                        costCurrency =
-                                                            value ?? 'USD'),
+                                                onFieldSubmitted: (_) =>
+                                                    addLineFocusNode
+                                                        .requestFocus(),
                                               );
                                               if (oneColumn) {
                                                 return Column(
@@ -3115,17 +3273,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                   children: [
                                                     unitField,
                                                     SizedBox(height: gap),
-                                                    Row(
-                                                      children: [
-                                                        Expanded(
-                                                            child: qtyField),
-                                                        SizedBox(width: gap),
-                                                        SizedBox(
-                                                            width: 120,
-                                                            child:
-                                                                currencyField),
-                                                      ],
-                                                    ),
+                                                    qtyField,
                                                     SizedBox(height: gap),
                                                     costField,
                                                   ],
@@ -3144,9 +3292,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                   SizedBox(
                                                       width: 190,
                                                       child: costField),
-                                                  SizedBox(
-                                                      width: 120,
-                                                      child: currencyField),
                                                 ],
                                               );
                                             },
@@ -3163,16 +3308,31 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     label: Text(conversion))),
                                           ],
                                           SizedBox(height: gap),
-                                          FilledButton.icon(
-                                            onPressed: selectedProduct ==
-                                                        null ||
-                                                    selectedUnit == null
-                                                ? null
-                                                : () => addSelectedPurchaseLine(
-                                                    setDialogState),
-                                            icon: const Icon(Icons.add),
-                                            label: Text(tr.text(
-                                                'add_product_to_purchase')),
+                                          Focus(
+                                            focusNode: addLineFocusNode,
+                                            onKeyEvent: (node, event) {
+                                              if (event is KeyDownEvent &&
+                                                  event.logicalKey ==
+                                                      LogicalKeyboardKey
+                                                          .enter) {
+                                                addSelectedPurchaseLine(
+                                                    setDialogState);
+                                                return KeyEventResult.handled;
+                                              }
+                                              return KeyEventResult.ignored;
+                                            },
+                                            child: FilledButton.icon(
+                                              onPressed: selectedProduct ==
+                                                          null ||
+                                                      selectedUnit == null
+                                                  ? null
+                                                  : () =>
+                                                      addSelectedPurchaseLine(
+                                                          setDialogState),
+                                              icon: const Icon(Icons.add),
+                                              label: Text(tr.text(
+                                                  'add_product_to_purchase')),
+                                            ),
                                           ),
                                         ],
                                       );
@@ -3188,7 +3348,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                 tooltip: tr.text('edit'),
                                                 onPressed: () =>
                                                     editPurchaseLine(
-                                                        item, setDialogState)),
+                                                      item,
+                                                      setDialogState,
+                                                      dialogContext,
+                                                    )),
                                             IconButton(
                                                 icon: const Icon(
                                                     Icons.delete_outline),
@@ -3446,8 +3609,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
     productSearchController.dispose();
     paidAmountController.dispose();
     dialogShortcutFocusNode.dispose();
+    productSearchFocusNode.dispose();
     qtyFocusNode.dispose();
     costFocusNode.dispose();
+    addLineFocusNode.dispose();
     paidAmountFocusNode.dispose();
   }
 }

@@ -1479,6 +1479,7 @@
   "purchase_cancelled": "Achat annulé.",
   "purchase_deleted": "Brouillon d'achat supprimé.",
   "purchase_details": "Détails de l'achat",
+  "purchase_currency_helper": "Utilisée pour tous les coûts des produits de cet achat.",
   "purchase_invoice": "Facture d'achat",
   "purchase_permanently_deleted": "Achat annulé définitivement supprimé de l'interface.",
   "purchase_received": "Achat reçu et stock mis à jour.",

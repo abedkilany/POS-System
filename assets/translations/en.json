@@ -1483,6 +1483,7 @@
   "purchase_cancelled": "Purchase cancelled.",
   "purchase_deleted": "Purchase draft deleted.",
   "purchase_details": "Purchase Details",
+  "purchase_currency_helper": "Used for all product costs in this purchase.",
   "purchase_invoice": "Purchase Invoice",
   "purchase_permanently_deleted": "Cancelled purchase permanently deleted from the interface.",
   "purchase_received": "Purchase received and stock updated.",

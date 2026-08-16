@@ -974,8 +974,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController barcodeController;
   late final TextEditingController codeController;
-  late final TextEditingController nameEnController;
-  late final TextEditingController nameArController;
+  late final TextEditingController nameController;
   late final TextEditingController descriptionController;
   late final TextEditingController priceController;
   late final TextEditingController costController;
@@ -988,7 +987,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   String priceCurrency = 'USD';
   String costCurrency = 'USD';
   String brand = '';
-  String unit = 'pcs';
+  String unit = '';
   ProductQuantityType quantityType = ProductQuantityType.countable;
   late List<_SaleUnitDraft> saleUnitDrafts;
   bool trackStock = true;
@@ -1017,11 +1016,13 @@ class _ProductDialogState extends State<_ProductDialog> {
     barcodeController = TextEditingController(text: product?.barcode ?? '');
     codeController =
         TextEditingController(text: product?.code ?? _generateUniqueSku());
-    nameEnController = TextEditingController(
-        text: product?.nameEn.isNotEmpty == true
-            ? product!.nameEn
-            : product?.name ?? '');
-    nameArController = TextEditingController(text: product?.nameAr ?? '');
+    nameController = TextEditingController(
+      text: product?.name.isNotEmpty == true
+          ? product!.name
+          : product?.nameEn.isNotEmpty == true
+              ? product!.nameEn
+              : product?.nameAr ?? '',
+    );
     descriptionController =
         TextEditingController(text: product?.description ?? '');
     final defaultProductPrice = product == null
@@ -1063,8 +1064,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                 : widget.store.categories.first.nameEn
             : tr.text('general'));
     brand = product?.brand ?? '';
-    unit = product?.unit ??
-        (widget.store.units.isNotEmpty ? widget.store.units.first.code : 'pcs');
+    unit = product?.unit ?? '';
     quantityType = product?.quantityType ?? ProductQuantityType.countable;
     saleUnitDrafts = (product?.saleUnits ?? const [])
         .map(_SaleUnitDraft.fromSaleUnit)
@@ -1087,8 +1087,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   void dispose() {
     barcodeController.dispose();
     codeController.dispose();
-    nameEnController.dispose();
-    nameArController.dispose();
+    nameController.dispose();
     descriptionController.dispose();
     priceController.dispose();
     costController.dispose();
@@ -1171,6 +1170,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                                 ],
                               ),
                             ),
+                            validator: _requiredValue,
                           ),
                           const SizedBox(height: 8),
                           Align(
@@ -1184,15 +1184,12 @@ class _ProductDialogState extends State<_ProductDialog> {
                         ],
                       ),
                       TextFormField(
-                          controller: nameEnController,
-                          decoration: InputDecoration(
-                              labelText: '${tr.text('product_name_en')} *'),
-                          validator: (_) => _nameRequired()),
-                      TextFormField(
-                          controller: nameArController,
-                          decoration: InputDecoration(
-                              labelText: '${tr.text('product_name_ar')} *'),
-                          validator: (_) => _nameRequired()),
+                        controller: nameController,
+                        decoration: InputDecoration(
+                          labelText: '${tr.text('product_name')} *',
+                        ),
+                        validator: (_) => _nameRequired(),
+                      ),
                       _CatalogDropdown(
                         label: tr.text('category'),
                         value: category,
@@ -1211,12 +1208,13 @@ class _ProductDialogState extends State<_ProductDialog> {
                         onManage: () => _manageCatalogItems(context, 'brand'),
                       ),
                       _CatalogDropdown(
-                        label: tr.text('unit'),
+                        label: '${tr.text('unit')} *',
                         value: unit,
                         items: widget.store.units,
                         onChanged: (value) => setState(() => unit = value),
                         onAdd: () => _addCatalogItem(context, 'unit'),
                         onManage: () => _manageCatalogItems(context, 'unit'),
+                        validator: _requiredValue,
                       ),
                       DropdownButtonFormField<ProductQuantityType>(
                         initialValue: quantityType,
@@ -1475,8 +1473,7 @@ class _ProductDialogState extends State<_ProductDialog> {
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;
-    final nameEn = nameEnController.text.trim();
-    final nameAr = nameArController.text.trim();
+    final name = nameController.text.trim();
     final originalPrice = double.tryParse(priceController.text.trim()) ?? 0;
     final originalCost = double.tryParse(costController.text.trim()) ?? 0;
     final rate = widget.store.storeProfile.usdToLbpRate;
@@ -1493,9 +1490,9 @@ class _ProductDialogState extends State<_ProductDialog> {
         supplierPriceSave: () => _saveSupplierPriceDrafts(_productId),
         product: Product(
           id: _productId,
-          name: nameEn.isNotEmpty ? nameEn : nameAr,
-          nameEn: nameEn,
-          nameAr: nameAr,
+          name: name,
+          nameEn: '',
+          nameAr: '',
           code: _resolvedSku(),
           barcode: barcodeController.text.trim(),
           category: category.trim(),
@@ -1518,7 +1515,7 @@ class _ProductDialogState extends State<_ProductDialog> {
           lowStockThreshold: trackStock
               ? (int.tryParse(lowStockController.text.trim()) ?? 5)
               : 0,
-          unit: unit.trim().isEmpty ? 'pcs' : unit.trim(),
+          unit: unit.trim(),
           quantityType: quantityType,
           saleUnits: saleUnitDrafts
               .map((item) => item.toSaleUnit(widget.store.storeProfile))
@@ -1680,11 +1677,16 @@ class _ProductDialogState extends State<_ProductDialog> {
   }
 
   String? _nameRequired() {
-    if (nameEnController.text.trim().isNotEmpty ||
-        nameArController.text.trim().isNotEmpty) {
+    if (nameController.text.trim().isNotEmpty) {
       return null;
     }
     return AppLocalizations.of(context).text('required');
+  }
+
+  String? _requiredValue(String? value) {
+    return (value ?? '').trim().isEmpty
+        ? AppLocalizations.of(context).text('required')
+        : null;
   }
 
   String? _nonNegativeNumber(String? value) {
@@ -2840,13 +2842,15 @@ class _CatalogDropdown extends StatelessWidget {
       required this.items,
       required this.onChanged,
       required this.onAdd,
-      required this.onManage});
+      required this.onManage,
+      this.validator});
   final String label;
   final String value;
   final List<CatalogItem> items;
   final ValueChanged<String> onChanged;
   final VoidCallback onAdd;
   final VoidCallback onManage;
+  final String? Function(String?)? validator;
 
   @override
   Widget build(BuildContext context) {
@@ -2877,6 +2881,7 @@ class _CatalogDropdown extends StatelessWidget {
                   value: raw, child: Text(match?.displayName(language) ?? raw));
             }).toList(),
             onChanged: (newValue) => onChanged(newValue ?? ''),
+            validator: validator,
           ),
         ),
         IconButton(
