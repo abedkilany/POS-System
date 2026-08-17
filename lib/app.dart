@@ -33,6 +33,7 @@ import 'features/inventory/manufacturing_page.dart';
 import 'features/maintenance/maintenance_page.dart';
 import 'features/products/products_page.dart';
 import 'features/barcode/barcode_labels_page.dart';
+import 'features/cash/cash_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
@@ -1014,6 +1015,13 @@ class _MainShellState extends State<MainShell> {
             selectedIcon: Icons.payments,
             page: timedPage('ExpensesPage', tr.text('expenses'),
                 ExpensesPage(store: widget.store))),
+      if (widget.store.canViewCashBox)
+        _ShellItem(
+            label: tr.text('cash_box'),
+            icon: Icons.point_of_sale_outlined,
+            selectedIcon: Icons.point_of_sale,
+            page: timedPage('CashPage', tr.text('cash_box'),
+                CashPage(store: widget.store))),
       if (widget.store.canAccessPage('accounting'))
         _ShellItem(
             label: tr.text('accounting'),

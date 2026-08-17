@@ -2244,6 +2244,8 @@ class AppStore extends ChangeNotifier {
         AppPermission.inventoryManufacturingManage,
       });
   bool get canViewReports => canAccessPage('reports');
+  bool get canViewCashBox =>
+      canAccessPage('cash_box') || canViewAccounting;
   bool get canViewSettings => canAccessPage('settings');
   bool get canViewDatabase => canAccessPage('database');
   bool get canViewMaintenance => canAccessPage('maintenance');

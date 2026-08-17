@@ -58,6 +58,8 @@ class AppPermission {
   static const String expensesDelete = 'expenses.delete';
   static const String reportsView = 'reports.view';
   static const String reportsExport = 'reports.export';
+  static const String cashBoxView = 'cash_box.view';
+  static const String cashBoxManage = 'cash_box.manage';
   static const String accountingView = 'accounting.view';
   static const String accountingManage = 'accounting.manage';
   static const String inventoryView = 'inventory.view';
@@ -123,6 +125,8 @@ class AppPermission {
     expensesDelete,
     reportsView,
     reportsExport,
+    cashBoxView,
+    cashBoxManage,
     accountingView,
     accountingManage,
     inventoryView,
@@ -187,6 +191,8 @@ class AppPermission {
     expensesDelete: 'Delete expenses',
     reportsView: 'View reports',
     reportsExport: 'Export reports',
+    cashBoxView: 'View cash box',
+    cashBoxManage: 'Manage cash box',
     accountingView: 'View accounting',
     accountingManage: 'Manage accounting',
     inventoryView: 'View inventory',
@@ -218,9 +224,23 @@ class AppPermission {
       permissions: [dashboardView],
     ),
     AppPermissionPage(
+      id: 'cash_box',
+      title: 'Cash Box',
+      order: 1,
+      accessPermission: cashBoxView,
+      navigationPermissions: [
+        cashBoxView,
+        cashBoxManage,
+      ],
+      permissions: [
+        cashBoxView,
+        cashBoxManage,
+      ],
+    ),
+    AppPermissionPage(
       id: 'users',
       title: 'Users',
-      order: 1,
+      order: 2,
       accessPermission: usersView,
       permissions: [
         usersView,
@@ -230,7 +250,7 @@ class AppPermission {
     AppPermissionPage(
       id: 'roles',
       title: 'Roles',
-      order: 2,
+      order: 3,
       accessPermission: rolesView,
       permissions: [
         rolesView,
@@ -240,7 +260,7 @@ class AppPermission {
     AppPermissionPage(
       id: 'permission_catalog',
       title: 'Permission Catalog',
-      order: 3,
+      order: 4,
       accessPermission: permissionsManage,
       permissions: [
         permissionsManage,
@@ -249,7 +269,7 @@ class AppPermission {
     AppPermissionPage(
       id: 'settings',
       title: 'Settings',
-      order: 4,
+      order: 5,
       accessPermission: settingsView,
       navigationPermissions: [
         settingsView,

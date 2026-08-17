@@ -1402,6 +1402,32 @@ class AccountingService {
     return drawer != null;
   }
 
+  static Future<AdvancedAccountingItem?> currentCashDrawerForDevice({
+    required String deviceId,
+    String branchId = '',
+  }) async {
+    if (!isAvailable) return null;
+    final drawer = await _openCashDrawerLocationForDevice(
+      deviceId: deviceId,
+      branchId: branchId,
+    );
+    if (drawer == null) return null;
+    final row = await _db.customSelect(
+      '''
+      SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active, cl.current_balance AS balance,
+             cl.notes, a.code AS account_code, a.name AS account_name,
+             parent.name AS status, cl.device_id AS reference_id
+      FROM cash_locations cl
+      LEFT JOIN accounts a ON a.id = cl.account_id
+      LEFT JOIN cash_locations parent ON parent.id = cl.parent_id
+      WHERE cl.id = ? AND cl.deleted_at = '' AND cl.is_active = 1
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(drawer.id)],
+    ).getSingleOrNull();
+    return row == null ? null : AdvancedAccountingItem.fromRow(row.data);
+  }
+
   static Future<bool> hasOpenCashDrawer(
       {String branchId = '', String cashLocationId = ''}) async {
     if (!isAvailable) return false;
@@ -2445,7 +2471,6 @@ class AccountingService {
     required String type,
     String code = '',
     String accountId = '',
-    String parentId = '',
     String paymentAccountId = '',
     bool isDefault = false,
     bool allowNegative = false,
@@ -2498,7 +2523,7 @@ class AccountingService {
           Variable<String>(normalizedName),
           Variable<String>(normalizedType),
           Variable<String>(resolvedAccountId),
-          Variable<String>(parentId.trim()),
+          Variable<String>(''),
           Variable<String>(paymentAccountId.trim()),
           Variable<int>(isDefault ? 1 : 0),
           Variable<int>(allowNegative ? 1 : 0),

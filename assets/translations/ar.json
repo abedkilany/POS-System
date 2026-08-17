@@ -311,6 +311,7 @@
   "cart_restored_successfully": "تم استرجاع السلة بنجاح",
   "cart_restored_with_missing_products": "تم استرجاع السلة، لكن تم تخطي بعض المنتجات",
   "cash": "نقدي",
+  "cash_box": "الصندوق",
   "cash_bank": "النقد / البنك",
   "cash_decimals": "منازل الدفع النقدي",
   "cash_drawer": "درج النقد",

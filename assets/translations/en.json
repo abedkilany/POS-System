@@ -300,6 +300,7 @@
   "cart_restored_successfully": "Cart restored successfully",
   "cart_restored_with_missing_products": "Cart restored, but some products were skipped",
   "cash": "cash",
+  "cash_box": "Cash box",
   "cash_bank": "Cash / Bank",
   "cash_decimals": "Cash decimals",
   "cash_drawer": "Cash Drawer",
