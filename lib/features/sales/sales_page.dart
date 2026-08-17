@@ -861,14 +861,22 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  String _customerSearchText(Customer customer) {
+  String _walkInCustomerLabel(AppLocalizations tr) {
+    final localized = tr.text('walk_in_customer');
+    return localized.isNotEmpty ? localized : widget.store.walkInCustomer.name;
+  }
+
+  String _customerSearchText(Customer customer, AppLocalizations tr) {
+    if (customer.id == AppStore.walkInCustomerId) {
+      return _walkInCustomerLabel(tr);
+    }
     return customer.name;
   }
 
-  List<Customer> _customerSearchOptions(String query) {
+  List<Customer> _customerSearchOptions(String query, AppLocalizations tr) {
     final rawQuery = query.trim().toLowerCase();
-    final normalized =
-        rawQuery == AppStore.walkInCustomerName.toLowerCase() ? '' : rawQuery;
+    final walkInName = _walkInCustomerLabel(tr).toLowerCase();
+    final normalized = rawQuery == walkInName ? '' : rawQuery;
     final seen = <String>{};
     final customers = <Customer>[];
     for (final customer in [
@@ -901,9 +909,9 @@ class _SalesPageState extends State<SalesPage> {
             key: ValueKey(
                 'sale_customer_${_selectedCustomerId}_${widget.store.customersRevision}'),
             initialValue: TextEditingValue(
-                text: _customerSearchText(_selectedCustomer())),
-            displayStringForOption: _customerSearchText,
-            optionsBuilder: (value) => _customerSearchOptions(value.text),
+                text: _customerSearchText(_selectedCustomer(), tr)),
+            displayStringForOption: (customer) => _customerSearchText(customer, tr),
+            optionsBuilder: (value) => _customerSearchOptions(value.text, tr),
             onSelected: (customer) {
               _setSelectedCustomerId(customer.id);
               modalSetState?.call(() {});
@@ -944,6 +952,7 @@ class _SalesPageState extends State<SalesPage> {
                         final isWalkIn =
                             customer.id == AppStore.walkInCustomerId;
                         final phone = customer.phone.trim();
+                        final walkInLabel = _walkInCustomerLabel(tr);
                         return ListTile(
                           dense: true,
                           leading: Icon(isWalkIn
@@ -951,7 +960,7 @@ class _SalesPageState extends State<SalesPage> {
                               : Icons.badge_outlined),
                           title: Text(
                               isWalkIn
-                                  ? customer.name
+                                  ? walkInLabel
                                   : '#${customer.id} - ${customer.name}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis),
@@ -4829,210 +4838,6 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  Future<void> _returnSale(BuildContext context, Sale sale) async {
-    if (!widget.store.canDeleteOrCancel) return;
-    final tr = AppLocalizations.of(context);
-    final quantityControllers = sale.items
-        .map((item) => TextEditingController(text: item.quantity.toString()))
-        .toList();
-    final quantities = await showDialog<Map<String, double>>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('${tr.text('return_sale')} ${sale.invoiceNo}'),
-        content: SizedBox(
-          width: 520,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < sale.items.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: TextField(
-                      controller: quantityControllers[i],
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                        labelText:
-                            '${sale.items[i].productName} (max ${sale.items[i].quantity})',
-                        border: const OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(tr.text('cancel'))),
-          FilledButton(
-              onPressed: () {
-                final result = <String, double>{};
-                for (var i = 0; i < sale.items.length; i++) {
-                  final value =
-                      double.tryParse(quantityControllers[i].text.trim()) ?? -1;
-                  if (value > 0) result[sale.items[i].productId] = value;
-                }
-                Navigator.pop(dialogContext, result);
-              },
-              child: Text(tr.text('confirm_return_sale'))),
-        ],
-      ),
-    );
-
-    for (final controller in quantityControllers) {
-      controller.dispose();
-    }
-    if (quantities == null || quantities.isEmpty) return;
-
-    final creditNote =
-        await widget.store.returnSale(sale.id, returnedQuantities: quantities);
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              '${AppLocalizations.of(context).text('sale_returned_stock_restored')} (${creditNote.creditNoteNo})')));
-      final returnedAmount = sale.items.fold<double>(0, (total, item) {
-        final quantity = quantities[item.productId] ?? 0;
-        return total + item.unitPrice * quantity;
-      });
-      await _offerReplacement(context, sale, returnedAmount: returnedAmount);
-    }
-  }
-
-  Future<void> _offerReplacement(BuildContext context, Sale original,
-      {required double returnedAmount}) async {
-    final products = widget.store.products
-        .where((product) => !product.isDeleted)
-        .toList(growable: false);
-    if (products.isEmpty || !context.mounted) return;
-    final quantityController = TextEditingController(text: '1');
-    Product? selected = products.first;
-    double replacementAmount() {
-      final unit = selected?.effectiveSaleUnits.first;
-      final quantity = double.tryParse(quantityController.text) ?? 0;
-      return (unit?.price ?? 0) * quantity;
-    }
-
-    final replacement = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('استبدال الصنف'),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<Product>(
-                  value: selected,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'الصنف البديل',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: products
-                      .map((product) => DropdownMenuItem<Product>(
-                            value: product,
-                            child: Text(product.name),
-                          ))
-                      .toList(),
-                  onChanged: (value) => setDialogState(() => selected = value),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: quantityController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'الكمية',
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (_) => setDialogState(() {}),
-                ),
-                const SizedBox(height: 12),
-                Builder(builder: (context) {
-                  final difference = replacementAmount() - returnedAmount;
-                  final label = difference >= 0
-                      ? 'المبلغ المطلوب من الزبون: ${difference.toStringAsFixed(2)}'
-                      : 'المبلغ الواجب ردّه للزبون: ${(-difference).toStringAsFixed(2)}';
-                  return Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: Text(label,
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: difference >= 0
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).colorScheme.error)),
-                  );
-                }),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('بدون استبدال'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final quantity = double.tryParse(quantityController.text) ?? 0;
-                if (selected == null || quantity <= 0) return;
-                Navigator.pop(dialogContext, <String, dynamic>{
-                  'product': selected,
-                  'quantity': quantity,
-                });
-              },
-              child: const Text('تأكيد الاستبدال'),
-            ),
-          ],
-        ),
-      ),
-    );
-    quantityController.dispose();
-    if (replacement == null || !context.mounted) return;
-    final product = replacement['product'] as Product;
-    final quantity = replacement['quantity'] as double;
-    final unit = product.effectiveSaleUnits.first;
-    final replacementAmountValue = unit.price * quantity;
-    final difference = replacementAmountValue - returnedAmount;
-    try {
-      final replacementSale = await widget.store.createSale(
-        customerName: original.customerName,
-        customerId: original.customerId,
-        items: [
-          SaleItem(
-            productId: product.id,
-            productName: product.name,
-            unitPrice: unit.price,
-            quantity: quantity,
-            unitName: unit.name,
-            conversionToBase: unit.conversionToBase,
-          ),
-        ],
-        paymentMethod: original.paymentMethod,
-        paymentStatus: 'paid',
-        paidAmount: difference > 0 ? difference : 0,
-        cashReceivedAmount: difference > 0 ? difference : 0,
-        invoiceCurrency: original.invoiceCurrency,
-        paymentCurrency: original.paymentCurrency,
-        warehouseId: original.warehouseId,
-        warehouseName: original.warehouseName,
-      );
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(difference >= 0
-            ? 'تم إنشاء فاتورة الاستبدال ${replacementSale.invoiceNo}. الفرق المطلوب: ${difference.toStringAsFixed(2)}'
-            : 'تم إنشاء فاتورة الاستبدال ${replacementSale.invoiceNo}. يجب ردّ ${(-difference).toStringAsFixed(2)} للزبون'),
-      ));
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
-    }
-  }
-
   _BarcodeAddResult _addProduct(Product product,
       {ProductSaleUnit? saleUnit, bool showBarcodeFeedback = false}) {
     if (!widget.store.canSell) {
@@ -5401,7 +5206,9 @@ class _SalesPageState extends State<SalesPage> {
         product: product,
         quantity: item.quantity,
         saleUnit: ProductSaleUnit(
-          id: 'edit-${item.productId}',
+          // Keep the cart label on the product name while preserving the
+          // original unit details in the subtitle and saved invoice data.
+          id: 'base',
           name: item.unitName,
           conversionToBase: item.conversionToBase,
           price: item.unitPrice,

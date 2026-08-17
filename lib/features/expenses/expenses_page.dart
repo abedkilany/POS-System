@@ -12,6 +12,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/services/expense_pdf_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/revision_cache.dart';
@@ -450,6 +451,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                               return _ExpenseCard(
                                 expense: expense,
                                 storeProfile: widget.store.storeProfile,
+                                onPrint: () => _printExpense(context, expense),
                                 onEdit: expense.isDraft &&
                                         widget.store.canManageExpenses
                                     ? () => _openExpenseForm(context,
@@ -673,6 +675,23 @@ class _ExpensesPageState extends State<ExpensesPage> {
     }
   }
 
+  Future<void> _printExpense(BuildContext context, Expense expense) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      await ExpensePdfService.printExpense(
+        expense: expense,
+        profile: widget.store.storeProfile,
+        locale: Localizations.localeOf(context),
+      );
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('pdf_action_failed'))),
+        );
+      }
+    }
+  }
+
   Future<void> _openExpenseForm(BuildContext context,
       {Expense? expense}) async {
     if (!widget.store.canManageExpenses) return;
@@ -761,6 +780,7 @@ class _ExpenseCard extends StatelessWidget {
       {required this.expense,
       required this.storeProfile,
       this.onEdit,
+      this.onPrint,
       this.onPost,
       this.onCancel,
       this.onDeleteDraft,
@@ -769,6 +789,7 @@ class _ExpenseCard extends StatelessWidget {
   final Expense expense;
   final StoreProfile storeProfile;
   final VoidCallback? onEdit;
+  final VoidCallback? onPrint;
   final VoidCallback? onPost;
   final VoidCallback? onCancel;
   final VoidCallback? onDeleteDraft;
@@ -850,9 +871,17 @@ class _ExpenseCard extends StatelessWidget {
                 ],
               ),
             ),
+            IconButton(
+              tooltip: tr.text('print_expense'),
+              onPressed: onPrint,
+              icon: const Icon(Icons.print_outlined),
+            ),
             PopupMenuButton<String>(
               onSelected: (value) {
                 switch (value) {
+                  case 'print':
+                    onPrint?.call();
+                    break;
                   case 'edit':
                     onEdit?.call();
                     break;
@@ -871,6 +900,9 @@ class _ExpenseCard extends StatelessWidget {
                 }
               },
               itemBuilder: (context) => [
+                if (onPrint != null)
+                  PopupMenuItem(
+                      value: 'print', child: Text(tr.text('print_expense'))),
                 if (onEdit != null)
                   PopupMenuItem(
                       value: 'edit', child: Text(tr.text('edit_expense'))),

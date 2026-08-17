@@ -18,7 +18,7 @@ See [PURE_DB_FIRST_CONTRACT.md](./PURE_DB_FIRST_CONTRACT.md) and
 
 ## Current release
 
-- Version: `1.0.19+19`
+- Version: `1.0.20+20`
 - Backup import supports JSON backups, local `.vtb` archives, and encrypted backup JSON.
 - Local automatic backups are stored as `.vtb` archives containing `backup.json` and `manifest.json`.
 

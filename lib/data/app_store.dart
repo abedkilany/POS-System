@@ -10771,7 +10771,13 @@ class AppStore extends ChangeNotifier {
 
   Future<void> addOrUpdateCategory(CatalogItem item) async {
     requirePermission(AppPermission.catalogManage);
+    final previousItem = _categories
+        .where((existing) => existing.id == item.id)
+        .cast<CatalogItem?>()
+        .firstOrNull;
     final syncedItem = _addOrUpdateCatalogItem(_categories, item);
+    final productsChanged =
+        _propagateCatalogRename('category', previousItem, syncedItem);
     _recordSyncChange(
       entityType: 'category',
       entityId: syncedItem.id,
@@ -10784,13 +10790,21 @@ class AppStore extends ChangeNotifier {
           : 'update',
       payload: syncedItem.toJson(),
     );
-    await _saveDirty(categories: true, sync: true);
+    await _saveDirty(
+      categories: true,
+      products: productsChanged,
+      sync: true,
+    );
     notifyListeners();
   }
 
   Future<void> addOrUpdateBrand(CatalogItem item) async {
     requirePermission(AppPermission.catalogManage);
+    final previousItem =
+        _brands.where((existing) => existing.id == item.id).cast<CatalogItem?>().firstOrNull;
     final syncedItem = _addOrUpdateCatalogItem(_brands, item);
+    final productsChanged =
+        _propagateCatalogRename('brand', previousItem, syncedItem);
     _recordSyncChange(
       entityType: 'brand',
       entityId: syncedItem.id,
@@ -10798,13 +10812,20 @@ class AppStore extends ChangeNotifier {
           syncedItem.createdAt == syncedItem.updatedAt ? 'create' : 'update',
       payload: syncedItem.toJson(),
     );
-    await _saveDirty(brands: true, sync: true);
+    await _saveDirty(
+      brands: true,
+      products: productsChanged,
+      sync: true,
+    );
     notifyListeners();
   }
 
   Future<void> addOrUpdateUnit(CatalogItem item) async {
     requirePermission(AppPermission.catalogManage);
+    final previousItem =
+        _units.where((existing) => existing.id == item.id).cast<CatalogItem?>().firstOrNull;
     final syncedItem = _addOrUpdateCatalogItem(_units, item);
+    final productsChanged = _propagateCatalogRename('unit', previousItem, syncedItem);
     _recordSyncChange(
       entityType: 'unit',
       entityId: syncedItem.id,
@@ -10812,7 +10833,11 @@ class AppStore extends ChangeNotifier {
           syncedItem.createdAt == syncedItem.updatedAt ? 'create' : 'update',
       payload: syncedItem.toJson(),
     );
-    await _saveDirty(units: true, sync: true);
+    await _saveDirty(
+      units: true,
+      products: productsChanged,
+      sync: true,
+    );
     notifyListeners();
   }
 
@@ -10848,6 +10873,12 @@ class AppStore extends ChangeNotifier {
   String _catalogReferenceValue(CatalogItem item) =>
       item.code.trim().isNotEmpty ? item.code.trim() : item.nameEn.trim();
 
+  bool _catalogReferenceChanged(CatalogItem? previous, CatalogItem current) {
+    if (previous == null) return false;
+    return _catalogReferenceValue(previous).trim().toLowerCase() !=
+        _catalogReferenceValue(current).trim().toLowerCase();
+  }
+
   bool _catalogItemMatchesValue(CatalogItem item, String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized.isEmpty) return false;
@@ -10857,12 +10888,61 @@ class AppStore extends ChangeNotifier {
   }
 
   int productsUsingCatalogItem(String type, CatalogItem item) {
-    if (type != 'category' && type != 'unit') return 0;
+    if (type != 'category' && type != 'unit' && type != 'brand') return 0;
     return _products.where((product) {
       if (product.isDeleted) return false;
-      final value = type == 'category' ? product.category : product.unit;
+      final value = switch (type) {
+        'category' => product.category,
+        'brand' => product.brand,
+        _ => product.unit,
+      };
       return _catalogItemMatchesValue(item, value);
     }).length;
+  }
+
+  bool _propagateCatalogRename(
+    String type,
+    CatalogItem? previous,
+    CatalogItem current,
+  ) {
+    if (!_catalogReferenceChanged(previous, current)) return false;
+    final oldValue = _catalogReferenceValue(previous!);
+    final newValue = _catalogReferenceValue(current);
+    var changed = false;
+    for (var i = 0; i < _products.length; i++) {
+      final product = _products[i];
+      if (product.isDeleted) continue;
+      final currentValue = switch (type) {
+        'category' => product.category,
+        'brand' => product.brand,
+        _ => product.unit,
+      };
+      if (!_valueMatchesCatalogReference(currentValue, oldValue)) continue;
+      final updatedProduct = _markProductForSync(
+        switch (type) {
+          'category' => product.copyWith(category: newValue),
+          'brand' => product.copyWith(brand: newValue),
+          _ => product.copyWith(unit: newValue),
+        },
+        DateTime.now(),
+      );
+      _products[i] = updatedProduct;
+      _recordSyncChange(
+        entityType: 'product',
+        entityId: updatedProduct.id,
+        operation: 'update',
+        payload: updatedProduct.toJson(),
+      );
+      changed = true;
+    }
+    return changed;
+  }
+
+  bool _valueMatchesCatalogReference(String value, String reference) {
+    final normalizedValue = value.trim().toLowerCase();
+    final normalizedReference = reference.trim().toLowerCase();
+    if (normalizedValue.isEmpty || normalizedReference.isEmpty) return false;
+    return normalizedValue == normalizedReference;
   }
 
   Future<void> replaceAndDeleteCatalogItem({

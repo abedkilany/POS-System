@@ -401,6 +401,19 @@ class _InventoryPageState extends State<InventoryPage>
   final RevisionValueCache<_InventoryOverviewMetrics> _overviewCache =
       RevisionValueCache<_InventoryOverviewMetrics>();
 
+  Future<double> _warehouseStock(
+    String productId,
+    String warehouseId,
+  ) async {
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return widget.store.warehouseStockFromSqlite(
+        productId,
+        warehouseId: warehouseId,
+      );
+    }
+    return widget.store.stockForWarehouse(productId, warehouseId);
+  }
+
   void _handleStoreChanged() {
     if (!mounted) return;
     setState(() {});
@@ -709,8 +722,18 @@ class _InventoryPageState extends State<InventoryPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  '${tr.text('current_stock')}: ${widget.store.stockForWarehouse(product.id, selectedWarehouseId)}',
+                FutureBuilder<double>(
+                  future: _warehouseStock(product.id, selectedWarehouseId),
+                  builder: (context, snapshot) {
+                    final currentStock = snapshot.data ??
+                        widget.store.stockForWarehouse(
+                          product.id,
+                          selectedWarehouseId,
+                        );
+                    return Text(
+                      '${tr.text('current_stock')}: ${currentStock.toStringAsFixed(2)}',
+                    );
+                  },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -1113,6 +1136,19 @@ class _WarehousesTabState extends State<_WarehousesTab> {
       _stockRowsCache =
       RevisionKeyCache<Map<String, List<_WarehouseProductStock>>>();
 
+  Future<double> _warehouseStock(
+    String productId,
+    String warehouseId,
+  ) async {
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return widget.store.warehouseStockFromSqlite(
+        productId,
+        warehouseId: warehouseId,
+      );
+    }
+    return widget.store.stockForWarehouse(productId, warehouseId);
+  }
+
   @override
   void didUpdateWidget(covariant _WarehousesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -1250,33 +1286,42 @@ class _WarehousesTabState extends State<_WarehousesTab> {
                 final conversion = units
                     .firstWhere((item) => item.id == selectedUnit)
                     .conversionToBase;
-                final availableBase =
-                    widget.store.stockForWarehouse(productId, fromWarehouseId);
-                final availableInUnit =
-                    conversion <= 0 ? 0 : availableBase / conversion;
-                return Column(
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedUnit,
-                      decoration: InputDecoration(labelText: tr.text('unit')),
-                      items: units
-                          .map((item) => DropdownMenuItem(
-                                value: item.id,
-                                child: Text(item.name),
-                              ))
-                          .toList(),
-                      onChanged: (value) =>
-                          setDialogState(() => unitId = value ?? selectedUnit),
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Text(
-                        '${tr.text('available')}: ${availableInUnit.toStringAsFixed(2)} ${units.firstWhere((item) => item.id == selectedUnit).name} '
-                        '(${availableBase.toStringAsFixed(2)} ${product.unit})',
-                      ),
-                    ),
-                  ],
+                return FutureBuilder<double>(
+                  future: _warehouseStock(productId, fromWarehouseId),
+                  builder: (context, snapshot) {
+                    final availableBase = snapshot.data ??
+                        widget.store.stockForWarehouse(
+                          productId,
+                          fromWarehouseId,
+                        );
+                    final availableInUnit =
+                        conversion <= 0 ? 0 : availableBase / conversion;
+                    return Column(
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedUnit,
+                          decoration:
+                              InputDecoration(labelText: tr.text('unit')),
+                          items: units
+                              .map((item) => DropdownMenuItem(
+                                    value: item.id,
+                                    child: Text(item.name),
+                                  ))
+                              .toList(),
+                          onChanged: (value) => setDialogState(
+                              () => unitId = value ?? selectedUnit),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: Text(
+                            '${tr.text('available')}: ${availableInUnit.toStringAsFixed(2)} ${units.firstWhere((item) => item.id == selectedUnit).name} '
+                            '(${availableBase.toStringAsFixed(2)} ${product.unit})',
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 );
               }),
               const SizedBox(height: 12),
