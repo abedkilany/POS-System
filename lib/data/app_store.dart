@@ -48,6 +48,7 @@ import '../models/warehouse.dart';
 import '../models/sale.dart';
 import '../models/sale_item.dart';
 import '../models/sale_quotation.dart';
+import '../models/credit_note.dart';
 import '../models/store_profile.dart';
 import '../models/supplier.dart';
 import '../models/sync_change.dart';
@@ -357,6 +358,7 @@ class AppStore extends ChangeNotifier {
   static const _productsKey = 'products_v4';
   static const _customersKey = 'customers_v4';
   static const _salesKey = 'sales_v4';
+  static const _creditNotesKey = 'credit_notes_v1';
   static const _saleQuotationsKey = 'sale_quotations_v1';
   static const _deliveryNotesKey = 'delivery_notes_v1';
   static const _billsOfMaterialsKey = 'bills_of_materials_v1';
@@ -409,6 +411,7 @@ class AppStore extends ChangeNotifier {
   final List<Product> _products = [];
   final List<Customer> _customers = [];
   final List<Sale> _sales = [];
+  final List<CreditNote> _creditNotes = [];
   final List<SaleQuotation> _saleQuotations = [];
   final List<DeliveryNote> _deliveryNotes = [];
   final List<BillOfMaterials> _billsOfMaterials = [];
@@ -1065,6 +1068,57 @@ class AppStore extends ChangeNotifier {
     return _cachedSales!;
   }
 
+  List<CreditNote> get creditNotes => List.unmodifiable(_creditNotes);
+
+  Future<void> ensureCreditNotesLoaded() async {
+    if (_creditNotes.isNotEmpty) return;
+    _creditNotes.addAll(await _decodeDeferredList<CreditNote>(
+      _creditNotesKey,
+      CreditNote.fromJson,
+      batchSize: 100,
+    ));
+  }
+
+  Future<CreditNote> issueCreditNote({
+    required Sale originalSale,
+    required List<SaleItem> items,
+    required double amount,
+    String refundMethod = 'Customer balance',
+    String note = '',
+  }) async {
+    requirePermission(AppPermission.salesCancel);
+    await ensureCreditNotesLoaded();
+    if (items.isEmpty || amount <= 0) {
+      throw ArgumentError(
+          'Credit note must contain items and a positive amount.');
+    }
+    final now = DateTime.now();
+    final number = (_creditNotes.length + 1).toString().padLeft(6, '0');
+    final creditNote = CreditNote(
+      id: 'credit_note_${now.microsecondsSinceEpoch}',
+      creditNoteNo: 'CN-$number',
+      originalSaleId: originalSale.id,
+      originalInvoiceNo: originalSale.invoiceNo,
+      customerName: originalSale.customerName,
+      customerId: originalSale.customerId,
+      date: now,
+      items: items,
+      amount: amount,
+      currency: originalSale.invoiceCurrency,
+      refundMethod: refundMethod,
+      note: note,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _creditNotes.add(creditNote);
+    await LocalDatabaseService.setString(
+      _creditNotesKey,
+      jsonEncode(_creditNotes.map((item) => item.toJson()).toList()),
+    );
+    notifyListeners();
+    return creditNote;
+  }
+
   List<SaleQuotation> get saleQuotations {
     unawaited(ensureSaleQuotationsLoaded());
     _ensureSaleQuotationsCache();
@@ -1156,6 +1210,14 @@ class AppStore extends ChangeNotifier {
     _ensureProductPricingLookupCaches();
     _ensureDefaultProductPriceEntries();
     final priceListId = defaultPriceList.id;
+    return _productPriceByLookupKey[
+        _productPriceLookupKey(productId, priceListId, unitId)];
+  }
+
+  ProductPrice? productPriceFor(String productId, String priceListId,
+      {String unitId = 'base'}) {
+    _ensureDefaultProductPriceEntries();
+    _ensureProductPricingLookupCaches();
     return _productPriceByLookupKey[
         _productPriceLookupKey(productId, priceListId, unitId)];
   }
@@ -2152,6 +2214,12 @@ class AppStore extends ChangeNotifier {
         AppPermission.salesCancel,
       });
   bool get canSell => hasPermission(AppPermission.salesCreate);
+
+  /// Whether the active user may correct an already posted sale invoice.
+  ///
+  /// This is intentionally separate from [canSell]: creating a new sale and
+  /// changing an existing financial document are different privileges.
+  bool get canEditSales => hasPermission(AppPermission.salesEdit);
   bool get canViewQuotations => canAccessPage('quotations');
   bool get canManageQuotations => hasPermission(AppPermission.quotationsManage);
   bool get canViewDeliveryNotes => canAccessPage('delivery_notes');
@@ -2540,8 +2608,20 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  double get totalSalesAmount =>
-      sales.fold<double>(0, (sum, sale) => sum + sale.total);
+  double get totalSalesAmount {
+    final gross = _sales
+        .where((sale) => !sale.isCancelled)
+        .fold<double>(0, (sum, sale) => sum + sale.total);
+    final returnedOnInvoices =
+        _sales.fold<double>(0, (sum, sale) => sum + sale.returnedAmount);
+    final creditedInLedger = _accountTransactions
+        .where((item) => item.type == 'saleReturn')
+        .fold<double>(0, (sum, item) => sum + item.credit);
+    final credited =
+        returnedOnInvoices > 0 ? returnedOnInvoices : creditedInLedger;
+    return (gross - credited).clamp(0, double.infinity).toDouble();
+  }
+
   double get totalExpensesAmount => expensesOverview.totalExpensesAmount;
   double get totalPurchasesAmount => purchasesOverview.totalPurchasesAmount;
   int get pendingPurchaseCount => purchasesOverview.pendingPurchaseCount;
@@ -9297,22 +9377,31 @@ class AppStore extends ChangeNotifier {
       _withSyncMeta<CatalogItem>(item, now, isCreate: isCreate);
 
   void _ensureDefaultPriceLists() {
-    if (_priceLists.any((item) => item.id == 'retail')) return;
     final now = DateTime.now();
-    _priceLists.insert(
-        0,
-        PriceList(
-            id: 'retail',
-            name: 'Retail',
-            code: 'retail',
-            isDefault: true,
-            createdAt: now,
-            updatedAt: now));
+    if (!_priceLists.any((item) => item.id == 'retail')) {
+      _priceLists.insert(
+          0,
+          PriceList(
+              id: 'retail',
+              name: 'Retail',
+              code: 'retail',
+              isDefault: true,
+              createdAt: now,
+              updatedAt: now));
+    }
     if (!_priceLists.any((item) => item.id == 'wholesale')) {
       _priceLists.add(PriceList(
           id: 'wholesale',
           name: 'Wholesale',
           code: 'wholesale',
+          createdAt: now,
+          updatedAt: now));
+    }
+    if (!_priceLists.any((item) => item.id == 'wholesale_bulk')) {
+      _priceLists.add(PriceList(
+          id: 'wholesale_bulk',
+          name: 'Wholesale Bulk',
+          code: 'wholesale_bulk',
           createdAt: now,
           updatedAt: now));
     }
@@ -9458,6 +9547,44 @@ class AppStore extends ChangeNotifier {
         <Map<String, dynamic>>[price.toJson()],
       ),
     ]);
+    _touchDataRevisions(products: true);
+    _invalidateDerivedDataCaches();
+    notifyListeners();
+  }
+
+  Future<void> setProductBasePriceForList({
+    required String productId,
+    required String priceListId,
+    required double amount,
+    required String currencyCode,
+    String unitId = 'base',
+  }) async {
+    requirePermission(AppPermission.productsEdit);
+    _ensureDefaultPriceLists();
+    final existing = productPriceFor(productId, priceListId, unitId: unitId);
+    final now = DateTime.now();
+    final price = ProductPrice(
+      id: existing?.id ?? 'pp_${productId}_${priceListId}_$unitId',
+      productId: productId,
+      priceListId: priceListId,
+      unitId: unitId,
+      baseCurrencyCode: currencyCode.toUpperCase(),
+      baseAmount: amount,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    );
+    final index = _productPrices.indexWhere((item) => item.id == price.id);
+    if (index == -1) {
+      _productPrices.add(price);
+    } else {
+      _productPrices[index] = price;
+    }
+    _productPriceByLookupKey[
+        _productPriceLookupKey(productId, priceListId, unitId)] = price;
+    await _upsertSqliteBusinessRows(
+      _productPricesKey,
+      <Map<String, dynamic>>[price.toJson()],
+    );
     _touchDataRevisions(products: true);
     _invalidateDerivedDataCaches();
     notifyListeners();
@@ -15087,19 +15214,345 @@ class AppStore extends ChangeNotifier {
     return sale;
   }
 
-  Future<void> returnSale(String id, {bool restoreStock = true}) async {
+  /// Corrects a posted sale without changing its invoice number.
+  ///
+  /// The correction is represented by reversal stock/accounting entries plus
+  /// replacement entries, rather than overwriting the original history.
+  /// Batch-tracked products are deliberately excluded until the edit flow can
+  /// reallocate them safely.
+  Future<Sale> editSale({
+    required String id,
+    required String customerName,
+    required String customerId,
+    required List<SaleItem> items,
+    required double discount,
+    required String paymentMethod,
+    required String paymentStatus,
+    double? paidAmount,
+    double? cashReceivedAmount,
+    String note = '',
+  }) async {
+    requirePermission(AppPermission.salesEdit);
+    final index = _sales.indexWhere((sale) => sale.id == id);
+    final current = index == -1 ? await _saleByIdFromSqlite(id) : _sales[index];
+    if (current == null) throw ArgumentError('Sale not found.');
+    if (current.isCancelled || current.returnedAmount > 0) {
+      throw StateError('Cancelled or returned sales cannot be edited.');
+    }
+    if (deliveryNoteForSale(current.id) != null) {
+      throw StateError('Sales with a delivery note cannot be edited.');
+    }
+    if (items.isEmpty) {
+      throw ArgumentError('Sale must contain at least one item.');
+    }
+    if (!discount.isFinite || discount < 0) {
+      throw ArgumentError('Invalid discount.');
+    }
+    for (final item in items) {
+      final product = _findProductById(item.productId);
+      if (product == null || item.quantity <= 0 || item.unitPrice < 0) {
+        throw ArgumentError('Invalid sale item values.');
+      }
+      if (product.expiryTrackingEnabled || item.batchAllocations.isNotEmpty) {
+        throw StateError(
+            'Batch-tracked products cannot be edited until batch reassignment is supported.');
+      }
+    }
+    if (current.items.any((item) => item.batchAllocations.isNotEmpty) ||
+        current.items.any((item) =>
+            _findProductById(item.productId)?.expiryTrackingEnabled == true)) {
+      throw StateError(
+          'This invoice contains batch-tracked products and cannot be edited.');
+    }
+
+    final subtotal = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+    if (discount > subtotal) {
+      throw ArgumentError('Discount cannot be greater than subtotal.');
+    }
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Sale correction requires the SQLite accounting store.');
+    }
+
+    final now = DateTime.now();
+    final editVersion = current.version + 1;
+    final normalizedMethod = paymentMethod.trim().isEmpty
+        ? current.paymentMethod
+        : paymentMethod.trim();
+    final normalizedStatus = paymentStatus.trim().isEmpty
+        ? current.paymentStatus
+        : paymentStatus.trim().toLowerCase();
+    final saleItems = items.map((item) {
+      final resolvedCost = _resolveCostForSaleItem(item, now);
+      return SaleItem(
+        productId: item.productId,
+        productName: item.productName,
+        unitPrice: item.unitPrice,
+        quantity: item.quantity,
+        unitName: item.unitName,
+        baseQuantity: item.effectiveBaseQuantity,
+        conversionToBase: item.conversionToBase,
+        unitCost: resolvedCost.unitCost,
+        costingMethodAtSale: resolvedCost.method,
+        costCurrency: resolvedCost.currencyCode,
+        costExchangeRate: 1,
+        costLayerConsumptions: resolvedCost.consumptions,
+      );
+    }).toList(growable: false);
+    final total = (subtotal - discount).clamp(0, double.infinity).toDouble();
+    final invoiceTotal = current.invoiceCurrency.toUpperCase() ==
+            current.baseCurrency.toUpperCase()
+        ? total
+        : total * current.exchangeRateAtInvoice;
+    final resolvedPaid =
+        (paidAmount ?? current.paidAmount).clamp(0, invoiceTotal).toDouble();
+    final resolvedCash = (cashReceivedAmount ?? current.cashReceivedAmount)
+        .clamp(0, resolvedPaid)
+        .toDouble();
+    final updated = _withSyncMeta<Sale>(
+      current.copyWith(
+        customerId:
+            customerId.trim().isEmpty ? walkInCustomerId : customerId.trim(),
+        customerName: customerName.trim().isEmpty
+            ? walkInCustomerName
+            : customerName.trim(),
+        items: saleItems,
+        discount: discount,
+        paymentMethod: normalizedMethod,
+        paymentStatus: normalizedStatus,
+        transactionAmount: invoiceTotal,
+        baseAmount: total,
+        paidBaseAmount: current.invoiceCurrency.toUpperCase() ==
+                current.baseCurrency.toUpperCase()
+            ? resolvedPaid
+            : resolvedPaid / current.exchangeRateAtInvoice,
+        paidAmount: resolvedPaid,
+        cashReceivedAmount: resolvedCash,
+        note: note,
+        version: editVersion,
+      ),
+      now,
+    );
+
+    final stockService = StockTransactionService(
+      sqliteDb,
+      deviceId: _deviceId,
+      defaultStoreId: appIdentity.storeId,
+      defaultBranchId: appIdentity.branchId,
+      defaultSyncTarget: _stockTransactionSyncTarget,
+    );
+    final replacementMovements = <StockMovement>[];
+    await sqliteDb.transaction(() async {
+      for (var lineIndex = 0; lineIndex < current.items.length; lineIndex++) {
+        final item = current.items[lineIndex];
+        final product = _findProductById(item.productId);
+        if (product == null || !product.trackStock) continue;
+        final original = StockMovement(
+          id: '${current.id}-${item.productId}-sale-$lineIndex',
+          productId: item.productId,
+          productName: item.productName,
+          type: 'sale',
+          quantity: -item.effectiveBaseQuantity,
+          date: current.date,
+          referenceId: current.id,
+          referenceNo: current.invoiceNo,
+          reason: 'Sale invoice',
+          unitCost: item.unitCostPerBase,
+          warehouseId: current.warehouseId,
+          warehouseName: current.warehouseName,
+          movementGroupId: current.id,
+          documentLineId: '${current.id}-line-$lineIndex',
+          idempotencyKey: '${current.id}:sale:$lineIndex',
+          createdAt: current.createdAt,
+          updatedAt: current.updatedAt,
+          deviceId: current.deviceId,
+          storeId: current.storeId,
+          branchId: current.branchId,
+        );
+        await stockService.recordReversalInTransaction(
+          originalMovement: original,
+          operationType: 'sale_edit_correction',
+          documentType: 'sale',
+          documentId: '${current.id}:edit:$editVersion',
+          reason: 'Sale corrected',
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          deviceId: _deviceId,
+        );
+      }
+      for (var lineIndex = 0; lineIndex < updated.items.length; lineIndex++) {
+        final item = updated.items[lineIndex];
+        final product = _findProductById(item.productId);
+        if (product == null || !product.trackStock) continue;
+        replacementMovements.add(StockMovement(
+          id: '${updated.id}-edit-$editVersion-$lineIndex-${item.productId}-sale',
+          productId: item.productId,
+          productName: item.productName,
+          type: 'sale',
+          quantity: -item.effectiveBaseQuantity,
+          date: now,
+          referenceId: updated.id,
+          referenceNo: updated.invoiceNo,
+          reason: 'Sale corrected',
+          unitCost: item.unitCostPerBase,
+          warehouseId: updated.warehouseId,
+          warehouseName: updated.warehouseName,
+          movementGroupId: '${updated.id}:edit:$editVersion',
+          documentLineId: '${updated.id}:edit:$editVersion-line-$lineIndex',
+          idempotencyKey: '${updated.id}:edit:$editVersion:$lineIndex',
+          createdAt: now,
+          updatedAt: now,
+          deviceId: _deviceId,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+        ));
+      }
+      if (replacementMovements.isNotEmpty) {
+        await stockService.recordMovementsInTransaction(
+          operationType: 'sale_edit_correction',
+          documentType: 'sale',
+          documentId: '${updated.id}:edit:$editVersion',
+          movementGroupId: '${updated.id}:edit:$editVersion',
+          idempotencyKey: '${updated.id}:edit:$editVersion',
+          movements: replacementMovements,
+          storeId: updated.storeId,
+          branchId: updated.branchId,
+          deviceId: _deviceId,
+        );
+      }
+      await BusinessSqliteStore.upsertEntityPayloads(
+        sqliteDb,
+        _salesKey,
+        <Map<String, dynamic>>[updated.toJson()],
+        sortIndices: <int?>[index == -1 ? 0 : index],
+      );
+    });
+    _mirrorAuthoritativeStockMovements(replacementMovements);
+    await AccountingService.reverseEntryForReference(
+      referenceType: 'sale',
+      referenceId: current.id,
+      reason: 'Sale corrected',
+      createdBy: _deviceId,
+    );
+    await AccountingService.recordSale(updated);
+    _recordSaleCancelLedger(current, now);
+    _recordSaleLedger(updated, now);
+    if (index == -1) {
+      _sales.add(updated);
+    } else {
+      _sales[index] = updated;
+    }
+    _recordSyncChange(
+      entityType: 'sale',
+      entityId: updated.id,
+      operation: 'correct',
+      payload: updated.toJson(),
+    );
+    await _refreshProductStockCompatibilityCache(<String>{
+      ...current.items.map((item) => item.productId),
+      ...updated.items.map((item) => item.productId),
+    });
+    await _saveDirty(
+      products: true,
+      productDerivedData: true,
+      sales: false,
+      stockMovements: false,
+      accountTransactions: true,
+      sync: true,
+    );
+    unawaited(AuditLogger.record(
+      entityType: 'sale',
+      entityId: updated.id,
+      action: 'correct',
+      summary: 'Sale invoice corrected',
+      details: jsonEncode(<String, dynamic>{
+        'before': current.toJson(),
+        'after': updated.toJson(),
+      }),
+      userId: _activeUser?.id ?? '',
+      userName: _actorName(),
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
+      sessionId: _deviceId,
+      traceId: _deviceId,
+      deviceId: _deviceId,
+      sourceModule: 'sales',
+      isImportant: true,
+    ));
+    _touchDataRevisions(sales: true);
+    notifyListeners();
+    return updated;
+  }
+
+  Future<CreditNote> returnSale(
+    String id, {
+    bool restoreStock = true,
+    Map<String, double>? returnedQuantities,
+  }) async {
     requirePermission(AppPermission.salesCancel);
     final index = _sales.indexWhere((sale) => sale.id == id);
     final sale = index == -1 ? await _saleByIdFromSqlite(id) : _sales[index];
     if (sale == null) {
       throw ArgumentError('Sale not found.');
     }
-    if (sale.isCancelled) return;
+    if (sale.isCancelled) {
+      throw StateError('Sale is already cancelled or fully returned.');
+    }
+
+    final selectedItems = sale.items
+        .map((item) {
+          final requested =
+              returnedQuantities?[item.productId] ?? item.quantity;
+          if (!requested.isFinite ||
+              requested < 0 ||
+              requested > item.quantity) {
+            throw ArgumentError(
+                'Invalid return quantity for ${item.productName}.');
+          }
+          return SaleItem(
+            productId: item.productId,
+            productName: item.productName,
+            unitPrice: item.unitPrice,
+            quantity: requested,
+            unitCost: item.unitCost,
+            costingMethodAtSale: item.costingMethodAtSale,
+            costCurrency: item.costCurrency,
+            costExchangeRate: item.costExchangeRate,
+            unitName: item.unitName,
+            conversionToBase: item.conversionToBase,
+            baseQuantity: item.effectiveBaseQuantity *
+                (item.quantity == 0 ? 0 : requested / item.quantity),
+          );
+        })
+        .where((item) => item.quantity > 0)
+        .toList();
+    if (selectedItems.isEmpty)
+      throw ArgumentError('Return quantity must be greater than zero.');
+    if (sale.status.toLowerCase() == 'partially returned') {
+      for (final item in selectedItems) {
+        final previous = sale.items.firstWhere(
+          (candidate) => candidate.productId == item.productId,
+          orElse: () => const SaleItem(
+              productId: '', productName: '', unitPrice: 0, quantity: 0),
+        );
+        if (item.quantity > previous.quantity) {
+          throw StateError(
+              'Return quantity cannot exceed the remaining invoice quantity.');
+        }
+      }
+    }
+    final isFullReturn = selectedItems.length == sale.items.length &&
+        selectedItems.every((item) =>
+            item.quantity ==
+            sale.items
+                .firstWhere((source) => source.productId == item.productId)
+                .quantity);
 
     final now = DateTime.now();
     final returnedSale = _withSyncMeta<Sale>(
       sale.copyWith(
-        status: 'Returned',
+        status: isFullReturn ? 'Returned' : 'Partially Returned',
+        items: selectedItems,
         paymentStatus: 'returned',
         paidAmount: 0,
         cashReceivedAmount: 0,
@@ -15112,7 +15565,7 @@ class AppStore extends ChangeNotifier {
       now,
     );
     if (restoreStock) {
-      for (final item in sale.items) {
+      for (final item in selectedItems) {
         _restoreInventoryCostLayersFromSaleItem(item, now);
       }
       final sqliteDb = SqliteMigrationManager.database;
@@ -15127,9 +15580,9 @@ class AppStore extends ChangeNotifier {
         final batchService = BatchInventoryService(sqliteDb);
         await sqliteDb.transaction(() async {
           for (var lineIndex = 0;
-              lineIndex < sale.items.length;
+              lineIndex < selectedItems.length;
               lineIndex += 1) {
-            final item = sale.items[lineIndex];
+            final item = selectedItems[lineIndex];
             final product = _findProductById(item.productId);
             if (product != null && item.batchAllocations.isNotEmpty) {
               await batchService.restoreInTransaction(
@@ -15210,8 +15663,10 @@ class AppStore extends ChangeNotifier {
           );
         });
       } else {
-        for (var lineIndex = 0; lineIndex < sale.items.length; lineIndex += 1) {
-          final item = sale.items[lineIndex];
+        for (var lineIndex = 0;
+            lineIndex < selectedItems.length;
+            lineIndex += 1) {
+          final item = selectedItems[lineIndex];
           final index = _productIndexById[item.productId];
           if (index == null) continue;
           final product = _products[index];
@@ -15258,11 +15713,8 @@ class AppStore extends ChangeNotifier {
         }
       }
       await _refreshProductStockCompatibilityCache(
-        sale.items.map((item) => item.productId),
+        selectedItems.map((item) => item.productId),
       );
-    }
-    if (index != -1) {
-      _sales[index] = returnedSale;
     }
     _recordSyncChange(
       entityType: 'sale',
@@ -15270,7 +15722,53 @@ class AppStore extends ChangeNotifier {
       operation: 'return',
       payload: returnedSale.toJson(),
     );
-    _recordSaleCancelLedger(sale, now, isReturn: true);
+    final returnedSubtotal =
+        selectedItems.fold<double>(0, (sum, item) => sum + item.lineTotal);
+    final creditAmount = (returnedSubtotal -
+            (sale.subtotal <= 0
+                ? 0
+                : sale.discount * (returnedSubtotal / sale.subtotal)))
+        .clamp(0, double.infinity)
+        .toDouble();
+    if (index != -1) {
+      _sales[index] = _withSyncMeta<Sale>(
+        sale.copyWith(
+          status: isFullReturn ? 'Returned' : sale.status,
+          returnedAmount: sale.returnedAmount + creditAmount,
+          paidAmount: isFullReturn ? 0 : sale.paidAmount,
+          cashReceivedAmount: isFullReturn ? 0 : sale.cashReceivedAmount,
+          paidAmountInPaymentCurrency:
+              isFullReturn ? 0 : sale.paidAmountInPaymentCurrency,
+          cashReceivedAmountInPaymentCurrency:
+              isFullReturn ? 0 : sale.cashReceivedAmountInPaymentCurrency,
+          note: 'Credit note issued for ${sale.invoiceNo}',
+        ),
+        now,
+      );
+      _touchDataRevisions(sales: true);
+    }
+    final creditNote = await issueCreditNote(
+      originalSale: sale,
+      items: selectedItems,
+      amount: creditAmount,
+      refundMethod: sale.paymentMethod.toLowerCase() == 'cash'
+          ? 'Cash'
+          : 'Customer balance',
+      note: 'مرتجع مرتبط بالفاتورة ${sale.invoiceNo}',
+    );
+    final ledgerSale = isFullReturn
+        ? sale
+        : sale.copyWith(
+            items: selectedItems,
+            discount: sale.subtotal <= 0
+                ? 0
+                : sale.discount * (returnedSubtotal / sale.subtotal),
+            transactionAmount: 0,
+            baseAmount: 0,
+            paidAmount: sale.paidAmount *
+                (sale.subtotal <= 0 ? 0 : returnedSubtotal / sale.subtotal),
+          );
+    _recordSaleCancelLedger(ledgerSale, now, isReturn: true);
     final productDerivedData = restoreStock &&
         sale.items.any((item) => item.costLayerConsumptions.isNotEmpty);
     await _saveDirty(
@@ -15282,6 +15780,7 @@ class AppStore extends ChangeNotifier {
       sync: true,
     );
     notifyListeners();
+    return creditNote;
   }
 
   Future<void> cancelSale(
@@ -15673,6 +16172,7 @@ class AppStore extends ChangeNotifier {
                 : _businessBackupJson(item),
           )
           .toList(),
+      'creditNotes': _creditNotes.map((item) => item.toJson()).toList(),
       'saleQuotations': _saleQuotations
           .map(
             (item) => includeDeviceAndSyncState
@@ -15988,6 +16488,7 @@ class AppStore extends ChangeNotifier {
       'inventoryMigrationAdjustments':
           inventoryMigrationAdjustments ?? <dynamic>[],
       'sales': _sales.map((item) => item.toJson()).toList(),
+      'creditNotes': _creditNotes.map((item) => item.toJson()).toList(),
       'saleQuotations': _saleQuotations.map((item) => item.toJson()).toList(),
       'deliveryNotes': _deliveryNotes.map((item) => item.toJson()).toList(),
       'purchases': _purchases.map((item) => item.toJson()).toList(),

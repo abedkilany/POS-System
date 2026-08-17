@@ -58,6 +58,8 @@ class _SalesPageState extends State<SalesPage> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _barcodeController = TextEditingController();
   final TextEditingController _discountController = TextEditingController();
+  final TextEditingController _discountPercentController =
+      TextEditingController();
   final TextEditingController _paidAmountController = TextEditingController();
   final TextEditingController _paymentExchangeRateController =
       TextEditingController();
@@ -94,6 +96,8 @@ class _SalesPageState extends State<SalesPage> {
   bool _scannerActive = false;
   bool _scannerStartFailed = false;
   bool _manualBarcodeInput = false;
+  bool _showInvoiceProfit = false;
+  Sale? _editingSale;
   bool _quickGridEditMode = false;
   List<_QuickProductPage>? _quickPagesEditSnapshot;
   int _selectedQuickPageIndex = 0;
@@ -227,6 +231,7 @@ class _SalesPageState extends State<SalesPage> {
     _searchController.dispose();
     _barcodeController.dispose();
     _discountController.dispose();
+    _discountPercentController.dispose();
     _paidAmountController.dispose();
     _paymentExchangeRateController.dispose();
     _invoiceSearchController.dispose();
@@ -246,7 +251,45 @@ class _SalesPageState extends State<SalesPage> {
         normalized.toDouble(), _discountCurrency, widget.store.storeProfile);
   }
 
+  double get _discountGrossAmount =>
+      _currencyFromBase(_subtotal, _discountCurrency);
+
+  void _syncDiscountPercentFromAmount() {
+    final gross = _discountGrossAmount;
+    final amount = double.tryParse(_discountController.text.trim());
+    if (gross <= 0 || amount == null) return;
+    final percent = (amount.clamp(0, gross) / gross) * 100;
+    final text = percent.toStringAsFixed(2).replaceFirst(RegExp(r'\.00$'), '');
+    if (_discountPercentController.text != text) {
+      _discountPercentController.text = text;
+    }
+  }
+
+  void _syncDiscountAmountFromPercent() {
+    final gross = _discountGrossAmount;
+    final percent = double.tryParse(_discountPercentController.text.trim());
+    if (gross <= 0 || percent == null) return;
+    final amount = gross * (percent.clamp(0, 100) / 100);
+    final text = amount.toStringAsFixed(2).replaceFirst(RegExp(r'\.00$'), '');
+    if (_discountController.text != text) _discountController.text = text;
+  }
+
   double get _subtotal => _cart.fold(0, (sum, item) => sum + item.lineTotal);
+  double get _invoiceProfitPercent {
+    final revenueAfterDiscount =
+        (_subtotal - _discount).clamp(0, double.infinity).toDouble();
+    if (revenueAfterDiscount <= 0) return 0;
+    return (_invoiceProfitAmount / revenueAfterDiscount) * 100;
+  }
+
+  double get _invoiceProfitAmount {
+    final cost = _cart.fold<double>(
+        0, (sum, item) => sum + item.baseQuantity * item.product.usdCost);
+    final revenueAfterDiscount =
+        (_subtotal - _discount).clamp(0, double.infinity).toDouble();
+    return revenueAfterDiscount - cost;
+  }
+
   String _stockAvailabilityLabel(Product product, AppLocalizations tr,
       {bool includeUnit = false, String? warehouseId}) {
     if (!product.trackStock) return 'Non-stock';
@@ -819,16 +862,13 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   String _customerSearchText(Customer customer) {
-    final phone = customer.phone.trim();
-    final id = customer.id.trim();
-    if (customer.id == AppStore.walkInCustomerId) return customer.name;
-    return phone.isEmpty
-        ? '#$id - ${customer.name}'
-        : '#$id - ${customer.name} - $phone';
+    return customer.name;
   }
 
   List<Customer> _customerSearchOptions(String query) {
-    final normalized = query.trim().toLowerCase();
+    final rawQuery = query.trim().toLowerCase();
+    final normalized =
+        rawQuery == AppStore.walkInCustomerName.toLowerCase() ? '' : rawQuery;
     final seen = <String>{};
     final customers = <Customer>[];
     for (final customer in [
@@ -3336,6 +3376,12 @@ class _SalesPageState extends State<SalesPage> {
               children: [
                 Text(tr.text('cart'),
                     style: Theme.of(context).textTheme.titleLarge),
+                if (_editingSale != null)
+                  Chip(
+                    avatar: const Icon(Icons.edit_outlined, size: 18),
+                    label:
+                        Text('${tr.text('edit')} ${_editingSale!.invoiceNo}'),
+                  ),
                 Chip(
                     label: Text(
                         '${tr.text('items')}: ${_formatQuantity(_itemsCount)}')),
@@ -3350,6 +3396,17 @@ class _SalesPageState extends State<SalesPage> {
                       onPressed: widget.store.canSell ? _holdCurrentCart : null,
                       icon: const Icon(Icons.pause_circle_outline),
                       label: Text(tr.text('hold'))),
+                if (_editingSale != null)
+                  TextButton.icon(
+                    onPressed: () => setState(() {
+                      _editingSale = null;
+                      _cart.clear();
+                      _selectedCartIndex = null;
+                      _pendingDeleteCartIndex = null;
+                    }),
+                    icon: const Icon(Icons.close_outlined),
+                    label: Text(tr.text('cancel')),
+                  ),
                 if (_heldCarts.isNotEmpty)
                   TextButton.icon(
                       onPressed:
@@ -3393,13 +3450,19 @@ class _SalesPageState extends State<SalesPage> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   final primary = FilledButton.icon(
-                      onPressed: _cart.isEmpty || !widget.store.canSell
+                      onPressed: _cart.isEmpty ||
+                              !(_editingSale == null
+                                  ? widget.store.canSell
+                                  : widget.store.canEditSales)
                           ? null
                           : () => _openPaymentPage(printAfterSave: true),
                       icon: const Icon(Icons.payments_outlined),
                       label: Text(tr.text('continue_payment')));
                   final secondary = OutlinedButton.icon(
-                      onPressed: _cart.isEmpty || !widget.store.canSell
+                      onPressed: _cart.isEmpty ||
+                              !(_editingSale == null
+                                  ? widget.store.canSell
+                                  : widget.store.canEditSales)
                           ? null
                           : () => _openPaymentPage(printAfterSave: false),
                       icon: const Icon(Icons.payments_outlined),
@@ -3673,6 +3736,18 @@ class _SalesPageState extends State<SalesPage> {
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled &&
+                                            sale.returnedAmount <= 0 &&
+                                            widget.store.deliveryNoteForSale(
+                                                    sale.id) ==
+                                                null &&
+                                            widget.store.canEditSales)
+                                        ? () => _startEditingSale(sale)
+                                        : null,
+                                    icon: const Icon(Icons.edit_outlined),
+                                    label: Text(tr.text('edit')),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: (!sale.isCancelled &&
                                             widget.store.deliveryNoteForSale(
                                                     sale.id) ==
                                                 null &&
@@ -3683,15 +3758,6 @@ class _SalesPageState extends State<SalesPage> {
                                     icon: const Icon(
                                         Icons.local_shipping_outlined),
                                     label: Text(tr.text('delivery_note')),
-                                  ),
-                                  OutlinedButton.icon(
-                                    onPressed: (!sale.isCancelled &&
-                                            widget.store.canDeleteOrCancel)
-                                        ? () => _returnSale(context, sale)
-                                        : null,
-                                    icon: const Icon(
-                                        Icons.assignment_return_outlined),
-                                    label: Text(tr.text('return_sale')),
                                   ),
                                 ],
                               ),
@@ -3928,19 +3994,22 @@ class _SalesPageState extends State<SalesPage> {
               ),
               OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
+                        sale.returnedAmount <= 0 &&
+                        widget.store.deliveryNoteForSale(sale.id) == null &&
+                        widget.store.canEditSales)
+                    ? () => _startEditingSale(sale)
+                    : null,
+                icon: const Icon(Icons.edit_outlined),
+                label: Text(tr.text('edit')),
+              ),
+              OutlinedButton.icon(
+                onPressed: (!sale.isCancelled &&
                         widget.store.deliveryNoteForSale(sale.id) == null &&
                         widget.store.canManageDeliveryNotes)
                     ? () => _createDeliveryNote(context, sale)
                     : null,
                 icon: const Icon(Icons.local_shipping_outlined),
                 label: Text(tr.text('delivery_note')),
-              ),
-              OutlinedButton.icon(
-                onPressed: (!sale.isCancelled && widget.store.canDeleteOrCancel)
-                    ? () => _returnSale(context, sale)
-                    : null,
-                icon: const Icon(Icons.assignment_return_outlined),
-                label: Text(tr.text('return_sale')),
               ),
             ],
           ),
@@ -4763,31 +4832,204 @@ class _SalesPageState extends State<SalesPage> {
   Future<void> _returnSale(BuildContext context, Sale sale) async {
     if (!widget.store.canDeleteOrCancel) return;
     final tr = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final quantityControllers = sale.items
+        .map((item) => TextEditingController(text: item.quantity.toString()))
+        .toList();
+    final quantities = await showDialog<Map<String, double>>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('return_sale')),
-        content: Text(tr
-            .text('return_sale_confirm')
-            .replaceAll('{invoice}', sale.invoiceNo)),
+        title: Text('${tr.text('return_sale')} ${sale.invoiceNo}'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < sale.items.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: TextField(
+                      controller: quantityControllers[i],
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText:
+                            '${sale.items[i].productName} (max ${sale.items[i].quantity})',
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
+              onPressed: () => Navigator.pop(dialogContext),
               child: Text(tr.text('cancel'))),
           FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
+              onPressed: () {
+                final result = <String, double>{};
+                for (var i = 0; i < sale.items.length; i++) {
+                  final value =
+                      double.tryParse(quantityControllers[i].text.trim()) ?? -1;
+                  if (value > 0) result[sale.items[i].productId] = value;
+                }
+                Navigator.pop(dialogContext, result);
+              },
               child: Text(tr.text('confirm_return_sale'))),
         ],
       ),
     );
 
-    if (confirmed != true) return;
+    for (final controller in quantityControllers) {
+      controller.dispose();
+    }
+    if (quantities == null || quantities.isEmpty) return;
 
-    await widget.store.returnSale(sale.id);
+    final creditNote =
+        await widget.store.returnSale(sale.id, returnedQuantities: quantities);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(AppLocalizations.of(context)
-              .text('sale_returned_stock_restored'))));
+          content: Text(
+              '${AppLocalizations.of(context).text('sale_returned_stock_restored')} (${creditNote.creditNoteNo})')));
+      final returnedAmount = sale.items.fold<double>(0, (total, item) {
+        final quantity = quantities[item.productId] ?? 0;
+        return total + item.unitPrice * quantity;
+      });
+      await _offerReplacement(context, sale, returnedAmount: returnedAmount);
+    }
+  }
+
+  Future<void> _offerReplacement(BuildContext context, Sale original,
+      {required double returnedAmount}) async {
+    final products = widget.store.products
+        .where((product) => !product.isDeleted)
+        .toList(growable: false);
+    if (products.isEmpty || !context.mounted) return;
+    final quantityController = TextEditingController(text: '1');
+    Product? selected = products.first;
+    double replacementAmount() {
+      final unit = selected?.effectiveSaleUnits.first;
+      final quantity = double.tryParse(quantityController.text) ?? 0;
+      return (unit?.price ?? 0) * quantity;
+    }
+
+    final replacement = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('استبدال الصنف'),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<Product>(
+                  value: selected,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'الصنف البديل',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: products
+                      .map((product) => DropdownMenuItem<Product>(
+                            value: product,
+                            child: Text(product.name),
+                          ))
+                      .toList(),
+                  onChanged: (value) => setDialogState(() => selected = value),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: quantityController,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'الكمية',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) => setDialogState(() {}),
+                ),
+                const SizedBox(height: 12),
+                Builder(builder: (context) {
+                  final difference = replacementAmount() - returnedAmount;
+                  final label = difference >= 0
+                      ? 'المبلغ المطلوب من الزبون: ${difference.toStringAsFixed(2)}'
+                      : 'المبلغ الواجب ردّه للزبون: ${(-difference).toStringAsFixed(2)}';
+                  return Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(label,
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: difference >= 0
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.error)),
+                  );
+                }),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('بدون استبدال'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final quantity = double.tryParse(quantityController.text) ?? 0;
+                if (selected == null || quantity <= 0) return;
+                Navigator.pop(dialogContext, <String, dynamic>{
+                  'product': selected,
+                  'quantity': quantity,
+                });
+              },
+              child: const Text('تأكيد الاستبدال'),
+            ),
+          ],
+        ),
+      ),
+    );
+    quantityController.dispose();
+    if (replacement == null || !context.mounted) return;
+    final product = replacement['product'] as Product;
+    final quantity = replacement['quantity'] as double;
+    final unit = product.effectiveSaleUnits.first;
+    final replacementAmountValue = unit.price * quantity;
+    final difference = replacementAmountValue - returnedAmount;
+    try {
+      final replacementSale = await widget.store.createSale(
+        customerName: original.customerName,
+        customerId: original.customerId,
+        items: [
+          SaleItem(
+            productId: product.id,
+            productName: product.name,
+            unitPrice: unit.price,
+            quantity: quantity,
+            unitName: unit.name,
+            conversionToBase: unit.conversionToBase,
+          ),
+        ],
+        paymentMethod: original.paymentMethod,
+        paymentStatus: 'paid',
+        paidAmount: difference > 0 ? difference : 0,
+        cashReceivedAmount: difference > 0 ? difference : 0,
+        invoiceCurrency: original.invoiceCurrency,
+        paymentCurrency: original.paymentCurrency,
+        warehouseId: original.warehouseId,
+        warehouseName: original.warehouseName,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(difference >= 0
+            ? 'تم إنشاء فاتورة الاستبدال ${replacementSale.invoiceNo}. الفرق المطلوب: ${difference.toStringAsFixed(2)}'
+            : 'تم إنشاء فاتورة الاستبدال ${replacementSale.invoiceNo}. يجب ردّ ${(-difference).toStringAsFixed(2)} للزبون'),
+      ));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -4925,6 +5167,7 @@ class _SalesPageState extends State<SalesPage> {
     if (_cart.isEmpty) return;
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _discountCurrency = _invoiceCurrency;
+    _syncDiscountPercentFromAmount();
     _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
     _paymentExchangeRateController.text =
         widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
@@ -5005,23 +5248,80 @@ class _SalesPageState extends State<SalesPage> {
                               modalSetState: setDialogState),
                         ],
                         const SizedBox(height: 16),
-                        TextFormField(
-                          focusNode: _discountFocusNode,
-                          controller: _discountController,
-                          decoration: InputDecoration(
-                              labelText: pageTr.text('discount')),
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(
-                                RegExp(r'^\d*\.?\d{0,2}$'))
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                focusNode: _discountFocusNode,
+                                controller: _discountController,
+                                decoration: InputDecoration(
+                                  labelText: pageTr.text('discount'),
+                                  suffixText: _discountCurrency,
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'^\d*\.?\d{0,2}$'))
+                                ],
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                onChanged: (_) {
+                                  _syncDiscountPercentFromAmount();
+                                  setState(() =>
+                                      _discountCurrency = _invoiceCurrency);
+                                  setDialogState(() {});
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextFormField(
+                                controller: _discountPercentController,
+                                decoration: InputDecoration(
+                                  labelText: pageTr.text('discount_percentage'),
+                                  suffixText: '%',
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'^\d*\.?\d{0,2}$'))
+                                ],
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                onChanged: (_) {
+                                  _syncDiscountAmountFromPercent();
+                                  setState(() {});
+                                  setDialogState(() {});
+                                },
+                              ),
+                            ),
                           ],
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          onChanged: (_) {
-                            setState(
-                                () => _discountCurrency = _invoiceCurrency);
-                            setDialogState(() {});
-                          },
                         ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: TextButton.icon(
+                            onPressed: () => setDialogState(() {
+                              _showInvoiceProfit = !_showInvoiceProfit;
+                            }),
+                            icon: Icon(_showInvoiceProfit
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                            label: Text(_showInvoiceProfit
+                                ? pageTr.text('hide_invoice_profit')
+                                : pageTr.text('show_invoice_profit')),
+                          ),
+                        ),
+                        if (_showInvoiceProfit)
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Text(
+                              '${pageTr.text('invoice_profit_amount')}: ${_formatSaleCurrency(_currencyFromBase(_invoiceProfitAmount, _invoiceCurrency), _invoiceCurrency)} • '
+                              '${pageTr.text('invoice_profit_percentage')}: ${_invoiceProfitPercent.toStringAsFixed(2)}%',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
                         const Divider(height: 28),
                         _totalLine(pageTr.text('total'),
                             _formatSaleCurrency(invoiceTotal, _invoiceCurrency),
@@ -5086,6 +5386,51 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
+  void _startEditingSale(Sale sale) {
+    if (!widget.store.canEditSales ||
+        sale.isCancelled ||
+        sale.returnedAmount > 0 ||
+        widget.store.deliveryNoteForSale(sale.id) != null) {
+      return;
+    }
+    final draftItems = <_DraftSaleItem>[];
+    for (final item in sale.items) {
+      final product = widget.store.productById(item.productId);
+      if (product == null) continue;
+      draftItems.add(_DraftSaleItem(
+        product: product,
+        quantity: item.quantity,
+        saleUnit: ProductSaleUnit(
+          id: 'edit-${item.productId}',
+          name: item.unitName,
+          conversionToBase: item.conversionToBase,
+          price: item.unitPrice,
+          isDefault: true,
+        ),
+      ));
+    }
+    if (draftItems.isEmpty) return;
+    setState(() {
+      _editingSale = sale;
+      _cart
+        ..clear()
+        ..addAll(draftItems);
+      _selectedCustomerId = sale.customerId;
+      _selectedWarehouseId = sale.warehouseId;
+      _paymentMethod = sale.paymentMethod;
+      _invoiceCurrency = sale.invoiceCurrency;
+      _paymentCurrency = sale.paymentCurrency;
+      _discountCurrency = sale.discountCurrency;
+      _discountController.text = sale.discount.toStringAsFixed(2);
+      _paidAmountController.text = sale.paidAmount.toStringAsFixed(2);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text(
+              '${AppLocalizations.of(context).text('edit')} ${sale.invoiceNo}')),
+    );
+  }
+
   Future<void> _saveCurrentInvoice({required bool printAfterSave}) async {
     if (_cart.isEmpty) return;
     if (_discount > _subtotal) {
@@ -5113,57 +5458,87 @@ class _SalesPageState extends State<SalesPage> {
     }
     final paidAmount = _derivedPaidAmount;
     final paymentStatus = _derivedPaymentStatus;
+    final wasEditing = _editingSale != null;
 
     late final Sale sale;
     try {
-      sale = await widget.store.createSale(
-        customerName: widget.store.resolveCustomerName(_selectedCustomerId),
-        customerId: _selectedCustomerId,
-        discount: _discount,
-        originalDiscount: double.tryParse(_discountController.text.trim()) ?? 0,
-        discountCurrency: _discountCurrency,
-        discountExchangeRateAtEntry: exchangeRate(
-          widget.store.storeProfile.baseCurrency,
-          _discountCurrency,
-          widget.store.storeProfile,
-          effectiveAt: DateTime.now(),
-        ),
-        paymentMethod: _paymentMethod,
-        paymentStatus: paymentStatus,
-        invoiceCurrency: _invoiceCurrency,
-        paymentCurrency: _paymentCurrency,
-        exchangeRateAtPayment: _saleExchangeRate,
-        paidAmount: paidAmount,
-        cashReceivedAmount: cashReceivedAmount,
-        paidAmountInPaymentCurrency: _isCreditPayment
-            ? _cashReceivedInPaymentCurrency
-            : _convertCurrencyAmount(
-                paidAmount, _invoiceCurrency, _paymentCurrency),
-        cashReceivedAmountInPaymentCurrency: _isCashPayment
-            ? _convertCurrencyAmount(
-                cashReceivedAmount, _invoiceCurrency, _paymentCurrency)
-            : _cashReceivedInPaymentCurrency,
-        warehouseId: _selectedWarehouseId,
-        warehouseName: widget.store
-            .resolveWarehouseForSale(
-              warehouseId: _selectedWarehouseId,
-            )
-            .name,
-        items: _cart
-            .map(
-              (item) => SaleItem(
-                productId: item.product.id,
-                productName: item.displayName,
-                unitPrice: item.unitPrice,
-                quantity: item.quantity,
-                unitName: item.unitName,
-                baseQuantity: item.baseQuantity,
-                conversionToBase: item.conversionToBase,
-                unitCost: 0,
-              ),
-            )
-            .toList(),
-      );
+      final editing = _editingSale;
+      if (editing != null) {
+        sale = await widget.store.editSale(
+          id: editing.id,
+          customerName: widget.store.resolveCustomerName(_selectedCustomerId),
+          customerId: _selectedCustomerId,
+          discount: _discount,
+          paymentMethod: _paymentMethod,
+          paymentStatus: paymentStatus,
+          paidAmount: paidAmount,
+          cashReceivedAmount: cashReceivedAmount,
+          note: editing.note,
+          items: _cart
+              .map(
+                (item) => SaleItem(
+                  productId: item.product.id,
+                  productName: item.product.name,
+                  unitPrice: item.unitPrice,
+                  quantity: item.quantity,
+                  unitName: item.unitName,
+                  baseQuantity: item.baseQuantity,
+                  conversionToBase: item.conversionToBase,
+                ),
+              )
+              .toList(),
+        );
+      } else {
+        sale = await widget.store.createSale(
+          customerName: widget.store.resolveCustomerName(_selectedCustomerId),
+          customerId: _selectedCustomerId,
+          discount: _discount,
+          originalDiscount:
+              double.tryParse(_discountController.text.trim()) ?? 0,
+          discountCurrency: _discountCurrency,
+          discountExchangeRateAtEntry: exchangeRate(
+            widget.store.storeProfile.baseCurrency,
+            _discountCurrency,
+            widget.store.storeProfile,
+            effectiveAt: DateTime.now(),
+          ),
+          paymentMethod: _paymentMethod,
+          paymentStatus: paymentStatus,
+          invoiceCurrency: _invoiceCurrency,
+          paymentCurrency: _paymentCurrency,
+          exchangeRateAtPayment: _saleExchangeRate,
+          paidAmount: paidAmount,
+          cashReceivedAmount: cashReceivedAmount,
+          paidAmountInPaymentCurrency: _isCreditPayment
+              ? _cashReceivedInPaymentCurrency
+              : _convertCurrencyAmount(
+                  paidAmount, _invoiceCurrency, _paymentCurrency),
+          cashReceivedAmountInPaymentCurrency: _isCashPayment
+              ? _convertCurrencyAmount(
+                  cashReceivedAmount, _invoiceCurrency, _paymentCurrency)
+              : _cashReceivedInPaymentCurrency,
+          warehouseId: _selectedWarehouseId,
+          warehouseName: widget.store
+              .resolveWarehouseForSale(
+                warehouseId: _selectedWarehouseId,
+              )
+              .name,
+          items: _cart
+              .map(
+                (item) => SaleItem(
+                  productId: item.product.id,
+                  productName: item.displayName,
+                  unitPrice: item.unitPrice,
+                  quantity: item.quantity,
+                  unitName: item.unitName,
+                  baseQuantity: item.baseQuantity,
+                  conversionToBase: item.conversionToBase,
+                  unitCost: 0,
+                ),
+              )
+              .toList(),
+        );
+      }
     } catch (error, stackTrace) {
       if (!mounted) return;
       final message = _saleSaveFailureMessage(context, error);
@@ -5183,6 +5558,7 @@ class _SalesPageState extends State<SalesPage> {
 
     setState(() {
       _cart.clear();
+      _editingSale = null;
       _selectedCartIndex = null;
       _pendingDeleteCartIndex = null;
       _discountController.clear();
@@ -5206,8 +5582,9 @@ class _SalesPageState extends State<SalesPage> {
     _restoreScannerMode();
 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(AppLocalizations.of(context)
-            .text('invoice_created_successfully'))));
+        content: Text(!wasEditing
+            ? AppLocalizations.of(context).text('invoice_created_successfully')
+            : '${AppLocalizations.of(context).text('edit')} ${sale.invoiceNo}')));
 
     if (printAfterSave) {
       await _handleInvoiceAction(() => InvoicePdfService.printInvoice(

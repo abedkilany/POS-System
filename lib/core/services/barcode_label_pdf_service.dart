@@ -8,10 +8,21 @@ import '../../models/product.dart';
 import '../../models/store_profile.dart';
 
 class BarcodeLabelItem {
-  const BarcodeLabelItem({required this.product, required this.quantity});
+  const BarcodeLabelItem({
+    required this.product,
+    required this.quantity,
+    this.barcode,
+    this.unitName,
+  });
 
   final Product product;
   final int quantity;
+  final String? barcode;
+  final String? unitName;
+
+  String get effectiveBarcode => barcode?.trim().isNotEmpty == true
+      ? barcode!.trim()
+      : product.barcode.trim();
 }
 
 class BarcodeLabelPrintOptions {
@@ -125,6 +136,7 @@ class BarcodeLabelPdfService {
     required BarcodeLabelPrintOptions options,
   }) {
     final product = item.product;
+    final barcode = item.effectiveBarcode;
     final hasDates = options.productionDate.trim().isNotEmpty ||
         options.expiryDate.trim().isNotEmpty;
     final hasLogo = options.logoBytes != null && options.logoBytes!.isNotEmpty;
@@ -225,7 +237,7 @@ class BarcodeLabelPdfService {
                           pw.Center(
                             child: pw.BarcodeWidget(
                               barcode: pw.Barcode.code128(),
-                              data: product.barcode,
+                              data: barcode,
                               width: barcodeWidth,
                               height: barcodeHeight,
                               drawText: false,
@@ -236,7 +248,7 @@ class BarcodeLabelPdfService {
                         pw.Directionality(
                           textDirection: pw.TextDirection.ltr,
                           child: pw.Text(
-                            product.barcode,
+                            barcode,
                             maxLines: 1,
                             softWrap: false,
                             textAlign: pw.TextAlign.center,

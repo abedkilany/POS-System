@@ -1213,6 +1213,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
     var fromWarehouseId = warehouses.first.id;
     var toWarehouseId =
         warehouses.length > 1 ? warehouses[1].id : warehouses.first.id;
+    var unitId = products.first.effectiveSaleUnits.first.id;
     final qtyController = TextEditingController();
     final notesController = TextEditingController();
     await showDialog<void>(
@@ -1229,9 +1230,55 @@ class _WarehousesTabState extends State<_WarehousesTab> {
                     .map((item) => DropdownMenuItem(
                         value: item.id, child: Text(item.name)))
                     .toList(),
-                onChanged: (value) =>
-                    setDialogState(() => productId = value ?? productId),
+                onChanged: (value) => setDialogState(() {
+                  productId = value ?? productId;
+                  unitId = products
+                      .firstWhere((item) => item.id == productId)
+                      .effectiveSaleUnits
+                      .first
+                      .id;
+                }),
               ),
+              const SizedBox(height: 12),
+              Builder(builder: (context) {
+                final product =
+                    products.firstWhere((item) => item.id == productId);
+                final units = product.effectiveSaleUnits;
+                final selectedUnit = units.any((item) => item.id == unitId)
+                    ? unitId
+                    : units.first.id;
+                final conversion = units
+                    .firstWhere((item) => item.id == selectedUnit)
+                    .conversionToBase;
+                final availableBase =
+                    widget.store.stockForWarehouse(productId, fromWarehouseId);
+                final availableInUnit =
+                    conversion <= 0 ? 0 : availableBase / conversion;
+                return Column(
+                  children: [
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedUnit,
+                      decoration: InputDecoration(labelText: tr.text('unit')),
+                      items: units
+                          .map((item) => DropdownMenuItem(
+                                value: item.id,
+                                child: Text(item.name),
+                              ))
+                          .toList(),
+                      onChanged: (value) =>
+                          setDialogState(() => unitId = value ?? selectedUnit),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        '${tr.text('available')}: ${availableInUnit.toStringAsFixed(2)} ${units.firstWhere((item) => item.id == selectedUnit).name} '
+                        '(${availableBase.toStringAsFixed(2)} ${product.unit})',
+                      ),
+                    ),
+                  ],
+                );
+              }),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: fromWarehouseId,
@@ -1256,9 +1303,6 @@ class _WarehousesTabState extends State<_WarehousesTab> {
                     () => toWarehouseId = value ?? toWarehouseId),
               ),
               const SizedBox(height: 12),
-              Text(
-                  '${tr.text('available')}: ${widget.store.stockForWarehouse(productId, fromWarehouseId)}'),
-              const SizedBox(height: 12),
               TextField(
                   controller: qtyController,
                   decoration: InputDecoration(labelText: tr.text('quantity')),
@@ -1278,12 +1322,27 @@ class _WarehousesTabState extends State<_WarehousesTab> {
             FilledButton(
               onPressed: () async {
                 try {
+                  final product =
+                      products.firstWhere((item) => item.id == productId);
+                  final unit = product.effectiveSaleUnits.firstWhere(
+                    (item) => item.id == unitId,
+                    orElse: () => product.effectiveSaleUnits.first,
+                  );
+                  final enteredQuantity =
+                      double.tryParse(qtyController.text.trim()) ?? 0;
+                  final baseQuantity = enteredQuantity * unit.conversionToBase;
+                  final transferNotes = [
+                    if (notesController.text.trim().isNotEmpty)
+                      notesController.text.trim(),
+                    'Unit: ${unit.name}; quantity: $enteredQuantity; '
+                        'base quantity: $baseQuantity ${product.unit}',
+                  ].join(' | ');
                   await widget.store.transferStock(
                       productId: productId,
                       fromWarehouseId: fromWarehouseId,
                       toWarehouseId: toWarehouseId,
-                      quantity: double.tryParse(qtyController.text.trim()) ?? 0,
-                      notes: notesController.text);
+                      quantity: baseQuantity,
+                      notes: transferNotes);
                   if (context.mounted) Navigator.pop(context);
                   if (mounted) setState(() {});
                 } catch (error) {

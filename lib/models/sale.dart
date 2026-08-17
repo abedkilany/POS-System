@@ -21,6 +21,7 @@ class Sale {
     this.baseAmount = 0,
     this.paidBaseAmount = 0,
     this.exchangeDifferenceAmount = 0,
+    this.returnedAmount = 0,
     this.paidAmount = 0,
     this.cashReceivedAmount = 0,
     this.paidAmountInPaymentCurrency = 0,
@@ -43,21 +44,51 @@ class Sale {
   })  : createdAt = createdAt ?? updatedAt ?? date,
         updatedAt = updatedAt ?? createdAt ?? date;
 
-  final String id, invoiceNo, customerName, customerId, status, paymentMethod, paymentStatus, invoiceCurrency, paymentCurrency, baseCurrency, note, deviceId, syncStatus, storeId, branchId, lastModifiedByDeviceId;
+  final String id,
+      invoiceNo,
+      customerName,
+      customerId,
+      status,
+      paymentMethod,
+      paymentStatus,
+      invoiceCurrency,
+      paymentCurrency,
+      baseCurrency,
+      note,
+      deviceId,
+      syncStatus,
+      storeId,
+      branchId,
+      lastModifiedByDeviceId;
   final String warehouseId, warehouseName;
   final DateTime date, createdAt, updatedAt;
   final DateTime? deletedAt;
   final List<SaleItem> items;
-  final double discount, paidAmount, cashReceivedAmount, exchangeRateAtPayment, exchangeRateAtInvoice, transactionAmount, baseAmount, paidBaseAmount, exchangeDifferenceAmount, paidAmountInPaymentCurrency, cashReceivedAmountInPaymentCurrency;
+  final double discount,
+      paidAmount,
+      cashReceivedAmount,
+      exchangeRateAtPayment,
+      exchangeRateAtInvoice,
+      transactionAmount,
+      baseAmount,
+      paidBaseAmount,
+      exchangeDifferenceAmount,
+      returnedAmount,
+      paidAmountInPaymentCurrency,
+      cashReceivedAmountInPaymentCurrency;
   final double? originalDiscount;
   final String discountCurrency;
   final double discountExchangeRateAtEntry;
   final int version;
 
   bool get isDeleted => deletedAt != null;
-  bool get isCancelled => status.toLowerCase() == 'cancelled' || status.toLowerCase() == 'returned';
-  double get subtotal => items.fold<double>(0, (sum, item) => sum + item.lineTotal);
-  double get total => isCancelled ? 0 : (subtotal - discount).clamp(0, double.infinity).toDouble();
+  bool get isCancelled =>
+      status.toLowerCase() == 'cancelled' || status.toLowerCase() == 'returned';
+  double get subtotal =>
+      items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+  double get total => isCancelled
+      ? 0
+      : (subtotal - discount).clamp(0, double.infinity).toDouble();
   double get invoiceTotal {
     if (isCancelled) return 0;
     if (transactionAmount > 0) return transactionAmount;
@@ -68,10 +99,16 @@ class Sale {
         ? total
         : total * rate;
   }
-  double get effectiveTransactionAmount => transactionAmount > 0 ? transactionAmount : invoiceTotal;
+
+  double get effectiveTransactionAmount =>
+      transactionAmount > 0 ? transactionAmount : invoiceTotal;
   double get effectiveBaseAmount => baseAmount > 0 ? baseAmount : total;
-  double get balanceDue => (effectiveTransactionAmount - paidAmount).clamp(0, double.infinity).toDouble();
-  double get grossProfit => isCancelled ? 0 : items.fold<double>(0, (sum, item) => sum + item.lineProfit) - discount;
+  double get balanceDue => (effectiveTransactionAmount - paidAmount)
+      .clamp(0, double.infinity)
+      .toDouble();
+  double get grossProfit => isCancelled
+      ? 0
+      : items.fold<double>(0, (sum, item) => sum + item.lineProfit) - discount;
 
   Sale copyWith({
     String? id,
@@ -96,6 +133,7 @@ class Sale {
     double? baseAmount,
     double? paidBaseAmount,
     double? exchangeDifferenceAmount,
+    double? returnedAmount,
     double? paidAmount,
     double? cashReceivedAmount,
     double? paidAmountInPaymentCurrency,
@@ -125,22 +163,30 @@ class Sale {
         discount: discount ?? this.discount,
         originalDiscount: originalDiscount ?? this.originalDiscount,
         discountCurrency: discountCurrency ?? this.discountCurrency,
-        discountExchangeRateAtEntry: discountExchangeRateAtEntry ?? this.discountExchangeRateAtEntry,
+        discountExchangeRateAtEntry:
+            discountExchangeRateAtEntry ?? this.discountExchangeRateAtEntry,
         paymentMethod: paymentMethod ?? this.paymentMethod,
         paymentStatus: paymentStatus ?? this.paymentStatus,
         invoiceCurrency: invoiceCurrency ?? this.invoiceCurrency,
         paymentCurrency: paymentCurrency ?? this.paymentCurrency,
-        exchangeRateAtPayment: exchangeRateAtPayment ?? this.exchangeRateAtPayment,
+        exchangeRateAtPayment:
+            exchangeRateAtPayment ?? this.exchangeRateAtPayment,
         baseCurrency: baseCurrency ?? this.baseCurrency,
-        exchangeRateAtInvoice: exchangeRateAtInvoice ?? this.exchangeRateAtInvoice,
+        exchangeRateAtInvoice:
+            exchangeRateAtInvoice ?? this.exchangeRateAtInvoice,
         transactionAmount: transactionAmount ?? this.transactionAmount,
         baseAmount: baseAmount ?? this.baseAmount,
         paidBaseAmount: paidBaseAmount ?? this.paidBaseAmount,
-        exchangeDifferenceAmount: exchangeDifferenceAmount ?? this.exchangeDifferenceAmount,
+        exchangeDifferenceAmount:
+            exchangeDifferenceAmount ?? this.exchangeDifferenceAmount,
+        returnedAmount: returnedAmount ?? this.returnedAmount,
         paidAmount: paidAmount ?? this.paidAmount,
         cashReceivedAmount: cashReceivedAmount ?? this.cashReceivedAmount,
-        paidAmountInPaymentCurrency: paidAmountInPaymentCurrency ?? this.paidAmountInPaymentCurrency,
-        cashReceivedAmountInPaymentCurrency: cashReceivedAmountInPaymentCurrency ?? this.cashReceivedAmountInPaymentCurrency,
+        paidAmountInPaymentCurrency:
+            paidAmountInPaymentCurrency ?? this.paidAmountInPaymentCurrency,
+        cashReceivedAmountInPaymentCurrency:
+            cashReceivedAmountInPaymentCurrency ??
+                this.cashReceivedAmountInPaymentCurrency,
         note: note ?? this.note,
         warehouseId: warehouseId ?? this.warehouseId,
         warehouseName: warehouseName ?? this.warehouseName,
@@ -152,7 +198,8 @@ class Sale {
         storeId: storeId ?? this.storeId,
         branchId: branchId ?? this.branchId,
         version: version ?? this.version,
-        lastModifiedByDeviceId: lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
+        lastModifiedByDeviceId:
+            lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
       );
 
   Map<String, dynamic> toJson() => {
@@ -176,11 +223,13 @@ class Sale {
         'baseAmount': baseAmount,
         'paidBaseAmount': paidBaseAmount,
         'exchangeDifferenceAmount': exchangeDifferenceAmount,
+        'returnedAmount': returnedAmount,
         'exchangeRateAtPayment': exchangeRateAtPayment,
         'paidAmount': paidAmount,
         'cashReceivedAmount': cashReceivedAmount,
         'paidAmountInPaymentCurrency': paidAmountInPaymentCurrency,
-        'cashReceivedAmountInPaymentCurrency': cashReceivedAmountInPaymentCurrency,
+        'cashReceivedAmountInPaymentCurrency':
+            cashReceivedAmountInPaymentCurrency,
         'note': note,
         'warehouseId': warehouseId,
         'warehouseName': warehouseName,
@@ -197,42 +246,64 @@ class Sale {
       };
 
   factory Sale.fromJson(Map<String, dynamic> json) {
-    final date = DateTime.tryParse(json['date'] as String? ?? '') ?? DateTime.now();
-    final updated = DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? date;
-    final items = (json['items'] as List<dynamic>).map((item) => SaleItem.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+    final date =
+        DateTime.tryParse(json['date'] as String? ?? '') ?? DateTime.now();
+    final updated =
+        DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? date;
+    final items = (json['items'] as List<dynamic>)
+        .map(
+            (item) => SaleItem.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final discount = (json['discount'] as num? ?? 0).toDouble();
     final subtotal = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
     final total = (subtotal - discount).clamp(0, double.infinity).toDouble();
     final legacyStatus = json['status'] as String? ?? 'Paid';
     final normalizedLegacyStatus = legacyStatus.toLowerCase();
-    final paymentStatus = normalizedLegacyStatus == 'cancelled' || normalizedLegacyStatus == 'returned'
+    final paymentStatus = normalizedLegacyStatus == 'cancelled' ||
+            normalizedLegacyStatus == 'returned'
         ? normalizedLegacyStatus
-        : json['paymentStatus'] as String? ?? (normalizedLegacyStatus == 'paid' ? 'paid' : 'credit');
+        : json['paymentStatus'] as String? ??
+            (normalizedLegacyStatus == 'paid' ? 'paid' : 'credit');
     String normalizeCurrency(String? value, [String fallback = 'USD']) {
       final normalized = (value ?? fallback).trim().toUpperCase();
       return normalized.isEmpty ? fallback : normalized;
     }
-    final invoiceCurrency = normalizeCurrency(json['invoiceCurrency'] as String?, 'USD');
-    final paymentCurrency = normalizeCurrency(json['paymentCurrency'] as String?, invoiceCurrency);
-    final baseCurrency = normalizeCurrency(json['baseCurrency'] as String?, 'USD');
-    final exchangeRateAtPayment = (json['exchangeRateAtPayment'] as num? ?? json['discountExchangeRateAtEntry'] as num? ?? 0).toDouble();
+
+    final invoiceCurrency =
+        normalizeCurrency(json['invoiceCurrency'] as String?, 'USD');
+    final paymentCurrency =
+        normalizeCurrency(json['paymentCurrency'] as String?, invoiceCurrency);
+    final baseCurrency =
+        normalizeCurrency(json['baseCurrency'] as String?, 'USD');
+    final exchangeRateAtPayment = (json['exchangeRateAtPayment'] as num? ??
+            json['discountExchangeRateAtEntry'] as num? ??
+            0)
+        .toDouble();
     final transactionAmount = (json['transactionAmount'] as num?)?.toDouble() ??
-        (invoiceCurrency == 'LBP' ? total * (exchangeRateAtPayment <= 0 ? 89500 : exchangeRateAtPayment) : total);
+        (invoiceCurrency == 'LBP'
+            ? total *
+                (exchangeRateAtPayment <= 0 ? 89500 : exchangeRateAtPayment)
+            : total);
     final invoiceTotal = transactionAmount;
-    final cancelledOrReturned = normalizedLegacyStatus == 'cancelled' || normalizedLegacyStatus == 'returned';
+    final cancelledOrReturned = normalizedLegacyStatus == 'cancelled' ||
+        normalizedLegacyStatus == 'returned';
     final paidAmount = cancelledOrReturned
         ? 0.0
-        : (json['paidAmount'] as num?)?.toDouble() ?? (paymentStatus == 'paid' ? invoiceTotal : 0);
+        : (json['paidAmount'] as num?)?.toDouble() ??
+            (paymentStatus == 'paid' ? invoiceTotal : 0);
     final paymentMethod = json['paymentMethod'] as String? ?? 'Cash';
     final cashReceivedAmount = cancelledOrReturned
         ? 0.0
-        : (json['cashReceivedAmount'] as num?)?.toDouble() ?? (paymentMethod == 'Cash' ? paidAmount : 0);
+        : (json['cashReceivedAmount'] as num?)?.toDouble() ??
+            (paymentMethod == 'Cash' ? paidAmount : 0);
     final paidAmountInPaymentCurrency = cancelledOrReturned
         ? 0.0
-        : (json['paidAmountInPaymentCurrency'] as num?)?.toDouble() ?? paidAmount;
+        : (json['paidAmountInPaymentCurrency'] as num?)?.toDouble() ??
+            paidAmount;
     final cashReceivedAmountInPaymentCurrency = cancelledOrReturned
         ? 0.0
-        : (json['cashReceivedAmountInPaymentCurrency'] as num?)?.toDouble() ?? cashReceivedAmount;
+        : (json['cashReceivedAmountInPaymentCurrency'] as num?)?.toDouble() ??
+            cashReceivedAmount;
     return Sale(
       id: json['id'] as String,
       invoiceNo: json['invoiceNo'] as String,
@@ -241,25 +312,29 @@ class Sale {
       date: date,
       status: legacyStatus,
       discount: discount,
-      originalDiscount: (json['originalDiscount'] as num?)?.toDouble() ?? discount,
-      discountCurrency: normalizeCurrency(json['discountCurrency'] as String?, 'USD'),
-      discountExchangeRateAtEntry: (json['discountExchangeRateAtEntry'] as num? ?? 0).toDouble(),
+      originalDiscount:
+          (json['originalDiscount'] as num?)?.toDouble() ?? discount,
+      discountCurrency:
+          normalizeCurrency(json['discountCurrency'] as String?, 'USD'),
+      discountExchangeRateAtEntry:
+          (json['discountExchangeRateAtEntry'] as num? ?? 0).toDouble(),
       paymentMethod: paymentMethod,
       paymentStatus: paymentStatus,
       invoiceCurrency: invoiceCurrency,
       paymentCurrency: paymentCurrency,
       baseCurrency: baseCurrency,
-      exchangeRateAtInvoice: (json['exchangeRateAtInvoice'] as num?)?.toDouble() ??
-          (invoiceCurrency == baseCurrency ? 1 : exchangeRateAtPayment),
+      exchangeRateAtInvoice:
+          (json['exchangeRateAtInvoice'] as num?)?.toDouble() ??
+              (invoiceCurrency == baseCurrency ? 1 : exchangeRateAtPayment),
       transactionAmount: transactionAmount,
       baseAmount: (json['baseAmount'] as num?)?.toDouble() ?? total,
       paidBaseAmount: cancelledOrReturned
           ? 0.0
           : (json['paidBaseAmount'] as num?)?.toDouble() ?? 0,
-      exchangeDifferenceAmount:
-          cancelledOrReturned
-              ? 0.0
-              : (json['exchangeDifferenceAmount'] as num?)?.toDouble() ?? 0,
+      exchangeDifferenceAmount: cancelledOrReturned
+          ? 0.0
+          : (json['exchangeDifferenceAmount'] as num?)?.toDouble() ?? 0,
+      returnedAmount: (json['returnedAmount'] as num?)?.toDouble() ?? 0,
       exchangeRateAtPayment: exchangeRateAtPayment,
       paidAmount: paidAmount,
       cashReceivedAmount: cashReceivedAmount,
@@ -281,7 +356,9 @@ class Sale {
       storeId: json['storeId'] as String? ?? '',
       branchId: json['branchId'] as String? ?? '',
       version: (json['version'] as num? ?? 1).toInt(),
-      lastModifiedByDeviceId: json['lastModifiedByDeviceId'] as String? ?? json['deviceId'] as String? ?? '',
+      lastModifiedByDeviceId: json['lastModifiedByDeviceId'] as String? ??
+          json['deviceId'] as String? ??
+          '',
     );
   }
 }

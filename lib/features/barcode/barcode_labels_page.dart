@@ -41,45 +41,72 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
     super.dispose();
   }
 
-  List<Product> get _products {
+  List<_BarcodeTarget> get _products {
     final query = _query.trim().toLowerCase();
-    final result = widget.store.products.where((product) {
-      if (product.isDeleted) return false;
+    final targets = <_BarcodeTarget>[];
+    final seen = <String>{};
+    for (final product in widget.store.products) {
+      if (product.isDeleted) continue;
+      final units = <ProductSaleUnit>[
+        ProductSaleUnit(
+          id: 'base',
+          name: product.unit,
+          conversionToBase: 1,
+          price: product.price,
+          originalPrice: product.originalPrice,
+          originalCurrency: product.originalCurrency,
+          barcode: product.barcode,
+          isDefault: true,
+        ),
+        ...product.saleUnits,
+        ...product.purchaseUnits,
+      ];
+      for (final unit in units) {
+        final barcode = unit.barcode.trim();
+        if (barcode.isEmpty || !seen.add(barcode.toLowerCase())) continue;
+        targets.add(_BarcodeTarget(product: product, unit: unit));
+      }
+    }
+    final result = targets.where((target) {
+      final product = target.product;
+      final unit = target.unit;
       if (query.isEmpty) return true;
       return '${product.name} ${product.nameEn} ${product.nameAr} '
-              '${product.code} ${product.barcode}'
+              '${product.code} ${product.barcode} ${unit.name} ${unit.barcode}'
           .toLowerCase()
           .contains(query);
     }).toList();
-    result.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    result.sort((a, b) => '${a.product.name} ${a.unit.name}'
+        .toLowerCase()
+        .compareTo('${b.product.name} ${b.unit.name}'.toLowerCase()));
     return result;
   }
 
-  bool _isSelected(Product product) => (_quantities[product.id] ?? 0) > 0;
+  bool _isSelected(_BarcodeTarget target) => (_quantities[target.key] ?? 0) > 0;
 
-  void _toggle(Product product, bool selected) {
+  void _toggle(_BarcodeTarget target, bool selected) {
     setState(() {
-      _quantities[product.id] = selected ? 1 : 0;
+      _quantities[target.key] = selected ? 1 : 0;
       if (selected) {
-        _quantityController(product).text = '1';
+        _quantityController(target).text = '1';
       } else {
-        _quantityControllers.remove(product.id)?.dispose();
+        _quantityControllers.remove(target.key)?.dispose();
       }
     });
   }
 
-  TextEditingController _quantityController(Product product) {
+  TextEditingController _quantityController(_BarcodeTarget target) {
     return _quantityControllers.putIfAbsent(
-      product.id,
-      () => TextEditingController(text: '${_quantities[product.id] ?? 1}'),
+      target.key,
+      () => TextEditingController(text: '${_quantities[target.key] ?? 1}'),
     );
   }
 
-  void _changeQuantity(Product product, int value) {
+  void _changeQuantity(_BarcodeTarget target, int value) {
     final quantity = value.clamp(0, 999);
-    setState(() => _quantities[product.id] = quantity);
+    setState(() => _quantities[target.key] = quantity);
     if (quantity > 0) {
-      final controller = _quantityController(product);
+      final controller = _quantityController(target);
       final text = '$quantity';
       if (controller.text != text) {
         controller.value = TextEditingValue(
@@ -105,29 +132,6 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
       final value = '$body${(10 - sum % 10) % 10}';
       if (!used.contains(value)) return value;
       seed = (seed + 1) % 1000000000000;
-    }
-  }
-
-  Future<void> _generateFor(Product product) async {
-    if (!widget.store.canManageProducts) return;
-    final confirmed = await _confirmGeneration(
-      title:
-          AppLocalizations.of(context).text('confirm_generate_barcode_title'),
-      message:
-          AppLocalizations.of(context).text('confirm_generate_barcode_message'),
-    );
-    if (!confirmed || !mounted) return;
-    try {
-      final updated = product.copyWith(barcode: _newBarcode());
-      await widget.store.addOrUpdateProduct(updated);
-      if (mounted) setState(() {});
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(
-                error.toString().replaceFirst('Invalid argument(s): ', ''))),
-      );
     }
   }
 
@@ -180,12 +184,13 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
   }
 
   Future<void> _print() async {
-    final selected = widget.store.products
-        .where((product) =>
-            _isSelected(product) && product.barcode.trim().isNotEmpty)
-        .map((product) => BarcodeLabelItem(
-              product: product,
-              quantity: _quantities[product.id] ?? 1,
+    final selected = _products
+        .where(_isSelected)
+        .map((target) => BarcodeLabelItem(
+              product: target.product,
+              barcode: target.unit.barcode,
+              unitName: target.unit.name,
+              quantity: _quantities[target.key] ?? 1,
             ))
         .toList(growable: false);
     if (selected.isEmpty) return;
@@ -195,7 +200,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
       context: context,
       builder: (dialogContext) => _BarcodePrintOptionsDialog(
         initial: lastOptions,
-        previewProduct: selected.first.product,
+        previewItem: selected.first,
         profile: widget.store.storeProfile,
       ),
     );
@@ -355,87 +360,60 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
                     itemCount: products.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
-                      final product = products[index];
-                      final hasBarcode = product.barcode.trim().isNotEmpty;
-                      final selected = _isSelected(product);
+                      final target = products[index];
+                      final product = target.product;
+                      final selected = _isSelected(target);
                       return ListTile(
                         leading: Checkbox(
                           value: selected,
-                          onChanged: hasBarcode
-                              ? (value) => _toggle(product, value == true)
-                              : null,
+                          onChanged: (value) => _toggle(target, value == true),
                         ),
-                        title: Text(product.name),
-                        subtitle: Text(hasBarcode
-                            ? '${product.code} • ${product.barcode}'
-                            : tr.text('barcode_missing')),
-                        trailing: hasBarcode
-                            ? SizedBox(
-                                width: 170,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    IconButton(
-                                      tooltip: tr.text('generate_barcode'),
-                                      onPressed: () => _generateFor(product),
-                                      icon: const Icon(Icons.autorenew),
-                                    ),
-                                    if (selected)
-                                      IconButton(
-                                        onPressed: () => _changeQuantity(
-                                            product,
-                                            (_quantities[product.id] ?? 1) - 1),
-                                        icon: const Icon(
-                                            Icons.remove_circle_outline),
-                                      ),
-                                    if (selected)
-                                      SizedBox(
-                                        width: 44,
-                                        child: TextFormField(
-                                          controller:
-                                              _quantityController(product),
-                                          textAlign: TextAlign.center,
-                                          keyboardType: TextInputType.number,
-                                          inputFormatters: [
-                                            FilteringTextInputFormatter
-                                                .digitsOnly,
-                                          ],
-                                          decoration: const InputDecoration(
-                                            isDense: true,
-                                            contentPadding:
-                                                EdgeInsets.symmetric(
-                                                    horizontal: 6,
-                                                    vertical: 10),
-                                          ),
-                                          onChanged: (value) {
-                                            final quantity =
-                                                int.tryParse(value);
-                                            if (quantity != null &&
-                                                quantity >= 1) {
-                                              _changeQuantity(
-                                                  product, quantity);
-                                            }
-                                          },
-                                        ),
-                                      ),
-                                    if (selected)
-                                      IconButton(
-                                        onPressed: () => _changeQuantity(
-                                            product,
-                                            (_quantities[product.id] ?? 1) + 1),
-                                        icon: const Icon(
-                                            Icons.add_circle_outline),
-                                      ),
-                                  ],
+                        title: Text('${product.name} • ${target.unit.name}'),
+                        subtitle:
+                            Text('${product.code} • ${target.unit.barcode}'),
+                        trailing: SizedBox(
+                          width: 170,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              if (selected)
+                                IconButton(
+                                  onPressed: () => _changeQuantity(target,
+                                      (_quantities[target.key] ?? 1) - 1),
+                                  icon: const Icon(Icons.remove_circle_outline),
                                 ),
-                              )
-                            : TextButton.icon(
-                                onPressed: widget.store.canManageProducts
-                                    ? () => _generateFor(product)
-                                    : null,
-                                icon: const Icon(Icons.auto_awesome_outlined),
-                                label: Text(tr.text('generate_barcode')),
-                              ),
+                              if (selected)
+                                SizedBox(
+                                  width: 44,
+                                  child: TextFormField(
+                                    controller: _quantityController(target),
+                                    textAlign: TextAlign.center,
+                                    keyboardType: TextInputType.number,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                    ],
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 10),
+                                    ),
+                                    onChanged: (value) {
+                                      final quantity = int.tryParse(value);
+                                      if (quantity != null && quantity >= 1) {
+                                        _changeQuantity(target, quantity);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              if (selected)
+                                IconButton(
+                                  onPressed: () => _changeQuantity(target,
+                                      (_quantities[target.key] ?? 1) + 1),
+                                  icon: const Icon(Icons.add_circle_outline),
+                                ),
+                            ],
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -446,14 +424,23 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
   }
 }
 
+class _BarcodeTarget {
+  const _BarcodeTarget({required this.product, required this.unit});
+
+  final Product product;
+  final ProductSaleUnit unit;
+
+  String get key => '${product.id}:${unit.id}:${unit.barcode}';
+}
+
 class _BarcodePrintOptionsDialog extends StatefulWidget {
   const _BarcodePrintOptionsDialog(
       {required this.initial,
-      required this.previewProduct,
+      required this.previewItem,
       required this.profile});
 
   final BarcodeLabelPrintOptions initial;
-  final Product previewProduct;
+  final BarcodeLabelItem previewItem;
   final StoreProfile profile;
 
   @override
@@ -548,9 +535,7 @@ class _BarcodePrintOptionsDialogState
       height: 235,
       child: PdfPreview(
         build: (_) => BarcodeLabelPdfService.buildPdf(
-          items: [
-            BarcodeLabelItem(product: widget.previewProduct, quantity: 1)
-          ],
+          items: [widget.previewItem],
           profile: widget.profile,
           locale: Localizations.localeOf(context),
           options: BarcodeLabelPrintOptions(
@@ -577,6 +562,7 @@ class _BarcodePrintOptionsDialogState
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return AlertDialog(
       title: const Text('إعدادات ملصق الباركود'),
       content: SizedBox(
@@ -595,7 +581,7 @@ class _BarcodePrintOptionsDialogState
                       Expanded(
                         child: Text(
                           logoName.isEmpty
-                              ? 'Optional black & white logo'
+                              ? tr.text('barcode_optional_logo')
                               : logoName,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -603,11 +589,11 @@ class _BarcodePrintOptionsDialogState
                       OutlinedButton.icon(
                         onPressed: _pickLogo,
                         icon: const Icon(Icons.image_outlined),
-                        label: const Text('Choose logo'),
+                        label: Text(tr.text('barcode_choose_logo')),
                       ),
                       if (logoBytes != null)
                         IconButton(
-                          tooltip: 'Remove logo',
+                          tooltip: tr.text('barcode_remove_logo'),
                           onPressed: () => setState(() {
                             logoBytes = null;
                             logoName = '';
@@ -621,9 +607,9 @@ class _BarcodePrintOptionsDialogState
                     controller: productionDateController,
                     onChanged: (_) => setState(() {}),
                     keyboardType: TextInputType.datetime,
-                    decoration: const InputDecoration(
-                      labelText: 'Production date',
-                      hintText: 'DD/MM/YYYY',
+                    decoration: InputDecoration(
+                      labelText: tr.text('barcode_production_date'),
+                      hintText: tr.text('barcode_date_hint'),
                       isDense: true,
                     ),
                   ),
@@ -632,9 +618,9 @@ class _BarcodePrintOptionsDialogState
                     controller: expiryDateController,
                     onChanged: (_) => setState(() {}),
                     keyboardType: TextInputType.datetime,
-                    decoration: const InputDecoration(
-                      labelText: 'Expiry date',
-                      hintText: 'DD/MM/YYYY',
+                    decoration: InputDecoration(
+                      labelText: tr.text('barcode_expiry_date'),
+                      hintText: tr.text('barcode_date_hint'),
                       isDense: true,
                     ),
                   ),
@@ -642,9 +628,9 @@ class _BarcodePrintOptionsDialogState
                   TextField(
                     controller: weightController,
                     onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: 'Weight',
-                      hintText: 'e.g. 250g or 1kg',
+                    decoration: InputDecoration(
+                      labelText: tr.text('barcode_weight'),
+                      hintText: tr.text('barcode_weight_hint'),
                       isDense: true,
                     ),
                   ),
@@ -660,7 +646,7 @@ class _BarcodePrintOptionsDialogState
                       40,
                       (v) => setState(() => barcodeHeight = v)),
                   _slider(
-                      'Barcode width: ${barcodeWidth.toStringAsFixed(0)}',
+                      '${tr.text('barcode_width')}: ${barcodeWidth.toStringAsFixed(0)}',
                       barcodeWidth,
                       25,
                       110,
@@ -668,7 +654,7 @@ class _BarcodePrintOptionsDialogState
                   if (logoBytes != null) ...[
                     const SizedBox(height: 8),
                     _slider(
-                        'Logo size: ${logoWidth.toStringAsFixed(0)}',
+                        '${tr.text('barcode_logo_size')}: ${logoWidth.toStringAsFixed(0)}',
                         logoWidth,
                         25,
                         100,
@@ -677,18 +663,24 @@ class _BarcodePrintOptionsDialogState
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     initialValue: positionElement,
-                    decoration: const InputDecoration(
-                      labelText: 'Move element',
+                    decoration: InputDecoration(
+                      labelText: tr.text('barcode_move_element'),
                       isDense: true,
                     ),
-                    items: const [
+                    items: [
                       DropdownMenuItem(
-                          value: 'productName', child: Text('Product name')),
+                          value: 'productName',
+                          child: Text(tr.text('product_name'))),
                       DropdownMenuItem(
-                          value: 'barcode', child: Text('Barcode')),
-                      DropdownMenuItem(value: 'logo', child: Text('Logo')),
-                      DropdownMenuItem(value: 'weight', child: Text('Weight')),
-                      DropdownMenuItem(value: 'dates', child: Text('Dates')),
+                          value: 'barcode', child: Text(tr.text('barcode'))),
+                      DropdownMenuItem(
+                          value: 'logo', child: Text(tr.text('barcode_logo'))),
+                      DropdownMenuItem(
+                          value: 'weight',
+                          child: Text(tr.text('barcode_weight'))),
+                      DropdownMenuItem(
+                          value: 'dates',
+                          child: Text(tr.text('barcode_dates'))),
                     ],
                     onChanged: (value) =>
                         setState(() => positionElement = value ?? 'barcode'),
@@ -723,8 +715,8 @@ class _BarcodePrintOptionsDialogState
             final expiryDate = _normalizeManualDate(expiryDateController.text);
             if (productionDate == null || expiryDate == null) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Use a valid date, for example DD/MM/YYYY.'),
+                SnackBar(
+                  content: Text(tr.text('barcode_invalid_date')),
                 ),
               );
               return;

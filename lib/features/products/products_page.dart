@@ -20,6 +20,7 @@ import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/user_role.dart';
 import '../../core/services/page_timing_scope.dart';
+import '../../core/services/price_list_pdf_service.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -56,6 +57,19 @@ class _ProductsPageState extends State<ProductsPage> {
   void _handleStoreChanged() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  void _invalidateProductViewCaches() {
+    _productsQueryFuture = null;
+    _productsQueryFutureKey = '';
+    _cachedRevision = -1;
+    _cachedProductSource = null;
+    _cachedCategorySource = null;
+    _cachedFilteredProducts = const <Product>[];
+    _cachedCategories = const <String>[];
+    _rowCache.clear();
+    _searchIndexCache.clear();
+    _resetProductReveal();
   }
 
   @override
@@ -313,6 +327,11 @@ class _ProductsPageState extends State<ProductsPage> {
                   totalCount: totalCount,
                 ),
                 OutlinedButton.icon(
+                  onPressed: () => _openPriceList(context),
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Price List'),
+                ),
+                OutlinedButton.icon(
                   onPressed: widget.store.canManageProducts
                       ? () => _openCatalogManager(context, 'category')
                       : null,
@@ -445,6 +464,50 @@ class _ProductsPageState extends State<ProductsPage> {
                           );
                         },
                       ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openPriceList(BuildContext context) async {
+    final products = _filteredProducts(widget.store.products);
+    if (products.isEmpty) return;
+    final tr = AppLocalizations.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Price List'),
+        content: SizedBox(
+          width: 760,
+          height: 520,
+          child: ListView.builder(
+            itemCount: products.length,
+            itemBuilder: (_, index) {
+              final p = products[index];
+              return ListTile(
+                dense: true,
+                title: Text(p.name),
+                subtitle: Text('${p.code} • ${p.category} • ${p.unit}'),
+                trailing: Text('${p.originalCurrency} ${p.originalPrice.toStringAsFixed(2)}'),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
+          FilledButton.icon(
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Print'),
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await PriceListPdfService.printPriceList(
+                products: products,
+                profile: widget.store.storeProfile,
+                title: 'Price List',
+                arabic: Localizations.localeOf(context).languageCode == 'ar',
+              );
+            },
           ),
         ],
       ),
@@ -646,6 +709,10 @@ class _ProductsPageState extends State<ProductsPage> {
       }
       if (result.addToQuickProducts) {
         await _addProductToQuickProducts(result.product, tr);
+      }
+      if (mounted) {
+        _invalidateProductViewCaches();
+        setState(() {});
       }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -977,6 +1044,11 @@ class _ProductDialogState extends State<_ProductDialog> {
   late final TextEditingController nameController;
   late final TextEditingController descriptionController;
   late final TextEditingController priceController;
+  late final TextEditingController wholesalePriceController;
+  late final TextEditingController bulkWholesalePriceController;
+  late final TextEditingController retailMarginController;
+  late final TextEditingController wholesaleMarginController;
+  late final TextEditingController bulkWholesaleMarginController;
   late final TextEditingController costController;
   late final TextEditingController stockController;
   late final TextEditingController lowStockController;
@@ -1044,8 +1116,28 @@ class _ProductDialogState extends State<_ProductDialog> {
         text: defaultProductPrice?.baseAmount.toString() ??
             product?.originalPrice.toString() ??
             '');
+    wholesalePriceController = TextEditingController(
+        text: product == null
+            ? ''
+            : widget.store
+                    .productPriceFor(product.id, 'wholesale')
+                    ?.baseAmount
+                    .toString() ??
+                '');
+    bulkWholesalePriceController = TextEditingController(
+        text: product == null
+            ? ''
+            : widget.store
+                    .productPriceFor(product.id, 'wholesale_bulk')
+                    ?.baseAmount
+                    .toString() ??
+                '');
     costController =
         TextEditingController(text: product?.originalCost.toString() ?? '');
+    retailMarginController = TextEditingController();
+    wholesaleMarginController = TextEditingController();
+    bulkWholesaleMarginController = TextEditingController();
+    _syncAllMargins();
     stockController =
         TextEditingController(text: product?.stock.toString() ?? '');
     lowStockController = TextEditingController(
@@ -1083,6 +1175,46 @@ class _ProductDialogState extends State<_ProductDialog> {
     setState(() => _supplierOptions = page.items);
   }
 
+  double? _costUsd() {
+    final cost = double.tryParse(costController.text.trim());
+    if (cost == null) return null;
+    return toUsdReferencePrice(cost, costCurrency, widget.store.storeProfile);
+  }
+
+  void _setControllerNumber(TextEditingController controller, double value) {
+    final text = value.toStringAsFixed(2).replaceFirst(RegExp(r'\.00$'), '');
+    if (controller.text != text) controller.text = text;
+  }
+
+  void _syncMarginFromPrice(
+      TextEditingController price, TextEditingController margin) {
+    final costUsd = _costUsd();
+    final sale = double.tryParse(price.text.trim());
+    if (costUsd == null || costUsd <= 0 || sale == null) return;
+    final saleUsd =
+        toUsdReferencePrice(sale, priceCurrency, widget.store.storeProfile);
+    _setControllerNumber(margin, (saleUsd / costUsd - 1) * 100);
+  }
+
+  void _syncPriceFromMargin(
+      TextEditingController price, TextEditingController margin) {
+    final costUsd = _costUsd();
+    final marginValue = double.tryParse(margin.text.trim());
+    if (costUsd == null || marginValue == null) return;
+    final saleUsd = costUsd * (1 + marginValue / 100);
+    _setControllerNumber(
+      price,
+      fromUsdReferencePrice(saleUsd, priceCurrency, widget.store.storeProfile),
+    );
+  }
+
+  void _syncAllMargins() {
+    _syncMarginFromPrice(priceController, retailMarginController);
+    _syncMarginFromPrice(wholesalePriceController, wholesaleMarginController);
+    _syncMarginFromPrice(
+        bulkWholesalePriceController, bulkWholesaleMarginController);
+  }
+
   @override
   void dispose() {
     barcodeController.dispose();
@@ -1090,6 +1222,11 @@ class _ProductDialogState extends State<_ProductDialog> {
     nameController.dispose();
     descriptionController.dispose();
     priceController.dispose();
+    wholesalePriceController.dispose();
+    bulkWholesalePriceController.dispose();
+    retailMarginController.dispose();
+    wholesaleMarginController.dispose();
+    bulkWholesaleMarginController.dispose();
     costController.dispose();
     stockController.dispose();
     lowStockController.dispose();
@@ -1308,9 +1445,11 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _MoneyField(
                           controller: priceController,
                           currency: priceCurrency,
-                          label: tr.text('sale_price'),
+                          label: tr.text('retail_price'),
                           currencyLabel: tr.text('price_currency'),
                           validator: _nonNegativeNumber,
+                          onChanged: (_) => setState(() => _syncMarginFromPrice(
+                              priceController, retailMarginController)),
                           onCurrencyChanged: (value) =>
                               setState(() => priceCurrency = value)),
                       _MoneyField(
@@ -1319,8 +1458,59 @@ class _ProductDialogState extends State<_ProductDialog> {
                           label: tr.text('cost_price'),
                           currencyLabel: tr.text('cost_currency'),
                           validator: _nonNegativeNumber,
+                          onChanged: (_) => setState(_syncAllMargins),
+                          onCurrencyChanged: (value) => setState(() {
+                                costCurrency = value;
+                                _syncAllMargins();
+                              })),
+                    ]),
+                    const SizedBox(height: 12),
+                    _ResponsiveFields(children: [
+                      _MoneyField(
+                          controller: wholesalePriceController,
+                          currency: priceCurrency,
+                          label: tr.text('wholesale_price'),
+                          currencyLabel: tr.text('price_currency'),
+                          validator: _optionalNonNegativeNumber,
+                          onChanged: (_) => setState(() => _syncMarginFromPrice(
+                              wholesalePriceController,
+                              wholesaleMarginController)),
                           onCurrencyChanged: (value) =>
-                              setState(() => costCurrency = value)),
+                              setState(() => priceCurrency = value)),
+                      _MoneyField(
+                          controller: bulkWholesalePriceController,
+                          currency: priceCurrency,
+                          label: tr.text('bulk_wholesale_price'),
+                          currencyLabel: tr.text('price_currency'),
+                          validator: _optionalNonNegativeNumber,
+                          onChanged: (_) => setState(() => _syncMarginFromPrice(
+                              bulkWholesalePriceController,
+                              bulkWholesaleMarginController)),
+                          onCurrencyChanged: (value) =>
+                              setState(() => priceCurrency = value)),
+                    ]),
+                    const SizedBox(height: 12),
+                    _ResponsiveFields(children: [
+                      _MarginField(
+                        controller: retailMarginController,
+                        label: tr.text('retail_margin'),
+                        onChanged: (_) => setState(() => _syncPriceFromMargin(
+                            priceController, retailMarginController)),
+                      ),
+                      _MarginField(
+                        controller: wholesaleMarginController,
+                        label: tr.text('wholesale_margin'),
+                        onChanged: (_) => setState(() => _syncPriceFromMargin(
+                            wholesalePriceController,
+                            wholesaleMarginController)),
+                      ),
+                      _MarginField(
+                        controller: bulkWholesaleMarginController,
+                        label: tr.text('bulk_wholesale_margin'),
+                        onChanged: (_) => setState(() => _syncPriceFromMargin(
+                            bulkWholesalePriceController,
+                            bulkWholesaleMarginController)),
+                      ),
                     ]),
                     const SizedBox(height: 12),
                     _CurrencyPriceOverridesEditor(
@@ -1492,8 +1682,30 @@ class _ProductDialogState extends State<_ProductDialog> {
       context,
       _ProductFormResult(
         addToQuickProducts: addToQuickProducts,
-        priceSave: () =>
-            _saveProductPriceDrafts(_productId, originalPrice, priceCurrency),
+        priceSave: () async {
+          await _saveProductPriceDrafts(
+              _productId, originalPrice, priceCurrency);
+          final wholesale =
+              double.tryParse(wholesalePriceController.text.trim());
+          if (wholesale != null) {
+            await widget.store.setProductBasePriceForList(
+              productId: _productId,
+              priceListId: 'wholesale',
+              amount: wholesale,
+              currencyCode: priceCurrency,
+            );
+          }
+          final bulkWholesale =
+              double.tryParse(bulkWholesalePriceController.text.trim());
+          if (bulkWholesale != null) {
+            await widget.store.setProductBasePriceForList(
+              productId: _productId,
+              priceListId: 'wholesale_bulk',
+              amount: bulkWholesale,
+              currencyCode: priceCurrency,
+            );
+          }
+        },
         supplierPriceSave: () => _saveSupplierPriceDrafts(_productId),
         product: Product(
           id: _productId,
@@ -1701,6 +1913,11 @@ class _ProductDialogState extends State<_ProductDialog> {
     return number == null || number < 0
         ? AppLocalizations.of(context).text('invalid_number')
         : null;
+  }
+
+  String? _optionalNonNegativeNumber(String? value) {
+    if ((value ?? '').trim().isEmpty) return null;
+    return _nonNegativeNumber(value);
   }
 
   String? _nonNegativeInteger(String? value) {
@@ -2735,6 +2952,7 @@ class _MoneyField extends StatelessWidget {
       required this.label,
       required this.currencyLabel,
       required this.validator,
+      this.onChanged,
       required this.onCurrencyChanged});
 
   final TextEditingController controller;
@@ -2742,6 +2960,7 @@ class _MoneyField extends StatelessWidget {
   final String label;
   final String currencyLabel;
   final FormFieldValidator<String> validator;
+  final ValueChanged<String>? onChanged;
   final ValueChanged<String> onCurrencyChanged;
 
   @override
@@ -2767,8 +2986,39 @@ class _MoneyField extends StatelessWidget {
       ),
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       validator: validator,
+      onChanged: onChanged,
     );
   }
+}
+
+class _MarginField extends StatelessWidget {
+  const _MarginField({
+    required this.controller,
+    required this.label,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          suffixText: '%',
+        ),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        validator: (value) {
+          if ((value ?? '').trim().isEmpty) return null;
+          final number = double.tryParse((value ?? '').trim());
+          return number == null || number < 0
+              ? AppLocalizations.of(context).text('invalid_number')
+              : null;
+        },
+        onChanged: onChanged,
+      );
 }
 
 class _ProductImagePicker extends StatelessWidget {

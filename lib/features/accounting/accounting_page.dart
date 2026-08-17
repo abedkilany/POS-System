@@ -650,7 +650,7 @@ class _CashAccountingGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -665,6 +665,9 @@ class _CashAccountingGroup extends StatelessWidget {
               Tab(
                   icon: const Icon(Icons.account_balance_wallet_outlined),
                   text: tr.text('cash_bank')),
+              Tab(
+                  icon: const Icon(Icons.manage_accounts_outlined),
+                  text: tr.text('shift_management')),
             ],
           ),
           const SizedBox(height: 8),
@@ -696,12 +699,387 @@ class _CashAccountingGroup extends StatelessWidget {
                       index: 2,
                       builder: (_) => _CashBankReportTab(store: store),
                     ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 3,
+                      builder: (_) =>
+                          _ShiftManagementTab(store: store, query: query),
+                    ),
                   ],
                 );
               },
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ShiftManagementTab extends StatefulWidget {
+  const _ShiftManagementTab({required this.store, required this.query});
+
+  final AppStore store;
+  final String query;
+
+  @override
+  State<_ShiftManagementTab> createState() => _ShiftManagementTabState();
+}
+
+class _ShiftManagementTabState extends State<_ShiftManagementTab> {
+  int _refreshKey = 0;
+
+  void _refresh() {
+    if (!mounted) return;
+    setState(() => _refreshKey++);
+  }
+
+  Future<void> _openDrawerDialog(
+      BuildContext context, List<AdvancedAccountingItem> drawers) async {
+    final tr = AppLocalizations.of(context);
+    if (drawers.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('no_cash_drawer_for_device'))),
+      );
+      return;
+    }
+    final controller = TextEditingController(text: '0');
+    String selectedDrawerId = drawers.first.id;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(tr.text('open_cash_shift')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: selectedDrawerId,
+                  decoration:
+                      InputDecoration(labelText: tr.text('cash_drawer')),
+                  items: drawers
+                      .map((item) => DropdownMenuItem(
+                            value: item.id,
+                            child: Text(item.name),
+                          ))
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => selectedDrawerId = value ?? ''),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration:
+                      InputDecoration(labelText: tr.text('opening_amount')),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton(
+              onPressed: selectedDrawerId.isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              child: Text(tr.text('open')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) {
+      controller.dispose();
+      return;
+    }
+    try {
+      final drawer = drawers.firstWhere((item) => item.id == selectedDrawerId);
+      final activeUser = widget.store.activeUser;
+      await AccountingService.openCashDrawer(
+        drawerNo: drawer.name,
+        cashLocationId: drawer.id,
+        openingBalance: double.tryParse(controller.text.trim()) ?? 0,
+        openedBy:
+            activeUser?.fullName.trim().isNotEmpty == true ? activeUser!.fullName : widget.store.currentRole,
+        openedByUserId: activeUser?.id ?? '',
+        storeId: widget.store.appIdentity.storeId,
+        branchId: widget.store.appIdentity.branchId,
+        deviceId: widget.store.appIdentity.deviceId,
+      );
+      _refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('cash_shift_opened'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _closeDrawerDialog(
+      BuildContext context, AdvancedAccountingItem session) async {
+    final tr = AppLocalizations.of(context);
+    final expected =
+        await AccountingService.calculateCashDrawerExpectedCash(session.id);
+    if (!mounted) return;
+    final counted = TextEditingController(text: expected.toStringAsFixed(2));
+    final notes = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('close_handover_shift')),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '${tr.text('expected')}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: counted,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(labelText: tr.text('counted_amount')),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notes,
+                decoration: InputDecoration(labelText: tr.text('notes')),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('close')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      counted.dispose();
+      notes.dispose();
+      return;
+    }
+    try {
+      final activeUser = widget.store.activeUser;
+      await AccountingService.closeCashDrawer(
+        sessionId: session.id,
+        countedCash: double.tryParse(counted.text.trim()) ?? 0,
+        closedBy:
+            activeUser?.fullName.trim().isNotEmpty == true ? activeUser!.fullName : widget.store.currentRole,
+        closedByUserId: activeUser?.id ?? '',
+        notes: notes.text.trim(),
+      );
+      _refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('cash_shift_updated'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+      );
+    } finally {
+      counted.dispose();
+      notes.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final canManage = widget.store.canManageAccounting;
+    final search = widget.query.trim().toLowerCase();
+    return FutureBuilder<List<AdvancedAccountingItem>>(
+      key: ValueKey('shift_management_$_refreshKey'),
+      future: AccountingService.listActiveCashLocations(),
+      builder: (context, snapshot) {
+        final locations = snapshot.data ?? const <AdvancedAccountingItem>[];
+        final drawers = locations.where((item) => item.type == 'cash_drawer').toList(growable: false);
+        final openSessionsFuture = AccountingService.listOpenCashDrawersReport();
+        return FutureBuilder<List<AdvancedAccountingItem>>(
+          future: openSessionsFuture,
+          builder: (context, sessionsSnapshot) {
+            final sessions = sessionsSnapshot.data ?? const <AdvancedAccountingItem>[];
+            final filteredSessions = search.isEmpty
+                ? sessions
+                : sessions.where((session) {
+                    final text = [
+                      session.name,
+                      session.accountName,
+                      session.referenceId,
+                      session.notes,
+                    ].join(' ').toLowerCase();
+                    return text.contains(search);
+                  }).toList(growable: false);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 18,
+                      child: Icon(Icons.manage_accounts_outlined,
+                          size: 20,
+                          color: Theme.of(context).colorScheme.primary),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        tr.text('shift_management'),
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    _buildMetricCard(
+                      context,
+                      label: tr.text('cash_drawer_sessions'),
+                      value: '${filteredSessions.length}',
+                      icon: Icons.point_of_sale_outlined,
+                    ),
+                    _buildMetricCard(
+                      context,
+                      label: tr.text('cash_drawer'),
+                      value: '${drawers.length}',
+                      icon: Icons.account_balance_wallet_outlined,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: canManage ? () => _openDrawerDialog(context, drawers) : null,
+                      icon: const Icon(Icons.lock_open_outlined),
+                      label: Text(tr.text('open_shift')),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: canManage
+                          ? () async {
+                              if (filteredSessions.isEmpty) return;
+                              await _closeDrawerDialog(context, filteredSessions.first);
+                            }
+                          : null,
+                      icon: const Icon(Icons.lock_outline),
+                      label: Text(tr.text('close')),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: Card(
+                    elevation: 0,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: filteredSessions.isEmpty ? 1 : filteredSessions.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        if (filteredSessions.isEmpty) {
+                          return Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Center(
+                              child: Text(tr.text('no_open_cash_shift')),
+                            ),
+                          );
+                        }
+                        final session = filteredSessions[index];
+                        return ListTile(
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.point_of_sale_outlined),
+                          ),
+                          title: Text(session.name),
+                          subtitle: Text(
+                            [
+                              if (session.accountName.isNotEmpty) session.accountName,
+                              if (session.referenceId.isNotEmpty) session.referenceId,
+                              if (session.notes.trim().isNotEmpty) session.notes,
+                            ].join(' • '),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: canManage
+                              ? TextButton(
+                                  onPressed: () => _closeDrawerDialog(context, session),
+                                  child: Text(tr.text('close')),
+                                )
+                              : null,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMetricCard(
+    BuildContext context, {
+    required String label,
+    required String value,
+    required IconData icon,
+  }) {
+    return SizedBox(
+      width: VentioResponsive.adaptiveWidth(context,
+          mobile: 180, tablet: 210, desktop: 240),
+      child: Card(
+        elevation: 0,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              CircleAvatar(
+                child: Icon(icon, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: Theme.of(context).textTheme.bodySmall),
+                    Text(value,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
