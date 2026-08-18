@@ -190,6 +190,8 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
               product: target.product,
               barcode: target.unit.barcode,
               unitName: target.unit.name,
+              price: target.unit.originalPrice,
+              priceCurrency: target.unit.originalCurrency,
               quantity: _quantities[target.key] ?? 1,
             ))
         .toList(growable: false);
@@ -256,14 +258,15 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
       }
     } catch (_) {}
     return BarcodeLabelPrintOptions(
-      marginMm: prefs.getDouble('barcode_label_margin_mm') ?? 1.5,
+      marginMm: 0,
       fontSize: prefs.getDouble('barcode_label_font_size') ?? 8,
-      barcodeHeight: prefs.getDouble('barcode_label_height') ?? 24,
-      barcodeWidth: prefs.getDouble('barcode_label_width') ?? 60,
-      logoWidth: prefs.getDouble('barcode_label_logo_width') ?? 60,
+      barcodeHeight: 14,
+      barcodeWidth: 50,
+      logoWidth: 23,
       productionDate: prefs.getString('barcode_label_production_date') ?? '',
       expiryDate: prefs.getString('barcode_label_expiry_date') ?? '',
       weight: prefs.getString('barcode_label_weight') ?? '',
+      showPrice: prefs.getBool('barcode_label_show_price') ?? false,
       logoBytes: logoBytes,
       elementOffsets: savedOffsets,
     );
@@ -287,6 +290,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
     );
     await prefs.setString('barcode_label_expiry_date', options.expiryDate);
     await prefs.setString('barcode_label_weight', options.weight);
+    await prefs.setBool('barcode_label_show_price', options.showPrice);
     if (options.logoBytes != null && options.logoBytes!.isNotEmpty) {
       final directory = await getApplicationSupportDirectory();
       await Directory(directory.path).create(recursive: true);
@@ -501,6 +505,7 @@ class _BarcodePrintOptionsDialogState
   late final TextEditingController productionDateController;
   late final TextEditingController expiryDateController;
   late final TextEditingController weightController;
+  late bool showPrice;
 
   @override
   void initState() {
@@ -520,6 +525,7 @@ class _BarcodePrintOptionsDialogState
     expiryDateController =
         TextEditingController(text: widget.initial.expiryDate);
     weightController = TextEditingController(text: widget.initial.weight);
+    showPrice = widget.initial.showPrice;
   }
 
   @override
@@ -548,8 +554,10 @@ class _BarcodePrintOptionsDialogState
             productionDate: productionDateController.text.trim(),
             expiryDate: expiryDateController.text.trim(),
             weight: weightController.text.trim(),
+            showPrice: showPrice,
             logoBytes: logoBytes,
           ),
+          showGuides: true,
         ),
         canChangePageFormat: false,
         canChangeOrientation: false,
@@ -629,37 +637,28 @@ class _BarcodePrintOptionsDialogState
                     controller: weightController,
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
-                      labelText: tr.text('barcode_weight'),
-                      hintText: tr.text('barcode_weight_hint'),
+                      labelText: 'الوزن والسعر',
+                      hintText: 'أدخل الوزن؛ السعر يُقرأ تلقائيًا من وحدة المنتج',
                       isDense: true,
                     ),
                   ),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('إظهار السعر'),
+                    value: showPrice,
+                    onChanged: (value) => setState(() => showPrice = value),
+                  ),
                   const SizedBox(height: 8),
-                  _slider('الهامش: ${margin.toStringAsFixed(1)} mm', margin, 0,
-                      8, (v) => setState(() => margin = v)),
+                  const Text(
+                    'حواف أمان ثابتة 2 mm من كل الجهات. داخلها: الشعار 23×17 mm، '
+                    'الاسم/الوزن 31×17 mm، الباركود 54×14 mm (عرض فعلي 50 mm)، '
+                    'والصلاحية 54×5 mm. خطوط التقسيم للمعاينة فقط ولن تُطبع.',
+                  ),
+                  const SizedBox(height: 8),
                   _slider('حجم الخط: ${fontSize.toStringAsFixed(0)}', fontSize,
                       5, 12, (v) => setState(() => fontSize = v)),
-                  _slider(
-                      'ارتفاع الباركود: ${barcodeHeight.toStringAsFixed(0)}',
-                      barcodeHeight,
-                      18,
-                      40,
-                      (v) => setState(() => barcodeHeight = v)),
-                  _slider(
-                      '${tr.text('barcode_width')}: ${barcodeWidth.toStringAsFixed(0)}',
-                      barcodeWidth,
-                      25,
-                      110,
-                      (v) => setState(() => barcodeWidth = v)),
-                  if (logoBytes != null) ...[
-                    const SizedBox(height: 8),
-                    _slider(
-                        '${tr.text('barcode_logo_size')}: ${logoWidth.toStringAsFixed(0)}',
-                        logoWidth,
-                        25,
-                        100,
-                        (v) => setState(() => logoWidth = v)),
-                  ],
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     initialValue: positionElement,
@@ -677,7 +676,7 @@ class _BarcodePrintOptionsDialogState
                           value: 'logo', child: Text(tr.text('barcode_logo'))),
                       DropdownMenuItem(
                           value: 'weight',
-                          child: Text(tr.text('barcode_weight'))),
+                          child: const Text('الوزن والسعر')),
                       DropdownMenuItem(
                           value: 'dates',
                           child: Text(tr.text('barcode_dates'))),
@@ -732,6 +731,7 @@ class _BarcodePrintOptionsDialogState
                 productionDate: productionDate,
                 expiryDate: expiryDate,
                 weight: weightController.text.trim(),
+                showPrice: showPrice,
                 logoBytes: logoBytes,
               ),
             );
