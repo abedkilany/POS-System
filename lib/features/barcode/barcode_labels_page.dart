@@ -574,7 +574,7 @@ class _BarcodePrintOptionsDialogState
             Expanded(
               child: ListView(
                 children: [
-                  const Text('مقاس الملصق مضبوط على 50 × 30 mm'),
+                  const Text('مقاس الملصق مضبوط على 58 × 40 mm'),
                   const SizedBox(height: 8),
                   Row(
                     children: [

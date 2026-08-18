@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/localization/localized_domain_exception.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
@@ -97,6 +96,11 @@ class _CashPageState extends State<CashPage> {
       ),
     );
     if (confirmed != true) {
+      amountController.dispose();
+      notesController.dispose();
+      return;
+    }
+    if (!mounted) {
       amountController.dispose();
       notesController.dispose();
       return;
@@ -213,6 +217,11 @@ class _CashPageState extends State<CashPage> {
       notesController.dispose();
       return;
     }
+    if (!mounted) {
+      amountController.dispose();
+      notesController.dispose();
+      return;
+    }
     final amount = double.tryParse(amountController.text.trim()) ?? 0;
     if (amount <= 0 || amount > selectedPurchase.balanceDue + 0.0001) {
       amountController.dispose();
@@ -247,126 +256,6 @@ class _CashPageState extends State<CashPage> {
       notesController.dispose();
     }
     _refresh();
-  }
-
-  Future<void> _cashMoveDialog(
-    BuildContext context, {
-    required AdvancedAccountingItem currentDrawer,
-    required bool isReceipt,
-  }) async {
-    final tr = AppLocalizations.of(context);
-    final locations = await AccountingService.listActiveCashLocations();
-    final counterparty = locations
-        .where((item) => item.id != currentDrawer.id)
-        .toList(growable: false);
-    if (counterparty.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.text('no_cash_locations'))),
-      );
-      return;
-    }
-    final amount = TextEditingController(text: '0');
-    final notes = TextEditingController();
-    String selectedLocationId = counterparty.first.id;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: Text(isReceipt ? tr.text('cash_in') : tr.text('cash_out')),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: selectedLocationId,
-                  decoration: InputDecoration(
-                    labelText: isReceipt
-                        ? tr.text('from_cash_location')
-                        : tr.text('to_cash_location'),
-                  ),
-                  items: counterparty
-                      .map(
-                        (item) => DropdownMenuItem<String>(
-                          value: item.id,
-                          child: Text(item.name),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) =>
-                      setDialogState(() => selectedLocationId = value ?? ''),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: amount,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(labelText: tr.text('amount')),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: notes,
-                  decoration: InputDecoration(labelText: tr.text('notes')),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(tr.text('cancel')),
-            ),
-            FilledButton(
-              onPressed: selectedLocationId.isEmpty
-                  ? null
-                  : () => Navigator.pop(dialogContext, true),
-              child: Text(tr.text('post')),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true) {
-      amount.dispose();
-      notes.dispose();
-      return;
-    }
-    final value = double.tryParse(amount.text.trim()) ?? 0;
-    if (value <= 0) {
-      amount.dispose();
-      notes.dispose();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr.text('positive_amount_required'))),
-      );
-      return;
-    }
-    try {
-      final user = widget.store.activeUser;
-      final actor = user?.fullName.trim().isNotEmpty == true
-          ? user!.fullName.trim()
-          : widget.store.currentRole;
-      await AccountingService.createCashTransfer(
-        fromLocationId:
-            isReceipt ? selectedLocationId : currentDrawer.id,
-        toLocationId:
-            isReceipt ? currentDrawer.id : selectedLocationId,
-        amount: value,
-        notes: notes.text.trim().isEmpty
-            ? (isReceipt ? tr.text('cash_in') : tr.text('cash_out'))
-            : notes.text.trim(),
-        createdBy: actor,
-        storeId: widget.store.appIdentity.storeId,
-        branchId: _branchId,
-      );
-      _refresh();
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
-      );
-    } finally {
-      amount.dispose();
-      notes.dispose();
-    }
   }
 
   Future<void> _openDrawerDialog(
@@ -417,7 +306,7 @@ class _CashPageState extends State<CashPage> {
       );
       _refresh();
     } catch (error) {
-      if (!mounted) return;
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
       );
@@ -429,7 +318,7 @@ class _CashPageState extends State<CashPage> {
   Future<void> _closeDrawerDialog(BuildContext context, AdvancedAccountingItem session) async {
     final tr = AppLocalizations.of(context);
     final expected = await AccountingService.calculateCashDrawerExpectedCash(session.id);
-    if (!mounted) return;
+    if (!context.mounted) return;
     final counted = TextEditingController(text: expected.toStringAsFixed(2));
     final notes = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -545,7 +434,7 @@ class _CashPageState extends State<CashPage> {
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: canManage && currentSession != null
-                          ? () => _closeDrawerDialog(context, currentSession!)
+                          ? () => _closeDrawerDialog(context, currentSession)
                           : null,
                       icon: const Icon(Icons.lock_outline),
                       label: Text(tr.text('close')),

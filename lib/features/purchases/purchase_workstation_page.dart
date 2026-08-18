@@ -218,10 +218,11 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
         return;
       }
     }
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(AppLocalizations.of(context)
               .text('barcode_not_registered_purchase'))));
+    }
   }
 
   Future<void> _confirmClearCart() async {
@@ -305,9 +306,10 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
               ? tr.text('purchase_saved')
               : tr.text('purchase_updated'))));
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -395,16 +397,18 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canManagePurchases)
+    if (!widget.store.canManagePurchases) {
       return Scaffold(
           body: Center(child: Text(tr.text('no_access_purchase_records'))));
+    }
     return PageTimingScope(
       pageKey: 'purchases_workstation',
       child: FutureBuilder<void>(
         future: _dataFuture,
         builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done)
+          if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator.adaptive());
+          }
           return Focus(
             focusNode: _shortcutFocusNode,
             autofocus: true,

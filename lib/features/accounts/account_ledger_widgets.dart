@@ -13,10 +13,11 @@ String accountBalanceText(BuildContext context, AppStore store,
   final balance = store.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return tr.text('account_settled');
   final amount = formatUsdReferenceAmount(balance.abs(), store.storeProfile);
-  if (accountType == 'customer')
+  if (accountType == 'customer') {
     return balance > 0
         ? '${tr.text('account_receivable')}: $amount'
         : '${tr.text('account_credit')}: $amount';
+  }
   return balance > 0
       ? '${tr.text('account_advance')}: $amount'
       : '${tr.text('account_payable')}: $amount';
@@ -26,8 +27,9 @@ Color accountBalanceColor(BuildContext context, AppStore store,
     String accountType, String accountId) {
   final balance = store.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return Theme.of(context).colorScheme.primary;
-  if (accountType == 'customer')
+  if (accountType == 'customer') {
     return balance > 0 ? Colors.orange.shade700 : Colors.green.shade700;
+  }
   return balance < 0 ? Colors.orange.shade700 : Colors.green.shade700;
 }
 
@@ -173,10 +175,11 @@ class _AccountLedgerSheet extends StatelessWidget {
       BuildContext context, String type, double balance) {
     final tr = AppLocalizations.of(context);
     if (balance.abs() < 0.0001) return tr.text('account_settled_description');
-    if (type == 'customer')
+    if (type == 'customer') {
       return balance > 0
           ? tr.text('amount_to_collect_from_customer')
           : tr.text('customer_credit_balance');
+    }
     return balance < 0
         ? tr.text('amount_to_pay_supplier')
         : tr.text('supplier_advance_balance');
@@ -321,8 +324,9 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                   decoration: InputDecoration(labelText: tr.text('amount')),
                   validator: (value) {
                     final amount = double.tryParse((value ?? '').trim());
-                    if (amount == null || amount <= 0)
+                    if (amount == null || amount <= 0) {
                       return tr.text('enter_valid_amount');
+                    }
                     return null;
                   },
                 ),

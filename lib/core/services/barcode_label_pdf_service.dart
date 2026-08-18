@@ -27,8 +27,8 @@ class BarcodeLabelItem {
 
 class BarcodeLabelPrintOptions {
   const BarcodeLabelPrintOptions({
-    this.labelWidthMm = 50,
-    this.labelHeightMm = 30,
+    this.labelWidthMm = 58,
+    this.labelHeightMm = 40,
     this.marginMm = 1.5,
     this.fontSize = 8,
     this.barcodeHeight = 24,
@@ -150,8 +150,24 @@ class BarcodeLabelPdfService {
     final barcodeHeight = hasDates
         ? options.barcodeHeight.clamp(18.0, 22.0).toDouble()
         : options.barcodeHeight;
-    final barcodeWidth = options.barcodeWidth
-        .clamp(24.0, (width - options.logoWidth - 16).clamp(24.0, 130.0))
+
+    // Keep Code128 comfortably above the printer-dot limit on common
+    // 203-DPI label printers. Previously we always reserved logoWidth even
+    // when there was no logo/weight, which compressed a 13-digit Code128 to
+    // roughly 20 mm and made its narrow modules fragile after rasterization.
+    final hasSideContent = hasLogo || hasWeight;
+    final sideWidth = hasSideContent ? options.logoWidth : 0.0;
+    final sideGap = hasSideContent ? 4.0 : 0.0;
+    final availableBarcodeWidth =
+        (width - sideWidth - sideGap - 12).clamp(24.0, 130.0).toDouble();
+    final printerSafeMinimum = hasSideContent ? 24.0 : 96.0;
+    final requestedBarcodeWidth =
+        options.barcodeWidth.clamp(24.0, 130.0).toDouble();
+    final barcodeWidth = requestedBarcodeWidth
+        .clamp(
+          printerSafeMinimum.clamp(24.0, availableBarcodeWidth).toDouble(),
+          availableBarcodeWidth,
+        )
         .toDouble();
     return pw.Container(
       width: width,
@@ -184,49 +200,51 @@ class BarcodeLabelPdfService {
               child: pw.Row(
                 crossAxisAlignment: pw.CrossAxisAlignment.center,
                 children: [
-                  pw.SizedBox(
-                    width: options.logoWidth,
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.center,
-                      mainAxisAlignment: pw.MainAxisAlignment.center,
-                      children: [
-                        if (hasLogo)
-                          _positioned(
-                            options,
-                            'logo',
-                            pw.Container(
-                              width: options.logoWidth,
-                              height: options.logoWidth * 2 / 3,
-                              alignment: pw.Alignment.center,
-                              child: pw.Image(
-                                pw.MemoryImage(options.logoBytes!),
+                  if (hasSideContent) ...[
+                    pw.SizedBox(
+                      width: options.logoWidth,
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.center,
+                        mainAxisAlignment: pw.MainAxisAlignment.center,
+                        children: [
+                          if (hasLogo)
+                            _positioned(
+                              options,
+                              'logo',
+                              pw.Container(
                                 width: options.logoWidth,
                                 height: options.logoWidth * 2 / 3,
-                                fit: pw.BoxFit.contain,
+                                alignment: pw.Alignment.center,
+                                child: pw.Image(
+                                  pw.MemoryImage(options.logoBytes!),
+                                  width: options.logoWidth,
+                                  height: options.logoWidth * 2 / 3,
+                                  fit: pw.BoxFit.contain,
+                                ),
                               ),
                             ),
-                          ),
-                        if (hasWeight) ...[
-                          pw.SizedBox(height: 3),
-                          _positioned(
-                            options,
-                            'weight',
-                            pw.Text(
-                              options.weight.trim(),
-                              maxLines: 1,
-                              overflow: pw.TextOverflow.clip,
-                              style: pw.TextStyle(
-                                fontSize: options.fontSize - 1,
-                                fontWeight: pw.FontWeight.bold,
+                          if (hasWeight) ...[
+                            pw.SizedBox(height: 3),
+                            _positioned(
+                              options,
+                              'weight',
+                              pw.Text(
+                                options.weight.trim(),
+                                maxLines: 1,
+                                overflow: pw.TextOverflow.clip,
+                                style: pw.TextStyle(
+                                  fontSize: options.fontSize - 1,
+                                  fontWeight: pw.FontWeight.bold,
+                                ),
+                                textAlign: pw.TextAlign.center,
                               ),
-                              textAlign: pw.TextAlign.center,
                             ),
-                          ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  pw.SizedBox(width: 4),
+                    pw.SizedBox(width: 4),
+                  ],
                   pw.Expanded(
                     child: pw.Column(
                       mainAxisAlignment: pw.MainAxisAlignment.center,

@@ -12021,8 +12021,9 @@ class AppStore extends ChangeNotifier {
     String warehouseName = '',
   }) async {
     requirePermission(AppPermission.suppliersManage);
-    if (items.isEmpty)
+    if (items.isEmpty) {
       throw ArgumentError('Purchase must contain at least one item.');
+    }
     final index = _purchaseIndexForId(id);
     final current =
         index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
@@ -12118,8 +12119,9 @@ class AppStore extends ChangeNotifier {
     if (!current.isReceived || current.isCancelled) {
       throw StateError('Only received purchase invoices can be edited.');
     }
-    if (items.isEmpty)
+    if (items.isEmpty) {
       throw ArgumentError('Purchase must contain at least one item.');
+    }
     if (items.any((item) =>
         _findProductById(item.productId)?.expiryTrackingEnabled == true)) {
       throw StateError(
@@ -15608,8 +15610,9 @@ class AppStore extends ChangeNotifier {
         })
         .where((item) => item.quantity > 0)
         .toList();
-    if (selectedItems.isEmpty)
+    if (selectedItems.isEmpty) {
       throw ArgumentError('Return quantity must be greater than zero.');
+    }
     if (sale.status.toLowerCase() == 'partially returned') {
       for (final item in selectedItems) {
         final previous = sale.items.firstWhere(

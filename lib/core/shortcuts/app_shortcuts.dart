@@ -275,8 +275,9 @@ class SaleShortcutSettings {
         LocalDatabaseService.getString('keyboard_shortcuts_sale_v2') ??
             LocalDatabaseService.getString('keyboard_shortcuts_sale_v1');
     final raw = LocalDatabaseService.getString(storageKey) ?? oldRaw;
-    if (raw == null || raw.trim().isEmpty)
+    if (raw == null || raw.trim().isEmpty) {
       return SaleShortcutSettings.defaults();
+    }
     try {
       final decoded = jsonDecode(raw) as Map<String, dynamic>;
       final sale = <SaleShortcutAction, String>{};
@@ -290,8 +291,9 @@ class SaleShortcutSettings {
         for (final entry in saleSource.entries) {
           final action = SaleShortcutActionInfo.fromId(entry.key);
           final key = entry.value as String?;
-          if (action != null && key != null && availableKeys.contains(key))
+          if (action != null && key != null && availableKeys.contains(key)) {
             sale[action] = key;
+          }
         }
       }
 
@@ -300,8 +302,9 @@ class SaleShortcutSettings {
         for (final entry in paymentSource.entries) {
           final action = SalePaymentShortcutActionInfo.fromId(entry.key);
           final key = entry.value as String?;
-          if (action != null && key != null && availableKeys.contains(key))
+          if (action != null && key != null && availableKeys.contains(key)) {
             payment[action] = key;
+          }
         }
       }
 
@@ -310,8 +313,9 @@ class SaleShortcutSettings {
         for (final entry in purchasesSource.entries) {
           final action = PurchasesShortcutActionInfo.fromId(entry.key);
           final key = entry.value as String?;
-          if (action != null && key != null && availableKeys.contains(key))
+          if (action != null && key != null && availableKeys.contains(key)) {
             purchases[action] = key;
+          }
         }
       }
 
@@ -320,8 +324,9 @@ class SaleShortcutSettings {
         for (final entry in purchaseDialogSource.entries) {
           final action = PurchaseDialogShortcutActionInfo.fromId(entry.key);
           final key = entry.value as String?;
-          if (action != null && key != null && availableKeys.contains(key))
+          if (action != null && key != null && availableKeys.contains(key)) {
             purchaseDialog[action] = key;
+          }
         }
       }
 
@@ -483,7 +488,9 @@ class SaleShortcutSettings {
     if (key == LogicalKeyboardKey.f11) return 'F11';
     if (key == LogicalKeyboardKey.f12) return 'F12';
     if (key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter) return 'Enter';
+        key == LogicalKeyboardKey.numpadEnter) {
+      return 'Enter';
+    }
     if (key == LogicalKeyboardKey.escape) return 'Esc';
     return null;
   }
