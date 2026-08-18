@@ -20,6 +20,7 @@ import '../../widgets/page_data_load_indicator.dart';
 import '../../widgets/summary_card.dart';
 import '../barcode/barcode_scanner_page.dart';
 import 'batch_allocation_dialog.dart';
+import 'warehouse_transfer_page.dart';
 
 String _movementTypeLabel(AppLocalizations tr, String type) {
   switch (type) {
@@ -1135,19 +1136,6 @@ class _WarehousesTabState extends State<_WarehousesTab> {
   Future<Map<String, List<_WarehouseProductStock>>>? _stockRowsFuture;
   String _stockRowsFutureKey = '';
 
-  Future<double> _warehouseStock(
-    String productId,
-    String warehouseId,
-  ) async {
-    if (LocalDatabaseService.canQueryBusinessSqlite) {
-      return widget.store.warehouseStockFromSqlite(
-        productId,
-        warehouseId: warehouseId,
-      );
-    }
-    return widget.store.stockForWarehouse(productId, warehouseId);
-  }
-
   @override
   void didUpdateWidget(covariant _WarehousesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -1253,169 +1241,16 @@ class _WarehousesTabState extends State<_WarehousesTab> {
   }
 
   Future<void> _transferStock() async {
-    final tr = AppLocalizations.of(context);
-    final products = widget.store.stockTrackedProducts;
-    final warehouses = widget.store.warehouses;
-    if (products.isEmpty || warehouses.length < 2) return;
-    var productId = products.first.id;
-    var fromWarehouseId = warehouses.first.id;
-    var toWarehouseId =
-        warehouses.length > 1 ? warehouses[1].id : warehouses.first.id;
-    var unitId = products.first.effectiveSaleUnits.first.id;
-    final qtyController = TextEditingController();
-    final notesController = TextEditingController();
-    await showDialog<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(tr.text('transfer_stock')),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              DropdownButtonFormField<String>(
-                initialValue: productId,
-                decoration: InputDecoration(labelText: tr.text('product')),
-                items: products
-                    .map((item) => DropdownMenuItem(
-                        value: item.id, child: Text(item.name)))
-                    .toList(),
-                onChanged: (value) => setDialogState(() {
-                  productId = value ?? productId;
-                  unitId = products
-                      .firstWhere((item) => item.id == productId)
-                      .effectiveSaleUnits
-                      .first
-                      .id;
-                }),
-              ),
-              const SizedBox(height: 12),
-              Builder(builder: (context) {
-                final product =
-                    products.firstWhere((item) => item.id == productId);
-                final units = product.effectiveSaleUnits;
-                final selectedUnit = units.any((item) => item.id == unitId)
-                    ? unitId
-                    : units.first.id;
-                final conversion = units
-                    .firstWhere((item) => item.id == selectedUnit)
-                    .conversionToBase;
-                return FutureBuilder<double>(
-                  future: _warehouseStock(productId, fromWarehouseId),
-                  builder: (context, snapshot) {
-                    final availableBase = snapshot.data ??
-                        widget.store.stockForWarehouse(
-                          productId,
-                          fromWarehouseId,
-                        );
-                    final availableInUnit =
-                        conversion <= 0 ? 0 : availableBase / conversion;
-                    return Column(
-                      children: [
-                        DropdownButtonFormField<String>(
-                          initialValue: selectedUnit,
-                          decoration:
-                              InputDecoration(labelText: tr.text('unit')),
-                          items: units
-                              .map((item) => DropdownMenuItem(
-                                    value: item.id,
-                                    child: Text(item.name),
-                                  ))
-                              .toList(),
-                          onChanged: (value) => setDialogState(
-                              () => unitId = value ?? selectedUnit),
-                        ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: Text(
-                            '${tr.text('available')}: ${availableInUnit.toStringAsFixed(2)} ${units.firstWhere((item) => item.id == selectedUnit).name} '
-                            '(${availableBase.toStringAsFixed(2)} ${product.unit})',
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              }),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: fromWarehouseId,
-                decoration:
-                    InputDecoration(labelText: tr.text('from_warehouse')),
-                items: warehouses
-                    .map((item) => DropdownMenuItem(
-                        value: item.id, child: Text(item.name)))
-                    .toList(),
-                onChanged: (value) => setDialogState(
-                    () => fromWarehouseId = value ?? fromWarehouseId),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: toWarehouseId,
-                decoration: InputDecoration(labelText: tr.text('to_warehouse')),
-                items: warehouses
-                    .map((item) => DropdownMenuItem(
-                        value: item.id, child: Text(item.name)))
-                    .toList(),
-                onChanged: (value) => setDialogState(
-                    () => toWarehouseId = value ?? toWarehouseId),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: qtyController,
-                  decoration: InputDecoration(labelText: tr.text('quantity')),
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true)),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: notesController,
-                  decoration:
-                      InputDecoration(labelText: tr.text('notes_optional'))),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(tr.text('cancel'))),
-            FilledButton(
-              onPressed: () async {
-                try {
-                  final product =
-                      products.firstWhere((item) => item.id == productId);
-                  final unit = product.effectiveSaleUnits.firstWhere(
-                    (item) => item.id == unitId,
-                    orElse: () => product.effectiveSaleUnits.first,
-                  );
-                  final enteredQuantity =
-                      double.tryParse(qtyController.text.trim()) ?? 0;
-                  final baseQuantity = enteredQuantity * unit.conversionToBase;
-                  final transferNotes = [
-                    if (notesController.text.trim().isNotEmpty)
-                      notesController.text.trim(),
-                    'Unit: ${unit.name}; quantity: $enteredQuantity; '
-                        'base quantity: $baseQuantity ${product.unit}',
-                  ].join(' | ');
-                  await widget.store.transferStock(
-                      productId: productId,
-                      fromWarehouseId: fromWarehouseId,
-                      toWarehouseId: toWarehouseId,
-                      quantity: baseQuantity,
-                      notes: transferNotes);
-                  if (context.mounted) Navigator.pop(context);
-                  if (mounted) setState(() {});
-                } catch (error) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text(localizedErrorText(
-                            AppLocalizations.of(context), error))));
-                  }
-                }
-              },
-              child: Text(tr.text('save')),
-            ),
-          ],
-        ),
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => WarehouseTransferPage(store: widget.store),
       ),
     );
+    if (!mounted) return;
+    setState(() {
+      _stockRowsFuture = null;
+      _stockRowsFutureKey = '';
+    });
   }
 
   @override

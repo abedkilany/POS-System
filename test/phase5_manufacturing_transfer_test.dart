@@ -11,6 +11,7 @@ import 'package:ventio/models/manufacturing.dart';
 import 'package:ventio/models/product.dart';
 import 'package:ventio/models/stock_movement.dart';
 import 'package:ventio/models/warehouse.dart';
+import 'package:ventio/models/warehouse_transfer_order.dart';
 import 'package:ventio/models/user_role.dart';
 
 Product phase5Product({
@@ -244,6 +245,146 @@ void main() {
         5,
       );
       expect(await store.totalWarehouseStockFromSqlite('move-1'), 8);
+    });
+
+    test('multi-product transfer order moves all lines atomically and persists order', () async {
+      final store = await readyPhase5SqliteStore();
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'bulk-1', code: 'BLK-1', stock: 0, cost: 2),
+      );
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'bulk-2', code: 'BLK-2', stock: 0, cost: 4),
+      );
+      final source = await store.createWarehouse(name: 'Bulk Source', code: 'BS');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final destination =
+          await store.createWarehouse(name: 'Bulk Destination', code: 'BD');
+      await store.adjustStock(
+        productId: 'bulk-1',
+        warehouseId: source.id,
+        quantityDelta: 10,
+        reason: 'seed bulk 1',
+      );
+      await store.adjustStock(
+        productId: 'bulk-2',
+        warehouseId: source.id,
+        quantityDelta: 20,
+        reason: 'seed bulk 2',
+      );
+
+      final order = await store.createWarehouseTransferOrder(
+        fromWarehouseId: source.id,
+        toWarehouseId: destination.id,
+        notes: 'truck load',
+        items: const <WarehouseTransferOrderItem>[
+          WarehouseTransferOrderItem(
+            productId: 'bulk-1',
+            productName: 'Coffee',
+            quantity: 3,
+          ),
+          WarehouseTransferOrderItem(
+            productId: 'bulk-2',
+            productName: 'Coffee',
+            quantity: 7,
+          ),
+        ],
+      );
+
+      expect(order.items.length, 2);
+      expect(order.totalUnits, 10);
+      expect(await sqliteWarehouseQuantity(
+        productId: 'bulk-1',
+        warehouseId: source.id,
+        storeId: store.appIdentity.storeId,
+      ), 7);
+      expect(await sqliteWarehouseQuantity(
+        productId: 'bulk-1',
+        warehouseId: destination.id,
+        storeId: store.appIdentity.storeId,
+      ), 3);
+      expect(await sqliteWarehouseQuantity(
+        productId: 'bulk-2',
+        warehouseId: source.id,
+        storeId: store.appIdentity.storeId,
+      ), 13);
+      expect(await sqliteWarehouseQuantity(
+        productId: 'bulk-2',
+        warehouseId: destination.id,
+        storeId: store.appIdentity.storeId,
+      ), 7);
+      final persisted = await store.recentWarehouseTransferOrders();
+      expect(persisted.any((item) => item.id == order.id), isTrue);
+      final movements = store.stockMovements
+          .where((movement) => movement.movementGroupId == order.id)
+          .toList();
+      expect(movements.length, 4);
+    });
+
+    test('multi-product transfer order rolls back every line when one item is insufficient', () async {
+      final store = await readyPhase5SqliteStore();
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'rollback-1', code: 'RB-1', stock: 0, cost: 2),
+      );
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'rollback-2', code: 'RB-2', stock: 0, cost: 4),
+      );
+      final source = await store.createWarehouse(name: 'Rollback Source', code: 'RS');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final destination =
+          await store.createWarehouse(name: 'Rollback Destination', code: 'RD');
+      await store.adjustStock(
+        productId: 'rollback-1',
+        warehouseId: source.id,
+        quantityDelta: 10,
+        reason: 'seed rollback 1',
+      );
+      await store.adjustStock(
+        productId: 'rollback-2',
+        warehouseId: source.id,
+        quantityDelta: 2,
+        reason: 'seed rollback 2',
+      );
+
+      await expectLater(
+        store.createWarehouseTransferOrder(
+          fromWarehouseId: source.id,
+          toWarehouseId: destination.id,
+          items: const <WarehouseTransferOrderItem>[
+            WarehouseTransferOrderItem(
+              productId: 'rollback-1',
+              productName: 'Coffee',
+              quantity: 3,
+            ),
+            WarehouseTransferOrderItem(
+              productId: 'rollback-2',
+              productName: 'Coffee',
+              quantity: 5,
+            ),
+          ],
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(await sqliteWarehouseQuantity(
+        productId: 'rollback-1',
+        warehouseId: source.id,
+        storeId: store.appIdentity.storeId,
+      ), 10);
+      expect(await sqliteWarehouseQuantity(
+        productId: 'rollback-1',
+        warehouseId: destination.id,
+        storeId: store.appIdentity.storeId,
+      ), 0);
+      expect(await sqliteWarehouseQuantity(
+        productId: 'rollback-2',
+        warehouseId: source.id,
+        storeId: store.appIdentity.storeId,
+      ), 2);
+      expect(await sqliteWarehouseQuantity(
+        productId: 'rollback-2',
+        warehouseId: destination.id,
+        storeId: store.appIdentity.storeId,
+      ), 0);
     });
 
     test('duplicate transfer replay does not double apply', () async {

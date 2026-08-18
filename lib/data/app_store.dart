@@ -45,6 +45,7 @@ import '../models/supplier_purchase_price.dart';
 import '../models/supplier_product_price.dart';
 import '../models/stock_movement.dart';
 import '../models/warehouse.dart';
+import '../models/warehouse_transfer_order.dart';
 import '../models/sale.dart';
 import '../models/sale_item.dart';
 import '../models/sale_quotation.dart';
@@ -11427,6 +11428,288 @@ class AppStore extends ChangeNotifier {
     );
     notifyListeners();
     return warehouse;
+  }
+
+  Future<List<WarehouseTransferOrder>> recentWarehouseTransferOrders({
+    int limit = 100,
+  }) async {
+    final db = SqliteMigrationManager.database;
+    if (LocalDatabaseService.isSqliteAuthoritative && db != null) {
+      return BusinessSqliteStore.readWarehouseTransferOrders(db, limit: limit);
+    }
+    return const <WarehouseTransferOrder>[];
+  }
+
+  Future<WarehouseTransferOrder> createWarehouseTransferOrder({
+    required String fromWarehouseId,
+    required String toWarehouseId,
+    required List<WarehouseTransferOrderItem> items,
+    String notes = '',
+  }) async {
+    if (!hasAnyPermission(<String>{
+      AppPermission.inventoryWarehousesManage,
+      AppPermission.productsEdit,
+    })) {
+      throw StateError('You do not have permission to transfer stock.');
+    }
+    if (fromWarehouseId == toWarehouseId) {
+      throw ArgumentError('Choose two different warehouses.');
+    }
+    if (items.isEmpty) {
+      throw ArgumentError('Add at least one product to the transfer.');
+    }
+    _ensureDefaultWarehouse();
+    final fromWarehouse = _warehouses.firstWhere(
+      (item) => item.id == fromWarehouseId && !item.isDeleted,
+      orElse: () => throw ArgumentError('Source warehouse not found.'),
+    );
+    final toWarehouse = _warehouses.firstWhere(
+      (item) => item.id == toWarehouseId && !item.isDeleted,
+      orElse: () => throw ArgumentError('Destination warehouse not found.'),
+    );
+
+    final normalizedItems = <WarehouseTransferOrderItem>[];
+    final seenProductIds = <String>{};
+    for (final item in items) {
+      if (item.baseQuantity <= 0) {
+        throw ArgumentError('Transfer quantities must be positive.');
+      }
+      if (!seenProductIds.add(item.productId)) {
+        throw ArgumentError('A product can only appear once in a transfer order.');
+      }
+      final productIndex = _productIndexById[item.productId];
+      if (productIndex == null) throw ArgumentError('Product not found.');
+      final product = _products[productIndex];
+      if (!product.trackStock) {
+        throw StateError('${product.name} does not track stock.');
+      }
+      normalizedItems.add(WarehouseTransferOrderItem(
+        productId: product.id,
+        productName: product.name,
+        quantity: item.quantity,
+        unitId: item.unitId,
+        unitName: item.unitName.isEmpty ? product.unit : item.unitName,
+        conversionToBase: item.conversionToBase,
+        unitCost: _safeUsdCost(product),
+      ));
+    }
+
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Warehouse transfer orders require SQLite storage.');
+    }
+
+    final now = DateTime.now();
+    final transferId = now.microsecondsSinceEpoch.toString();
+    final orderNo = 'TR-$transferId';
+    final order = WarehouseTransferOrder(
+      id: transferId,
+      orderNo: orderNo,
+      fromWarehouseId: fromWarehouse.id,
+      fromWarehouseName: fromWarehouse.name,
+      toWarehouseId: toWarehouse.id,
+      toWarehouseName: toWarehouse.name,
+      date: now,
+      items: normalizedItems,
+      notes: notes.trim(),
+      createdByUserId: _activeUser?.id ?? '',
+      createdByUserName: _actorName(),
+      createdAt: now,
+      updatedAt: now,
+      deviceId: _deviceId,
+      syncStatus: 'pending',
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
+      lastModifiedByDeviceId: _deviceId,
+    );
+    final stockService = StockTransactionService(
+      sqliteDb,
+      deviceId: _deviceId,
+      defaultStoreId: appIdentity.storeId,
+      defaultBranchId: appIdentity.branchId,
+      defaultSyncTarget: _stockTransactionSyncTarget,
+    );
+    final batchService = BatchInventoryService(sqliteDb);
+    final transferMovements = <StockMovement>[];
+
+    await _traceAsync<void>('inventory.createTransferOrder', 'sqlite_transaction',
+        () async {
+      await sqliteDb.transaction(() async {
+        for (var lineIndex = 0;
+            lineIndex < normalizedItems.length;
+            lineIndex += 1) {
+          final item = normalizedItems[lineIndex];
+          final product = _products[_productIndexById[item.productId]!];
+          final baseQuantity = item.baseQuantity;
+          final lineId = '$transferId-line-${lineIndex + 1}';
+          final outMovement = StockMovement(
+            id: '$transferId-${item.productId}-out-${lineIndex + 1}',
+            productId: item.productId,
+            productName: item.productName,
+            type: 'transfer_out',
+            quantity: -baseQuantity,
+            date: now,
+            referenceId: transferId,
+            referenceNo: orderNo,
+            reason: 'Warehouse transfer to ${toWarehouse.name}',
+            notes: notes.trim(),
+            warehouseId: fromWarehouse.id,
+            warehouseName: fromWarehouse.name,
+            movementGroupId: transferId,
+            documentLineId: '$lineId-out',
+            idempotencyKey: '$transferId:$lineId:out',
+            unitCost: item.unitCost,
+            createdAt: now,
+            updatedAt: now,
+            deviceId: _deviceId,
+            storeId: appIdentity.storeId,
+            branchId: appIdentity.branchId,
+            lastModifiedByDeviceId: _deviceId,
+          );
+          final inMovement = StockMovement(
+            id: '$transferId-${item.productId}-in-${lineIndex + 1}',
+            productId: item.productId,
+            productName: item.productName,
+            type: 'transfer_in',
+            quantity: baseQuantity,
+            date: now,
+            referenceId: transferId,
+            referenceNo: orderNo,
+            reason: 'Warehouse transfer from ${fromWarehouse.name}',
+            notes: notes.trim(),
+            warehouseId: toWarehouse.id,
+            warehouseName: toWarehouse.name,
+            movementGroupId: transferId,
+            documentLineId: '$lineId-in',
+            idempotencyKey: '$transferId:$lineId:in',
+            unitCost: item.unitCost,
+            createdAt: now,
+            updatedAt: now,
+            deviceId: _deviceId,
+            storeId: appIdentity.storeId,
+            branchId: appIdentity.branchId,
+            lastModifiedByDeviceId: _deviceId,
+          );
+
+          if (product.expiryTrackingEnabled) {
+            final allocations = await batchService.transferFefoInTransaction(
+              product: product,
+              fromWarehouseId: fromWarehouse.id,
+              toWarehouseId: toWarehouse.id,
+              quantity: baseQuantity,
+              transferredAt: now,
+              storeId: appIdentity.storeId,
+              branchId: appIdentity.branchId,
+              deviceId: _deviceId,
+            );
+            for (var batchIndex = 0;
+                batchIndex < allocations.length;
+                batchIndex += 1) {
+              final allocation = allocations[batchIndex];
+              transferMovements.addAll(<StockMovement>[
+                outMovement.copyWith(
+                  id: '${outMovement.id}-batch-$batchIndex',
+                  quantity: -allocation.quantity,
+                  batchId: allocation.batchId,
+                  documentLineId: '$lineId-out-batch-$batchIndex',
+                  idempotencyKey: '$transferId:$lineId:out:$batchIndex',
+                ),
+                inMovement.copyWith(
+                  id: '${inMovement.id}-batch-$batchIndex',
+                  quantity: allocation.quantity,
+                  batchId: allocation.batchId,
+                  documentLineId: '$lineId-in-batch-$batchIndex',
+                  idempotencyKey: '$transferId:$lineId:in:$batchIndex',
+                ),
+              ]);
+            }
+          } else {
+            transferMovements.addAll(<StockMovement>[outMovement, inMovement]);
+          }
+        }
+
+        await stockService.recordMovementsInTransaction(
+          operationType: 'warehouse_transfer_order',
+          documentType: 'stock_transfer_order',
+          documentId: transferId,
+          movementGroupId: transferId,
+          idempotencyKey: '$transferId:warehouse_transfer_order',
+          movements: transferMovements,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          deviceId: _deviceId,
+        );
+
+        final payload = order.toJson();
+        await sqliteDb.customInsert('''
+          INSERT INTO warehouse_transfer_orders (
+            id, entity_type, created_at, updated_at, deleted_at, device_id,
+            sync_status, store_id, branch_id, version,
+            last_modified_by_device_id, sort_index, order_no,
+            from_warehouse_id, from_warehouse_name, to_warehouse_id,
+            to_warehouse_name, document_date, status, notes,
+            created_by_user_id, created_by_user_name, items_json, total_units
+          ) VALUES (?, 'warehouse_transfer_order', ?, ?, '', ?, 'pending', ?, ?, 1,
+                    ?, 0, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)
+        ''', variables: <Variable<Object>>[
+          Variable<String>(order.id),
+          Variable<String>(order.createdAt.toIso8601String()),
+          Variable<String>(order.updatedAt.toIso8601String()),
+          Variable<String>(_deviceId),
+          Variable<String>(appIdentity.storeId),
+          Variable<String>(appIdentity.branchId),
+          Variable<String>(_deviceId),
+          Variable<String>(order.orderNo),
+          Variable<String>(order.fromWarehouseId),
+          Variable<String>(order.fromWarehouseName),
+          Variable<String>(order.toWarehouseId),
+          Variable<String>(order.toWarehouseName),
+          Variable<String>(order.date.toIso8601String()),
+          Variable<String>(order.notes),
+          Variable<String>(order.createdByUserId),
+          Variable<String>(order.createdByUserName),
+          Variable<String>(jsonEncode(payload['items'])),
+          Variable<double>(order.totalUnits),
+        ]);
+      });
+    });
+
+    _mirrorAuthoritativeStockMovements(transferMovements);
+    await _refreshProductStockCompatibilityCache(
+      normalizedItems.map((item) => item.productId).toSet(),
+    );
+    _recordSyncChange(
+      entityType: 'warehouse_transfer_order',
+      entityId: order.id,
+      operation: 'create',
+      payload: order.toJson(),
+    );
+    for (final movement in transferMovements) {
+      _recordSyncChange(
+        entityType: 'stock_movement',
+        entityId: movement.id,
+        operation: 'transfer',
+        payload: movement.toJson(),
+      );
+    }
+    unawaited(AuditLogger.record(
+      entityType: 'warehouse_transfer_order',
+      entityId: order.id,
+      action: 'create',
+      summary: 'Warehouse transfer order created',
+      details: jsonEncode(order.toJson()),
+      userId: _activeUser?.id ?? '',
+      userName: _actorName(),
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
+      sessionId: _deviceId,
+      traceId: _deviceId,
+      deviceId: _deviceId,
+      sourceModule: 'inventory',
+      isImportant: true,
+    ));
+    notifyListeners();
+    return order;
   }
 
   Future<void> transferStock({

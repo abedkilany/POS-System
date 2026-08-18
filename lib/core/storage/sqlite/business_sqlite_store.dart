@@ -22,6 +22,7 @@ import '../../../models/supplier.dart';
 import '../../../models/supplier_product_price.dart';
 import '../../../models/stock_movement.dart';
 import '../../../models/warehouse.dart';
+import '../../../models/warehouse_transfer_order.dart';
 import '../../../models/app_user.dart';
 import 'sync_sqlite_store.dart';
 import 'ventio_drift_database.dart';
@@ -66,6 +67,7 @@ class BusinessSqliteStore {
   static const String purchasesKey = 'purchases_v1';
   static const String inventoryCountsKey = 'inventory_counts_v1';
   static const String warehousesKey = 'warehouses_v1';
+  static const String warehouseTransferOrdersKey = 'warehouse_transfer_orders_v1';
   static const String stockMovementsKey = 'stock_movements_v1';
   static const String accountTransactionsKey = 'account_transactions_v1';
   static const String categoriesKey = 'product_categories_v1';
@@ -94,6 +96,7 @@ class BusinessSqliteStore {
     purchasesKey,
     inventoryCountsKey,
     warehousesKey,
+    warehouseTransferOrdersKey,
     stockMovementsKey,
     accountTransactionsKey,
     categoriesKey,
@@ -123,6 +126,7 @@ class BusinessSqliteStore {
     purchasesKey: 'purchases',
     inventoryCountsKey: 'inventory_counts',
     warehousesKey: 'warehouses',
+    warehouseTransferOrdersKey: 'warehouse_transfer_orders',
     stockMovementsKey: 'stock_movements',
     accountTransactionsKey: 'account_transactions',
     categoriesKey: 'catalog_categories',
@@ -152,6 +156,7 @@ class BusinessSqliteStore {
     purchasesKey: 'purchase',
     inventoryCountsKey: 'inventory_count',
     warehousesKey: 'warehouse',
+    warehouseTransferOrdersKey: 'warehouse_transfer_order',
     stockMovementsKey: 'stockMovement',
     accountTransactionsKey: 'accountTransaction',
     categoriesKey: 'category',
@@ -1810,6 +1815,10 @@ class BusinessSqliteStore {
         return (await readWarehouses(db))
             .map((item) => item.toJson())
             .toList(growable: false);
+      case warehouseTransferOrdersKey:
+        return (await readWarehouseTransferOrders(db))
+            .map((item) => item.toJson())
+            .toList(growable: false);
       case stockMovementsKey:
         return (await readStockMovements(db))
             .map((item) => item.toJson())
@@ -2128,6 +2137,43 @@ class BusinessSqliteStore {
       data['isDefault'] = data['isDefault'] == 1 || data['isDefault'] == true;
       data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
       return Warehouse.fromJson(data);
+    }).toList(growable: false);
+  }
+
+  static Future<List<WarehouseTransferOrder>> readWarehouseTransferOrders(
+    VentioDriftDatabase db, {
+    int? limit,
+  }) async {
+    final safeLimit = limit?.clamp(1, 1000).toInt();
+    final rows = await db.customSelect('''
+      SELECT id, order_no AS orderNo,
+             from_warehouse_id AS fromWarehouseId,
+             from_warehouse_name AS fromWarehouseName,
+             to_warehouse_id AS toWarehouseId,
+             to_warehouse_name AS toWarehouseName,
+             document_date AS date, status, notes,
+             created_by_user_id AS createdByUserId,
+             created_by_user_name AS createdByUserName,
+             items_json AS itemsJson,
+             created_at AS createdAt, updated_at AS updatedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM warehouse_transfer_orders
+      WHERE deleted_at = ''
+      ORDER BY document_date DESC, created_at DESC, id DESC
+      ${safeLimit == null ? '' : 'LIMIT ?'}
+    ''', variables: safeLimit == null
+        ? const <Variable<Object>>[]
+        : <Variable<Object>>[Variable<int>(safeLimit)]).get();
+    return rows.map((row) {
+      final data = Map<String, dynamic>.from(row.data);
+      try {
+        data['items'] = jsonDecode(data.remove('itemsJson')?.toString() ?? '[]');
+      } catch (_) {
+        data['items'] = const <dynamic>[];
+      }
+      return WarehouseTransferOrder.fromJson(data);
     }).toList(growable: false);
   }
 
@@ -3877,6 +3923,44 @@ class BusinessSqliteStore {
               'cancelled_by_device_id':
                   _textValue(payload['cancelledByDeviceId']),
               'cancelled_at': _dateString(payload['cancelledAt']) ?? '',
+            },
+          );
+          continue;
+        }
+        if (key == warehouseTransferOrdersKey) {
+          final rawItems = payload['items'] as List<dynamic>? ?? const <dynamic>[];
+          final totalUnits = rawItems.fold<double>(0, (sum, raw) {
+            if (raw is! Map) return sum;
+            final item = Map<String, dynamic>.from(raw);
+            return sum + (item['baseQuantity'] as num? ??
+                    ((item['quantity'] as num? ?? 0).toDouble() *
+                        (item['conversionToBase'] as num? ?? 1).toDouble()))
+                .toDouble();
+          });
+          await _upsertTypedEntityRow(
+            db,
+            table,
+            entityType,
+            payload,
+            id: id,
+            payloadJson: payloadJson,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt,
+            sortIndex: sortIndex ?? 0,
+            typedColumns: <String, Object?>{
+              'order_no': _textValue(payload['orderNo']),
+              'from_warehouse_id': _textValue(payload['fromWarehouseId']),
+              'from_warehouse_name': _textValue(payload['fromWarehouseName']),
+              'to_warehouse_id': _textValue(payload['toWarehouseId']),
+              'to_warehouse_name': _textValue(payload['toWarehouseName']),
+              'document_date': _dateString(payload['date']) ?? createdAt,
+              'status': _textValue(payload['status'], fallback: 'completed'),
+              'notes': _textValue(payload['notes']),
+              'created_by_user_id': _textValue(payload['createdByUserId']),
+              'created_by_user_name': _textValue(payload['createdByUserName']),
+              'items_json': jsonEncode(rawItems),
+              'total_units': totalUnits,
             },
           );
           continue;

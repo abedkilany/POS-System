@@ -15,7 +15,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 17;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -122,6 +122,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       'purchases',
       'warehouses',
       'stock_movements',
+      'warehouse_transfer_orders',
       'account_transactions',
       'catalog_categories',
       'catalog_brands',
@@ -132,6 +133,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       await _createBusinessEntityTable(tableName);
     }
     await _ensureWarehouseInventoryTable();
+    await _ensureWarehouseTransferOrderColumns();
     await _ensureStockOperationsTable();
     await _ensureInventoryMigrationAdjustmentsTable();
     await _ensureInventoryReconciliationsTable();
@@ -406,6 +408,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       'purchases',
       'warehouses',
       'stock_movements',
+      'warehouse_transfer_orders',
       'account_transactions',
       'catalog_categories',
       'catalog_brands',
@@ -3058,6 +3061,39 @@ class VentioDriftDatabase extends GeneratedDatabase {
       "UPDATE accounting_settings SET value = '7', description = 'إصدار بنية وبذور محرك المحاسبة', updated_at = ? WHERE key = 'accounting_engine_version'",
       variables: <Variable<Object>>[Variable<String>(now)],
     );
+  }
+
+  Future<void> _ensureWarehouseTransferOrderColumns() async {
+    await _ensureColumn(
+        'warehouse_transfer_orders', 'order_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'from_warehouse_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'from_warehouse_name',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'to_warehouse_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'to_warehouse_name',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'document_date',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'status',
+        "TEXT NOT NULL DEFAULT 'completed'");
+    await _ensureColumn(
+        'warehouse_transfer_orders', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'created_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'created_by_user_name',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'items_json',
+        "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn('warehouse_transfer_orders', 'total_units',
+        'REAL NOT NULL DEFAULT 0');
+    await customStatement(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_order_no ON warehouse_transfer_orders(order_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_date ON warehouse_transfer_orders(document_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_route ON warehouse_transfer_orders(from_warehouse_id, to_warehouse_id, document_date DESC);');
   }
 
   Future<void> _createBusinessEntityTable(String tableName) async {

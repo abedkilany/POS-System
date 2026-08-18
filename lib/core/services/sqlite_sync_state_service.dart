@@ -174,6 +174,8 @@ class SqliteSyncStateService {
         return BusinessSqliteStore.manufacturingOrdersKey;
       case 'purchase':
         return BusinessSqliteStore.purchasesKey;
+      case 'warehouse_transfer_order':
+        return BusinessSqliteStore.warehouseTransferOrdersKey;
       case 'inventory_count':
         return BusinessSqliteStore.inventoryCountsKey;
       case 'stock_movement':
@@ -218,6 +220,8 @@ class SqliteSyncStateService {
         return 'manufacturing_orders';
       case BusinessSqliteStore.purchasesKey:
         return 'purchases';
+      case BusinessSqliteStore.warehouseTransferOrdersKey:
+        return 'warehouse_transfer_orders';
       case BusinessSqliteStore.inventoryCountsKey:
         return 'inventory_counts';
       case BusinessSqliteStore.stockMovementsKey:
@@ -1501,6 +1505,7 @@ class SqliteSyncStateService {
         case 'bill_of_materials':
         case 'manufacturing_order':
         case 'purchase':
+        case 'warehouse_transfer_order':
         case 'account_transaction':
         case 'inventory_count':
           await _applyBusinessEntityChange(
