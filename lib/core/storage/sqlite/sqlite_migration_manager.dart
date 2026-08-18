@@ -159,6 +159,13 @@ class SqliteMigrationManager {
 
   static Future<SqliteMigrationStatus> initializePhase2() => initializePhase3();
 
+  @visibleForTesting
+  static void useDatabaseForTesting(VentioDriftDatabase database) {
+    _database = database;
+    _initialized = true;
+    _lastError = null;
+  }
+
   static Future<void> resetForTesting() async {
     final db = _database;
     _database = null;

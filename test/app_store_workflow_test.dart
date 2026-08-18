@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNotNull;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/repositories/auth_repository.dart';
 import 'package:ventio/core/services/stock_transaction_service.dart';
@@ -1596,5 +1596,127 @@ void main() {
       expect(await setup.login('owner', 'owner123'), isTrue);
       expect(() => setup.setCurrentRole('cashier'), throwsStateError);
     });
+  });
+  _phase5ExpensePostStateTests();
+}
+
+Future<void> _seedPhase5PostingDrawer(
+  AppStore store, {
+  required double balance,
+}) async {
+  final db = SqliteMigrationManager.database;
+  expect(db, isNotNull);
+  final now = DateTime.utc(2026, 8, 18, 12).toIso8601String();
+  await db!.customStatement("DELETE FROM cash_drawer_sessions WHERE id = 'shift-post-integrity'");
+  await db.customStatement("DELETE FROM cash_locations WHERE id = 'drawer-post-integrity'");
+  await db.customInsert(
+    '''
+    INSERT INTO cash_locations
+      (id, code, name, type, account_id, current_balance, allow_negative,
+       is_active, created_at, updated_at, store_id, branch_id, device_id)
+    VALUES ('drawer-post-integrity', 'DRAW-POST-INTEGRITY', 'Posting Integrity Drawer',
+            'cash_drawer', 'acc_cash', ?, 0, 1, ?, ?, ?, ?, ?)
+    ''',
+    variables: <Variable<Object>>[
+      Variable<double>(balance),
+      Variable<String>(now),
+      Variable<String>(now),
+      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.appIdentity.branchId),
+      Variable<String>(store.appIdentity.deviceId),
+    ],
+  );
+  await db.customInsert(
+    '''
+    INSERT INTO cash_drawer_sessions
+      (id, drawer_no, cash_location_id, opened_at, status, opening_balance,
+       expected_cash, store_id, branch_id)
+    VALUES ('shift-post-integrity', 'SHIFT-POST-INTEGRITY',
+            'drawer-post-integrity', ?, 'open', ?, ?, ?, ?)
+    ''',
+    variables: <Variable<Object>>[
+      Variable<String>(now),
+      Variable<double>(balance),
+      Variable<double>(balance),
+      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.appIdentity.branchId),
+    ],
+  );
+}
+
+void _phase5ExpensePostStateTests() {
+  test('postExpense keeps expense unposted when authoritative cash posting fails', () async {
+    final store = await readySqliteStore(
+      storeId: 'ST-P5-POST-ONE',
+      branchId: 'BR-P5-POST-ONE',
+      storeName: 'Phase 5 Posting One',
+    );
+    await _seedPhase5PostingDrawer(store, balance: 5);
+    await store.addOrUpdateExpense(Expense(
+      id: 'expense-post-fail',
+      title: 'Too large',
+      category: 'General',
+      amount: 20,
+      date: DateTime.utc(2026, 8, 18, 15),
+      notes: '',
+    ));
+
+    await expectLater(store.postExpense('expense-post-fail'), throwsStateError);
+
+    final expense = store.expenses.firstWhere((e) => e.id == 'expense-post-fail');
+    expect(expense.isPosted, isFalse);
+    final db = SqliteMigrationManager.database!;
+    final operation = await db.customSelect(
+      "SELECT COUNT(*) AS c FROM cash_operations WHERE idempotency_key = 'expense:expense-post-fail'",
+    ).getSingle();
+    expect(operation.read<int>('c'), 0);
+    final balance = await db.customSelect(
+      "SELECT current_balance FROM cash_locations WHERE id = 'drawer-post-integrity'",
+    ).getSingle();
+    expect((balance.data['current_balance'] as num).toDouble(), 5);
+  });
+
+  test('bulk posting failure leaves all expenses unposted and rolls back cash batch', () async {
+    final store = await readySqliteStore(
+      storeId: 'ST-P5-POST-BULK',
+      branchId: 'BR-P5-POST-BULK',
+      storeName: 'Phase 5 Posting Bulk',
+    );
+    await _seedPhase5PostingDrawer(store, balance: 10);
+    final expenses = <Expense>[
+      Expense(
+        id: 'expense-bulk-post-1',
+        title: 'Bulk one',
+        category: 'General',
+        amount: 6,
+        date: DateTime.utc(2026, 8, 18, 15),
+        notes: '',
+      ),
+      Expense(
+        id: 'expense-bulk-post-2',
+        title: 'Bulk two',
+        category: 'General',
+        amount: 6,
+        date: DateTime.utc(2026, 8, 18, 15),
+        notes: '',
+      ),
+    ];
+
+    await expectLater(store.createAndPostExpensesBulk(expenses), throwsStateError);
+
+    expect(
+      store.expenses.where((e) =>
+          e.id == 'expense-bulk-post-1' || e.id == 'expense-bulk-post-2'),
+      isEmpty,
+    );
+    final db = SqliteMigrationManager.database!;
+    final operations = await db.customSelect(
+      "SELECT COUNT(*) AS c FROM cash_operations WHERE idempotency_key IN ('expense:expense-bulk-post-1', 'expense:expense-bulk-post-2')",
+    ).getSingle();
+    expect(operations.read<int>('c'), 0);
+    final balance = await db.customSelect(
+      "SELECT current_balance FROM cash_locations WHERE id = 'drawer-post-integrity'",
+    ).getSingle();
+    expect((balance.data['current_balance'] as num).toDouble(), 10);
   });
 }

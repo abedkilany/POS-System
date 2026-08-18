@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/accounting_service.dart';
+import '../../core/services/cash_operation_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/purchase.dart';
 import '../../models/sale.dart';
+import 'cash_history_panel.dart';
 
 class CashPage extends StatefulWidget {
   const CashPage({super.key, required this.store});
@@ -115,19 +117,11 @@ class _CashPageState extends State<CashPage> {
       return;
     }
     try {
-      final newPaid = (selectedSale.paidAmount + amount).clamp(0, selectedSale.invoiceTotal).toDouble();
-      final updatedStatus = newPaid >= selectedSale.invoiceTotal - 0.0001 ? 'paid' : 'partial';
-      await widget.store.editSale(
-        id: selectedSale.id,
-        customerName: selectedSale.customerName,
-        customerId: selectedSale.customerId,
-        items: selectedSale.items,
-        discount: selectedSale.discount,
+      await widget.store.settleSalePayment(
+        saleId: selectedSale.id,
+        amount: amount,
         paymentMethod: 'Cash',
-        paymentStatus: updatedStatus,
-        paidAmount: newPaid,
-        cashReceivedAmount: (selectedSale.cashReceivedAmount + amount).clamp(0, selectedSale.invoiceTotal).toDouble(),
-        note: notesController.text.trim().isEmpty ? selectedSale.note : notesController.text.trim(),
+        notes: notesController.text.trim(),
       );
     } catch (error) {
       if (!mounted) return;
@@ -232,19 +226,11 @@ class _CashPageState extends State<CashPage> {
       return;
     }
     try {
-      final newPaid = (selectedPurchase.paidAmount + amount).clamp(0, selectedPurchase.subtotal).toDouble();
-      final updatedStatus = newPaid >= selectedPurchase.subtotal - 0.0001 ? 'paid' : 'partial';
-      await widget.store.editReceivedPurchase(
-        id: selectedPurchase.id,
-        supplierId: selectedPurchase.supplierId,
-        supplierName: selectedPurchase.supplierName,
-        items: selectedPurchase.items,
-        paymentStatus: updatedStatus,
+      await widget.store.settlePurchasePayment(
+        purchaseId: selectedPurchase.id,
+        amount: amount,
         paymentMethod: 'Cash',
-        paidAmount: newPaid,
-        note: notesController.text.trim().isEmpty ? selectedPurchase.note : notesController.text.trim(),
-        warehouseId: selectedPurchase.warehouseId,
-        warehouseName: selectedPurchase.warehouseName,
+        notes: notesController.text.trim(),
       );
     } catch (error) {
       if (!mounted) return;
@@ -256,6 +242,240 @@ class _CashPageState extends State<CashPage> {
       notesController.dispose();
     }
     _refresh();
+  }
+
+  String _l(AppLocalizations tr, String en, String ar) => tr.isArabic ? ar : en;
+
+  Future<void> _cashOperationDialog({
+    required AdvancedAccountingItem currentDrawer,
+    required AdvancedAccountingItem currentSession,
+    required String type,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    final amountController = TextEditingController();
+    final notesController = TextEditingController();
+    final title = switch (type) {
+      'cash_deposit' => _l(tr, 'Cash deposit', 'إيداع نقدي'),
+      'cash_withdrawal' => _l(tr, 'Cash withdrawal', 'سحب نقدي'),
+      'expense' => _l(tr, 'Cash expense', 'مصروف نقدي'),
+      _ => _l(tr, 'Cash operation', 'عملية نقدية'),
+    };
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text('${_l(tr, 'Cash location', 'موقع النقدية')}: ${currentDrawer.name}'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: amountController,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(labelText: tr.text('amount')),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: notesController,
+            decoration: InputDecoration(labelText: tr.text('notes')),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(tr.text('post'))),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      amountController.dispose();
+      notesController.dispose();
+      return;
+    }
+    final amount = double.tryParse(amountController.text.trim()) ?? 0;
+    final notes = notesController.text.trim();
+    amountController.dispose();
+    notesController.dispose();
+    if (amount <= 0) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_l(tr, 'Enter a valid amount.', 'أدخل مبلغاً صالحاً.'))));
+      return;
+    }
+    try {
+      final user = widget.store.activeUser;
+      final service = CashOperationService.current();
+      final args = (
+        cashLocationId: currentDrawer.id,
+        cashDrawerSessionId: currentSession.id,
+        amount: amount,
+        notes: notes,
+        createdBy: user?.fullName.trim().isNotEmpty == true ? user!.fullName : widget.store.currentRole,
+        createdByUserId: user?.id ?? '',
+        deviceId: widget.store.appIdentity.deviceId,
+        branchId: widget.store.appIdentity.branchId,
+        storeId: widget.store.appIdentity.storeId,
+        idempotencyKey: 'cash-ui-$type-${DateTime.now().toUtc().microsecondsSinceEpoch}',
+      );
+      if (type == 'cash_deposit') {
+        await service.deposit(
+          cashLocationId: args.cashLocationId,
+          cashDrawerSessionId: args.cashDrawerSessionId,
+          amount: args.amount,
+          notes: args.notes,
+          createdBy: args.createdBy,
+          createdByUserId: args.createdByUserId,
+          deviceId: args.deviceId,
+          branchId: args.branchId,
+          storeId: args.storeId,
+          idempotencyKey: args.idempotencyKey,
+        );
+      } else if (type == 'cash_withdrawal') {
+        await service.withdrawal(
+          cashLocationId: args.cashLocationId,
+          cashDrawerSessionId: args.cashDrawerSessionId,
+          amount: args.amount,
+          notes: args.notes,
+          createdBy: args.createdBy,
+          createdByUserId: args.createdByUserId,
+          deviceId: args.deviceId,
+          branchId: args.branchId,
+          storeId: args.storeId,
+          idempotencyKey: args.idempotencyKey,
+        );
+      } else {
+        await service.expense(
+          cashLocationId: args.cashLocationId,
+          cashDrawerSessionId: args.cashDrawerSessionId,
+          amount: args.amount,
+          notes: args.notes,
+          createdBy: args.createdBy,
+          createdByUserId: args.createdByUserId,
+          deviceId: args.deviceId,
+          branchId: args.branchId,
+          storeId: args.storeId,
+          idempotencyKey: args.idempotencyKey,
+        );
+      }
+      _refresh();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))));
+    }
+  }
+
+  Future<void> _cashTransferDialog({
+    required AdvancedAccountingItem currentDrawer,
+    required AdvancedAccountingItem currentSession,
+    required String kind,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    final all = await AccountingService.listActiveCashLocations(includeBank: false);
+    if (!mounted) return;
+    var candidates = all.where((item) => item.id != currentDrawer.id).toList(growable: false);
+    if (kind == 'shift_transfer') {
+      candidates = candidates.where((item) => item.type == 'cash_drawer').toList(growable: false);
+    } else {
+      final preferred = candidates.where((item) => item.type != 'cash_drawer').toList(growable: false);
+      if (preferred.isNotEmpty) candidates = preferred;
+    }
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_l(tr, 'No eligible cash location was found.', 'لا يوجد موقع نقدية مناسب للتحويل.'))));
+      return;
+    }
+    String otherLocationId = candidates.first.id;
+    String flow = 'out';
+    final amountController = TextEditingController();
+    final notesController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(kind == 'shift_transfer' ? _l(tr, 'Shift transfer', 'تحويل شيفت') : _l(tr, 'Vault transfer', 'تحويل خزنة')),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<String>(
+              initialValue: flow,
+              decoration: InputDecoration(labelText: _l(tr, 'Direction', 'الاتجاه')),
+              items: <DropdownMenuItem<String>>[
+                DropdownMenuItem(value: 'out', child: Text('${currentDrawer.name} → ${_l(tr, 'destination', 'الوجهة')}')),
+                DropdownMenuItem(value: 'in', child: Text('${_l(tr, 'source', 'المصدر')} → ${currentDrawer.name}')),
+              ],
+              onChanged: (value) => setDialogState(() => flow = value ?? 'out'),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: otherLocationId,
+              decoration: InputDecoration(labelText: flow == 'out' ? _l(tr, 'To', 'إلى') : _l(tr, 'From', 'من')),
+              items: candidates.map((item) => DropdownMenuItem(value: item.id, child: Text(item.name))).toList(),
+              onChanged: (value) => setDialogState(() => otherLocationId = value ?? otherLocationId),
+            ),
+            const SizedBox(height: 12),
+            TextField(controller: amountController, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: tr.text('amount'))),
+            const SizedBox(height: 12),
+            TextField(controller: notesController, decoration: InputDecoration(labelText: tr.text('notes'))),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(_l(tr, 'Transfer', 'تحويل'))),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) {
+      amountController.dispose();
+      notesController.dispose();
+      return;
+    }
+    final amount = double.tryParse(amountController.text.trim()) ?? 0;
+    final notes = notesController.text.trim();
+    amountController.dispose();
+    notesController.dispose();
+    if (amount <= 0) return;
+    try {
+      final other = candidates.firstWhere((item) => item.id == otherLocationId);
+      final from = flow == 'out' ? currentDrawer : other;
+      final to = flow == 'out' ? other : currentDrawer;
+      String fromSessionId = flow == 'out' ? currentSession.id : '';
+      String toSessionId = flow == 'in' ? currentSession.id : '';
+
+      if (from.type == 'cash_drawer' && fromSessionId.isEmpty) {
+        fromSessionId = await AccountingService.currentOpenCashDrawerSessionId(
+          branchId: widget.store.appIdentity.branchId,
+          cashLocationId: from.id,
+        );
+        if (fromSessionId.isEmpty) {
+          throw StateError(_l(tr, 'The source cash drawer has no open shift.', 'درج النقدية المصدر لا يملك شيفتاً مفتوحاً.'));
+        }
+      }
+      if (to.type == 'cash_drawer' && toSessionId.isEmpty) {
+        toSessionId = await AccountingService.currentOpenCashDrawerSessionId(
+          branchId: widget.store.appIdentity.branchId,
+          cashLocationId: to.id,
+        );
+        if (toSessionId.isEmpty) {
+          throw StateError(_l(tr, 'The destination cash drawer has no open shift.', 'درج النقدية الوجهة لا يملك شيفتاً مفتوحاً.'));
+        }
+      }
+      final user = widget.store.activeUser;
+      await AccountingService.createCashTransfer(
+        fromLocationId: from.id,
+        toLocationId: to.id,
+        amount: amount,
+        notes: notes,
+        createdBy: user?.fullName.trim().isNotEmpty == true ? user!.fullName : widget.store.currentRole,
+        createdByUserId: user?.id ?? '',
+        storeId: widget.store.appIdentity.storeId,
+        branchId: widget.store.appIdentity.branchId,
+        deviceId: widget.store.appIdentity.deviceId,
+        fromSessionId: fromSessionId,
+        toSessionId: toSessionId,
+        transferKind: kind,
+        idempotencyKey: 'cash-ui-$kind-${DateTime.now().toUtc().microsecondsSinceEpoch}',
+      );
+      _refresh();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))));
+    }
   }
 
   Future<void> _openDrawerDialog(
@@ -402,7 +622,7 @@ class _CashPageState extends State<CashPage> {
                     _metric(context, tr.text('cash_drawer'), currentDrawer == null ? '0' : '1', Icons.account_balance_wallet_outlined),
                   ]),
                   const SizedBox(height: 16),
-                  Row(children: [
+                  Wrap(spacing: 12, runSpacing: 12, children: [
                     FilledButton.icon(
                       onPressed: canManage
                           ? () => _openDrawerDialog(
@@ -431,7 +651,36 @@ class _CashPageState extends State<CashPage> {
                       icon: const Icon(Icons.arrow_upward_rounded),
                       label: Text(tr.text('cash_out')),
                     ),
-                    const SizedBox(width: 12),
+                    PopupMenuButton<String>(
+                      enabled: canManage && currentDrawer != null && currentSession != null,
+                      tooltip: _l(tr, 'Cash operations', 'عمليات الصندوق'),
+                      onSelected: (value) {
+                        if (currentDrawer == null || currentSession == null) return;
+                        if (value == 'vault_transfer' || value == 'shift_transfer') {
+                          _cashTransferDialog(currentDrawer: currentDrawer, currentSession: currentSession, kind: value);
+                        } else {
+                          _cashOperationDialog(currentDrawer: currentDrawer, currentSession: currentSession, type: value);
+                        }
+                      },
+                      itemBuilder: (context) => <PopupMenuEntry<String>>[
+                        PopupMenuItem(value: 'cash_deposit', child: Text(_l(tr, 'Cash deposit', 'إيداع نقدي'))),
+                        PopupMenuItem(value: 'cash_withdrawal', child: Text(_l(tr, 'Cash withdrawal', 'سحب نقدي'))),
+                        PopupMenuItem(value: 'expense', child: Text(_l(tr, 'Cash expense', 'مصروف نقدي'))),
+                        const PopupMenuDivider(),
+                        PopupMenuItem(value: 'vault_transfer', child: Text(_l(tr, 'Vault transfer', 'تحويل خزنة'))),
+                        PopupMenuItem(value: 'shift_transfer', child: Text(_l(tr, 'Shift transfer', 'تحويل شيفت'))),
+                      ],
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.swap_horiz_rounded),
+                          const SizedBox(width: 8),
+                          Text(_l(tr, 'Operations', 'العمليات')),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.arrow_drop_down_rounded),
+                        ]),
+                      ),
+                    ),
                     OutlinedButton.icon(
                       onPressed: canManage && currentSession != null
                           ? () => _closeDrawerDialog(context, currentSession)
@@ -441,48 +690,50 @@ class _CashPageState extends State<CashPage> {
                     ),
                   ]),
                   const SizedBox(height: 16),
-                  Expanded(
-                    child: Card(
-                      elevation: 0,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: currentDrawer == null
-                            ? 1
-                            : (currentDrawerSessions.isEmpty ? 1 : currentDrawerSessions.length),
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          if (currentDrawer == null) {
-                            return Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Center(
-                                child: Text(tr.text('no_cash_drawer_for_device')),
-                              ),
-                            );
-                          }
-                          if (currentDrawerSessions.isEmpty) {
-                            return Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Center(
-                                child: Text(tr.text('no_open_cash_shift')),
-                              ),
-                            );
-                          }
-                          final session = currentDrawerSessions[index];
-                          return ListTile(
-                            leading: const CircleAvatar(child: Icon(Icons.point_of_sale_outlined)),
-                            title: Text(session.name),
-                            subtitle: Text([
-                              if (session.referenceId == currentDrawer.id) tr.text('drawer_linked_to_device_found'),
-                              if (session.accountName.isNotEmpty) session.accountName,
-                              if (session.referenceId.isNotEmpty) session.referenceId,
-                              if (session.notes.trim().isNotEmpty) session.notes
-                            ].join(' • '), maxLines: 2, overflow: TextOverflow.ellipsis),
-                            trailing: canManage ? TextButton(onPressed: () => _closeDrawerDialog(context, session), child: Text(tr.text('close'))) : null,
-                          );
-                        },
+                  if (currentDrawer == null)
+                    Expanded(
+                      child: Card(
+                        elevation: 0,
+                        child: Center(child: Text(tr.text('no_cash_drawer_for_device'))),
+                      ),
+                    )
+                  else ...[
+                    if (currentSession != null)
+                      Card(
+                        elevation: 0,
+                        child: ListTile(
+                          leading: const CircleAvatar(child: Icon(Icons.point_of_sale_outlined)),
+                          title: Text(currentSession.name),
+                          subtitle: Text([
+                            tr.text('drawer_linked_to_device_found'),
+                            if (currentSession.accountName.isNotEmpty) currentSession.accountName,
+                            if (currentSession.notes.trim().isNotEmpty) currentSession.notes,
+                          ].join(' • '), maxLines: 2, overflow: TextOverflow.ellipsis),
+                          trailing: canManage
+                              ? TextButton(
+                                  onPressed: () => _closeDrawerDialog(context, currentSession),
+                                  child: Text(tr.text('close')),
+                                )
+                              : null,
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          tr.text('no_open_cash_shift'),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    Expanded(
+                      child: CashHistoryPanel(
+                        store: widget.store,
+                        cashLocationId: currentDrawer.id,
+                        currentSessionId: currentSession?.id ?? '',
+                        refreshKey: _refreshKey,
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             );

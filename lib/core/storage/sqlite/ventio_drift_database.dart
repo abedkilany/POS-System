@@ -15,7 +15,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 17;
+  int get schemaVersion => 20;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -2135,6 +2135,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference_type, reference_id);');
     await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_entries_voucher_reference_active ON journal_entries(reference_type, reference_id) WHERE deleted_at = '' AND reference_type IN ('receipt_voucher', 'payment_voucher');");
+    await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_journal_entries_status ON journal_entries(status, entry_date);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_journal_entries_store_branch ON journal_entries(store_id, branch_id);');
@@ -2383,6 +2385,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_cash_transfers_locations ON cash_transfers(from_location_id, to_location_id);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_cash_transfers_status ON cash_transfers(status, transfer_date);');
+    await _ensureColumn('cash_transfers', 'transfer_kind', "TEXT NOT NULL DEFAULT 'vault_transfer'");
+    await _ensureColumn('cash_transfers', 'from_session_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'to_session_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'created_by_user_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'device_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'idempotency_key', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_transfers_idempotency ON cash_transfers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cash_drawer_sessions (
@@ -2418,6 +2428,213 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_location ON cash_drawer_sessions(cash_location_id, status);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_users ON cash_drawer_sessions(opened_by_user_id, closed_by_user_id);');
+
+    // Phase 1 cash ledger: immutable, append-oriented cash movement source.
+    // Existing sale/purchase/accounting flows are intentionally not switched to it yet.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_ledger_transactions (
+        id TEXT PRIMARY KEY NOT NULL,
+        type TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        cash_location_id TEXT NOT NULL,
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        reference_type TEXT NOT NULL DEFAULT '',
+        reference_id TEXT NOT NULL DEFAULT '',
+        reference_number TEXT NOT NULL DEFAULT '',
+        party_type TEXT NOT NULL DEFAULT '',
+        party_id TEXT NOT NULL DEFAULT '',
+        party_name TEXT NOT NULL DEFAULT '',
+        payment_method TEXT NOT NULL DEFAULT 'Cash',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        occurred_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        reversal_of_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (direction IN ('in', 'out')),
+        CHECK (amount >= 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_location_time ON cash_ledger_transactions(cash_location_id, occurred_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_session_time ON cash_ledger_transactions(cash_drawer_session_id, occurred_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_reference ON cash_ledger_transactions(reference_type, reference_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_party ON cash_ledger_transactions(party_type, party_id, occurred_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_store_branch_time ON cash_ledger_transactions(store_id, branch_id, occurred_at DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_ledger_idempotency ON cash_ledger_transactions(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+
+    // Phase 5 standalone cash operations. These rows bind the operational
+    // action to its journal entry and immutable Cash Ledger movement.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_operations (
+        id TEXT PRIMARY KEY NOT NULL,
+        operation_no TEXT NOT NULL,
+        operation_type TEXT NOT NULL,
+        operation_date TEXT NOT NULL,
+        cash_location_id TEXT NOT NULL,
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        journal_entry_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'posted',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (operation_type IN ('cash_deposit', 'cash_withdrawal', 'expense')),
+        CHECK (amount > 0)
+      );
+    ''');
+    await _ensureColumn(
+        'cash_operations', 'status', "TEXT NOT NULL DEFAULT 'posted'");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_operations_location_date ON cash_operations(cash_location_id, operation_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_operations_session_date ON cash_operations(cash_drawer_session_id, operation_date DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_operations_idempotency ON cash_operations(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+
+    // Phase 2 receipt/payment vouchers. These are independent financial events;
+    // invoice paid_amount remains a compatibility cache updated from allocations.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS receipt_vouchers (
+        id TEXT PRIMARY KEY NOT NULL,
+        voucher_no TEXT NOT NULL,
+        customer_id TEXT NOT NULL,
+        customer_name TEXT NOT NULL DEFAULT '',
+        voucher_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        unallocated_amount REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        payment_method TEXT NOT NULL DEFAULT 'Cash',
+        cash_location_id TEXT NOT NULL DEFAULT '',
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'posted',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (amount > 0),
+        CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
+        CHECK (status IN ('posted', 'reversed', 'void'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_customer_date ON receipt_vouchers(customer_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_session_date ON receipt_vouchers(cash_drawer_session_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_store_branch_date ON receipt_vouchers(store_id, branch_id, voucher_date DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_receipt_vouchers_idempotency ON receipt_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS payment_vouchers (
+        id TEXT PRIMARY KEY NOT NULL,
+        voucher_no TEXT NOT NULL,
+        supplier_id TEXT NOT NULL,
+        supplier_name TEXT NOT NULL DEFAULT '',
+        voucher_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        unallocated_amount REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        payment_method TEXT NOT NULL DEFAULT 'Cash',
+        cash_location_id TEXT NOT NULL DEFAULT '',
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'posted',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (amount > 0),
+        CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
+        CHECK (status IN ('posted', 'reversed', 'void'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_supplier_date ON payment_vouchers(supplier_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_session_date ON payment_vouchers(cash_drawer_session_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_store_branch_date ON payment_vouchers(store_id, branch_id, voucher_date DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_vouchers_idempotency ON payment_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS payment_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        voucher_type TEXT NOT NULL,
+        voucher_id TEXT NOT NULL,
+        reference_type TEXT NOT NULL,
+        reference_id TEXT NOT NULL,
+        reference_number TEXT NOT NULL DEFAULT '',
+        amount REAL NOT NULL,
+        reference_amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        reference_currency TEXT NOT NULL DEFAULT 'USD',
+        exchange_rate REAL NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (voucher_type IN ('receipt', 'payment')),
+        CHECK (reference_type IN ('sale', 'purchase')),
+        CHECK (amount > 0),
+        CHECK (reference_amount > 0),
+        CHECK (exchange_rate > 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_allocations_voucher ON payment_allocations(voucher_type, voucher_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_allocations_reference ON payment_allocations(reference_type, reference_id);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_allocations_target_per_voucher ON payment_allocations(voucher_type, voucher_id, reference_type, reference_id) WHERE deleted_at = '';");
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cheques (
