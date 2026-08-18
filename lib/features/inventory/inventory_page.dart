@@ -10,6 +10,7 @@ import '../../core/utils/currency_utils.dart';
 import '../../core/utils/revision_cache.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/sql_result_export_service.dart';
+import '../../core/services/warehouse_inventory_pdf_service.dart';
 import '../../data/app_store.dart';
 import '../../models/inventory_count.dart';
 import '../../models/product.dart';
@@ -1253,6 +1254,32 @@ class _WarehousesTabState extends State<_WarehousesTab> {
     });
   }
 
+  Future<void> _printWarehouseInventory(
+    Warehouse warehouse,
+    List<_WarehouseProductStock> rows,
+  ) async {
+    try {
+      await WarehouseInventoryPdfService.printWarehouseInventory(
+        warehouse: warehouse,
+        rows: rows
+            .map(
+              (row) => WarehouseInventoryPdfRow(
+                product: row.product,
+                stock: row.stock,
+              ),
+            )
+            .toList(growable: false),
+        profile: widget.store.storeProfile,
+        locale: Localizations.localeOf(context),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -1297,7 +1324,21 @@ class _WarehousesTabState extends State<_WarehousesTab> {
               child: ExpansionTile(
                 leading:
                     const CircleAvatar(child: Icon(Icons.warehouse_outlined)),
-                title: Text(warehouse.name),
+                title: Row(
+                  children: [
+                    Expanded(child: Text(warehouse.name)),
+                    IconButton(
+                      tooltip:
+                          Localizations.localeOf(context).languageCode == 'ar'
+                              ? 'طباعة محتوى المستودع'
+                              : 'Print warehouse inventory',
+                      onPressed: stockRowsByWarehouse == null
+                          ? null
+                          : () => _printWarehouseInventory(warehouse, rows),
+                      icon: const Icon(Icons.print_outlined),
+                    ),
+                  ],
+                ),
                 subtitle: Text([
                   if (warehouse.code.isNotEmpty) warehouse.code,
                   if (warehouse.location.isNotEmpty) warehouse.location

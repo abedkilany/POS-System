@@ -4,8 +4,8 @@
     "channel":  "stable",
     "windows":  {
                     "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.25-build25.exe",
-                    "sha256":  "02a8b9c97b1730615f93514c488b31e9e7762731d6ffbf142b5089777d64ebe5",
-                    "size":  26267645
+                    "sha256":  "9f873bcc64447fc349e06e76bf960e8fccf10307ae6c8441d016e230817645ff",
+                    "size":  26271314
                 },
     "android":  {
                     "source":  "play_store"

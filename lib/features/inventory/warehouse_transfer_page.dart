@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/localization/localized_domain_exception.dart';
+import '../../core/services/warehouse_transfer_pdf_service.dart';
 import '../../data/app_store.dart';
 import '../../models/product.dart';
 import '../../models/warehouse.dart';
@@ -553,7 +554,20 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
                 subtitle: Text(
                   '${order.fromWarehouseName} → ${order.toWarehouseName} • ${order.items.length} products • ${_fmt(order.totalUnits)} units',
                 ),
-                trailing: Text(_dateText(order.date)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_dateText(order.date)),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: Localizations.localeOf(context).languageCode == 'ar'
+                          ? 'طباعة'
+                          : 'Print',
+                      onPressed: () => _printOrder(order),
+                      icon: const Icon(Icons.print_outlined),
+                    ),
+                  ],
+                ),
                 onTap: () => _showOrderDetails(order),
               );
             },
@@ -561,6 +575,21 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
         );
       },
     );
+  }
+
+  Future<void> _printOrder(WarehouseTransferOrder order) async {
+    try {
+      await WarehouseTransferPdfService.printTransferOrder(
+        order: order,
+        profile: widget.store.storeProfile,
+        locale: Localizations.localeOf(context),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    }
   }
 
   Future<void> _showOrderDetails(WarehouseTransferOrder order) async {
