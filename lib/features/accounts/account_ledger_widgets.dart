@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/cash_ledger_service.dart';
+import '../../core/services/cash_receipt_pdf_service.dart';
+import '../../core/services/payment_voucher_service.dart';
+import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/account_transaction.dart';
+import '../../models/cash_ledger_transaction.dart';
 
 String accountBalanceText(BuildContext context, AppStore store,
     String accountType, String accountId) {
@@ -206,8 +211,145 @@ class _TransactionTile extends StatelessWidget {
         transaction.referenceNo,
         transaction.note,
       ].where((part) => part.trim().isNotEmpty).join(' • ')),
-      trailing:
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
           Text('$sign ${formatUsdReferenceAmount(amount, store.storeProfile)}'),
+          if (_isReceiptMovement(transaction)) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: Localizations.localeOf(context).languageCode == 'ar'
+                  ? 'طباعة الإيصال'
+                  : 'Print receipt',
+              onPressed: () => _printReceipt(context),
+              icon: const Icon(Icons.print_outlined, size: 20),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  bool _isReceiptMovement(AccountTransaction item) =>
+      item.type == 'paymentReceived' || item.type == 'paymentPaid';
+
+  Future<void> _printReceipt(BuildContext context) async {
+    try {
+      final printable = await _resolvePrintableReceipt();
+      if (!context.mounted) return;
+      await CashReceiptPdfService.printReceipt(
+        transaction: printable,
+        profile: store.storeProfile,
+        locale: Localizations.localeOf(context),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      final ar = Localizations.localeOf(context).languageCode == 'ar';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ar
+                ? 'تعذر طباعة الإيصال: $error'
+                : 'Could not print receipt: $error',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<CashLedgerTransaction> _resolvePrintableReceipt() async {
+    final db = SqliteMigrationManager.database;
+    if (db != null) {
+      final ledger = CashLedgerService(db);
+      CashLedgerTransaction? found;
+
+      final suffix = transaction.type == 'paymentReceived'
+          ? '-customer-payment'
+          : '-supplier-payment';
+      if (transaction.id.endsWith(suffix) &&
+          transaction.id.length > suffix.length) {
+        final voucherId = transaction.id
+            .substring(0, transaction.id.length - suffix.length);
+        final rows = await ledger.list(
+          referenceType: transaction.type == 'paymentReceived'
+              ? 'receipt_voucher'
+              : 'payment_voucher',
+          referenceId: voucherId,
+          limit: 1,
+        );
+        if (rows.isNotEmpty) found = rows.first;
+      }
+
+      if (found == null) {
+        final rows = await ledger.list(
+          referenceType: 'legacy_account_transaction',
+          referenceId: transaction.id,
+          limit: 1,
+        );
+        if (rows.isNotEmpty) found = rows.first;
+      }
+
+      if (found == null) {
+        await PaymentVoucherService(db).backfillLegacyCashLedger();
+
+        final suffix = transaction.type == 'paymentReceived'
+            ? '-customer-payment'
+            : '-supplier-payment';
+        if (transaction.id.endsWith(suffix) &&
+            transaction.id.length > suffix.length) {
+          final voucherId = transaction.id
+              .substring(0, transaction.id.length - suffix.length);
+          final rows = await ledger.list(
+            referenceType: transaction.type == 'paymentReceived'
+                ? 'receipt_voucher'
+                : 'payment_voucher',
+            referenceId: voucherId,
+            limit: 1,
+          );
+          if (rows.isNotEmpty) found = rows.first;
+        }
+
+        if (found == null) {
+          final rows = await ledger.list(
+            referenceType: 'legacy_account_transaction',
+            referenceId: transaction.id,
+            limit: 1,
+          );
+          if (rows.isNotEmpty) found = rows.first;
+        }
+      }
+
+      if (found != null) return found;
+    }
+
+    final amount =
+        transaction.debit > 0 ? transaction.debit : transaction.credit;
+    final isReceipt = transaction.type == 'paymentReceived';
+    return CashLedgerTransaction(
+      id: transaction.id,
+      type: isReceipt ? 'receipt' : 'supplier_payment',
+      direction: isReceipt ? 'in' : 'out',
+      amount: amount,
+      currency: transaction.currency,
+      cashLocationId: '',
+      referenceType: 'account_transaction',
+      referenceId: transaction.referenceId,
+      referenceNumber: transaction.referenceNo,
+      partyType: transaction.accountType,
+      partyId: transaction.accountId,
+      partyName: transaction.accountName,
+      paymentMethod: transaction.paymentMethod.trim().isEmpty
+          ? 'Cash'
+          : transaction.paymentMethod,
+      deviceId: transaction.deviceId,
+      branchId: transaction.branchId,
+      storeId: transaction.storeId,
+      notes: transaction.note,
+      occurredAt: transaction.date.toUtc(),
+      createdAt: transaction.createdAt.toUtc(),
+      updatedAt: transaction.updatedAt.toUtc(),
+      lastModifiedByDeviceId: transaction.lastModifiedByDeviceId,
     );
   }
 
