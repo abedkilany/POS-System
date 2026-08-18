@@ -5,9 +5,9 @@
                          "url":  "/releases/windows/VentioSetup-1.0.21-build21.exe",
                          "version":  "1.0.21",
                          "build":  21,
-                         "size":  26140617,
-                         "sha256":  "57a2e7da257693ba3003862f9998aed592879f6b4dc17dbe44c45ce51380c908",
-                         "publishedAt":  "2026-08-18T11:23:05Z"
+                         "size":  26141607,
+                         "sha256":  "259890cc97045159a63828032c5b63dbd4ec122ee65b887216e9d0b0429f24ae",
+                         "publishedAt":  "2026-08-18T11:35:42Z"
                      }
                  ]
 }

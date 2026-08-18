@@ -1749,6 +1749,49 @@ class AppStore extends ChangeNotifier {
     return stockForWarehouse(productId, resolvedWarehouseId);
   }
 
+  Future<Map<String, Map<String, double>>>
+      warehouseStockBalancesFromSqlite() async {
+    if (LocalDatabaseService.isSqliteAuthoritative) {
+      final db = SqliteMigrationManager.database;
+      if (db != null) {
+        final rows = await db.customSelect(
+          '''
+          SELECT warehouse_id, product_id, quantity
+          FROM warehouse_inventory
+          WHERE store_id = ? AND ABS(quantity) > 0.0000001
+          ORDER BY warehouse_id ASC, product_id ASC
+          ''',
+          variables: <Variable<Object>>[
+            Variable<String>(appIdentity.storeId),
+          ],
+        ).get();
+        final balances = <String, Map<String, double>>{};
+        for (final row in rows) {
+          final warehouseId =
+              (row.data['warehouse_id'] as String? ?? '').trim();
+          final productId = (row.data['product_id'] as String? ?? '').trim();
+          final quantity = (row.data['quantity'] as num? ?? 0).toDouble();
+          if (warehouseId.isEmpty ||
+              productId.isEmpty ||
+              quantity.abs() <= 0.0000001) {
+            continue;
+          }
+          (balances[warehouseId] ??= <String, double>{})[productId] = quantity;
+        }
+        return balances;
+      }
+    }
+
+    final balances = <String, Map<String, double>>{};
+    for (final product in stockTrackedProducts) {
+      for (final entry in warehouseStockForProduct(product.id).entries) {
+        if (entry.value.abs() <= 0.0000001) continue;
+        (balances[entry.key] ??= <String, double>{})[product.id] = entry.value;
+      }
+    }
+    return balances;
+  }
+
   Future<double> totalWarehouseStockFromSqlite(String productId) async {
     if (LocalDatabaseService.isSqliteAuthoritative) {
       final db = SqliteMigrationManager.database;

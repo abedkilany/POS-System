@@ -1132,9 +1132,8 @@ class _WarehousesTab extends StatefulWidget {
 }
 
 class _WarehousesTabState extends State<_WarehousesTab> {
-  final RevisionKeyCache<Map<String, List<_WarehouseProductStock>>>
-      _stockRowsCache =
-      RevisionKeyCache<Map<String, List<_WarehouseProductStock>>>();
+  Future<Map<String, List<_WarehouseProductStock>>>? _stockRowsFuture;
+  String _stockRowsFutureKey = '';
 
   Future<double> _warehouseStock(
     String productId,
@@ -1153,36 +1152,49 @@ class _WarehousesTabState extends State<_WarehousesTab> {
   void didUpdateWidget(covariant _WarehousesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
-      _stockRowsCache.invalidate();
+      _stockRowsFuture = null;
+      _stockRowsFutureKey = '';
     }
   }
 
-  Map<String, List<_WarehouseProductStock>> _stockRowsByWarehouse() {
-    return _stockRowsCache.getOrCompute(
-      widget.store.inventoryRevision,
-      widget.store.appIdentity.storeId,
-      () {
-        final warehouses = widget.store.warehouses;
-        final products = widget.store.stockTrackedProducts;
-        final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
-          for (final warehouse in warehouses)
-            warehouse.id: <_WarehouseProductStock>[],
-        };
-        for (final product in products) {
-          for (final entry
-              in widget.store.warehouseStockForProduct(product.id).entries) {
-            if (entry.value != 0) {
-              (stockRowsByWarehouse[entry.key] ??= <_WarehouseProductStock>[])
-                  .add(_WarehouseProductStock(
-                product: product,
-                stock: entry.value,
-              ));
-            }
-          }
-        }
-        return stockRowsByWarehouse;
-      },
-    );
+  Future<Map<String, List<_WarehouseProductStock>>>
+      _loadStockRowsByWarehouse() async {
+    final warehouses = widget.store.warehouses;
+    final products = widget.store.stockTrackedProducts;
+    final productsById = <String, Product>{
+      for (final product in products) product.id: product,
+    };
+    final balances = await widget.store.warehouseStockBalancesFromSqlite();
+    final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
+      for (final warehouse in warehouses)
+        warehouse.id: <_WarehouseProductStock>[],
+    };
+
+    for (final warehouseEntry in balances.entries) {
+      final rows = stockRowsByWarehouse[warehouseEntry.key];
+      if (rows == null) continue;
+      for (final productEntry in warehouseEntry.value.entries) {
+        final product = productsById[productEntry.key];
+        if (product == null) continue;
+        rows.add(_WarehouseProductStock(
+          product: product,
+          stock: productEntry.value,
+        ));
+      }
+      rows.sort((a, b) => a.product.name.compareTo(b.product.name));
+    }
+    return stockRowsByWarehouse;
+  }
+
+  Future<Map<String, List<_WarehouseProductStock>>>
+      _stockRowsByWarehouseFuture() {
+    final key =
+        '${widget.store.appIdentity.storeId}:${widget.store.inventoryRevision}';
+    if (_stockRowsFuture == null || _stockRowsFutureKey != key) {
+      _stockRowsFutureKey = key;
+      _stockRowsFuture = _loadStockRowsByWarehouse();
+    }
+    return _stockRowsFuture!;
   }
 
   Future<void> _createWarehouse() async {
@@ -1419,51 +1431,64 @@ class _WarehousesTabState extends State<_WarehousesTab> {
       );
     }
     final warehouses = widget.store.warehouses;
-    final stockRowsByWarehouse = _stockRowsByWarehouse();
-    return ListView.builder(
-      padding: VentioResponsive.pageInsets(context),
-      itemCount: warehouses.length + 1,
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Wrap(spacing: 12, runSpacing: 12, children: [
-              FilledButton.icon(
-                  onPressed: _createWarehouse,
-                  icon: const Icon(Icons.add_business_outlined),
-                  label: Text(tr.text('create_warehouse'))),
-              OutlinedButton.icon(
-                  onPressed: warehouses.length < 2 ? null : _transferStock,
-                  icon: const Icon(Icons.swap_horiz),
-                  label: Text(tr.text('transfer_stock'))),
-            ]),
-          );
-        }
-        final warehouse = warehouses[index - 1];
-        final rows = stockRowsByWarehouse[warehouse.id] ??
-            const <_WarehouseProductStock>[];
-        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          child: ExpansionTile(
-            leading: const CircleAvatar(child: Icon(Icons.warehouse_outlined)),
-            title: Text(warehouse.name),
-            subtitle: Text([
-              if (warehouse.code.isNotEmpty) warehouse.code,
-              if (warehouse.location.isNotEmpty) warehouse.location
-            ].join(' • ')),
-            children: [
-              for (final row in rows.take(100))
-                ListTile(
-                  dense: true,
-                  title: Text(row.product.name),
-                  trailing: Text('${row.stock}'),
-                ),
-              if (rows.isEmpty)
-                Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(tr.text('no_inventory_items'))),
-            ],
-          ),
+    return FutureBuilder<Map<String, List<_WarehouseProductStock>>>(
+      future: _stockRowsByWarehouseFuture(),
+      builder: (context, snapshot) {
+        final stockRowsByWarehouse = snapshot.data;
+        return ListView.builder(
+          padding: VentioResponsive.pageInsets(context),
+          itemCount: warehouses.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Wrap(spacing: 12, runSpacing: 12, children: [
+                  FilledButton.icon(
+                      onPressed: _createWarehouse,
+                      icon: const Icon(Icons.add_business_outlined),
+                      label: Text(tr.text('create_warehouse'))),
+                  OutlinedButton.icon(
+                      onPressed: warehouses.length < 2 ? null : _transferStock,
+                      icon: const Icon(Icons.swap_horiz),
+                      label: Text(tr.text('transfer_stock'))),
+                ]),
+              );
+            }
+            final warehouse = warehouses[index - 1];
+            final rows = stockRowsByWarehouse?[warehouse.id] ??
+                const <_WarehouseProductStock>[];
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ExpansionTile(
+                leading:
+                    const CircleAvatar(child: Icon(Icons.warehouse_outlined)),
+                title: Text(warehouse.name),
+                subtitle: Text([
+                  if (warehouse.code.isNotEmpty) warehouse.code,
+                  if (warehouse.location.isNotEmpty) warehouse.location
+                ].join(' • ')),
+                children: [
+                  if (stockRowsByWarehouse == null)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else ...[
+                    for (final row in rows.take(100))
+                      ListTile(
+                        dense: true,
+                        title: Text(row.product.name),
+                        trailing: Text('${row.stock}'),
+                      ),
+                    if (rows.isEmpty)
+                      Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(tr.text('no_inventory_items'))),
+                  ],
+                ],
+              ),
+            );
+          },
         );
       },
     );
