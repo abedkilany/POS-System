@@ -4,8 +4,8 @@
     "channel":  "stable",
     "windows":  {
                     "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.20-build20.exe",
-                    "sha256":  "1048c3bc6935e5cf98650138ea0c49eeff377c98fb1ab39c52344bd4f9e7c83c",
-                    "size":  26139728
+                    "sha256":  "ea6f391581330c89971eb4f2b865e67ac371018c99974f54b69b7d80dc3defc9",
+                    "size":  26140650
                 },
     "android":  {
                     "source":  "play_store"

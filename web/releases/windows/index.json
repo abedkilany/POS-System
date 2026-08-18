@@ -5,9 +5,9 @@
                          "url":  "/releases/windows/VentioSetup-1.0.20-build20.exe",
                          "version":  "1.0.20",
                          "build":  20,
-                         "size":  26139728,
-                         "sha256":  "1048c3bc6935e5cf98650138ea0c49eeff377c98fb1ab39c52344bd4f9e7c83c",
-                         "publishedAt":  "2026-08-17T21:26:46Z"
+                         "size":  26140650,
+                         "sha256":  "ea6f391581330c89971eb4f2b865e67ac371018c99974f54b69b7d80dc3defc9",
+                         "publishedAt":  "2026-08-17T21:53:53Z"
                      }
                  ]
 }
