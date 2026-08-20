@@ -24,10 +24,10 @@ class InvoicePdfService {
     Locale locale = const Locale('en'),
   }) async {
     final baseFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/DejaVuSans.ttf'),
+      await rootBundle.load('assets/fonts/Tahoma.ttf'),
     );
     final boldFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'),
+      await rootBundle.load('assets/fonts/Tahoma-Bold.ttf'),
     );
     final labels = _InvoicePdfLabels(locale.languageCode);
     final isArabic = locale.languageCode == 'ar';
@@ -79,6 +79,7 @@ class InvoicePdfService {
             sale: sale,
             profile: profile,
             labels: labels,
+            isArabic: isArabic,
           ),
         ],
       ),
@@ -212,45 +213,29 @@ class InvoicePdfService {
           ),
         ),
         pw.SizedBox(height: 14),
-        _metaItem(labels.invoiceNo, sale.invoiceNo),
+        _metaItem(labels.invoiceNo, sale.invoiceNo, isArabic: isArabic),
         pw.SizedBox(height: 8),
-        _metaItem(labels.date, _formatDate(sale.date)),
+        _metaItem(labels.date, _formatDate(sale.date), isArabic: isArabic),
         pw.SizedBox(height: 8),
-        _metaItem(labels.time, _formatTime(sale.date)),
+        _metaItem(labels.time, _formatTime(sale.date), isArabic: isArabic),
       ],
     );
   }
 
-  static pw.Widget _metaItem(String label, String value) {
+  static pw.Widget _metaItem(String label, String value, {required bool isArabic}) {
     return pw.Directionality(
       textDirection: pw.TextDirection.ltr,
       child: pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Container(
-          width: 17,
-          height: 17,
-          alignment: pw.Alignment.center,
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(color: _navy, width: .8),
-            borderRadius: pw.BorderRadius.circular(3),
-          ),
-          child: pw.Text(
-            label.isEmpty ? '' : label.substring(0, 1),
-            style: pw.TextStyle(
-              fontSize: 7,
-              fontWeight: pw.FontWeight.bold,
-              color: _navy,
-            ),
-          ),
-        ),
-        pw.SizedBox(width: 7),
         pw.Expanded(
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Text(
                 label,
+                textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                textAlign: isArabic ? pw.TextAlign.right : pw.TextAlign.left,
                 style: const pw.TextStyle(fontSize: 6.8, color: _muted),
               ),
               pw.SizedBox(height: 2),
@@ -280,7 +265,7 @@ class InvoicePdfService {
       children: [
         if (logoBytes != null)
           pw.Container(
-            height: 88,
+            height: 108,
             alignment: pw.Alignment.center,
             child: pw.Image(
               pw.MemoryImage(logoBytes),
@@ -316,7 +301,7 @@ class InvoicePdfService {
           profile.name,
           textAlign: pw.TextAlign.right,
           style: pw.TextStyle(
-            fontSize: 15.5,
+            fontSize: 13.5,
             fontWeight: pw.FontWeight.bold,
             color: _navy,
           ),
@@ -392,7 +377,9 @@ class InvoicePdfService {
             ),
             pw.Text(
               '${labels.invoiceNo}: ${sale.invoiceNo}',
-              textDirection: pw.TextDirection.ltr,
+              textDirection: labels.isArabic
+                  ? pw.TextDirection.rtl
+                  : pw.TextDirection.ltr,
               style: const pw.TextStyle(fontSize: 7, color: _muted),
             ),
           ],
@@ -410,7 +397,7 @@ class InvoicePdfService {
     required bool isArabic,
   }) {
     return pw.Container(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 17, vertical: 12),
+      padding: const pw.EdgeInsets.symmetric(horizontal: 15, vertical: 8),
       decoration: pw.BoxDecoration(
         color: _soft,
         borderRadius: pw.BorderRadius.circular(6),
@@ -427,7 +414,7 @@ class InvoicePdfService {
               valueDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
             ),
           ),
-          pw.Container(width: .7, height: 34, color: _line),
+          pw.Container(width: .7, height: 26, color: _line),
           pw.Expanded(
             child: _stripInfo(
               label: labels.paymentMethod,
@@ -449,13 +436,15 @@ class InvoicePdfService {
     required pw.TextDirection valueDirection,
   }) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 12),
+      padding: const pw.EdgeInsets.symmetric(horizontal: 10),
       child: pw.Column(
         crossAxisAlignment:
             alignRight ? pw.CrossAxisAlignment.end : pw.CrossAxisAlignment.start,
         children: [
           pw.Text(
             label,
+            textDirection: valueDirection,
+            textAlign: alignRight ? pw.TextAlign.right : pw.TextAlign.left,
             style: pw.TextStyle(
               fontSize: 7.6,
               fontWeight: pw.FontWeight.bold,
@@ -546,83 +535,41 @@ class InvoicePdfService {
     required Sale sale,
     required StoreProfile profile,
     required _InvoicePdfLabels labels,
+    required bool isArabic,
   }) {
-    return pw.Directionality(
-      textDirection: pw.TextDirection.ltr,
-      child: pw.Row(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.Container(
-          width: 175,
-          padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-          decoration: pw.BoxDecoration(
-            color: _soft,
-            borderRadius: pw.BorderRadius.circular(6),
-          ),
-          child: pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.center,
-            children: [
-              pw.Container(
-                width: 31,
-                height: 31,
-                alignment: pw.Alignment.center,
-                decoration: pw.BoxDecoration(
-                  border: pw.Border.all(color: _gold, width: 1.4),
-                  shape: pw.BoxShape.circle,
-                ),
-                child: pw.Text(
-                  '✓',
-                  style: pw.TextStyle(
-                    color: _gold,
-                    fontWeight: pw.FontWeight.bold,
-                    fontSize: 15,
-                  ),
+    return pw.Align(
+      alignment: pw.Alignment.centerRight,
+      child: pw.Container(
+        width: 330,
+        child: pw.Column(
+          children: [
+            _totalsLine(
+              label: labels.subtotal,
+              value: _formatMoney(sale.subtotal, profile),
+              isArabic: isArabic,
+            ),
+            pw.SizedBox(height: 7),
+            _totalsLine(
+              label: labels.discount,
+              value: _formatMoney(sale.discount, profile),
+              isArabic: isArabic,
+            ),
+            pw.SizedBox(height: 9),
+            pw.Container(height: .8, color: _line),
+            pw.SizedBox(height: 9),
+            pw.Container(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: pw.BoxDecoration(
+                color: _navy,
+                borderRadius: pw.BorderRadius.circular(5),
+                border: const pw.Border(
+                  right: pw.BorderSide(color: _gold, width: 5),
                 ),
               ),
-              pw.SizedBox(height: 9),
-              pw.Text(
-                labels.thankYou,
-                textAlign: pw.TextAlign.center,
-                style: pw.TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: pw.FontWeight.bold,
-                  color: _navy,
-                ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Container(width: 38, height: 2, color: _gold),
-            ],
-          ),
-        ),
-        pw.SizedBox(width: 30),
-        pw.Expanded(
-          child: pw.Column(
-            children: [
-              _totalsLine(
-                label: labels.subtotal,
-                value: _formatMoney(sale.subtotal, profile),
-              ),
-              pw.SizedBox(height: 8),
-              _totalsLine(
-                label: labels.discount,
-                value: _formatMoney(sale.discount, profile),
-              ),
-              pw.SizedBox(height: 10),
-              pw.Container(height: .8, color: _line),
-              pw.SizedBox(height: 10),
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(horizontal: 17, vertical: 13),
-                decoration: pw.BoxDecoration(
-                  color: _navy,
-                  borderRadius: pw.BorderRadius.circular(5),
-                  border: const pw.Border(
-                    right: pw.BorderSide(color: _gold, width: 5),
-                  ),
-                ),
-                child: pw.Directionality(
-                  textDirection: pw.TextDirection.ltr,
-                  child: pw.Row(
-                    children: [
+              child: pw.Directionality(
+                textDirection: pw.TextDirection.ltr,
+                child: pw.Row(
+                  children: [
                     pw.Text(
                       _formatMoney(sale.total, profile),
                       textDirection: pw.TextDirection.ltr,
@@ -635,34 +582,37 @@ class InvoicePdfService {
                     pw.Spacer(),
                     pw.Text(
                       labels.total,
+                      textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                      textAlign: pw.TextAlign.right,
                       style: pw.TextStyle(
                         fontSize: 12,
                         fontWeight: pw.FontWeight.bold,
                         color: PdfColors.white,
                       ),
                     ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
-              if (sale.note.trim().isNotEmpty) ...[
-                pw.SizedBox(height: 10),
-                pw.Text(
-                  sale.note.trim(),
-                  style: const pw.TextStyle(fontSize: 7, color: _muted),
-                ),
-              ],
+            ),
+            if (sale.note.trim().isNotEmpty) ...[
+              pw.SizedBox(height: 9),
+              pw.Text(
+                sale.note.trim(),
+                textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                textAlign: isArabic ? pw.TextAlign.right : pw.TextAlign.left,
+                style: const pw.TextStyle(fontSize: 7, color: _muted),
+              ),
             ],
-          ),
+          ],
         ),
-      ],
-    ),
+      ),
     );
   }
 
   static pw.Widget _totalsLine({
     required String label,
     required String value,
+    required bool isArabic,
   }) {
     return pw.Directionality(
       textDirection: pw.TextDirection.ltr,
@@ -680,6 +630,8 @@ class InvoicePdfService {
         pw.Spacer(),
         pw.Text(
           label,
+          textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+          textAlign: pw.TextAlign.right,
           style: const pw.TextStyle(fontSize: 8.2, color: _ink),
         ),
       ],
@@ -713,6 +665,9 @@ class InvoicePdfService {
             pw.Expanded(
               child: pw.Text(
                 contact.isEmpty ? profile.name : contact,
+                textDirection: _containsArabic(contact)
+                    ? pw.TextDirection.rtl
+                    : pw.TextDirection.ltr,
                 textAlign: pw.TextAlign.center,
                 style: const pw.TextStyle(fontSize: 6.3, color: _muted),
               ),
@@ -753,6 +708,10 @@ class InvoicePdfService {
     } catch (_) {
       return null;
     }
+  }
+
+  static bool _containsArabic(String value) {
+    return RegExp(r'[\u0600-\u06FF]').hasMatch(value);
   }
 
   static String _formatDate(DateTime date) {
