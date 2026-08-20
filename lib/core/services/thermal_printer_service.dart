@@ -249,6 +249,20 @@ class ThermalReceiptWidget extends StatelessWidget {
 
   bool get isArabic => locale.languageCode.toLowerCase() == 'ar';
 
+  Uint8List? get _logoBytes {
+    final raw = profile.logoDataBase64.trim();
+    if (raw.isEmpty) return null;
+    try {
+      final comma = raw.indexOf(',');
+      final payload = raw.startsWith('data:') && comma >= 0
+          ? raw.substring(comma + 1)
+          : raw;
+      return base64Decode(payload);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final textDirection = isArabic ? TextDirection.rtl : TextDirection.ltr;
@@ -277,20 +291,36 @@ class ThermalReceiptWidget extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    profile.name,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.bold,
+                  if (_logoBytes != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Image.memory(
+                        _logoBytes!,
+                        height: width >= 500 ? 125 : 96,
+                        fit: BoxFit.contain,
+                      ),
+                    )
+                  else
+                    Text(
+                      profile.name,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
                   if (profile.phone.trim().isNotEmpty)
                     Text(profile.phone, textAlign: TextAlign.center),
                   if (profile.address.trim().isNotEmpty)
                     Text(profile.address, textAlign: TextAlign.center),
                   const SizedBox(height: 10),
                   const Divider(color: Colors.black, thickness: 2),
+                  Text(
+                    isArabic ? 'فاتورة مبيعات' : 'SALES INVOICE',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 7),
                   Text('${labels.invoice}: ${sale.invoiceNo}'),
                   Text('${labels.date}: ${_formatDate(sale.date)}'),
                   if (sale.customerName.trim().isNotEmpty)

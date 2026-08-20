@@ -6,20 +6,27 @@ class AppSectionHeader extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.action,
+    this.compact = false,
   });
 
   final String title;
   final String subtitle;
   final Widget? action;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final textBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
-        Text(subtitle),
+        Text(title,
+            style: (compact
+                    ? Theme.of(context).textTheme.titleLarge
+                    : Theme.of(context).textTheme.headlineSmall)
+                ?.copyWith(fontWeight: FontWeight.bold)),
+        SizedBox(height: compact ? 1 : 4),
+        Text(subtitle,
+            style: compact ? Theme.of(context).textTheme.bodySmall : null),
       ],
     );
 
@@ -31,7 +38,7 @@ class AppSectionHeader extends StatelessWidget {
             children: [
               textBlock,
               if (action != null) ...[
-                const SizedBox(height: 12),
+                SizedBox(height: compact ? 4 : 12),
                 Align(alignment: AlignmentDirectional.centerStart, child: action!),
               ],
             ],

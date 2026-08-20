@@ -1,6 +1,6 @@
+import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
-import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 import '../../models/expense.dart';
 import '../../models/store_profile.dart';
 import '../utils/currency_utils.dart';
+import 'professional_pdf_theme.dart';
 
 class ExpensePdfService {
   static Future<Uint8List> buildExpensePdf({
@@ -15,80 +16,63 @@ class ExpensePdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final baseFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/DejaVuSans.ttf'),
-    );
-    final boldFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'),
-    );
     final labels = _ExpensePdfLabels(locale.languageCode);
-    final pdf = pw.Document(
-      theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont),
-    );
+    final isArabic = labels.isArabic;
+    final theme = await ProfessionalPdfTheme.loadTheme();
+    final pdf = pw.Document(theme: theme);
 
     final originalAmount = formatCurrency(
       expense.originalAmount ?? expense.amount,
       currency: expense.originalCurrency,
     );
     final referenceAmount = formatUsdReferenceAmount(expense.amount, profile);
+    final status = _statusLabel(labels, expense);
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
-        textDirection:
-            labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
+        textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        header: (context) => context.pageNumber == 1
+            ? ProfessionalPdfTheme.header(
+                profile: profile,
+                title: labels.expense,
+                englishTitle: 'EXPENSE',
+                isArabic: isArabic,
+                meta: [
+                  MapEntry(labels.no, expense.id),
+                  MapEntry(labels.date, _formatDate(expense.date)),
+                  MapEntry(labels.status, status),
+                ],
+              )
+            : ProfessionalPdfTheme.compactHeader(profile: profile, title: labels.expense),
+        footer: (context) => ProfessionalPdfTheme.footer(context: context, profile: profile, isArabic: isArabic),
         build: (_) => [
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text(profile.name,
-                      style: pw.TextStyle(
-                          fontSize: 22, fontWeight: pw.FontWeight.bold)),
-                  if (profile.phone.isNotEmpty)
-                    pw.Text('${labels.phone}: ${profile.phone}'),
-                  if (profile.address.isNotEmpty)
-                    pw.Text('${labels.address}: ${profile.address}'),
-                ],
-              ),
-              pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.end,
-                children: [
-                  pw.Text(labels.expense,
-                      style: pw.TextStyle(
-                          fontSize: 20, fontWeight: pw.FontWeight.bold)),
-                  pw.Text('${labels.no}: ${expense.id}'),
-                  pw.Text('${labels.date}: ${_formatDate(expense.date)}'),
-                  pw.Text('${labels.status}: ${_statusLabel(labels, expense)}'),
-                ],
-              ),
+          ProfessionalPdfTheme.infoStrip(
+            isArabic: isArabic,
+            entries: [
+              MapEntry(labels.title, expense.title),
+              MapEntry(labels.category, expense.category),
+              MapEntry(labels.status, status),
             ],
           ),
-          pw.SizedBox(height: 20),
-          pw.TableHelper.fromTextArray(
-            border: null,
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            headers: [labels.field, labels.value],
-            data: [
-              [labels.title, expense.title],
-              [labels.category, expense.category],
-              [labels.amount, originalAmount],
-              [labels.referenceAmount, referenceAmount],
-              [labels.date, _formatDate(expense.date)],
-              [labels.status, _statusLabel(labels, expense)],
-              if (expense.notes.trim().isNotEmpty)
-                [labels.notes, expense.notes.trim()],
-              if (expense.cancelReason.trim().isNotEmpty)
-                [labels.cancelReason, expense.cancelReason.trim()],
+          pw.SizedBox(height: 14),
+          ProfessionalPdfTheme.summaryBox(
+            isArabic: isArabic,
+            highlightIndex: 0,
+            rows: [
+              MapEntry(labels.amount, originalAmount),
+              MapEntry(labels.referenceAmount, referenceAmount),
             ],
           ),
-          pw.SizedBox(height: 24),
-          pw.Text(profile.footerNote),
+          if (expense.notes.trim().isNotEmpty) ...[
+            pw.SizedBox(height: 16),
+            ProfessionalPdfTheme.note(labels.notes, expense.notes.trim(), isArabic: isArabic),
+          ],
+          if (expense.cancelReason.trim().isNotEmpty) ...[
+            pw.SizedBox(height: 10),
+            ProfessionalPdfTheme.note(labels.cancelReason, expense.cancelReason.trim(), isArabic: isArabic),
+          ],
         ],
       ),
     );
@@ -100,23 +84,15 @@ class ExpensePdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildExpensePdf(
-      expense: expense,
-      profile: profile,
-      locale: locale,
-    );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
-      name: expense.title,
-    );
+    final bytes = await buildExpensePdf(expense: expense, profile: profile, locale: locale);
+    await Printing.layoutPdf(onLayout: (_) async => bytes, name: expense.title);
   }
 
-  static String _statusLabel(_ExpensePdfLabels labels, Expense expense) =>
-      expense.isCancelled
-          ? labels.cancelled
-          : expense.isPosted
-              ? labels.posted
-              : labels.draft;
+  static String _statusLabel(_ExpensePdfLabels labels, Expense expense) => expense.isCancelled
+      ? labels.cancelled
+      : expense.isPosted
+          ? labels.posted
+          : labels.draft;
 
   static String _formatDate(DateTime date) {
     final local = date.toLocal();

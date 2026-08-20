@@ -1,63 +1,70 @@
+import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
-import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../../models/manufacturing.dart';
 import '../../models/store_profile.dart';
+import 'professional_pdf_theme.dart';
 
 class ManufacturingPdfService {
-  static Future<_Fonts> _fonts() async => _Fonts(
-        pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf')),
-        pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf')),
-      );
-
   static Future<Uint8List> buildBillOfMaterialsPdf({
     required BillOfMaterials bom,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final fonts = await _fonts();
     final labels = _Labels(locale.languageCode);
-    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: fonts.base, bold: fonts.bold));
+    final isArabic = labels.isArabic;
+    final pdf = pw.Document(theme: await ProfessionalPdfTheme.loadTheme());
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
-        textDirection: labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
+        textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        header: (context) => context.pageNumber == 1
+            ? ProfessionalPdfTheme.header(
+                profile: profile,
+                title: labels.recipe,
+                englishTitle: 'MANUFACTURING RECIPE',
+                isArabic: isArabic,
+                meta: [
+                  MapEntry(labels.recipeName, bom.name),
+                  MapEntry(labels.outputProduct, bom.outputProductName),
+                  MapEntry(labels.outputQuantity, _qty(bom.outputQuantity)),
+                ],
+              )
+            : ProfessionalPdfTheme.compactHeader(profile: profile, title: labels.recipe),
+        footer: (context) => ProfessionalPdfTheme.footer(context: context, profile: profile, isArabic: isArabic, languageCode: labels.languageCode),
         build: (_) => [
-          _header(profile, labels.recipe, labels),
-          pw.SizedBox(height: 18),
-          _infoBox([
-            '${labels.recipeName}: ${bom.name}',
-            '${labels.outputProduct}: ${bom.outputProductName}',
-            '${labels.outputQuantity}: ${_qty(bom.outputQuantity)}',
-            '${labels.unitCost}: ${bom.unitCost.toStringAsFixed(2)}',
-          ]),
-          pw.SizedBox(height: 18),
-          pw.TableHelper.fromTextArray(
-            border: null,
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ProfessionalPdfTheme.infoStrip(
+            isArabic: isArabic,
+            entries: [
+              MapEntry(labels.recipeName, bom.name),
+              MapEntry(labels.outputProduct, bom.outputProductName),
+              MapEntry(labels.unitCost, bom.unitCost.toStringAsFixed(2)),
+            ],
+          ),
+          pw.SizedBox(height: 14),
+          ProfessionalPdfTheme.table(
             headers: [labels.component, labels.quantity, labels.unitCost, labels.totalCost],
-            data: bom.components
-                .map((item) => [
-                      item.productName,
-                      _qty(item.quantity),
-                      item.unitCost.toStringAsFixed(2),
-                      item.lineCost.toStringAsFixed(2),
-                    ])
-                .toList(growable: false),
+            data: bom.components.map((item) => [
+              item.productName,
+              _qty(item.quantity),
+              item.unitCost.toStringAsFixed(2),
+              item.lineCost.toStringAsFixed(2),
+            ]).toList(growable: false),
+            columnWidths: const {
+              0: pw.FlexColumnWidth(2.7),
+              1: pw.FlexColumnWidth(1),
+              2: pw.FlexColumnWidth(1),
+              3: pw.FlexColumnWidth(1),
+            },
           ),
           if (bom.notes.trim().isNotEmpty) ...[
-            pw.SizedBox(height: 18),
-            pw.Text('${labels.notes}: ${bom.notes.trim()}'),
-          ],
-          if (profile.footerNote.trim().isNotEmpty) ...[
-            pw.SizedBox(height: 24),
-            pw.Text(profile.footerNote),
+            pw.SizedBox(height: 14),
+            ProfessionalPdfTheme.note(labels.notes, bom.notes.trim(), isArabic: isArabic),
           ],
         ],
       ),
@@ -80,49 +87,60 @@ class ManufacturingPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final fonts = await _fonts();
     final labels = _Labels(locale.languageCode);
-    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: fonts.base, bold: fonts.bold));
+    final isArabic = labels.isArabic;
+    final pdf = pw.Document(theme: await ProfessionalPdfTheme.loadTheme());
     final ratio = bom == null || bom.outputQuantity <= 0 ? 0.0 : order.quantity / bom.outputQuantity;
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
-        textDirection: labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
+        textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        header: (context) => context.pageNumber == 1
+            ? ProfessionalPdfTheme.header(
+                profile: profile,
+                title: labels.order,
+                englishTitle: 'MANUFACTURING ORDER',
+                isArabic: isArabic,
+                meta: [
+                  MapEntry(labels.orderNo, order.orderNo),
+                  MapEntry(labels.date, _date(order.date)),
+                  MapEntry(labels.status, order.status),
+                ],
+              )
+            : ProfessionalPdfTheme.compactHeader(profile: profile, title: labels.order),
+        footer: (context) => ProfessionalPdfTheme.footer(context: context, profile: profile, isArabic: isArabic, languageCode: labels.languageCode),
         build: (_) => [
-          _header(profile, labels.order, labels),
-          pw.SizedBox(height: 18),
-          _infoBox([
-            '${labels.orderNo}: ${order.orderNo}',
-            '${labels.date}: ${_date(order.date)}',
-            '${labels.recipeName}: ${order.bomName}',
-            '${labels.outputProduct}: ${order.outputProductName}',
-            '${labels.producedQuantity}: ${_qty(order.quantity)}',
-            '${labels.status}: ${order.status}',
-            '${labels.rawWarehouse}: ${order.rawMaterialsWarehouseName}',
-            '${labels.finishedWarehouse}: ${order.finishedGoodsWarehouseName}',
-          ]),
+          ProfessionalPdfTheme.infoStrip(
+            isArabic: isArabic,
+            entries: [
+              MapEntry(labels.recipeName, order.bomName),
+              MapEntry(labels.outputProduct, order.outputProductName),
+              MapEntry(labels.producedQuantity, _qty(order.quantity)),
+            ],
+          ),
+          pw.SizedBox(height: 10),
+          ProfessionalPdfTheme.infoStrip(
+            isArabic: isArabic,
+            entries: [
+              MapEntry(labels.rawWarehouse, order.rawMaterialsWarehouseName),
+              MapEntry(labels.finishedWarehouse, order.finishedGoodsWarehouseName),
+            ],
+          ),
           if (bom != null && bom.components.isNotEmpty) ...[
-            pw.SizedBox(height: 18),
-            pw.Text(labels.consumedMaterials, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 16),
+            pw.Text(labels.consumedMaterials, textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr, style: pw.TextStyle(color: ProfessionalPdfTheme.navy, fontSize: 12, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 8),
-            pw.TableHelper.fromTextArray(
-              border: null,
-              headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
-              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ProfessionalPdfTheme.table(
               headers: [labels.component, labels.quantity],
-              data: bom.components
-                  .map((item) => [item.productName, _qty(item.quantity * ratio)])
-                  .toList(growable: false),
+              data: bom.components.map((item) => [item.productName, _qty(item.quantity * ratio)]).toList(growable: false),
+              columnWidths: const {0: pw.FlexColumnWidth(3), 1: pw.FlexColumnWidth(1)},
             ),
           ],
           if (order.notes.trim().isNotEmpty) ...[
-            pw.SizedBox(height: 18),
-            pw.Text('${labels.notes}: ${order.notes.trim()}'),
-          ],
-          if (profile.footerNote.trim().isNotEmpty) ...[
-            pw.SizedBox(height: 24),
-            pw.Text(profile.footerNote),
+            pw.SizedBox(height: 14),
+            ProfessionalPdfTheme.note(labels.notes, order.notes.trim(), isArabic: isArabic),
           ],
         ],
       ),
@@ -147,61 +165,44 @@ class ManufacturingPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final fonts = await _fonts();
     final labels = _Labels(locale.languageCode);
-    final pdf = pw.Document(
-      theme: pw.ThemeData.withFont(base: fonts.base, bold: fonts.bold),
-    );
+    final isArabic = labels.isArabic;
+    final pdf = pw.Document(theme: await ProfessionalPdfTheme.loadTheme());
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
-        textDirection:
-            labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
+        textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        header: (context) => context.pageNumber == 1
+            ? ProfessionalPdfTheme.header(
+                profile: profile,
+                title: labels.orders,
+                englishTitle: 'MANUFACTURING ORDERS',
+                isArabic: isArabic,
+                meta: [MapEntry(labels.orderCount, '${orders.length}')],
+              )
+            : ProfessionalPdfTheme.compactHeader(profile: profile, title: labels.orders),
+        footer: (context) => ProfessionalPdfTheme.footer(context: context, profile: profile, isArabic: isArabic, languageCode: labels.languageCode),
         build: (_) => [
-          _header(profile, labels.orders, labels),
-          pw.SizedBox(height: 8),
-          pw.Text('${labels.orderCount}: ${orders.length}'),
-          pw.SizedBox(height: 16),
           if (!includeDetails)
-            pw.TableHelper.fromTextArray(
-              border: null,
-              headerDecoration:
-                  const pw.BoxDecoration(color: PdfColors.grey300),
-              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-              headers: [
-                labels.orderNo,
-                labels.date,
-                labels.outputProduct,
-                labels.producedQuantity,
-                labels.status,
-                labels.recipeName,
-              ],
-              data: orders
-                  .map((order) => [
-                        order.orderNo,
-                        _date(order.date),
-                        order.outputProductName,
-                        _qty(order.quantity),
-                        order.status,
-                        order.bomName,
-                      ])
-                  .toList(growable: false),
+            ProfessionalPdfTheme.table(
+              headers: [labels.orderNo, labels.date, labels.outputProduct, labels.producedQuantity, labels.status, labels.recipeName],
+              data: orders.map((order) => [
+                order.orderNo,
+                _date(order.date),
+                order.outputProductName,
+                _qty(order.quantity),
+                order.status,
+                order.bomName,
+              ]).toList(growable: false),
+              cellStyle: const pw.TextStyle(fontSize: 7.5),
             )
           else
             for (final order in orders) ...[
-              _manufacturingOrderBlock(
-                order: order,
-                bom: bomsById[order.bomId],
-                labels: labels,
-              ),
-              pw.SizedBox(height: 14),
+              _manufacturingOrderBlock(order: order, bom: bomsById[order.bomId], labels: labels),
+              pw.SizedBox(height: 10),
             ],
-          if (profile.footerNote.trim().isNotEmpty) ...[
-            pw.SizedBox(height: 24),
-            pw.Text(profile.footerNote),
-          ],
         ],
       ),
     );
@@ -216,17 +217,8 @@ class ManufacturingPdfService {
     Locale locale = const Locale('en'),
   }) async {
     if (orders.isEmpty) return;
-    final bytes = await buildManufacturingOrdersPdf(
-      orders: orders,
-      bomsById: bomsById,
-      includeDetails: includeDetails,
-      profile: profile,
-      locale: locale,
-    );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
-      name: 'manufacturing-orders-${orders.length}',
-    );
+    final bytes = await buildManufacturingOrdersPdf(orders: orders, bomsById: bomsById, includeDetails: includeDetails, profile: profile, locale: locale);
+    await Printing.layoutPdf(onLayout: (_) async => bytes, name: 'manufacturing-orders-${orders.length}');
   }
 
   static pw.Widget _manufacturingOrderBlock({
@@ -234,81 +226,68 @@ class ManufacturingPdfService {
     required BillOfMaterials? bom,
     required _Labels labels,
   }) {
-    final ratio =
-        bom == null || bom.outputQuantity <= 0 ? 0.0 : order.quantity / bom.outputQuantity;
+    final ratio = bom == null || bom.outputQuantity <= 0 ? 0.0 : order.quantity / bom.outputQuantity;
     return pw.Container(
       width: double.infinity,
-      padding: const pw.EdgeInsets.all(10),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.grey400),
-      ),
+      padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: pw.BoxDecoration(border: pw.Border.all(color: ProfessionalPdfTheme.line, width: .8)),
       child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
         children: [
-          pw.Text(
-            '${labels.orderNo}: ${order.orderNo}',
-            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 13),
+          pw.Directionality(
+            textDirection: labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.start,
+              children: [
+                pw.Text(
+                  '${labels.orderNo}:',
+                  textDirection: labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                  style: pw.TextStyle(
+                    color: ProfessionalPdfTheme.navy,
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 11,
+                  ),
+                ),
+                pw.SizedBox(width: 4),
+                pw.Text(
+                  order.orderNo,
+                  textDirection: pw.TextDirection.ltr,
+                  style: pw.TextStyle(
+                    color: ProfessionalPdfTheme.navy,
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
           ),
           pw.SizedBox(height: 5),
-          pw.Text(
-            '${labels.date}: ${_date(order.date)}   •   ${labels.outputProduct}: ${order.outputProductName}   •   ${labels.producedQuantity}: ${_qty(order.quantity)}',
+          ProfessionalPdfTheme.infoStrip(
+            isArabic: labels.isArabic,
+            flexes: const [23, 40, 17, 20],
+            verticalPadding: 7,
+            entries: [
+              MapEntry(labels.date, _date(order.date)),
+              MapEntry(labels.outputProduct, order.outputProductName),
+              MapEntry(labels.producedQuantity, _qty(order.quantity)),
+              MapEntry(labels.status, order.status),
+            ],
           ),
-          pw.SizedBox(height: 4),
-          pw.Text(
-            '${labels.status}: ${order.status}   •   ${labels.recipeName}: ${order.bomName}',
-          ),
-          pw.SizedBox(height: 8),
           if (bom != null && bom.components.isNotEmpty) ...[
-            pw.Text(
-              labels.recipeDetails,
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            ),
-            pw.SizedBox(height: 5),
-            pw.TableHelper.fromTextArray(
-              border: null,
-              headerDecoration:
-                  const pw.BoxDecoration(color: PdfColors.grey200),
-              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            pw.SizedBox(height: 7),
+            ProfessionalPdfTheme.table(
               headers: [labels.component, labels.quantity],
-              data: bom.components
-                  .map((item) => [
-                        item.productName,
-                        _qty(item.quantity * ratio),
-                      ])
-                  .toList(growable: false),
+              data: bom.components.map((item) => [item.productName, _qty(item.quantity * ratio)]).toList(growable: false),
+              columnWidths: const {0: pw.FlexColumnWidth(3), 1: pw.FlexColumnWidth(1)},
             ),
-          ] else
-            pw.Text(labels.noRecipeDetails),
+          ] else ...[
+            pw.SizedBox(height: 8),
+            pw.Text(labels.noRecipeDetails, textDirection: labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr, style: const pw.TextStyle(color: ProfessionalPdfTheme.muted, fontSize: 8)),
+          ],
         ],
       ),
     );
   }
-
-  static pw.Widget _header(StoreProfile profile, String title, _Labels labels) => pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(profile.name, style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
-              if (profile.phone.isNotEmpty) pw.Text('${labels.phone}: ${profile.phone}'),
-              if (profile.address.isNotEmpty) pw.Text('${labels.address}: ${profile.address}'),
-            ],
-          ),
-          pw.Text(title, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-        ],
-      );
-
-  static pw.Widget _infoBox(List<String> lines) => pw.Container(
-        width: double.infinity,
-        padding: const pw.EdgeInsets.all(12),
-        decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey400)),
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [for (final line in lines) pw.Padding(padding: const pw.EdgeInsets.only(bottom: 4), child: pw.Text(line))],
-        ),
-      );
 
   static String _qty(double value) {
     if ((value - value.roundToDouble()).abs() < 0.000001) return value.toStringAsFixed(0);
@@ -317,15 +296,8 @@ class ManufacturingPdfService {
 
   static String _date(DateTime value) {
     final d = value.toLocal();
-    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} '
-        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
-}
-
-class _Fonts {
-  const _Fonts(this.base, this.bold);
-  final pw.Font base;
-  final pw.Font bold;
 }
 
 class _Labels {

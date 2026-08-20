@@ -1,12 +1,13 @@
+import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
-import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../../models/store_profile.dart';
 import '../../models/warehouse_transfer_order.dart';
+import 'professional_pdf_theme.dart';
 
 class WarehouseTransferPdfService {
   static Future<Uint8List> buildTransferOrderPdf({
@@ -14,129 +15,69 @@ class WarehouseTransferPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final baseFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/DejaVuSans.ttf'),
-    );
-    final boldFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'),
-    );
     final labels = _WarehouseTransferPdfLabels(locale.languageCode);
-    final pdf = pw.Document(
-      theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont),
-    );
+    final isArabic = labels.isArabic;
+    final theme = await ProfessionalPdfTheme.loadTheme();
+    final pdf = pw.Document(theme: theme);
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
-        textDirection:
-            labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
+        textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        header: (context) => context.pageNumber == 1
+            ? ProfessionalPdfTheme.header(
+                profile: profile,
+                title: labels.transferOrder,
+                englishTitle: 'STOCK TRANSFER ORDER',
+                isArabic: isArabic,
+                meta: [
+                  MapEntry(labels.no, order.orderNo),
+                  MapEntry(labels.date, _formatDateTime(order.date)),
+                  MapEntry(labels.products, '${order.items.length}'),
+                ],
+              )
+            : ProfessionalPdfTheme.compactHeader(profile: profile, title: labels.transferOrder),
+        footer: (context) => ProfessionalPdfTheme.footer(context: context, profile: profile, isArabic: isArabic),
         build: (_) => [
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text(
-                    profile.name,
-                    style: pw.TextStyle(
-                      fontSize: 22,
-                      fontWeight: pw.FontWeight.bold,
-                    ),
-                  ),
-                  if (profile.phone.isNotEmpty)
-                    pw.Text('${labels.phone}: ${profile.phone}'),
-                  if (profile.address.isNotEmpty)
-                    pw.Text('${labels.address}: ${profile.address}'),
-                ],
-              ),
-              pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.end,
-                children: [
-                  pw.Text(
-                    labels.transferOrder,
-                    style: pw.TextStyle(
-                      fontSize: 20,
-                      fontWeight: pw.FontWeight.bold,
-                    ),
-                  ),
-                  pw.Text('${labels.no}: ${order.orderNo}'),
-                  pw.Text('${labels.date}: ${_formatDateTime(order.date)}'),
-                ],
-              ),
+          ProfessionalPdfTheme.infoStrip(
+            isArabic: isArabic,
+            entries: [
+              MapEntry(labels.from, order.fromWarehouseName),
+              MapEntry(labels.to, order.toWarehouseName),
+              if (order.createdByUserName.trim().isNotEmpty) MapEntry(labels.createdBy, order.createdByUserName.trim()),
             ],
           ),
-          pw.SizedBox(height: 20),
-          pw.Container(
-            width: double.infinity,
-            padding: const pw.EdgeInsets.all(12),
-            decoration: pw.BoxDecoration(
-              border: pw.Border.all(color: PdfColors.grey400),
-            ),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text('${labels.from}: ${order.fromWarehouseName}'),
-                pw.SizedBox(height: 4),
-                pw.Text('${labels.to}: ${order.toWarehouseName}'),
-                if (order.createdByUserName.trim().isNotEmpty) ...[
-                  pw.SizedBox(height: 4),
-                  pw.Text('${labels.createdBy}: ${order.createdByUserName}'),
-                ],
-              ],
-            ),
-          ),
-          pw.SizedBox(height: 18),
-          pw.TableHelper.fromTextArray(
-            border: null,
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          pw.SizedBox(height: 14),
+          ProfessionalPdfTheme.table(
             headers: [labels.item, labels.quantity, labels.unit],
-            data: order.items
-                .map(
-                  (item) => [
-                    item.productName,
-                    _formatQuantity(item.quantity),
-                    item.unitName.trim().isEmpty ? '-' : item.unitName,
-                  ],
-                )
-                .toList(growable: false),
+            data: order.items.map((item) => [
+              item.productName,
+              _formatQuantity(item.quantity),
+              item.unitName.trim().isEmpty ? '-' : item.unitName,
+            ]).toList(growable: false),
+            columnWidths: const {
+              0: pw.FlexColumnWidth(3),
+              1: pw.FlexColumnWidth(1),
+              2: pw.FlexColumnWidth(1),
+            },
           ),
-          pw.SizedBox(height: 16),
-          pw.Align(
-            alignment: pw.Alignment.centerRight,
-            child: pw.Container(
-              width: 250,
-              padding: const pw.EdgeInsets.all(12),
-              decoration: pw.BoxDecoration(
-                border: pw.Border.all(color: PdfColors.grey400),
-              ),
-              child: pw.Column(
-                children: [
-                  _summaryLine(labels.products, '${order.items.length}'),
-                  pw.SizedBox(height: 6),
-                  _summaryLine(labels.totalBaseUnits, _formatQuantity(order.totalUnits)),
-                ],
-              ),
-            ),
+          pw.SizedBox(height: 14),
+          ProfessionalPdfTheme.summaryBox(
+            isArabic: isArabic,
+            highlightIndex: 1,
+            rows: [
+              MapEntry(labels.products, '${order.items.length}'),
+              MapEntry(labels.totalBaseUnits, _formatQuantity(order.totalUnits)),
+            ],
           ),
           if (order.notes.trim().isNotEmpty) ...[
-            pw.SizedBox(height: 20),
-            pw.Text(
-              '${labels.notes}: ${order.notes.trim()}',
-              style: const pw.TextStyle(fontSize: 11),
-            ),
-          ],
-          if (profile.footerNote.trim().isNotEmpty) ...[
-            pw.SizedBox(height: 24),
-            pw.Text(profile.footerNote),
+            pw.SizedBox(height: 14),
+            ProfessionalPdfTheme.note(labels.notes, order.notes.trim(), isArabic: isArabic),
           ],
         ],
       ),
     );
-
     return pdf.save();
   }
 
@@ -145,39 +86,18 @@ class WarehouseTransferPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildTransferOrderPdf(
-      order: order,
-      profile: profile,
-      locale: locale,
-    );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
-      name: order.orderNo.isEmpty ? 'warehouse-transfer' : order.orderNo,
-    );
+    final bytes = await buildTransferOrderPdf(order: order, profile: profile, locale: locale);
+    await Printing.layoutPdf(onLayout: (_) async => bytes, name: order.orderNo.isEmpty ? 'warehouse-transfer' : order.orderNo);
   }
 
-  static pw.Widget _summaryLine(String title, String value) => pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        children: [
-          pw.Text(title, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-          pw.Text(value, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-        ],
-      );
-
   static String _formatQuantity(double value) {
-    if ((value - value.roundToDouble()).abs() < 0.000001) {
-      return value.toStringAsFixed(0);
-    }
-    return value
-        .toStringAsFixed(3)
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    if ((value - value.roundToDouble()).abs() < 0.000001) return value.toStringAsFixed(0);
+    return value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
   }
 
   static String _formatDateTime(DateTime value) {
     final date = value.toLocal();
-    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} '
-        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 }
 

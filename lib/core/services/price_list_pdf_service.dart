@@ -1,10 +1,12 @@
-import 'package:flutter/services.dart';
+import 'dart:typed_data';
+
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../../models/product.dart';
 import '../../models/store_profile.dart';
+import 'professional_pdf_theme.dart';
 
 class PriceListPdfService {
   static Future<Uint8List> build({
@@ -15,41 +17,60 @@ class PriceListPdfService {
     String Function(Product product, String field)? valueResolver,
     bool arabic = false,
   }) async {
-    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final bold = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'));
-    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: font, bold: bold));
-    pdf.addPage(pw.MultiPage(
-      pageFormat: PdfPageFormat.a4,
-      margin: const pw.EdgeInsets.all(28),
-      textDirection: arabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
-      build: (_) => [
-        pw.Text(profile.name, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-        pw.Text(title, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-        pw.SizedBox(height: 16),
-        pw.TableHelper.fromTextArray(
-          border: null,
-          headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
-          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-          headers: [
-            arabic ? 'المنتج' : 'Product',
-            ...fields.map((field) => _fieldLabel(field, arabic)),
-          ],
-          data: products.map((p) {
-            return [
-              p.name,
-              ...fields.map((field) {
-                final raw = valueResolver?.call(p, field) ?? _fieldValue(p, field);
-                return raw;
-              }),
-            ];
-          }).toList(),
-        ),
-      ],
-    ));
+    final theme = await ProfessionalPdfTheme.loadTheme();
+    final pdf = pw.Document(theme: theme);
+    final now = DateTime.now().toLocal();
+    final date = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+
+    final headers = [
+      arabic ? 'المنتج' : 'Product',
+      ...fields.map((field) => _fieldLabel(field, arabic)),
+    ];
+    final data = products.map((p) => [
+      p.name,
+      ...fields.map((field) => valueResolver?.call(p, field) ?? _fieldValue(p, field)),
+    ]).toList(growable: false);
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
+        textDirection: arabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        header: (context) => context.pageNumber == 1
+            ? ProfessionalPdfTheme.header(
+                profile: profile,
+                title: title,
+                englishTitle: 'PRICE LIST',
+                isArabic: arabic,
+                meta: [
+                  MapEntry(arabic ? 'التاريخ' : 'Date', date),
+                  MapEntry(arabic ? 'عدد الأصناف' : 'Products', '${products.length}'),
+                ],
+              )
+            : ProfessionalPdfTheme.compactHeader(profile: profile, title: title),
+        footer: (context) => ProfessionalPdfTheme.footer(context: context, profile: profile, isArabic: arabic),
+        build: (_) => [
+          if (products.isEmpty)
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(vertical: 30),
+              child: pw.Center(child: pw.Text(arabic ? 'لا توجد أصناف.' : 'No products.')),
+            )
+          else
+            ProfessionalPdfTheme.table(headers: headers, data: data),
+        ],
+      ),
+    );
     return pdf.save();
   }
 
-  static Future<void> printPriceList({required List<Product> products, required StoreProfile profile, required String title, List<String> fields = const <String>[], String Function(Product product, String field)? valueResolver, bool arabic = false}) async {
+  static Future<void> printPriceList({
+    required List<Product> products,
+    required StoreProfile profile,
+    required String title,
+    List<String> fields = const <String>[],
+    String Function(Product product, String field)? valueResolver,
+    bool arabic = false,
+  }) async {
     final bytes = await build(products: products, profile: profile, title: title, fields: fields, valueResolver: valueResolver, arabic: arabic);
     await Printing.layoutPdf(onLayout: (_) async => bytes, name: 'price-list');
   }

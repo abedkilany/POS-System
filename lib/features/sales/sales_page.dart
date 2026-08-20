@@ -74,6 +74,8 @@ class _SalesPageState extends State<SalesPage> {
       FocusNode(debugLabel: 'sale_payment_discount');
   final FocusNode _cashReceivedFocusNode =
       FocusNode(debugLabel: 'sale_payment_cash_received');
+  final ScrollController _cartScrollController = ScrollController();
+  final Map<int, GlobalKey> _cartItemKeys = <int, GlobalKey>{};
 
   static const String _quickPagesStorageKey = 'sale_quick_product_pages_v1';
   static const String _heldSalesStorageKey = 'sale_held_carts_v1';
@@ -241,6 +243,7 @@ class _SalesPageState extends State<SalesPage> {
     _paymentShortcutFocusNode.dispose();
     _discountFocusNode.dispose();
     _cashReceivedFocusNode.dispose();
+    _cartScrollController.dispose();
     _scannerController.dispose();
     super.dispose();
   }
@@ -617,6 +620,18 @@ class _SalesPageState extends State<SalesPage> {
     setState(() {
       _selectedCartIndex = index.clamp(0, _cart.length - 1).toInt();
       _pendingDeleteCartIndex = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final key = _cartItemKeys[_selectedCartIndex];
+      final itemContext = key?.currentContext;
+      if (itemContext == null) return;
+      Scrollable.ensureVisible(
+        itemContext,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
     });
   }
 
@@ -1174,35 +1189,6 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  Widget _buildShortcutGuide(BuildContext context, AppLocalizations tr) {
-    final settings = SaleShortcutSettings.load();
-    final chips = <Widget>[];
-    for (final action in SaleShortcutAction.values) {
-      final keyName = settings.keyForSaleAction(action);
-      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
-      chips.add(Chip(
-        visualDensity: VisualDensity.compact,
-        avatar: const Icon(Icons.keyboard_outlined, size: 16),
-        label: Text('$keyName ${tr.text(action.labelKey)}'),
-      ));
-    }
-    if (chips.isEmpty) {
-      return Align(
-        alignment: AlignmentDirectional.centerStart,
-        child: Text(tr.text('shortcuts_disabled_for_page'),
-            style: Theme.of(context).textTheme.bodySmall),
-      );
-    }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: [
-        Text('${tr.text('shortcut_guide')}: ',
-            style: Theme.of(context).textTheme.bodySmall),
-        ...chips.expand((chip) => [chip, const SizedBox(width: 6)]),
-      ]),
-    );
-  }
-
   String _activeUserDisplayName([AppUser? user]) {
     final current = user ?? widget.store.activeUser;
     final fullName = current?.fullName.trim() ?? '';
@@ -1746,12 +1732,16 @@ class _SalesPageState extends State<SalesPage> {
   Widget _buildDesktopSalesLayout(BuildContext context, AppLocalizations tr,
       List<Product> products, double pagePadding) {
     return Padding(
-      padding: EdgeInsets.all(pagePadding),
+      padding: EdgeInsets.symmetric(
+        horizontal: pagePadding,
+        vertical: 4,
+      ),
       child: Column(
         children: [
           AppSectionHeader(
             title: tr.text('pos_terminal'),
             subtitle: tr.text('pos_terminal_desc'),
+            compact: true,
             action: Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1773,21 +1763,34 @@ class _SalesPageState extends State<SalesPage> {
               ],
             ),
           ),
-          const SizedBox(height: 8),
-          _buildShortcutGuide(context, tr),
-          const SizedBox(height: 8),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: Column(
               children: [
                 Expanded(
-                    flex: 6,
-                    child: _buildCurrentSalePanel(context, tr, products)),
-                const SizedBox(width: 12),
-                Expanded(
-                    flex: 4,
-                    child: _buildQuickProductGridPanel(context, tr, products)),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        flex: 6,
+                        child: _buildCurrentSalePanel(
+                          context,
+                          tr,
+                          products,
+                          showTotalBar: false,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 4,
+                        child: _buildQuickProductGridPanel(
+                            context, tr, products),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _buildSaleTotalBar(context, tr),
               ],
             ),
           ),
@@ -1797,7 +1800,8 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Widget _buildCurrentSalePanel(
-      BuildContext context, AppLocalizations tr, List<Product> products) {
+      BuildContext context, AppLocalizations tr, List<Product> products,
+      {bool showTotalBar = true}) {
     return Card(
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
@@ -1809,8 +1813,10 @@ class _SalesPageState extends State<SalesPage> {
             Expanded(
                 child: _buildCart(context, tr,
                     showTotals: false, showActions: false)),
-            const SizedBox(height: 12),
-            _buildSaleTotalBar(context, tr),
+            if (showTotalBar) ...[
+              const SizedBox(height: 12),
+              _buildSaleTotalBar(context, tr),
+            ],
           ],
         ),
       ),
@@ -2706,7 +2712,7 @@ class _SalesPageState extends State<SalesPage> {
                     Text(totalText,
                         style: Theme.of(context)
                             .textTheme
-                            .headlineSmall
+                            .titleLarge
                             ?.copyWith(fontWeight: FontWeight.w900)),
                     if (hasDiscount)
                       Text(
@@ -2716,6 +2722,10 @@ class _SalesPageState extends State<SalesPage> {
                 ),
               ),
               FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 40),
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: _cart.isEmpty
                     ? null
                     : () => _openPaymentPage(printAfterSave: false),
@@ -2727,8 +2737,8 @@ class _SalesPageState extends State<SalesPage> {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: EdgeInsets.symmetric(
-            horizontal: compact ? 14 : 18, vertical: compact ? 12 : 14),
+            padding: EdgeInsets.symmetric(
+                horizontal: compact ? 14 : 12, vertical: compact ? 12 : 4),
         child: content,
       ),
     );
@@ -3220,6 +3230,7 @@ class _SalesPageState extends State<SalesPage> {
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, index) {
           final item = _cart[index];
+          final itemKey = _cartItemKeys.putIfAbsent(index, GlobalKey.new);
           final isSelected = index == _selectedCartIndex;
           final isPendingDelete = index == _pendingDeleteCartIndex;
           final rowColor = isPendingDelete
@@ -3239,6 +3250,7 @@ class _SalesPageState extends State<SalesPage> {
                           .withValues(alpha: 0.65)
                       : null;
           return LayoutBuilder(
+            key: itemKey,
             builder: (context, constraints) {
               final actions = Row(
                 mainAxisSize: MainAxisSize.min,

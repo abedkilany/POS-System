@@ -22,6 +22,7 @@ import 'core/services/app_update_service.dart';
 import 'core/services/account_auth_service.dart';
 import 'core/services/page_timing_scope.dart';
 import 'core/services/startup_timing_service.dart';
+import 'core/shortcuts/app_shortcuts.dart';
 import 'data/app_store.dart';
 import 'features/dev_tools/stress_lab_coverage_manifest.dart';
 import 'features/accounting/accounting_page.dart';
@@ -513,6 +514,40 @@ class _MainShellState extends State<MainShell> {
   late final VoidCallback _storeListener;
   VoidCallback? _cancelDownloadUpdate;
   AppUpdateInfo? _availableUpdate;
+
+  Widget _buildSalesShortcutStrip(AppLocalizations tr) {
+    final settings = SaleShortcutSettings.load();
+    final chips = <Widget>[];
+    for (final action in SaleShortcutAction.values) {
+      final keyName = settings.keyForSaleAction(action);
+      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
+      chips.add(Padding(
+        padding: const EdgeInsetsDirectional.only(end: 4),
+        child: Chip(
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          avatar: const Icon(Icons.keyboard_outlined, size: 14),
+          label: Text('$keyName ${tr.text(action.labelKey)}'),
+          labelStyle: Theme.of(context).textTheme.labelSmall,
+        ),
+      ));
+    }
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      // Keep enough room for the configured shortcut chips. The horizontal
+      // scroll remains available when the window is narrower than this.
+      width: 900,
+      height: 48,
+      child: ClipRect(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: chips),
+        ),
+      ),
+    );
+  }
+
   bool _checkingForUpdate = false;
   bool _downloadingUpdate = false;
   bool _installingUpdate = false;
@@ -1139,6 +1174,10 @@ class _MainShellState extends State<MainShell> {
       builder: (context, constraints) {
         return Scaffold(
           appBar: AppBar(
+            toolbarHeight:
+                resolvedItems[selectedIndex].label == tr.text('sales')
+                    ? 64
+                    : null,
             leading: Builder(
               builder: (context) => IconButton(
                 tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
@@ -1152,7 +1191,24 @@ class _MainShellState extends State<MainShell> {
             actions: [
               if (_availableUpdate != null) _buildUpdateAction(context, tr),
               LocalAutoBackupIndicator(),
-              HostConnectionIndicator(store: widget.store),
+              if (resolvedItems[selectedIndex].label == tr.text('sales'))
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (Localizations.localeOf(context).languageCode ==
+                        'ar') ...[
+                      _buildSalesShortcutStrip(tr),
+                      const SizedBox(width: 6),
+                      HostConnectionIndicator(store: widget.store),
+                    ] else ...[
+                      HostConnectionIndicator(store: widget.store),
+                      const SizedBox(width: 6),
+                      _buildSalesShortcutStrip(tr),
+                    ],
+                  ],
+                )
+              else
+                HostConnectionIndicator(store: widget.store),
               PopupMenuButton<String>(
                 tooltip: widget.store.activeUser?.fullName ?? tr.text('logout'),
                 onSelected: (value) async {
