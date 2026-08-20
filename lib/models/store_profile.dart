@@ -357,6 +357,9 @@ class StoreProfile {
     this.email = '',
     this.website = '',
     this.logoPath = '',
+    this.logoDataBase64 = '',
+    this.logoFileName = '',
+    this.logoMimeType = '',
     this.vatNumber = '',
     this.taxRegistrationNumber = '',
     this.commercialRegisterNumber = '',
@@ -389,7 +392,12 @@ class StoreProfile {
   final String tradeName;
   final String email;
   final String website;
+  /// Legacy local file path retained only for backward compatibility.
   final String logoPath;
+  /// Logo contents persisted inside the SQLite-backed store profile.
+  final String logoDataBase64;
+  final String logoFileName;
+  final String logoMimeType;
   final String vatNumber;
   final String taxRegistrationNumber;
   final String commercialRegisterNumber;
@@ -513,6 +521,9 @@ class StoreProfile {
     String? email,
     String? website,
     String? logoPath,
+    String? logoDataBase64,
+    String? logoFileName,
+    String? logoMimeType,
     String? vatNumber,
     String? taxRegistrationNumber,
     String? commercialRegisterNumber,
@@ -551,6 +562,9 @@ class StoreProfile {
       email: email ?? this.email,
       website: website ?? this.website,
       logoPath: logoPath ?? this.logoPath,
+      logoDataBase64: logoDataBase64 ?? this.logoDataBase64,
+      logoFileName: logoFileName ?? this.logoFileName,
+      logoMimeType: logoMimeType ?? this.logoMimeType,
       vatNumber: vatNumber ?? this.vatNumber,
       taxRegistrationNumber:
           taxRegistrationNumber ?? this.taxRegistrationNumber,
@@ -605,6 +619,9 @@ class StoreProfile {
         'email': email,
         'website': website,
         'logoPath': logoPath,
+        'logoDataBase64': logoDataBase64,
+        'logoFileName': logoFileName,
+        'logoMimeType': logoMimeType,
         'vatNumber': vatNumber,
         'taxRegistrationNumber': taxRegistrationNumber,
         'commercialRegisterNumber': commercialRegisterNumber,
@@ -752,6 +769,9 @@ class StoreProfile {
       email: json['email'] as String? ?? '',
       website: json['website'] as String? ?? '',
       logoPath: json['logoPath'] as String? ?? '',
+      logoDataBase64: json['logoDataBase64'] as String? ?? '',
+      logoFileName: json['logoFileName'] as String? ?? '',
+      logoMimeType: json['logoMimeType'] as String? ?? '',
       vatNumber: json['vatNumber'] as String? ?? '',
       taxRegistrationNumber:
           json['taxRegistrationNumber'] as String? ?? '',
@@ -806,6 +826,9 @@ class StoreProfile {
     email: '',
     website: '',
     logoPath: '',
+    logoDataBase64: '',
+    logoFileName: '',
+    logoMimeType: '',
     vatNumber: '',
     taxRegistrationNumber: '',
     commercialRegisterNumber: '',

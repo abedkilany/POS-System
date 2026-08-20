@@ -142,6 +142,7 @@ void main() {
     final first = await service.deposit(
       cashLocationId: 'drawer-p5',
       cashDrawerSessionId: 'shift-p5',
+      counterpartAccountId: 'acc_owner_capital',
       amount: 25,
       storeId: 'store-1',
       branchId: 'main',
@@ -151,6 +152,7 @@ void main() {
     final retry = await service.deposit(
       cashLocationId: 'drawer-p5',
       cashDrawerSessionId: 'shift-p5',
+      counterpartAccountId: 'acc_owner_capital',
       amount: 25,
       storeId: 'store-1',
       branchId: 'main',
@@ -186,12 +188,14 @@ void main() {
     await service.withdrawal(
       cashLocationId: 'drawer-p5',
       cashDrawerSessionId: 'shift-p5',
+      counterpartAccountId: 'acc_owner_capital',
       amount: 20,
       idempotencyKey: 'withdraw-1',
     );
     await service.expense(
       cashLocationId: 'drawer-p5',
       cashDrawerSessionId: 'shift-p5',
+      counterpartAccountId: 'acc_general_expenses',
       amount: 15,
       idempotencyKey: 'expense-1',
     );
@@ -215,6 +219,7 @@ void main() {
       service.withdrawal(
         cashLocationId: 'drawer-p5',
         cashDrawerSessionId: 'shift-p5',
+        counterpartAccountId: 'acc_owner_capital',
         amount: 11,
       ),
       throwsStateError,
@@ -241,6 +246,7 @@ void main() {
       lastModifiedByDeviceId: 'dev-1',
     );
 
+    final beforePost = DateTime.now().toUtc();
     await AccountingService.recordExpense(expense);
     await AccountingService.recordExpense(expense);
 
@@ -250,11 +256,22 @@ void main() {
     ).getSingle();
     expect(operation.read<int>('c'), 1);
     final ledger = await db.customSelect(
-      "SELECT direction, amount, cash_drawer_session_id FROM cash_ledger_transactions WHERE reference_type = 'expense' AND reference_id = 'expense-legacy-p5'",
+      "SELECT direction, amount, cash_drawer_session_id, occurred_at FROM cash_ledger_transactions WHERE reference_type = 'expense' AND reference_id = 'expense-legacy-p5'",
     ).getSingle();
     expect(ledger.read<String>('direction'), 'out');
     expect(ledger.read<double>('amount'), 15);
     expect(ledger.read<String>('cash_drawer_session_id'), 'shift-p5');
+    final occurredAt = DateTime.parse(ledger.read<String>('occurred_at')).toUtc();
+    expect(occurredAt.isBefore(beforePost), isFalse);
+
+    final shift = await db.customSelect(
+      "SELECT expected_cash FROM cash_drawer_sessions WHERE id = 'shift-p5'",
+    ).getSingle();
+    expect((shift.data['expected_cash'] as num).toDouble(), 85);
+
+    final openShiftReport = await AccountingService.listOpenCashDrawersReport();
+    final reportedShift = openShiftReport.firstWhere((item) => item.id == 'shift-p5');
+    expect(reportedShift.credit, 85);
     final journals = await db.customSelect(
       "SELECT COUNT(*) AS c FROM journal_entries WHERE reference_type = 'expense' AND reference_id = 'expense-legacy-p5' AND status = 'posted'",
     ).getSingle();

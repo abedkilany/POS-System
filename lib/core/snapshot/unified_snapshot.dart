@@ -136,6 +136,29 @@ class UnifiedSnapshotCatalog {
     ],
   );
 
+  static const cashAndAccounting = UnifiedSnapshotSection(
+    id: 'cash_accounting',
+    labelKey: 'snapshot_section_cash_accounting',
+    order: 70,
+    collections: <String>[
+      'accountingAccounts',
+      'accountingSettings',
+      'accountingPeriods',
+      'paymentAccounts',
+      'cashLocations',
+      'cashDrawerSessions',
+      'cashTransfers',
+      'receiptVouchers',
+      'paymentVouchers',
+      'paymentAllocations',
+      'cashOperations',
+      'cashLedgerTransactions',
+      'journalEntries',
+      'journalLines',
+      'accountingAuditLog',
+    ],
+  );
+
   static const sections = <UnifiedSnapshotSection>[
     loginSettingsAndUsers,
     catalogsAndWarehouses,
@@ -143,6 +166,7 @@ class UnifiedSnapshotCatalog {
     inventoryMovements,
     salesAndPurchases,
     accountingAndReports,
+    cashAndAccounting,
   ];
 
   static UnifiedSnapshotSection sectionForCollection(String collection) {

@@ -547,26 +547,50 @@ class _ExpensesPageState extends State<ExpensesPage> {
       AppPermission.expensesManage,
     })) return;
     final tr = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    final settlement = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(tr.text('post_expense')),
-        content: Text(tr.text('post_expense_desc')),
+        title: Text(isArabic ? 'تحديد حالة الصرف' : 'Select expense payment status'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              isArabic
+                  ? 'كيف تريد اعتماد هذا المصروف؟'
+                  : 'How do you want to post this expense?',
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(context, 'cash'),
+              icon: const Icon(Icons.payments_outlined),
+              label: Text(isArabic ? 'نقداً' : 'Cash'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(context, 'credit'),
+              icon: const Icon(Icons.schedule_outlined),
+              label: Text(isArabic ? 'آجل' : 'Credit'),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(tr.text('cancel'))),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(tr.text('confirm'))),
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('cancel')),
+          ),
         ],
       ),
     );
-    if (confirmed != true) {
+    if (settlement == null) {
       return;
     }
     try {
-      await widget.store.postExpense(expense.id);
+      await widget.store.postExpense(
+        expense.id,
+        paidInCash: settlement == 'cash',
+      );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('expense_posted'))),

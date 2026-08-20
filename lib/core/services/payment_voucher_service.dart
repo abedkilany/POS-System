@@ -18,7 +18,7 @@ import 'cash_ledger_service.dart';
 /// - New vouchers created through this service are authoritative events.
 /// - Allocations update Sale/Purchase paid_amount only as a compatibility cache.
 /// - Existing Sales/Purchases UI paths are NOT rerouted here until Phase 3.
-/// - Sync/snapshot/backup registration is intentionally deferred to Phase 8.
+/// - Phase 8 registers voucher/accounting mutations with unified sync, snapshot, and backup flows.
 class PaymentVoucherService {
   PaymentVoucherService(this._db) : _cashLedger = CashLedgerService(_db);
 
@@ -72,10 +72,12 @@ class PaymentVoucherService {
     final cleanCurrency = _currency(currency);
     final cleanPaymentMethod = paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
 
-    return _db.transaction(() async {
+    final result = await _db.transaction(() async {
       final existing = await _findReceiptByIdentity(cleanId, idempotencyKey);
       if (existing != null) {
-        await _postReceiptAccounting(existing);
+        if (existing.status == 'posted') {
+          await _postReceiptAccounting(existing);
+        }
         return existing;
       }
 
@@ -146,8 +148,17 @@ class PaymentVoucherService {
         );
         await _moveCashLocation(voucher.cashLocationId, voucher.amount, now);
       }
+      await _insertCompatibilityAccountMovement(
+        voucherType: 'receipt', voucherId: voucher.id, voucherNo: voucher.voucherNo,
+        partyId: voucher.customerId, partyName: voucher.customerName, amount: voucher.amount,
+        currency: voucher.currency, paymentMethod: voucher.paymentMethod, allocations: prepared,
+        notes: voucher.notes, deviceId: voucher.deviceId, branchId: voucher.branchId,
+        storeId: voucher.storeId, occurredAt: voucher.date,
+      );
       return voucher;
     });
+    AccountingService.notifyCommittedMutation();
+    return result;
   }
 
   Future<PaymentVoucher> createPayment({
@@ -182,11 +193,27 @@ class PaymentVoucherService {
     final cleanCurrency = _currency(currency);
     final cleanPaymentMethod = paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
 
-    return _db.transaction(() async {
+    final result = await _db.transaction(() async {
       final existing = await _findPaymentByIdentity(cleanId, idempotencyKey);
       if (existing != null) {
-        await _postPaymentAccounting(existing);
+        if (existing.status == 'posted') {
+          await _postPaymentAccounting(existing);
+        }
         return existing;
+      }
+
+      if (_isCash(cleanPaymentMethod)) {
+        final location = await _db.customSelect(
+          "SELECT current_balance FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
+          variables: <Variable<Object>>[Variable<String>(cashLocationId.trim())],
+        ).getSingleOrNull();
+        if (location == null) {
+          throw StateError('Cash location is unavailable.');
+        }
+        final balance = _number(location.data['current_balance']);
+        if (balance + _epsilon < amount) {
+          throw StateError('Insufficient cash balance for supplier payment.');
+        }
       }
 
       final prepared = await _prepareAllocations(
@@ -256,8 +283,17 @@ class PaymentVoucherService {
         );
         await _moveCashLocation(voucher.cashLocationId, -voucher.amount, now);
       }
+      await _insertCompatibilityAccountMovement(
+        voucherType: 'payment', voucherId: voucher.id, voucherNo: voucher.voucherNo,
+        partyId: voucher.supplierId, partyName: voucher.supplierName, amount: voucher.amount,
+        currency: voucher.currency, paymentMethod: voucher.paymentMethod, allocations: prepared,
+        notes: voucher.notes, deviceId: voucher.deviceId, branchId: voucher.branchId,
+        storeId: voucher.storeId, occurredAt: voucher.date,
+      );
       return voucher;
     });
+    AccountingService.notifyCommittedMutation();
+    return result;
   }
 
   Future<void> _postReceiptAccounting(ReceiptVoucher voucher) async {
@@ -301,7 +337,7 @@ class PaymentVoucherService {
   }
 
 
-  Future<double> refundableCashForSale(String saleId) async {
+  Future<double> refundableCashForSale(String saleId, {double? maxRefundAmount}) async {
     final totalRow = await _db.customSelect(
       '''
       SELECT COALESCE(SUM(pa.reference_amount), 0) AS total
@@ -311,6 +347,7 @@ class PaymentVoucherService {
         AND pa.reference_type = 'sale'
         AND pa.reference_id = ?
         AND pa.deleted_at = ''
+        AND pa.status = 'active'
         AND rv.deleted_at = ''
         AND rv.status = 'posted'
         AND LOWER(rv.payment_method) = 'cash'
@@ -320,18 +357,32 @@ class PaymentVoucherService {
     final refundedRow = await _db.customSelect(
       '''
       SELECT COALESCE(SUM(amount), 0) AS total
-      FROM cash_ledger_transactions
-      WHERE type = 'refund'
-        AND direction = 'out'
-        AND reference_type = 'sale_refund'
-        AND reference_id LIKE ?
-        AND deleted_at = ''
+      FROM cash_ledger_transactions refund_tx
+      WHERE refund_tx.type = 'refund'
+        AND refund_tx.direction = 'out'
+        AND refund_tx.reference_type = 'sale_refund'
+        AND refund_tx.reference_id LIKE ?
+        AND refund_tx.deleted_at = ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cash_ledger_transactions reversal_tx
+          WHERE reversal_tx.reversal_of_id = refund_tx.id
+            AND reversal_tx.deleted_at = ''
+        )
       ''',
       variables: <Variable<Object>>[Variable<String>('${saleId.trim()}:%')],
     ).getSingle();
-    return _money(_number(totalRow.data['total']) - _number(refundedRow.data['total']))
+    final refunded = _number(refundedRow.data['total']);
+    final cashRemaining = _money(_number(totalRow.data['total']) - refunded)
         .clamp(0, double.infinity)
         .toDouble();
+    if (maxRefundAmount == null || !maxRefundAmount.isFinite) {
+      return cashRemaining;
+    }
+    final entitlementRemaining = _money(maxRefundAmount - refunded)
+        .clamp(0, double.infinity)
+        .toDouble();
+    return min(cashRemaining, entitlementRemaining);
   }
 
   Future<double> refundSaleCash({
@@ -340,6 +391,7 @@ class PaymentVoucherService {
     required String customerId,
     required String customerName,
     required double requestedAmount,
+    double? maxRefundAmount,
     required String cashLocationId,
     required String cashDrawerSessionId,
     required String refundKey,
@@ -365,12 +417,15 @@ class PaymentVoucherService {
     ).getSingleOrNull();
     if (existing != null) return _number(existing.data['amount']);
 
-    final refundable = await refundableCashForSale(saleId);
+    final refundable = await refundableCashForSale(
+      saleId,
+      maxRefundAmount: maxRefundAmount,
+    );
     final amount = _money(min(requestedAmount, refundable));
     if (amount <= 0) return 0;
     final when = (date ?? DateTime.now()).toUtc();
 
-    return _db.transaction(() async {
+    final result = await _db.transaction(() async {
       final session = await _db.customSelect(
         "SELECT id FROM cash_drawer_sessions WHERE id = ? AND cash_location_id = ? AND status = 'open' LIMIT 1",
         variables: <Variable<Object>>[
@@ -404,7 +459,7 @@ class PaymentVoucherService {
           referenceId: referenceId,
           referenceNo: invoiceNo.trim(),
           description: 'Cash refund for sale ${invoiceNo.trim()}',
-          source: 'refund',
+          source: 'system',
           createdBy: createdBy.trim(),
           storeId: storeId.trim(),
           branchId: branchId.trim(),
@@ -462,9 +517,27 @@ class PaymentVoucherService {
         updatedAt: now,
         lastModifiedByDeviceId: deviceId.trim(),
       ));
+      await _insertCompatibilityRefundMovement(
+        id: '$referenceId-customer-refund',
+        accountType: 'customer',
+        accountId: customerId.trim(),
+        accountName: customerName.trim(),
+        referenceId: referenceId,
+        referenceNo: invoiceNo.trim(),
+        debit: amount,
+        credit: 0,
+        currency: currency,
+        note: notes.trim().isEmpty ? 'Cash refund for ${invoiceNo.trim()}' : notes.trim(),
+        deviceId: deviceId,
+        branchId: branchId,
+        storeId: storeId,
+        occurredAt: when,
+      );
       await _moveCashLocation(cashLocationId.trim(), -amount, now);
       return amount;
     });
+    AccountingService.notifyCommittedMutation();
+    return result;
   }
 
 
@@ -478,6 +551,7 @@ class PaymentVoucherService {
         AND pa.reference_type = 'purchase'
         AND pa.reference_id = ?
         AND pa.deleted_at = ''
+        AND pa.status = 'active'
         AND pv.deleted_at = ''
         AND pv.status = 'posted'
         AND LOWER(pv.payment_method) = 'cash'
@@ -487,14 +561,23 @@ class PaymentVoucherService {
     final refundedRow = await _db.customSelect(
       '''
       SELECT COALESCE(SUM(amount), 0) AS total
-      FROM cash_ledger_transactions
-      WHERE type = 'supplier_refund'
-        AND direction = 'in'
-        AND reference_type = 'purchase_refund'
-        AND reference_id = ?
-        AND deleted_at = ''
+      FROM cash_ledger_transactions refund_tx
+      WHERE refund_tx.type = 'supplier_refund'
+        AND refund_tx.direction = 'in'
+        AND refund_tx.reference_type = 'purchase_refund'
+        AND (refund_tx.reference_id = ? OR refund_tx.reference_id LIKE ?)
+        AND refund_tx.deleted_at = ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cash_ledger_transactions reversal_tx
+          WHERE reversal_tx.reversal_of_id = refund_tx.id
+            AND reversal_tx.deleted_at = ''
+        )
       ''',
-      variables: <Variable<Object>>[Variable<String>(purchaseId.trim())],
+      variables: <Variable<Object>>[
+        Variable<String>(purchaseId.trim()),
+        Variable<String>('${purchaseId.trim()}:%'),
+      ],
     ).getSingle();
     return _money(_number(totalRow.data['total']) - _number(refundedRow.data['total']))
         .clamp(0, double.infinity)
@@ -508,6 +591,7 @@ class PaymentVoucherService {
     required String supplierName,
     required String cashLocationId,
     required String cashDrawerSessionId,
+    double? requestedAmount,
     String currency = 'USD',
     String notes = '',
     String createdBy = '',
@@ -515,17 +599,82 @@ class PaymentVoucherService {
     String deviceId = '',
     String branchId = '',
     String storeId = '',
+    String refundKey = '',
     DateTime? date,
   }) async {
-    final existing = await _db.customSelect(
-      "SELECT amount FROM cash_ledger_transactions WHERE idempotency_key = ? AND deleted_at = '' LIMIT 1",
-      variables: <Variable<Object>>[Variable<String>('purchase_refund:${purchaseId.trim()}')],
+    final cleanPurchaseId = purchaseId.trim();
+    final cleanRefundKey = refundKey.trim();
+    final activeRefund = await _db.customSelect(
+      '''
+      SELECT refund_tx.amount
+      FROM cash_ledger_transactions refund_tx
+      WHERE refund_tx.type = 'supplier_refund'
+        AND refund_tx.direction = 'in'
+        AND refund_tx.reference_type = 'purchase_refund'
+        AND (refund_tx.reference_id = ? OR refund_tx.reference_id LIKE ?)
+        AND refund_tx.reversal_of_id = ''
+        AND refund_tx.deleted_at = ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cash_ledger_transactions reversal_tx
+          WHERE reversal_tx.reversal_of_id = refund_tx.id
+            AND reversal_tx.deleted_at = ''
+        )
+      ORDER BY refund_tx.occurred_at DESC, refund_tx.created_at DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(cleanPurchaseId),
+        Variable<String>('$cleanPurchaseId:%'),
+      ],
     ).getSingleOrNull();
-    if (existing != null) return _number(existing.data['amount']);
-    final amount = await refundableCashForPurchase(purchaseId);
+    // Preserve the original idempotent full-refund API: callers that do not
+    // specify an amount get the already-posted active refund back on retry.
+    // Explicit amounts represent deliberate partial refund events and may be
+    // posted repeatedly until refundableCashForPurchase reaches zero.
+    if (activeRefund != null && requestedAmount == null && cleanRefundKey.isEmpty) {
+      return _number(activeRefund.data['amount']);
+    }
+
+    final priorRefunds = await _db.customSelect(
+      '''
+      SELECT COUNT(*) AS count
+      FROM cash_ledger_transactions
+      WHERE type = 'supplier_refund'
+        AND direction = 'in'
+        AND reference_type = 'purchase_refund'
+        AND (reference_id = ? OR reference_id LIKE ?)
+        AND reversal_of_id = ''
+        AND deleted_at = ''
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(cleanPurchaseId),
+        Variable<String>('$cleanPurchaseId:%'),
+      ],
+    ).getSingle();
+    final priorCount = (priorRefunds.data['count'] as num?)?.toInt() ?? 0;
+    final resolvedRefundKey = cleanRefundKey.isNotEmpty
+        ? cleanRefundKey
+        : (requestedAmount == null ? 'full' : 'partial-${priorCount + 1}');
+    final refundReferenceId = '$cleanPurchaseId:$resolvedRefundKey';
+    final refundIdempotencyKey = 'purchase_refund:$refundReferenceId';
+    final existingByKey = await _db.customSelect(
+      "SELECT amount FROM cash_ledger_transactions WHERE idempotency_key = ? AND deleted_at = '' LIMIT 1",
+      variables: <Variable<Object>>[Variable<String>(refundIdempotencyKey)],
+    ).getSingleOrNull();
+    if (existingByKey != null) return _number(existingByKey.data['amount']);
+    final refundable = await refundableCashForPurchase(cleanPurchaseId);
+    if (refundable <= 0) return 0;
+    final requested = requestedAmount == null || !requestedAmount.isFinite
+        ? refundable
+        : requestedAmount;
+    if (requested <= 0) {
+      throw ArgumentError('Refund amount must be greater than zero.');
+    }
+    final amount = _money(min(requested, refundable));
     if (amount <= 0) return 0;
     final when = (date ?? DateTime.now()).toUtc();
-    return _db.transaction(() async {
+    final result = await _db.transaction(() async {
       final session = await _db.customSelect(
         "SELECT id FROM cash_drawer_sessions WHERE id = ? AND cash_location_id = ? AND status = 'open' LIMIT 1",
         variables: <Variable<Object>>[
@@ -549,10 +698,10 @@ class PaymentVoucherService {
         JournalEntryDraft(
           entryDate: when,
           referenceType: 'purchase_refund',
-          referenceId: purchaseId.trim(),
+          referenceId: refundReferenceId,
           referenceNo: purchaseNo.trim(),
           description: 'Cash refund from supplier for purchase ${purchaseNo.trim()}',
-          source: 'refund',
+          source: 'system',
           createdBy: createdBy.trim(),
           storeId: storeId.trim(),
           branchId: branchId.trim(),
@@ -573,20 +722,534 @@ class PaymentVoucherService {
       );
       if (entryId.isEmpty) throw StateError('Supplier refund journal entry was not created.');
       final now = DateTime.now().toUtc();
+      final ledgerId = _cashLedger.generateId();
       await _cashLedger.appendInExistingTransaction(CashLedgerTransaction(
-        id: _cashLedger.generateId(), type: 'supplier_refund', direction: 'in',
+        id: ledgerId, type: 'supplier_refund', direction: 'in',
         amount: amount, currency: _currency(currency),
         cashLocationId: cashLocationId.trim(), cashDrawerSessionId: cashDrawerSessionId.trim(),
-        referenceType: 'purchase_refund', referenceId: purchaseId.trim(), referenceNumber: purchaseNo.trim(),
+        referenceType: 'purchase_refund', referenceId: refundReferenceId, referenceNumber: purchaseNo.trim(),
         partyType: 'supplier', partyId: supplierId.trim(), partyName: supplierName.trim(),
         paymentMethod: 'Cash', createdBy: createdBy.trim(), createdByUserId: createdByUserId.trim(),
         deviceId: deviceId.trim(), branchId: branchId.trim(), storeId: storeId.trim(), notes: notes.trim(),
-        idempotencyKey: 'purchase_refund:${purchaseId.trim()}', occurredAt: when, createdAt: now, updatedAt: now,
+        idempotencyKey: refundIdempotencyKey, occurredAt: when, createdAt: now, updatedAt: now,
         lastModifiedByDeviceId: deviceId.trim(),
       ));
+
+      // Keep the compatibility supplier ledger in the SAME SQLite transaction
+      // as the journal, Cash Ledger movement and drawer balance. This prevents
+      // a committed cash refund from existing without the corresponding
+      // supplier account movement after a crash or follow-up save failure.
+      final nextSort = await _db.customSelect(
+        'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+      ).getSingle();
+      final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+      final isoWhen = when.toIso8601String();
+      final compatibilityId = '$ledgerId-supplier-refund';
+      final inserted = await _db.customInsert(
+        '''
+        INSERT OR IGNORE INTO account_transactions
+          (id, entity_type, created_at, updated_at, deleted_at,
+           device_id, sync_status, store_id, branch_id, version, sort_index,
+           account_type, account_id, account_name, transaction_date,
+           transaction_type, reference_id, reference_no, debit, credit,
+           currency, payment_method, note, last_modified_by_device_id)
+        VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?,
+                'supplier', ?, ?, ?, 'paymentReversal', ?, ?, 0, ?, ?, 'Cash', ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(compatibilityId),
+          Variable<String>(isoWhen),
+          Variable<String>(isoWhen),
+          Variable<String>(deviceId.trim()),
+          Variable<String>(storeId.trim()),
+          Variable<String>(branchId.trim()),
+          Variable<int>(sortIndex),
+          Variable<String>(supplierId.trim()),
+          Variable<String>(supplierName.trim()),
+          Variable<String>(isoWhen),
+          Variable<String>(cleanPurchaseId),
+          Variable<String>(purchaseNo.trim()),
+          Variable<double>(amount),
+          Variable<String>(_currency(currency)),
+          Variable<String>(notes.trim().isEmpty
+              ? 'Cash refund from supplier for ${purchaseNo.trim()}'
+              : notes.trim()),
+          Variable<String>(deviceId.trim()),
+        ],
+      );
+      if (inserted <= 0) {
+        throw StateError('Supplier refund account movement was not created.');
+      }
+
       await _moveCashLocation(cashLocationId.trim(), amount, now);
       return amount;
     });
+    AccountingService.notifyCommittedMutation();
+    return result;
+  }
+
+
+  /// Phase 6: reverses a posted receipt without deleting its financial history.
+  ///
+  /// The original voucher, allocation rows, journal entry and Cash Ledger row
+  /// remain queryable. Allocations are marked reversed so invoice paid_amount
+  /// can be rebuilt from active posted vouchers only.
+  Future<bool> reverseReceiptVoucher({
+    required String voucherId,
+    String reason = '',
+    String createdBy = '',
+    String createdByUserId = '',
+    String deviceId = '',
+    DateTime? occurredAt,
+  }) {
+    return _reverseVoucher(
+      voucherType: 'receipt',
+      voucherId: voucherId,
+      reason: reason,
+      createdBy: createdBy,
+      createdByUserId: createdByUserId,
+      deviceId: deviceId,
+      occurredAt: occurredAt,
+    );
+  }
+
+  /// Phase 6 counterpart for supplier payment vouchers.
+  Future<bool> reversePaymentVoucher({
+    required String voucherId,
+    String reason = '',
+    String createdBy = '',
+    String createdByUserId = '',
+    String deviceId = '',
+    DateTime? occurredAt,
+  }) {
+    return _reverseVoucher(
+      voucherType: 'payment',
+      voucherId: voucherId,
+      reason: reason,
+      createdBy: createdBy,
+      createdByUserId: createdByUserId,
+      deviceId: deviceId,
+      occurredAt: occurredAt,
+    );
+  }
+
+  Future<bool> _reverseVoucher({
+    required String voucherType,
+    required String voucherId,
+    required String reason,
+    required String createdBy,
+    required String createdByUserId,
+    required String deviceId,
+    required DateTime? occurredAt,
+  }) async {
+    final type = voucherType.trim().toLowerCase();
+    final id = voucherId.trim();
+    if (id.isEmpty || (type != 'receipt' && type != 'payment')) {
+      throw ArgumentError('A valid voucher type and voucherId are required.');
+    }
+    final table = type == 'receipt' ? 'receipt_vouchers' : 'payment_vouchers';
+    final referenceType =
+        type == 'receipt' ? 'receipt_voucher' : 'payment_voucher';
+
+    final before = await _db.customSelect(
+      'SELECT status, payment_method FROM $table WHERE id = ? AND deleted_at = \'\' LIMIT 1',
+      variables: <Variable<Object>>[Variable<String>(id)],
+    ).getSingleOrNull();
+    if (before == null) throw StateError('Voucher $id does not exist.');
+    final beforeStatus = before.data['status']?.toString() ?? '';
+    if (beforeStatus == 'reversed' || beforeStatus == 'void') return false;
+    if (beforeStatus != 'posted') {
+      throw StateError('Only posted vouchers can be reversed.');
+    }
+
+    final isCashVoucher =
+        _isCash(before.data['payment_method']?.toString() ?? '');
+    if (isCashVoucher) {
+      final originalCash = await _db.customSelect(
+        '''
+        SELECT id
+        FROM cash_ledger_transactions
+        WHERE reference_type = ? AND reference_id = ?
+          AND reversal_of_id = '' AND deleted_at = ''
+        LIMIT 1
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(referenceType),
+          Variable<String>(id),
+        ],
+      ).getSingleOrNull();
+      if (originalCash == null) {
+        // Legacy vouchers can pre-date Phase 1. Materialize their immutable
+        // original ledger row before appending the reversal. This does not move
+        // current_balance; the original legacy payment already did that.
+        await backfillLegacyCashLedger();
+      }
+    }
+
+    final when = (occurredAt ?? DateTime.now()).toUtc();
+    final result = await _db.transaction(() async {
+      final voucher = await _db.customSelect(
+        'SELECT status, payment_method FROM $table WHERE id = ? AND deleted_at = \'\' LIMIT 1',
+        variables: <Variable<Object>>[Variable<String>(id)],
+      ).getSingleOrNull();
+      if (voucher == null) throw StateError('Voucher $id disappeared.');
+      final status = voucher.data['status']?.toString() ?? '';
+      if (status == 'reversed' || status == 'void') return false;
+      if (status != 'posted') {
+        throw StateError('Only posted vouchers can be reversed.');
+      }
+
+      final allocations = await _db.customSelect(
+        '''
+        SELECT reference_type, reference_id
+        FROM payment_allocations
+        WHERE voucher_type = ? AND voucher_id = ?
+          AND deleted_at = '' AND status = 'active'
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(type),
+          Variable<String>(id),
+        ],
+      ).get();
+      final affected = <String, String>{
+        for (final row in allocations)
+          row.data['reference_id']?.toString() ?? '':
+              row.data['reference_type']?.toString() ?? '',
+      }..remove('');
+
+      if (_isCash(voucher.data['payment_method']?.toString() ?? '')) {
+        final originalRows = await _cashLedger.list(
+          referenceType: referenceType,
+          referenceId: id,
+          limit: 500,
+        );
+        if (originalRows.isEmpty) {
+          throw StateError(
+              'Cash voucher cannot be reversed because its original Cash Ledger movement is missing.');
+        }
+        for (final row in originalRows) {
+          if (row.reversalOfId.isNotEmpty) continue;
+          await _cashLedger.reverseTransactionInExistingTransaction(
+            row,
+            reason: reason,
+            createdBy: createdBy,
+            createdByUserId: createdByUserId,
+            deviceId: deviceId,
+            occurredAt: when,
+          );
+        }
+      }
+
+      await AccountingService.reverseEntryForReference(
+        referenceType: referenceType,
+        referenceId: id,
+        reason: reason,
+        createdBy: createdBy,
+        adjustCashLocationBalance: false,
+        notifyChange: false,
+      );
+
+      final now = DateTime.now().toUtc().toIso8601String();
+      await _db.customUpdate(
+        '''
+        UPDATE payment_allocations
+        SET status = 'reversed', reversed_at = ?, reversal_reason = ?,
+            reversed_by = ?, reversed_by_user_id = ?, updated_at = ?,
+            sync_status = 'pending', version = version + 1,
+            last_modified_by_device_id = ?
+        WHERE voucher_type = ? AND voucher_id = ?
+          AND deleted_at = '' AND status = 'active'
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(now),
+          Variable<String>(reason.trim()),
+          Variable<String>(createdBy.trim()),
+          Variable<String>(createdByUserId.trim()),
+          Variable<String>(now),
+          Variable<String>(deviceId.trim()),
+          Variable<String>(type),
+          Variable<String>(id),
+        ],
+      );
+
+      for (final entry in affected.entries) {
+        await _rebuildAllocationCache(
+          referenceType: entry.value,
+          referenceId: entry.key,
+          deviceId: deviceId,
+        );
+      }
+
+      final updatedVoucherRows = await _db.customUpdate(
+        '''
+        UPDATE $table
+        SET status = 'reversed', reversed_at = ?, reversal_reason = ?,
+            reversed_by = ?, reversed_by_user_id = ?, updated_at = ?,
+            sync_status = 'pending', version = version + 1,
+            last_modified_by_device_id = ?
+        WHERE id = ? AND deleted_at = '' AND status = 'posted'
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(now),
+          Variable<String>(reason.trim()),
+          Variable<String>(createdBy.trim()),
+          Variable<String>(createdByUserId.trim()),
+          Variable<String>(now),
+          Variable<String>(deviceId.trim()),
+          Variable<String>(id),
+        ],
+      );
+      if (updatedVoucherRows != 1) {
+        throw StateError(
+          'Voucher $id was not reversed because its posted state changed before commit.',
+        );
+      }
+      await _reverseCompatibilityAccountMovements(
+        voucherType: type, voucherId: id, reason: reason, deviceId: deviceId, occurredAt: when,
+      );
+      return true;
+    });
+    AccountingService.notifyCommittedMutation();
+    return result;
+  }
+
+  Future<void> _insertCompatibilityRefundMovement({
+    required String id,
+    required String accountType,
+    required String accountId,
+    required String accountName,
+    required String referenceId,
+    required String referenceNo,
+    required double debit,
+    required double credit,
+    required String currency,
+    required String note,
+    required String deviceId,
+    required String branchId,
+    required String storeId,
+    required DateTime occurredAt,
+  }) async {
+    if (id.trim().isEmpty || accountId.trim().isEmpty) return;
+    final existing = await _db.customSelect(
+      "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
+      variables: <Variable<Object>>[Variable<String>(id.trim())],
+    ).getSingleOrNull();
+    if (existing != null) return;
+    final nextSort = await _db.customSelect(
+      'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+    ).getSingle();
+    final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+    final iso = occurredAt.toUtc().toIso8601String();
+    await _db.customInsert(
+      '''
+      INSERT OR IGNORE INTO account_transactions
+        (id, entity_type, created_at, updated_at, deleted_at, device_id,
+         sync_status, store_id, branch_id, version, sort_index, account_type,
+         account_id, account_name, transaction_date, transaction_type,
+         reference_id, reference_no, debit, credit, currency, payment_method,
+         note, last_modified_by_device_id)
+      VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?, ?, ?, ?, ?,
+              'paymentReversal', ?, ?, ?, ?, ?, 'Cash', ?, ?)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(id.trim()), Variable<String>(iso), Variable<String>(iso),
+        Variable<String>(deviceId.trim()), Variable<String>(storeId.trim()),
+        Variable<String>(branchId.trim()), Variable<int>(sortIndex),
+        Variable<String>(accountType.trim()), Variable<String>(accountId.trim()),
+        Variable<String>(accountName.trim()), Variable<String>(iso),
+        Variable<String>(referenceId.trim()), Variable<String>(referenceNo.trim()),
+        Variable<double>(_money(debit)), Variable<double>(_money(credit)),
+        Variable<String>(_currency(currency)), Variable<String>(note.trim()),
+        Variable<String>(deviceId.trim()),
+      ],
+    );
+  }
+
+  Future<void> _insertCompatibilityAccountMovement({
+    required String voucherType,
+    required String voucherId,
+    required String voucherNo,
+    required String partyId,
+    required String partyName,
+    required double amount,
+    required String currency,
+    required String paymentMethod,
+    required List<PaymentAllocation> allocations,
+    required String notes,
+    required String deviceId,
+    required String branchId,
+    required String storeId,
+    required DateTime occurredAt,
+  }) async {
+    final isReceipt = voucherType.trim().toLowerCase() == 'receipt';
+    if (voucherId.trim().isEmpty || partyId.trim().isEmpty || amount <= 0) return;
+    final first = allocations.isEmpty ? null : allocations.first;
+    final movementId = first == null
+        ? '$voucherId-${isReceipt ? 'customer' : 'supplier'}-account-payment'
+        : '$voucherId-${isReceipt ? 'customer-payment' : 'supplier-payment'}';
+    final referenceId = first?.referenceId ?? voucherId;
+    final referenceNo = (first?.referenceNumber.trim().isNotEmpty ?? false)
+        ? first!.referenceNumber.trim()
+        : voucherNo.trim();
+    final existing = await _db.customSelect(
+      "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
+      variables: <Variable<Object>>[Variable<String>(movementId)],
+    ).getSingleOrNull();
+    if (existing != null) return;
+    final nextSort = await _db.customSelect(
+      'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+    ).getSingle();
+    final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+    final iso = occurredAt.toUtc().toIso8601String();
+    await _db.customInsert(
+      '''
+      INSERT OR IGNORE INTO account_transactions
+        (id, entity_type, created_at, updated_at, deleted_at, device_id,
+         sync_status, store_id, branch_id, version, sort_index, account_type,
+         account_id, account_name, transaction_date, transaction_type,
+         reference_id, reference_no, debit, credit, currency, payment_method,
+         note, last_modified_by_device_id)
+      VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(movementId), Variable<String>(iso), Variable<String>(iso),
+        Variable<String>(deviceId.trim()), Variable<String>(storeId.trim()),
+        Variable<String>(branchId.trim()), Variable<int>(sortIndex),
+        Variable<String>(isReceipt ? 'customer' : 'supplier'),
+        Variable<String>(partyId.trim()), Variable<String>(partyName.trim()),
+        Variable<String>(iso),
+        Variable<String>(isReceipt ? 'paymentReceived' : 'paymentPaid'),
+        Variable<String>(referenceId.trim()), Variable<String>(referenceNo),
+        Variable<double>(isReceipt ? 0 : _money(amount)),
+        Variable<double>(isReceipt ? _money(amount) : 0),
+        Variable<String>(_currency(currency)), Variable<String>(paymentMethod.trim()),
+        Variable<String>(notes.trim().isEmpty ? (isReceipt ? 'Receipt $voucherNo' : 'Payment $voucherNo') : notes.trim()),
+        Variable<String>(deviceId.trim()),
+      ],
+    );
+  }
+
+  Future<void> _reverseCompatibilityAccountMovements({
+    required String voucherType,
+    required String voucherId,
+    required String reason,
+    required String deviceId,
+    required DateTime occurredAt,
+  }) async {
+    final isReceipt = voucherType.trim().toLowerCase() == 'receipt';
+    final ids = <String>[
+      '$voucherId-${isReceipt ? 'customer-payment' : 'supplier-payment'}',
+      '$voucherId-${isReceipt ? 'customer' : 'supplier'}-account-payment',
+    ];
+    for (final originalId in ids) {
+      final original = await _db.customSelect(
+        '''SELECT account_type, account_id, account_name, reference_id, reference_no,
+                  debit, credit, currency, payment_method, store_id, branch_id
+           FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1''',
+        variables: <Variable<Object>>[Variable<String>(originalId)],
+      ).getSingleOrNull();
+      if (original == null) continue;
+      final reversalId = '$originalId-reversal';
+      final exists = await _db.customSelect(
+        "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
+        variables: <Variable<Object>>[Variable<String>(reversalId)],
+      ).getSingleOrNull();
+      if (exists != null) continue;
+      final nextSort = await _db.customSelect(
+        'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+      ).getSingle();
+      final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+      final iso = occurredAt.toUtc().toIso8601String();
+      final debit = (original.data['debit'] as num?)?.toDouble() ?? 0.0;
+      final credit = (original.data['credit'] as num?)?.toDouble() ?? 0.0;
+      await _db.customInsert(
+        '''
+        INSERT OR IGNORE INTO account_transactions
+          (id, entity_type, created_at, updated_at, deleted_at, device_id,
+           sync_status, store_id, branch_id, version, sort_index, account_type,
+           account_id, account_name, transaction_date, transaction_type,
+           reference_id, reference_no, debit, credit, currency, payment_method,
+           note, last_modified_by_device_id)
+        VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?, ?, ?, ?, ?, 'paymentReversal', ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(reversalId), Variable<String>(iso), Variable<String>(iso),
+          Variable<String>(deviceId.trim()), Variable<String>(original.data['store_id']?.toString() ?? ''),
+          Variable<String>(original.data['branch_id']?.toString() ?? ''), Variable<int>(sortIndex),
+          Variable<String>(original.data['account_type']?.toString() ?? ''),
+          Variable<String>(original.data['account_id']?.toString() ?? ''),
+          Variable<String>(original.data['account_name']?.toString() ?? ''), Variable<String>(iso),
+          Variable<String>(original.data['reference_id']?.toString() ?? voucherId),
+          Variable<String>(original.data['reference_no']?.toString() ?? ''),
+          Variable<double>(credit), Variable<double>(debit),
+          Variable<String>(original.data['currency']?.toString() ?? 'USD'),
+          Variable<String>(original.data['payment_method']?.toString() ?? ''),
+          Variable<String>(reason.trim().isEmpty ? 'Voucher reversed' : 'Voucher reversal: ${reason.trim()}'),
+          Variable<String>(deviceId.trim()),
+        ],
+      );
+    }
+  }
+
+  Future<void> _rebuildAllocationCache({
+    required String referenceType,
+    required String referenceId,
+    required String deviceId,
+  }) async {
+    final type = referenceType.trim().toLowerCase();
+    final id = referenceId.trim();
+    if (id.isEmpty || (type != 'sale' && type != 'purchase')) return;
+
+    final isSale = type == 'sale';
+    final voucherTable = isSale ? 'receipt_vouchers' : 'payment_vouchers';
+    final voucherType = isSale ? 'receipt' : 'payment';
+    final target =
+        isSale ? await _saleTarget(id) : await _purchaseTarget(id, 'USD');
+    if (target == null) return;
+
+    final row = await _db.customSelect(
+      '''
+      SELECT COALESCE(SUM(pa.reference_amount), 0) AS total
+      FROM payment_allocations pa
+      INNER JOIN $voucherTable voucher ON voucher.id = pa.voucher_id
+      WHERE pa.voucher_type = ?
+        AND pa.reference_type = ?
+        AND pa.reference_id = ?
+        AND pa.deleted_at = ''
+        AND pa.status = 'active'
+        AND voucher.deleted_at = ''
+        AND voucher.status = 'posted'
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(voucherType),
+        Variable<String>(type),
+        Variable<String>(id),
+      ],
+    ).getSingle();
+    final paid =
+        _money(_number(row.data['total'])).clamp(0, target.total).toDouble();
+    final paymentStatus =
+        paid + _epsilon >= target.total && target.total > 0
+            ? 'paid'
+            : (paid > 0 ? 'partial' : 'unpaid');
+    final now = DateTime.now().toUtc().toIso8601String();
+    final table = isSale ? 'sales' : 'purchases';
+    await _db.customUpdate(
+      '''
+      UPDATE $table
+      SET paid_amount = ?, payment_status = ?, updated_at = ?,
+          sync_status = 'pending', version = version + 1,
+          last_modified_by_device_id = ?
+      WHERE id = ? AND deleted_at = ''
+      ''',
+      variables: <Variable<Object>>[
+        Variable<double>(paid),
+        Variable<String>(paymentStatus),
+        Variable<String>(now),
+        Variable<String>(deviceId.trim()),
+        Variable<String>(id),
+      ],
+    );
   }
 
   /// Backfills Cash Ledger rows for legacy cash receipt/payment vouchers that
@@ -831,7 +1494,7 @@ class PaymentVoucherService {
 
   Future<List<PaymentAllocation>> allocationsFor(String voucherType, String voucherId) async {
     final rows = await _db.customSelect(
-      "SELECT * FROM payment_allocations WHERE voucher_type = ? AND voucher_id = ? AND deleted_at = '' ORDER BY created_at, id",
+      "SELECT * FROM payment_allocations WHERE voucher_type = ? AND voucher_id = ? AND deleted_at = '' AND status = 'active' ORDER BY created_at, id",
       variables: <Variable<Object>>[
         Variable<String>(voucherType.trim().toLowerCase()),
         Variable<String>(voucherId.trim()),
@@ -1265,7 +1928,9 @@ class PaymentVoucherService {
       date: _date(row['voucher_date']), amount: _number(row['amount']), unallocatedAmount: _number(row['unallocated_amount']),
       currency: row['currency']?.toString() ?? 'USD', paymentMethod: row['payment_method']?.toString() ?? 'Cash',
       cashLocationId: row['cash_location_id']?.toString() ?? '', cashDrawerSessionId: row['cash_drawer_session_id']?.toString() ?? '',
-      status: row['status']?.toString() ?? 'posted', notes: row['notes']?.toString() ?? '', createdBy: row['created_by']?.toString() ?? '',
+      status: row['status']?.toString() ?? 'posted', reversalReason: row['reversal_reason']?.toString() ?? '',
+      reversedBy: row['reversed_by']?.toString() ?? '', reversedByUserId: row['reversed_by_user_id']?.toString() ?? '',
+      reversedAt: _nullableDate(row['reversed_at']), notes: row['notes']?.toString() ?? '', createdBy: row['created_by']?.toString() ?? '',
       createdByUserId: row['created_by_user_id']?.toString() ?? '', deviceId: row['device_id']?.toString() ?? '', branchId: row['branch_id']?.toString() ?? '',
       storeId: row['store_id']?.toString() ?? '', idempotencyKey: row['idempotency_key']?.toString() ?? '', allocations: allocations,
       createdAt: _date(row['created_at']), updatedAt: _date(row['updated_at']), deletedAt: _nullableDate(row['deleted_at']),
@@ -1281,7 +1946,9 @@ class PaymentVoucherService {
       date: _date(row['voucher_date']), amount: _number(row['amount']), unallocatedAmount: _number(row['unallocated_amount']),
       currency: row['currency']?.toString() ?? 'USD', paymentMethod: row['payment_method']?.toString() ?? 'Cash',
       cashLocationId: row['cash_location_id']?.toString() ?? '', cashDrawerSessionId: row['cash_drawer_session_id']?.toString() ?? '',
-      status: row['status']?.toString() ?? 'posted', notes: row['notes']?.toString() ?? '', createdBy: row['created_by']?.toString() ?? '',
+      status: row['status']?.toString() ?? 'posted', reversalReason: row['reversal_reason']?.toString() ?? '',
+      reversedBy: row['reversed_by']?.toString() ?? '', reversedByUserId: row['reversed_by_user_id']?.toString() ?? '',
+      reversedAt: _nullableDate(row['reversed_at']), notes: row['notes']?.toString() ?? '', createdBy: row['created_by']?.toString() ?? '',
       createdByUserId: row['created_by_user_id']?.toString() ?? '', deviceId: row['device_id']?.toString() ?? '', branchId: row['branch_id']?.toString() ?? '',
       storeId: row['store_id']?.toString() ?? '', idempotencyKey: row['idempotency_key']?.toString() ?? '', allocations: allocations,
       createdAt: _date(row['created_at']), updatedAt: _date(row['updated_at']), deletedAt: _nullableDate(row['deleted_at']),
@@ -1295,7 +1962,9 @@ class PaymentVoucherService {
         referenceType: row['reference_type']?.toString() ?? '', referenceId: row['reference_id']?.toString() ?? '',
         referenceNumber: row['reference_number']?.toString() ?? '', amount: _number(row['amount']), referenceAmount: _number(row['reference_amount']),
         currency: row['currency']?.toString() ?? 'USD', referenceCurrency: row['reference_currency']?.toString() ?? 'USD',
-        exchangeRate: _number(row['exchange_rate']) <= 0 ? 1 : _number(row['exchange_rate']), createdAt: _date(row['created_at']),
+        exchangeRate: _number(row['exchange_rate']) <= 0 ? 1 : _number(row['exchange_rate']), status: row['status']?.toString() ?? 'active',
+        reversalReason: row['reversal_reason']?.toString() ?? '', reversedBy: row['reversed_by']?.toString() ?? '',
+        reversedByUserId: row['reversed_by_user_id']?.toString() ?? '', reversedAt: _nullableDate(row['reversed_at']), createdAt: _date(row['created_at']),
         updatedAt: _date(row['updated_at']), deletedAt: _nullableDate(row['deleted_at']), syncStatus: row['sync_status']?.toString() ?? 'pending',
         version: (row['version'] as num?)?.toInt() ?? 1, lastModifiedByDeviceId: row['last_modified_by_device_id']?.toString() ?? '',
       );

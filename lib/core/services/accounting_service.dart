@@ -42,6 +42,12 @@ class AccountingService {
     _mutationListener?.call();
   }
 
+  /// Phase 8 hook for services that own a larger SQLite transaction.
+  /// Call this only after the outer transaction has committed successfully.
+  static void notifyCommittedMutation() {
+    _notifyMutation();
+  }
+
   static void _clearAccountingSettingsCache() {
     _settingsCacheDbIdentity = null;
     _defaultAccountMapCache = null;
@@ -287,6 +293,85 @@ class AccountingService {
     }
   }
 
+  static Future<String> recordSaleReturn({
+    required Sale sale,
+    required String returnReferenceId,
+    required DateTime date,
+    required double returnAmount,
+    required double returnCogs,
+    String createdBy = '',
+  }) async {
+    if (!isAvailable || returnAmount <= 0 || returnReferenceId.trim().isEmpty) {
+      return '';
+    }
+    final accounts = await readDefaultAccountMap();
+    final accountingCurrency = sale.invoiceCurrency.trim().isEmpty
+        ? _moneyProfile.baseCurrency
+        : sale.invoiceCurrency.trim().toUpperCase();
+    final gross = _roundMoney(
+      _cleanAmount(returnAmount),
+      currency: accountingCurrency,
+    );
+    final cogs = _roundMoney(
+      _cleanAmount(returnCogs),
+      currency: accountingCurrency,
+    );
+    if (gross <= 0) return '';
+    final tax = await _taxBreakdown(gross);
+    final lines = <JournalLineDraft>[
+      JournalLineDraft(
+        accountId: _requiredAccount(accounts, 'default_sales_account_id'),
+        debit: tax.netAmount,
+        credit: 0,
+        memo: 'مرتجع مبيعات ${sale.invoiceNo}',
+      ),
+    ];
+    if (tax.taxAmount > 0) {
+      lines.add(JournalLineDraft(
+        accountId: _requiredAccount(accounts, 'default_sales_tax_account_id'),
+        debit: tax.taxAmount,
+        credit: 0,
+        memo: 'عكس ضريبة مبيعات ${sale.invoiceNo}',
+      ));
+    }
+    lines.add(JournalLineDraft(
+      accountId: _requiredAccount(accounts, 'default_customers_account_id'),
+      debit: 0,
+      credit: gross,
+      memo: 'رصيد دائن للعميل عن مرتجع ${sale.invoiceNo}',
+      partyType: 'customer',
+      partyId: sale.customerId,
+      partyName: sale.customerName,
+    ));
+    if (cogs > 0) {
+      lines
+        ..add(JournalLineDraft(
+          accountId: _requiredAccount(accounts, 'default_inventory_account_id'),
+          debit: cogs,
+          credit: 0,
+          memo: 'إعادة مخزون مرتجع ${sale.invoiceNo}',
+        ))
+        ..add(JournalLineDraft(
+          accountId: _requiredAccount(accounts, 'default_cogs_account_id'),
+          debit: 0,
+          credit: cogs,
+          memo: 'عكس تكلفة بضاعة مباعة ${sale.invoiceNo}',
+        ));
+    }
+    return createPostedEntry(JournalEntryDraft(
+      entryDate: date,
+      referenceType: 'sale_return',
+      referenceId: returnReferenceId.trim(),
+      referenceNo: sale.invoiceNo,
+      description: 'مرتجع مبيعات ${sale.invoiceNo}',
+      source: 'system',
+      createdBy: createdBy.trim().isEmpty ? sale.lastModifiedByDeviceId : createdBy.trim(),
+      storeId: sale.storeId,
+      branchId: sale.branchId,
+      lines: lines,
+    ));
+  }
+
   static Future<bool> recordPurchase(Purchase purchase,
       {String accountingReferenceId = '', bool paymentPostedSeparately = false}) async {
     if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) {
@@ -410,6 +495,18 @@ class AccountingService {
       throw StateError(
           'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل دفع نقدي.');
     }
+    final location = await _db.customSelect(
+      "SELECT current_balance FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
+      variables: <Variable<Object>>[Variable<String>(drawer.id)],
+    ).getSingleOrNull();
+    if (location == null) {
+      throw StateError('درج النقد غير متاح.');
+    }
+    final balance = _num(location.data['current_balance']);
+    if (balance + 0.000001 < paidAmount) {
+      throw StateError(
+          'رصيد الصندوق غير كافٍ لتسجيل الشراء النقدي. الرصيد الحالي: ${_roundMoney(balance)}، المطلوب: ${_roundMoney(paidAmount)}.');
+    }
   }
 
   /// Posts a legacy Expense through the Phase 5 authoritative cash path.
@@ -422,9 +519,56 @@ class AccountingService {
     if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
     await _db.transaction(() async {
+      // Phase 9/2: Expense status and all financial effects commit together.
+      await _upsertExpenseRowInExistingTransaction(expense);
       await _recordExpenseInExistingTransaction(expense, accounts);
+      await _recordExpenseCompatibilityLedgerInExistingTransaction(expense);
     });
     _notifyMutation();
+  }
+
+  /// Posts an expense on credit without touching the cash drawer or shift.
+  /// The journal recognizes the expense immediately and carries the amount in
+  /// the default suppliers/payables account until it is settled later.
+  static Future<void> recordExpenseOnCredit(Expense expense) async {
+    if (expense.isDeleted || !expense.isPosted || expense.amount <= 0) return;
+    if (!isAvailable) return;
+    final accounts = await readDefaultAccountMap();
+    await _db.transaction(() async {
+      await _upsertExpenseRowInExistingTransaction(expense);
+      await _recordCreditExpenseInExistingTransaction(expense, accounts);
+      await _recordCreditExpenseCompatibilityLedgerInExistingTransaction(expense);
+    });
+    _notifyMutation();
+  }
+
+  /// Returns posted credit-expense ids that have not yet been settled from cash.
+  /// Credit approval is identified by the compatibility ledger row written by
+  /// [recordExpenseOnCredit]. A successful cash settlement is identified by the
+  /// stable cash-operation idempotency key used by the Cash page.
+  static Future<Set<String>> readOutstandingCreditExpenseIds() async {
+    if (!isAvailable) return <String>{};
+    final rows = await _db.customSelect(
+      '''
+      SELECT DISTINCT at.reference_id AS expense_id
+      FROM account_transactions at
+      WHERE at.deleted_at = ''
+        AND LOWER(at.transaction_type) = 'expense'
+        AND LOWER(at.payment_method) = 'credit'
+        AND TRIM(at.reference_id) <> ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cash_operations co
+          WHERE co.deleted_at = ''
+            AND LOWER(co.status) = 'posted'
+            AND co.idempotency_key = ('expense-credit-settlement:' || at.reference_id)
+        )
+      ''',
+    ).get();
+    return rows
+        .map((row) => row.data['expense_id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
   }
 
   /// Atomically posts a batch of legacy expenses through the Phase 5 cash path.
@@ -439,10 +583,210 @@ class AccountingService {
     final accounts = await readDefaultAccountMap();
     await _db.transaction(() async {
       for (final expense in candidates) {
+        await _upsertExpenseRowInExistingTransaction(expense);
         await _recordExpenseInExistingTransaction(expense, accounts);
+        await _recordExpenseCompatibilityLedgerInExistingTransaction(expense);
       }
     });
     _notifyMutation();
+  }
+
+  static Future<void> _upsertExpenseRowInExistingTransaction(Expense expense) async {
+    final createdAt = expense.createdAt.toUtc().toIso8601String();
+    final updatedAt = expense.updatedAt.toUtc().toIso8601String();
+    final deletedAt = expense.deletedAt?.toUtc().toIso8601String() ?? '';
+    final cancelledAt = expense.cancelledAt?.toUtc().toIso8601String() ?? '';
+    final existingSort = await _db.customSelect(
+      'SELECT sort_index FROM expenses WHERE id = ? LIMIT 1',
+      variables: <Variable<Object>>[Variable<String>(expense.id)],
+    ).getSingleOrNull();
+    final nextSort = existingSort == null
+        ? await _db.customSelect(
+            'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM expenses',
+          ).getSingle()
+        : null;
+    final sortIndex = existingSort != null
+        ? (existingSort.data['sort_index'] as num?)?.toInt() ?? 0
+        : (nextSort?.data['next_sort'] as num?)?.toInt() ?? 1;
+    await _db.customInsert(
+      '''
+      INSERT INTO expenses
+        (id, entity_type, created_at, updated_at, deleted_at,
+         device_id, sync_status, store_id, branch_id, version,
+         last_modified_by_device_id, sort_index, title, category, amount,
+         original_amount, original_currency, exchange_rate_at_entry,
+         expense_date, notes, expense_status, cancel_reason,
+         cancelled_by_device_id, cancelled_at)
+      VALUES (?, 'expense', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        deleted_at = excluded.deleted_at,
+        device_id = excluded.device_id,
+        sync_status = excluded.sync_status,
+        store_id = excluded.store_id,
+        branch_id = excluded.branch_id,
+        version = excluded.version,
+        last_modified_by_device_id = excluded.last_modified_by_device_id,
+        title = excluded.title,
+        category = excluded.category,
+        amount = excluded.amount,
+        original_amount = excluded.original_amount,
+        original_currency = excluded.original_currency,
+        exchange_rate_at_entry = excluded.exchange_rate_at_entry,
+        expense_date = excluded.expense_date,
+        notes = excluded.notes,
+        expense_status = excluded.expense_status,
+        cancel_reason = excluded.cancel_reason,
+        cancelled_by_device_id = excluded.cancelled_by_device_id,
+        cancelled_at = excluded.cancelled_at
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(expense.id), Variable<String>(createdAt),
+        Variable<String>(updatedAt), Variable<String>(deletedAt),
+        Variable<String>(expense.deviceId), Variable<String>(expense.syncStatus),
+        Variable<String>(expense.storeId), Variable<String>(expense.branchId),
+        Variable<int>(expense.version), Variable<String>(expense.lastModifiedByDeviceId),
+        Variable<int>(sortIndex), Variable<String>(expense.title),
+        Variable<String>(expense.category), Variable<double>(expense.amount),
+        Variable<double>(expense.originalAmount ?? expense.amount),
+        Variable<String>(expense.originalCurrency.trim().isEmpty ? 'USD' : expense.originalCurrency.trim().toUpperCase()),
+        Variable<double>(expense.exchangeRateAtEntry),
+        Variable<String>(expense.date.toUtc().toIso8601String()),
+        Variable<String>(expense.notes), Variable<String>(expense.status),
+        Variable<String>(expense.cancelReason), Variable<String>(expense.cancelledByDeviceId),
+        Variable<String>(cancelledAt),
+      ],
+    );
+  }
+
+  static Future<void> _recordExpenseCompatibilityLedgerInExistingTransaction(
+    Expense expense,
+  ) async {
+    final accountId = expense.id.trim();
+    if (accountId.isEmpty || expense.amount <= 0) return;
+    final accountName = expense.title.trim().isEmpty ? 'Expense' : expense.title.trim();
+    final currency = expense.originalCurrency.trim().isEmpty ? 'USD' : expense.originalCurrency.trim().toUpperCase();
+    final when = expense.date.toUtc().toIso8601String();
+    final updated = expense.updatedAt.toUtc().toIso8601String();
+
+    Future<void> insertMovement(String id, String type, double debit, double credit, String method, String note) async {
+      final existing = await _db.customSelect(
+        "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
+        variables: <Variable<Object>>[Variable<String>(id)],
+      ).getSingleOrNull();
+      if (existing != null) return;
+      final nextSort = await _db.customSelect(
+        'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+      ).getSingle();
+      final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+      await _db.customInsert(
+        '''
+        INSERT INTO account_transactions
+          (id, entity_type, created_at, updated_at, deleted_at,
+           device_id, sync_status, store_id, branch_id, version, sort_index,
+           account_type, account_id, account_name, transaction_date,
+           transaction_type, reference_id, reference_no, debit, credit,
+           currency, payment_method, note, last_modified_by_device_id)
+        VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?,
+                'supplier', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(id), Variable<String>(updated), Variable<String>(updated),
+          Variable<String>(expense.deviceId), Variable<String>(expense.storeId),
+          Variable<String>(expense.branchId), Variable<int>(sortIndex),
+          Variable<String>(accountId), Variable<String>(accountName), Variable<String>(when),
+          Variable<String>(type), Variable<String>(expense.id), Variable<String>(accountName),
+          Variable<double>(debit), Variable<double>(credit), Variable<String>(currency),
+          Variable<String>(method), Variable<String>(note), Variable<String>(expense.lastModifiedByDeviceId),
+        ],
+      );
+    }
+
+    await insertMovement('${expense.id}-expense-debit', 'expense', expense.amount, 0, '', 'Expense ${expense.title}');
+    await insertMovement('${expense.id}-expense-credit', 'paymentPaid', 0, expense.amount, 'Cash', 'Expense settlement ${expense.title}');
+  }
+
+  static Future<void> _recordCreditExpenseCompatibilityLedgerInExistingTransaction(
+    Expense expense,
+  ) async {
+    final accountId = expense.id.trim();
+    if (accountId.isEmpty || expense.amount <= 0) return;
+    final accountName = expense.title.trim().isEmpty ? 'Expense' : expense.title.trim();
+    final currency = expense.originalCurrency.trim().isEmpty
+        ? 'USD'
+        : expense.originalCurrency.trim().toUpperCase();
+    final when = expense.date.toUtc().toIso8601String();
+    final updated = expense.updatedAt.toUtc().toIso8601String();
+    final id = '${expense.id}-expense-debit';
+    final existing = await _db.customSelect(
+      "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
+      variables: <Variable<Object>>[Variable<String>(id)],
+    ).getSingleOrNull();
+    if (existing != null) return;
+    final nextSort = await _db.customSelect(
+      'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+    ).getSingle();
+    final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+    await _db.customInsert(
+      '''
+      INSERT INTO account_transactions
+        (id, entity_type, created_at, updated_at, deleted_at,
+         device_id, sync_status, store_id, branch_id, version, sort_index,
+         account_type, account_id, account_name, transaction_date,
+         transaction_type, reference_id, reference_no, debit, credit,
+         currency, payment_method, note, last_modified_by_device_id)
+      VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?,
+              'supplier', ?, ?, ?, 'expense', ?, ?, ?, 0, ?, 'Credit', ?, ?)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(id), Variable<String>(updated), Variable<String>(updated),
+        Variable<String>(expense.deviceId), Variable<String>(expense.storeId),
+        Variable<String>(expense.branchId), Variable<int>(sortIndex),
+        Variable<String>(accountId), Variable<String>(accountName), Variable<String>(when),
+        Variable<String>(expense.id), Variable<String>(accountName),
+        Variable<double>(expense.amount), Variable<String>(currency),
+        Variable<String>('Expense on credit ${expense.title}'),
+        Variable<String>(expense.lastModifiedByDeviceId),
+      ],
+    );
+  }
+
+  static Future<void> _recordCreditExpenseInExistingTransaction(
+    Expense expense,
+    Map<String, String> accounts,
+  ) async {
+    final amount = _roundMoney(expense.amount);
+    final entryId = await createPostedEntry(
+      JournalEntryDraft(
+        entryDate: expense.date,
+        referenceType: 'expense',
+        referenceId: expense.id,
+        referenceNo: expense.title,
+        description: 'مصروف آجل: ${expense.title}',
+        source: 'system',
+        createdBy: expense.lastModifiedByDeviceId,
+        storeId: expense.storeId,
+        branchId: expense.branchId,
+        lines: <JournalLineDraft>[
+          JournalLineDraft(
+            accountId: _requiredAccount(accounts, 'default_expense_account_id'),
+            debit: amount,
+            credit: 0,
+            memo: expense.category,
+          ),
+          JournalLineDraft(
+            accountId: _requiredAccount(accounts, 'default_suppliers_account_id'),
+            debit: 0,
+            credit: amount,
+            memo: 'مصروف مستحق الدفع',
+          ),
+        ],
+      ),
+      database: _db,
+    );
+    if (entryId.isEmpty) {
+      throw StateError('تعذر إنشاء القيد المحاسبي للمصروف الآجل.');
+    }
   }
 
   static Future<void> _recordExpenseInExistingTransaction(
@@ -498,7 +842,7 @@ class AccountingService {
         referenceId: expense.id,
         referenceNo: expense.title,
         description: 'مصروف: ${expense.title}',
-        source: 'cash',
+        source: 'system',
         createdBy: expense.lastModifiedByDeviceId,
         storeId: expense.storeId,
         branchId: expense.branchId,
@@ -535,7 +879,7 @@ class AccountingService {
       variables: <Variable<Object>>[
         Variable<String>(operationId),
         Variable<String>(expense.title.trim().isEmpty ? expense.id : expense.title),
-        Variable<String>(expense.date.toUtc().toIso8601String()),
+        Variable<String>(now),
         Variable<String>(cashExpenseLocation.id),
         Variable<String>(sessionId),
         Variable<double>(amount),
@@ -573,7 +917,10 @@ class AccountingService {
       storeId: expense.storeId,
       notes: expense.notes,
       idempotencyKey: '$idempotencyKey:ledger',
-      occurredAt: expense.date.toUtc(),
+      // Cash leaves the drawer when the expense is posted/paid, not on the
+      // document's historical expense date. This keeps current-shift history
+      // and reports aligned with the actual cash event.
+      occurredAt: nowDate,
       createdAt: nowDate,
       updatedAt: nowDate,
       lastModifiedByDeviceId: expense.lastModifiedByDeviceId,
@@ -585,6 +932,24 @@ class AccountingService {
         Variable<double>(amount),
         Variable<String>(now),
         Variable<String>(cashExpenseLocation.id),
+      ],
+    );
+
+    // expected_cash is a persisted shift cache used by the open-shift UI.
+    // Rebuild it from the authoritative Cash Ledger after appending the
+    // expense movement so the shift reflects the payment immediately.
+    final expectedCash =
+        _roundMoney(await calculateCashDrawerExpectedCash(sessionId));
+    await _db.customUpdate(
+      '''
+      UPDATE cash_drawer_sessions
+      SET expected_cash = ?, updated_at = ?, revision = revision + 1
+      WHERE id = ? AND status = 'open'
+      ''',
+      variables: <Variable<Object>>[
+        Variable<double>(expectedCash),
+        Variable<String>(now),
+        Variable<String>(sessionId),
       ],
     );
   }
@@ -858,6 +1223,7 @@ class AccountingService {
         transaction.date,
       );
     }
+    if (entryId.isNotEmpty) _notifyMutation();
   }
 
   static Future<String> createPostedEntry(
@@ -992,6 +1358,7 @@ class AccountingService {
     String reason = '',
     String createdBy = '',
     bool adjustCashLocationBalance = true,
+    bool notifyChange = true,
   }) async {
     if (!isAvailable) return;
     final db = _db;
@@ -1181,6 +1548,7 @@ class AccountingService {
         createdAt: now,
       );
     });
+    if (notifyChange) _notifyMutation();
   }
 
   static Future<List<GeneralLedgerAccountReport>> generalLedgerReport() async {
@@ -1734,28 +2102,43 @@ class AccountingService {
     return drawer != null;
   }
 
+  /// Returns the cash drawer assigned to [deviceId] regardless of whether a
+  /// drawer session is currently open. Session state is queried separately.
+  ///
+  /// This distinction is important after closing a shift: the physical drawer
+  /// remains assigned to the device and must still be available to open the
+  /// next shift.
   static Future<AdvancedAccountingItem?> currentCashDrawerForDevice({
     required String deviceId,
     String branchId = '',
   }) async {
     if (!isAvailable) return null;
-    final drawer = await _openCashDrawerLocationForDevice(
-      deviceId: deviceId,
-      branchId: branchId,
-    );
-    if (drawer == null) return null;
+    final cleanDeviceId = deviceId.trim();
+    if (cleanDeviceId.isEmpty) return null;
+    final branchFilter = branchId.trim().isEmpty
+        ? ''
+        : "AND (cl.branch_id = ? OR cl.branch_id = '')";
     final row = await _db.customSelect(
       '''
-      SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active, cl.current_balance AS balance,
-             cl.notes, a.code AS account_code, a.name AS account_name,
+      SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active,
+             cl.current_balance AS balance, cl.notes,
+             a.code AS account_code, a.name AS account_name,
              parent.name AS status, cl.device_id AS reference_id
       FROM cash_locations cl
       LEFT JOIN accounts a ON a.id = cl.account_id
       LEFT JOIN cash_locations parent ON parent.id = cl.parent_id
-      WHERE cl.id = ? AND cl.deleted_at = '' AND cl.is_active = 1
+      WHERE cl.deleted_at = ''
+        AND cl.is_active = 1
+        AND cl.type = 'cash_drawer'
+        AND cl.device_id = ?
+        $branchFilter
+      ORDER BY cl.is_default DESC, cl.code, cl.name
       LIMIT 1
       ''',
-      variables: <Variable<Object>>[Variable<String>(drawer.id)],
+      variables: <Variable<Object>>[
+        Variable<String>(cleanDeviceId),
+        if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
+      ],
     ).getSingleOrNull();
     return row == null ? null : AdvancedAccountingItem.fromRow(row.data);
   }
@@ -1841,6 +2224,26 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
+  static Future<List<CashShiftReportSession>> listClosedCashDrawerSessions({int limit = 200}) async {
+    if (!isAvailable) return const <CashShiftReportSession>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT cds.id, cds.drawer_no, cds.cash_location_id,
+             COALESCE(cl.name, '') AS cash_location_name,
+             cds.opened_at, cds.closed_at, cds.opening_balance,
+             cds.expected_cash, cds.counted_cash, cds.difference,
+             cds.notes, cds.opened_by, cds.closed_by, cds.branch_id
+      FROM cash_drawer_sessions cds
+      LEFT JOIN cash_locations cl ON cl.id = cds.cash_location_id
+      WHERE cds.status = 'closed'
+      ORDER BY cds.closed_at DESC, cds.opened_at DESC
+      LIMIT ?
+      ''',
+      variables: <Variable<Object>>[Variable<int>(limit.clamp(1, 1000).toInt())],
+    ).get();
+    return rows.map((row) => CashShiftReportSession.fromRow(row.data)).toList(growable: false);
+  }
+
   static Future<List<AdvancedAccountingItem>> listCashDrawers() async {
     if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
@@ -1897,7 +2300,14 @@ class AccountingService {
              cl.name AS account_name,
              cds.cash_location_id AS reference_id,
              cds.opening_balance AS debit,
-             cds.expected_cash AS credit,
+             ROUND(
+               cds.opening_balance + COALESCE((
+                 SELECT SUM(CASE WHEN clt.direction = 'in' THEN clt.amount ELSE -clt.amount END)
+                 FROM cash_ledger_transactions clt
+                 WHERE clt.cash_drawer_session_id = cds.id AND clt.deleted_at = ''
+               ), 0),
+               2
+             ) AS credit,
              COALESCE(cl.current_balance, cds.expected_cash) AS balance,
              ('افتتحت: ' || cds.opened_at ||
               CASE WHEN cds.opened_by <> '' THEN ' • بواسطة: ' || cds.opened_by ELSE '' END ||
@@ -2448,7 +2858,8 @@ class AccountingService {
     String deviceId = '',
   }) async {
     if (!isAvailable) return;
-    final now = DateTime.now().toUtc().toIso8601String();
+    final nowDate = DateTime.now().toUtc();
+    final now = nowDate.toIso8601String();
     final resolvedLocationId = cashLocationId.trim().isEmpty
         ? await _defaultCashLocationId(
             type: 'cash_drawer', branchId: branchId, deviceId: deviceId)
@@ -2456,59 +2867,72 @@ class AccountingService {
     if (resolvedLocationId.trim().isEmpty) {
       throw StateError('لا يوجد درج نقد معرف لفتح وردية.');
     }
-    await _ensureCashDrawerDeviceBinding(
-      cashLocationId: resolvedLocationId,
-      deviceId: deviceId,
-      branchId: branchId,
-      updatedAt: now,
-    );
-    if (await hasOpenCashDrawer(
-        branchId: branchId, cashLocationId: resolvedLocationId)) {
-      throw StateError('يوجد وردية مفتوحة بالفعل لهذا الدرج.');
+    final cleanOpening = _roundMoney(openingBalance);
+    if (cleanOpening < 0) {
+      throw ArgumentError('الرصيد الافتتاحي لا يمكن أن يكون سالباً.');
     }
     final sessionId = _newId('drawer');
-    final cleanOpening = _roundMoney(openingBalance);
-    await _db.customInsert(
-      '''
-      INSERT INTO cash_drawer_sessions
-        (id, drawer_no, cash_location_id, opened_at, status, opening_balance, expected_cash,
-         notes, opened_by, opened_by_user_id, store_id, branch_id)
-      VALUES (?, ?, ?, ?, 'open', ?, ?, '', ?, ?, ?, ?)
-      ''',
-      variables: <Variable<Object>>[
-        Variable<String>(sessionId),
-        Variable<String>(
-            drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()),
-        Variable<String>(resolvedLocationId),
-        Variable<String>(now),
-        Variable<double>(cleanOpening),
-        Variable<double>(cleanOpening),
-        Variable<String>(openedBy),
-        Variable<String>(openedByUserId),
-        Variable<String>(storeId),
-        Variable<String>(branchId),
-      ],
-    );
-    if (cleanOpening > 0) {
+    await _db.transaction(() async {
+      await _ensureCashDrawerDeviceBinding(
+        cashLocationId: resolvedLocationId,
+        deviceId: deviceId,
+        branchId: branchId,
+        updatedAt: now,
+      );
+      if (await hasOpenCashDrawer(
+          branchId: branchId, cashLocationId: resolvedLocationId)) {
+        throw StateError('يوجد وردية مفتوحة بالفعل لهذا الدرج.');
+      }
+
+      await _db.customInsert(
+        '''
+        INSERT INTO cash_drawer_sessions
+          (id, drawer_no, cash_location_id, opened_at, status, opening_balance, expected_cash,
+           notes, opened_by, opened_by_user_id, store_id, branch_id, updated_at, revision)
+        VALUES (?, ?, ?, ?, 'open', ?, ?, '', ?, ?, ?, ?, ?, 1)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(sessionId),
+          Variable<String>(
+              drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()),
+          Variable<String>(resolvedLocationId),
+          Variable<String>(now),
+          Variable<double>(cleanOpening),
+          Variable<double>(cleanOpening),
+          Variable<String>(openedBy),
+          Variable<String>(openedByUserId),
+          Variable<String>(storeId),
+          Variable<String>(branchId),
+          Variable<String>(now),
+        ],
+      );
+
       if (fundingLocationId.trim().isNotEmpty &&
-          fundingLocationId.trim() != resolvedLocationId) {
+          fundingLocationId.trim() != resolvedLocationId &&
+          cleanOpening > 0) {
         await createCashTransfer(
           fromLocationId: fundingLocationId,
           toLocationId: resolvedLocationId,
           amount: cleanOpening,
-          transferDate:
-              DateTime.parse(now).subtract(const Duration(microseconds: 1)),
+          transferDate: nowDate.subtract(const Duration(microseconds: 1)),
           notes:
               'عهدة افتتاح وردية ${drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()}',
           createdBy: openedBy,
+          createdByUserId: openedByUserId,
+          deviceId: deviceId,
           storeId: storeId,
           branchId: branchId,
+          idempotencyKey: 'shift_open_funding:$sessionId',
           notifyChange: false,
         );
       } else {
+        // The opening count is the authoritative physical starting cash for the
+        // new shift. Align the location cache even when the opening count is 0
+        // so a previous closed shift cannot leak a stale balance forward.
         await _setCashLocationBalance(resolvedLocationId, cleanOpening, now);
       }
-    }
+    });
+
     _notifyMutation();
     await _writeAuditLog(
         action: 'open_cash_drawer',
@@ -2529,33 +2953,49 @@ class AccountingService {
     String depositToLocationId = '',
   }) async {
     if (!isAvailable) return;
-    final row = await _db.customSelect(
-      """
-      SELECT id, drawer_no, cash_location_id, opened_at, opening_balance,
-             expected_cash, store_id, branch_id
-      FROM cash_drawer_sessions
-      WHERE id = ? AND status = 'open'
-      LIMIT 1
-      """,
-      variables: <Variable<Object>>[Variable<String>(sessionId)],
-    ).getSingleOrNull();
-    if (row == null) return;
-
-    final data = row.data;
-    final storeId = data['store_id']?.toString() ?? '';
-    final branchId = data['branch_id']?.toString() ?? '';
-    final cashLocationId = data['cash_location_id']?.toString() ?? '';
-    final expected = _roundMoney(await calculateCashDrawerExpectedCash(sessionId));
     final counted = _roundMoney(countedCash);
-    final difference = _roundMoney(counted - expected);
-    final nowDate = DateTime.now().toUtc();
-    final now = nowDate.toIso8601String();
+    if (counted < 0) {
+      throw ArgumentError('النقد المعدود لا يمكن أن يكون سالباً.');
+    }
+
+    var didClose = false;
+    var expected = 0.0;
+    var difference = 0.0;
+    var storeId = '';
+    var branchId = '';
+    var cashLocationId = '';
+    var drawerNo = '';
 
     await _db.transaction(() async {
+      final row = await _db.customSelect(
+        """
+        SELECT id, drawer_no, cash_location_id, opened_at, opening_balance,
+               expected_cash, store_id, branch_id
+        FROM cash_drawer_sessions
+        WHERE id = ? AND status = 'open'
+        LIMIT 1
+        """,
+        variables: <Variable<Object>>[Variable<String>(sessionId)],
+      ).getSingleOrNull();
+      if (row == null) {
+        throw StateError('Cash drawer session is not open or no longer exists.');
+      }
+
+      final data = row.data;
+      storeId = data['store_id']?.toString() ?? '';
+      branchId = data['branch_id']?.toString() ?? '';
+      cashLocationId = data['cash_location_id']?.toString() ?? '';
+      drawerNo = data['drawer_no']?.toString() ?? '';
+      expected =
+          _roundMoney(await calculateCashDrawerExpectedCash(sessionId));
+      difference = _roundMoney(counted - expected);
+      final nowDate = DateTime.now().toUtc();
+      final now = nowDate.toIso8601String();
+
       if (difference.abs() >= 0.01) {
         await _postCashReconciliationDifference(
           sessionId: sessionId,
-          drawerNo: data['drawer_no']?.toString() ?? '',
+          drawerNo: drawerNo,
           difference: difference,
           countedCash: counted,
           expectedCash: expected,
@@ -2589,11 +3029,11 @@ class AccountingService {
         );
       }
 
-      await _db.customUpdate(
+      final updated = await _db.customUpdate(
         '''
         UPDATE cash_drawer_sessions
         SET status = 'closed', closed_at = ?, expected_cash = ?, counted_cash = ?, difference = ?,
-            closed_by = ?, closed_by_user_id = ?, notes = ?
+            closed_by = ?, closed_by_user_id = ?, notes = ?, updated_at = ?, revision = revision + 1
         WHERE id = ? AND status = 'open'
         ''',
         variables: <Variable<Object>>[
@@ -2604,11 +3044,19 @@ class AccountingService {
           Variable<String>(closedBy),
           Variable<String>(closedByUserId),
           Variable<String>(notes),
+          Variable<String>(now),
           Variable<String>(sessionId),
         ],
       );
+      if (updated != 1) {
+        throw StateError('Cash drawer close failed because the session state changed.');
+      }
+      didClose = true;
     });
 
+    if (!didClose) {
+      throw StateError('Cash drawer close did not update the session.');
+    }
     final type = difference < 0
         ? 'shortage'
         : difference > 0
@@ -4276,4 +4724,59 @@ class CashBankMovementReport {
   final double moneyIn;
   final double moneyOut;
   final double closingBalance;
+}
+
+class CashShiftReportSession {
+  const CashShiftReportSession({
+    required this.id,
+    required this.drawerNo,
+    required this.cashLocationId,
+    required this.cashLocationName,
+    required this.openedAt,
+    required this.closedAt,
+    required this.openingBalance,
+    required this.expectedCash,
+    required this.countedCash,
+    required this.difference,
+    required this.notes,
+    required this.openedBy,
+    required this.closedBy,
+    required this.branchId,
+  });
+
+  final String id;
+  final String drawerNo;
+  final String cashLocationId;
+  final String cashLocationName;
+  final DateTime? openedAt;
+  final DateTime? closedAt;
+  final double openingBalance;
+  final double expectedCash;
+  final double countedCash;
+  final double difference;
+  final String notes;
+  final String openedBy;
+  final String closedBy;
+  final String branchId;
+
+  factory CashShiftReportSession.fromRow(Map<String, Object?> row) {
+    double number(String key) => (row[key] as num?)?.toDouble() ??
+        double.tryParse(row[key]?.toString() ?? '') ?? 0.0;
+    return CashShiftReportSession(
+      id: row['id']?.toString() ?? '',
+      drawerNo: row['drawer_no']?.toString() ?? '',
+      cashLocationId: row['cash_location_id']?.toString() ?? '',
+      cashLocationName: row['cash_location_name']?.toString() ?? '',
+      openedAt: DateTime.tryParse(row['opened_at']?.toString() ?? ''),
+      closedAt: DateTime.tryParse(row['closed_at']?.toString() ?? ''),
+      openingBalance: number('opening_balance'),
+      expectedCash: number('expected_cash'),
+      countedCash: number('counted_cash'),
+      difference: number('difference'),
+      notes: row['notes']?.toString() ?? '',
+      openedBy: row['opened_by']?.toString() ?? '',
+      closedBy: row['closed_by']?.toString() ?? '',
+      branchId: row['branch_id']?.toString() ?? '',
+    );
+  }
 }

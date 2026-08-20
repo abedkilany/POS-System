@@ -84,25 +84,25 @@ Future<void> showAccountPaymentDialog({
     }
     return;
   }
-  final now = DateTime.now();
-  final isCustomer = accountType == 'customer';
-  await store.addOrUpdateAccountTransaction(AccountTransaction(
-    id: 'txn-${now.microsecondsSinceEpoch}',
-    accountType: accountType,
-    accountId: accountId,
-    accountName: accountName,
-    date: now,
-    type: isCustomer ? 'paymentReceived' : 'paymentPaid',
-    referenceId: '',
-    referenceNo: result.referenceNo,
-    paymentMethod: result.paymentMethod,
-    debit: isCustomer ? 0 : result.amount,
-    credit: isCustomer ? result.amount : 0,
-    note: result.note,
-  ));
-  if (context.mounted) {
+  try {
+    await store.settleAccountPayment(
+      accountType: accountType,
+      accountId: accountId,
+      accountName: accountName,
+      amount: result.amount,
+      paymentMethod: result.paymentMethod,
+      referenceNo: result.referenceNo,
+      notes: result.note,
+    );
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(AppLocalizations.of(context).text('payment_saved'))));
+  } catch (error) {
+    if (!context.mounted) return;
+    final tr = AppLocalizations.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+    );
   }
 }
 

@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
 import 'package:flutter/services.dart';

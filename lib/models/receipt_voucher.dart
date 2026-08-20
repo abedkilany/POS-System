@@ -14,6 +14,10 @@ class ReceiptVoucher {
     this.cashLocationId = '',
     this.cashDrawerSessionId = '',
     this.status = 'posted',
+    this.reversalReason = '',
+    this.reversedBy = '',
+    this.reversedByUserId = '',
+    this.reversedAt,
     this.notes = '',
     this.createdBy = '',
     this.createdByUserId = '',
@@ -33,10 +37,11 @@ class ReceiptVoucher {
 
   final String id, voucherNo, customerId, customerName, currency, paymentMethod;
   final String cashLocationId, cashDrawerSessionId, status, notes;
+  final String reversalReason, reversedBy, reversedByUserId;
   final String createdBy, createdByUserId, deviceId, branchId, storeId;
   final String idempotencyKey, syncStatus, lastModifiedByDeviceId;
   final DateTime date, createdAt, updatedAt;
-  final DateTime? deletedAt;
+  final DateTime? deletedAt, reversedAt;
   final double amount, unallocatedAmount;
   final int version;
   final List<PaymentAllocation> allocations;
@@ -57,6 +62,10 @@ class ReceiptVoucher {
         'cashLocationId': cashLocationId,
         'cashDrawerSessionId': cashDrawerSessionId,
         'status': status,
+        'reversalReason': reversalReason,
+        'reversedBy': reversedBy,
+        'reversedByUserId': reversedByUserId,
+        'reversedAt': reversedAt?.toIso8601String(),
         'notes': notes,
         'createdBy': createdBy,
         'createdByUserId': createdByUserId,

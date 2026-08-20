@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:drift/drift.dart' hide isNotNull;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/repositories/auth_repository.dart';
+import 'package:ventio/core/services/accounting_service.dart';
+import 'package:ventio/core/services/cash_reversal_service.dart';
+import 'package:ventio/core/services/payment_voucher_service.dart';
 import 'package:ventio/core/services/stock_transaction_service.dart';
 import 'package:ventio/core/services/direct_sync_settings.dart';
 import 'package:ventio/core/services/local_database_service.dart';
@@ -17,6 +20,8 @@ import 'package:ventio/models/catalog_item.dart';
 import 'package:ventio/models/customer.dart';
 import 'package:ventio/models/expense.dart';
 import 'package:ventio/models/product.dart';
+import 'package:ventio/models/product_costing.dart';
+import 'package:ventio/models/inventory_batch.dart';
 import 'package:ventio/models/stock_movement.dart';
 import 'package:ventio/models/purchase_item.dart';
 import 'package:ventio/models/sale_item.dart';
@@ -161,6 +166,46 @@ Future<AppStore> readySqliteStore({
     rememberLogin: true,
   );
   return store;
+}
+
+Future<void> seedOpenCashDrawerForStore(AppStore store) async {
+  final db = SqliteMigrationManager.database!;
+  final accounts = await AccountingService.readDefaultAccountMap();
+  final cashAccount = accounts['default_cash_account_id']?.trim() ?? '';
+  expect(cashAccount, isNotEmpty);
+  final now = DateTime(2026, 8, 19, 12).toUtc().toIso8601String();
+  await db.customInsert(
+    '''
+    INSERT INTO cash_locations
+      (id, code, name, type, account_id, current_balance, allow_negative,
+       is_active, created_at, updated_at, store_id, branch_id, device_id)
+    VALUES ('drawer-phase6-cancel', 'P6-CANCEL', 'Phase 6 Cancel Drawer',
+            'cash_drawer', ?, 1000, 0, 1, ?, ?, ?, ?, ?)
+    ''',
+    variables: <Variable<Object>>[
+      Variable<String>(cashAccount),
+      Variable<String>(now),
+      Variable<String>(now),
+      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.appIdentity.branchId),
+      Variable<String>(store.deviceId),
+    ],
+  );
+  await db.customInsert(
+    '''
+    INSERT INTO cash_drawer_sessions
+      (id, drawer_no, cash_location_id, opened_at, status, opening_balance,
+       expected_cash, opened_by, device_id, store_id, branch_id)
+    VALUES ('shift-phase6-cancel', 'P6-CANCEL', 'drawer-phase6-cancel', ?,
+            'open', 1000, 1000, 'tester', ?, ?, ?)
+    ''',
+    variables: <Variable<Object>>[
+      Variable<String>(now),
+      Variable<String>(store.deviceId),
+      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.appIdentity.branchId),
+    ],
+  );
 }
 
 Future<double> sqliteWarehouseQuantity({
@@ -648,6 +693,108 @@ void main() {
       expect(store.sales.length, 1);
     });
 
+    test('phase 6 cancellation never auto-refunds cash; refund is explicit',
+        () async {
+      final store = await readySqliteStore(
+        storeId: 'ST-P6-CANCEL',
+        branchId: 'BR-P6-CANCEL',
+      );
+      await seedOpenCashDrawerForStore(store);
+      await store.addOrUpdateProduct(product(id: 'p-p6-cancel', stock: 0));
+      final warehouse = store.resolveWarehouseForSale();
+      await StockTransactionService(
+        SqliteMigrationManager.database!,
+        defaultStoreId: store.appIdentity.storeId,
+        defaultBranchId: store.appIdentity.branchId,
+      ).applyDelta(
+        storeId: store.appIdentity.storeId,
+        warehouseId: warehouse.id,
+        productId: 'p-p6-cancel',
+        delta: 5,
+        branchId: store.appIdentity.branchId,
+      );
+
+      final sale = await store.createSale(
+        customerName: 'Phase 6 Customer',
+        customerId: 'customer-p6-cancel',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        items: const <SaleItem>[
+          SaleItem(
+            productId: 'p-p6-cancel',
+            productName: 'Coffee',
+            unitPrice: 10,
+            quantity: 2,
+          ),
+        ],
+        warehouseId: warehouse.id,
+      );
+      await store.settleSalePayment(
+        saleId: sale.id,
+        amount: 20,
+        paymentMethod: 'Cash',
+        idempotencyKey: 'p6-cancel-payment',
+      );
+
+      final db = SqliteMigrationManager.database!;
+      final beforeCancel = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((beforeCancel.data['current_balance'] as num).toDouble(), 1020);
+
+      await store.cancelSale(sale.id);
+
+      final autoRefunds = await db.customSelect(
+        "SELECT COUNT(*) AS c FROM cash_ledger_transactions WHERE reference_type = 'sale_refund' AND deleted_at = ''",
+      ).getSingle();
+      expect(autoRefunds.read<int>('c'), 0);
+      expect(
+        await PaymentVoucherService(db).refundableCashForSale(sale.id),
+        20,
+      );
+      final afterCancel = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((afterCancel.data['current_balance'] as num).toDouble(), 1020);
+      final customerCreditAfterCancel = await db.customSelect(
+        "SELECT COALESCE(SUM(debit - credit), 0) AS balance FROM account_transactions WHERE deleted_at = '' AND account_type = 'customer' AND account_id = 'customer-p6-cancel'",
+      ).getSingle();
+      expect((customerCreditAfterCancel.data['balance'] as num).toDouble(), -20);
+
+      final refunded = await store.refundSaleCash(
+        saleId: sale.id,
+        amount: 20,
+        idempotencyKey: 'p6-explicit-refund',
+      );
+      expect(refunded, 20);
+      final afterRefund = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((afterRefund.data['current_balance'] as num).toDouble(), 1000);
+      final customerBalanceAfterRefund = await db.customSelect(
+        "SELECT COALESCE(SUM(debit - credit), 0) AS balance FROM account_transactions WHERE deleted_at = '' AND account_type = 'customer' AND account_id = 'customer-p6-cancel'",
+      ).getSingle();
+      expect((customerBalanceAfterRefund.data['balance'] as num).toDouble(), 0);
+
+      final reversedRefund = await CashReversalService(db).reverseReference(
+        referenceType: 'sale_refund',
+        referenceId: '${sale.id}:p6-explicit-refund',
+        reason: 'Customer kept the cash refund',
+        createdBy: 'Phase 6 Tester',
+        createdByUserId: 'user-p6-test',
+        deviceId: store.appIdentity.deviceId,
+      );
+      expect(reversedRefund, 1);
+      final afterRefundReversal = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((afterRefundReversal.data['current_balance'] as num).toDouble(), 1020);
+      final customerCreditAfterRefundReversal = await db.customSelect(
+        "SELECT COALESCE(SUM(debit - credit), 0) AS balance FROM account_transactions WHERE deleted_at = '' AND account_type = 'customer' AND account_id = 'customer-p6-cancel'",
+      ).getSingle();
+      expect((customerCreditAfterRefundReversal.data['balance'] as num).toDouble(), -20);
+    });
+
     test('returns a sale, restores stock, and records a sale return movement',
         () async {
       final store = await readyStore();
@@ -673,6 +820,228 @@ void main() {
       expect(store.sales.single.cashReceivedAmount, 0);
       expect(store.totalSalesAmount, 0);
       expect(store.products.single.stock, 5);
+    });
+
+    test('partial sale returns are cumulative and cannot return the same units twice', () async {
+      final store = await readyStore();
+      await store.addOrUpdateProduct(product(stock: 20, price: 10, cost: 4));
+
+      final sale = await store.createSale(
+        customerName: 'Partial Return Customer',
+        items: const <SaleItem>[
+          SaleItem(
+            productId: 'p1',
+            productName: 'Coffee',
+            unitPrice: 10,
+            quantity: 10,
+          ),
+        ],
+      );
+
+      final first = await store.returnSale(
+        sale.id,
+        returnedQuantities: const <String, double>{'p1': 4},
+      );
+      expect(first.items.single.quantity, 4);
+      expect(store.sales.single.status, 'Partially Returned');
+      expect(store.sales.single.items.single.quantity, 10);
+      expect(store.products.single.stock, 14);
+
+      final second = await store.returnSale(
+        sale.id,
+        returnedQuantities: const <String, double>{'p1': 4},
+      );
+      expect(second.items.single.quantity, 4);
+      expect(store.sales.single.status, 'Partially Returned');
+      expect(store.sales.single.items.single.quantity, 10);
+      expect(store.products.single.stock, 18);
+      expect(
+        store.accountTransactions.where((txn) => txn.type == 'saleReturn'),
+        hasLength(2),
+      );
+
+      await expectLater(
+        store.returnSale(
+          sale.id,
+          returnedQuantities: const <String, double>{'p1': 3},
+        ),
+        throwsArgumentError,
+      );
+      expect(store.products.single.stock, 18);
+
+      final finalReturn = await store.returnSale(
+        sale.id,
+        returnedQuantities: const <String, double>{'p1': 2},
+      );
+      expect(finalReturn.items.single.quantity, 2);
+      expect(store.sales.single.status, 'Returned');
+      expect(store.sales.single.items.single.quantity, 10);
+      expect(store.products.single.stock, 20);
+      expect(
+        store.accountTransactions.where((txn) => txn.type == 'saleReturn'),
+        hasLength(3),
+      );
+    });
+
+    test('partial sale returns preserve FEFO batches and FIFO cost layers by returned slice', () async {
+      final store = await readySqliteStore(
+        storeId: 'ST-P6-RETURN',
+        branchId: 'BR-P6-RETURN',
+        storeName: 'Phase 6 Return Store',
+      );
+      await store.setInventoryCostingMethod(
+        InventoryCostingMethod.fifo,
+        reason: 'Phase 6 return test',
+      );
+      final tracked = Product(
+        id: 'p-p6-batch-return',
+        name: 'Tracked Product',
+        code: 'P6-BATCH',
+        price: 10,
+        cost: 1,
+        stock: 0,
+        category: 'Test',
+        expiryTrackingEnabled: true,
+        expiryEntryRequired: true,
+      );
+      await store.addOrUpdateProduct(tracked);
+      final warehouse = store.resolveWarehouseForSale();
+
+      final firstPurchase = await store.createPurchase(
+        supplierId: 'sup-p6-1',
+        supplierName: 'Supplier 1',
+        items: const <PurchaseItem>[
+          PurchaseItem(
+            productId: 'p-p6-batch-return',
+            productName: 'Tracked Product',
+            quantity: 4,
+            unitCost: 1,
+          ),
+        ],
+        receiveNow: false,
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+      );
+      await store.receivePurchase(
+        firstPurchase.id,
+        batchAllocationsByLine: <int, List<BatchAllocation>>{
+          0: <BatchAllocation>[
+            BatchAllocation(
+              batchId: 'batch-early-p6',
+              quantity: 4,
+              expirationDate: DateTime.utc(2026, 9, 1),
+            ),
+          ],
+        },
+      );
+
+      final secondPurchase = await store.createPurchase(
+        supplierId: 'sup-p6-2',
+        supplierName: 'Supplier 2',
+        items: const <PurchaseItem>[
+          PurchaseItem(
+            productId: 'p-p6-batch-return',
+            productName: 'Tracked Product',
+            quantity: 6,
+            unitCost: 2,
+          ),
+        ],
+        receiveNow: false,
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+      );
+      await store.receivePurchase(
+        secondPurchase.id,
+        batchAllocationsByLine: <int, List<BatchAllocation>>{
+          0: <BatchAllocation>[
+            BatchAllocation(
+              batchId: 'batch-late-p6',
+              quantity: 6,
+              expirationDate: DateTime.utc(2026, 10, 1),
+            ),
+          ],
+        },
+      );
+
+      final sale = await store.createSale(
+        customerId: 'cust-p6-return',
+        customerName: 'Return Customer',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        items: const <SaleItem>[
+          SaleItem(
+            productId: 'p-p6-batch-return',
+            productName: 'Tracked Product',
+            unitPrice: 10,
+            quantity: 7,
+          ),
+        ],
+      );
+      expect(sale.items.single.batchAllocations, hasLength(2));
+      expect(sale.items.single.batchAllocations[0].batchId, 'batch-early-p6');
+      expect(sale.items.single.batchAllocations[0].quantity, 4);
+      expect(sale.items.single.batchAllocations[1].batchId, 'batch-late-p6');
+      expect(sale.items.single.batchAllocations[1].quantity, 3);
+      expect(sale.items.single.costLayerConsumptions, hasLength(2));
+
+      final firstReturn = await store.returnSale(
+        sale.id,
+        returnedQuantities: const <String, double>{'p-p6-batch-return': 2},
+      );
+      expect(firstReturn.items.single.batchAllocations, hasLength(1));
+      expect(firstReturn.items.single.batchAllocations.single.batchId,
+          'batch-early-p6');
+      expect(firstReturn.items.single.batchAllocations.single.quantity, 2);
+      expect(firstReturn.items.single.costLayerConsumptions, hasLength(1));
+      expect(firstReturn.items.single.costLayerConsumptions.single.quantity, 2);
+      expect(firstReturn.items.single.costLayerConsumptions.single.unitCost, 1);
+
+      final secondReturn = await store.returnSale(
+        sale.id,
+        returnedQuantities: const <String, double>{'p-p6-batch-return': 3},
+      );
+      expect(secondReturn.items.single.batchAllocations, hasLength(2));
+      expect(secondReturn.items.single.batchAllocations[0].batchId,
+          'batch-early-p6');
+      expect(secondReturn.items.single.batchAllocations[0].quantity, 2);
+      expect(secondReturn.items.single.batchAllocations[1].batchId,
+          'batch-late-p6');
+      expect(secondReturn.items.single.batchAllocations[1].quantity, 1);
+      expect(secondReturn.items.single.costLayerConsumptions, hasLength(2));
+      expect(secondReturn.items.single.costLayerConsumptions[0].quantity, 2);
+      expect(secondReturn.items.single.costLayerConsumptions[0].unitCost, 1);
+      expect(secondReturn.items.single.costLayerConsumptions[1].quantity, 1);
+      expect(secondReturn.items.single.costLayerConsumptions[1].unitCost, 2);
+
+      final db = SqliteMigrationManager.database!;
+      final batchRows = await db.customSelect(
+        '''
+        SELECT batch_id, quantity
+        FROM inventory_batch_balances
+        WHERE warehouse_id = ?
+          AND batch_id IN ('batch-early-p6', 'batch-late-p6')
+        ORDER BY batch_id
+        ''',
+        variables: <Variable<Object>>[Variable<String>(warehouse.id)],
+      ).get();
+      expect(
+        batchRows
+            .singleWhere((row) => row.read<String>('batch_id') == 'batch-early-p6')
+            .read<double>('quantity'),
+        4,
+      );
+      expect(
+        batchRows
+            .singleWhere((row) => row.read<String>('batch_id') == 'batch-late-p6')
+            .read<double>('quantity'),
+        4,
+      );
     });
 
     test('warehouse-aware sales only use the selected warehouse', () async {
@@ -830,6 +1199,132 @@ void main() {
       expect(store.purchases.single.isCancelled, isTrue);
       expect(store.totalPurchasesAmount, 0);
       expect(store.products.single.stock, 0);
+    });
+
+    test('SQLite-first purchase ledger is durable immediately after create',
+        () async {
+      final store = await readySqliteStore(
+        storeId: 'ST-P9-ACCOUNT-SOT',
+        branchId: 'BR-P9-ACCOUNT-SOT',
+      );
+      await store.addOrUpdateProduct(product(id: 'p-p9-account-sot', stock: 0));
+
+      final purchase = await store.createPurchase(
+        supplierId: 'supplier-p9-account-sot',
+        supplierName: 'Phase 9 Supplier',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        items: const <PurchaseItem>[
+          PurchaseItem(
+            productId: 'p-p9-account-sot',
+            productName: 'Coffee',
+            quantity: 2,
+            unitCost: 10,
+          ),
+        ],
+        receiveNow: true,
+      );
+
+      final db = SqliteMigrationManager.database!;
+      final row = await db.customSelect(
+        'SELECT account_type, account_id, transaction_type, credit '
+        "FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
+        variables: <Variable<Object>>[
+          Variable<String>('${purchase.id}-purchase-invoice'),
+        ],
+      ).getSingle();
+
+      expect(row.read<String>('account_type'), 'supplier');
+      expect(row.read<String>('account_id'), 'supplier-p9-account-sot');
+      expect(row.read<String>('transaction_type'), 'purchaseInvoice');
+      expect((row.data['credit'] as num).toDouble(), 20);
+    });
+
+    test('phase 6 purchase cancellation never auto-refunds supplier cash',
+        () async {
+      final store = await readySqliteStore(
+        storeId: 'ST-P6-PURCHASE-CANCEL',
+        branchId: 'BR-P6-PURCHASE-CANCEL',
+      );
+      await seedOpenCashDrawerForStore(store);
+      await store.addOrUpdateProduct(product(id: 'p-p6-purchase', stock: 0));
+      final purchase = await store.createPurchase(
+        supplierId: 'supplier-p6-cancel',
+        supplierName: 'Phase 6 Supplier',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        items: const <PurchaseItem>[
+          PurchaseItem(
+            productId: 'p-p6-purchase',
+            productName: 'Coffee',
+            quantity: 2,
+            unitCost: 10,
+          ),
+        ],
+        receiveNow: true,
+      );
+      await store.settlePurchasePayment(
+        purchaseId: purchase.id,
+        amount: 20,
+        paymentMethod: 'Cash',
+        idempotencyKey: 'p6-purchase-cancel-payment',
+      );
+
+      final db = SqliteMigrationManager.database!;
+      final beforeCancel = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((beforeCancel.data['current_balance'] as num).toDouble(), 980);
+
+      await store.cancelPurchase(purchase.id);
+
+      final autoRefunds = await db.customSelect(
+        "SELECT COUNT(*) AS c FROM cash_ledger_transactions WHERE reference_type = 'purchase_refund' AND deleted_at = ''",
+      ).getSingle();
+      expect(autoRefunds.read<int>('c'), 0);
+      expect(
+        await PaymentVoucherService(db).refundableCashForPurchase(purchase.id),
+        20,
+      );
+      final afterCancel = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((afterCancel.data['current_balance'] as num).toDouble(), 980);
+      final supplierAdvanceAfterCancel = await db.customSelect(
+        "SELECT COALESCE(SUM(debit - credit), 0) AS balance FROM account_transactions WHERE deleted_at = '' AND account_type = 'supplier' AND account_id = 'supplier-p6-cancel'",
+      ).getSingle();
+      expect((supplierAdvanceAfterCancel.data['balance'] as num).toDouble(), 20);
+
+      final refunded = await store.refundPurchaseCash(
+        purchaseId: purchase.id,
+      );
+      expect(refunded, 20);
+      final afterRefund = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((afterRefund.data['current_balance'] as num).toDouble(), 1000);
+      final supplierBalanceAfterRefund = await db.customSelect(
+        "SELECT COALESCE(SUM(debit - credit), 0) AS balance FROM account_transactions WHERE deleted_at = '' AND account_type = 'supplier' AND account_id = 'supplier-p6-cancel'",
+      ).getSingle();
+      expect((supplierBalanceAfterRefund.data['balance'] as num).toDouble(), 0);
+
+      final reversedRefund = await CashReversalService(db).reverseReference(
+        referenceType: 'purchase_refund',
+        referenceId: purchase.id,
+        reason: 'Supplier refund reversal',
+        createdBy: 'Phase 6 Tester',
+        createdByUserId: 'user-p6-test',
+        deviceId: store.appIdentity.deviceId,
+      );
+      expect(reversedRefund, 1);
+      final afterRefundReversal = await db.customSelect(
+        "SELECT current_balance FROM cash_locations WHERE id = 'drawer-phase6-cancel'",
+      ).getSingle();
+      expect((afterRefundReversal.data['current_balance'] as num).toDouble(), 980);
+      final supplierAdvanceAfterRefundReversal = await db.customSelect(
+        "SELECT COALESCE(SUM(debit - credit), 0) AS balance FROM account_transactions WHERE deleted_at = '' AND account_type = 'supplier' AND account_id = 'supplier-p6-cancel'",
+      ).getSingle();
+      expect((supplierAdvanceAfterRefundReversal.data['balance'] as num).toDouble(), 20);
     });
 
     test('returns received purchase and reverses stock with return movement',

@@ -272,17 +272,7 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
           warehouseName: _warehouse.name,
         );
       } else if (editing.isReceived) {
-        await widget.store.editReceivedPurchase(
-          id: editing.id,
-          supplierId: supplier.id,
-          supplierName: supplier.name,
-          items: items,
-          paymentMethod: _paymentMethod,
-          paymentStatus: _paymentStatus,
-          warehouseId: _warehouse.id,
-          warehouseName: _warehouse.name,
-          note: editing.note,
-        );
+        throw StateError('Received purchase invoices cannot be edited.');
       } else {
         await widget.store.updatePurchaseDraft(
           id: editing.id,
@@ -347,51 +337,12 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
                           trailing:
                               Row(mainAxisSize: MainAxisSize.min, children: [
                             Text(_amount(purchase.subtotal)),
-                            IconButton(
-                              tooltip: tr.text('edit'),
-                              icon: const Icon(Icons.edit_outlined),
-                              onPressed: purchase.isCancelled
-                                  ? null
-                                  : () {
-                                      Navigator.pop(context);
-                                      _startEditing(purchase);
-                                    },
-                            ),
                           ]),
                         );
                       },
                     )),
                   ])),
             ));
-  }
-
-  void _startEditing(Purchase purchase) {
-    final lines = <_DraftPurchaseLine>[];
-    for (final item in purchase.items) {
-      final product = widget.store.productById(item.productId);
-      if (product == null) continue;
-      final matchingUnits = product.effectivePurchaseUnits
-          .where((unit) => unit.id == item.purchaseUnitId);
-      final unit = matchingUnits.isEmpty
-          ? product.effectivePurchaseUnits.first
-          : matchingUnits.first;
-      lines.add(_DraftPurchaseLine(
-        product: product,
-        unit: unit,
-        quantity: item.quantity,
-        unitCost: item.unitCost,
-      ));
-    }
-    setState(() {
-      _editingPurchase = purchase;
-      _cart
-        ..clear()
-        ..addAll(lines);
-      _supplierId = purchase.supplierId;
-      _warehouseId = purchase.warehouseId;
-      _paymentStatus = purchase.paymentStatus;
-      _receiveNow = purchase.isReceived;
-    });
   }
 
   @override

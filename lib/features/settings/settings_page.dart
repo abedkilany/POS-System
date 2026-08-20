@@ -424,8 +424,12 @@ class SettingsPage extends StatelessWidget {
           children: [
             _InfoTile(
                 icon: Icons.image_outlined,
-                title: tr.text('logo_path'),
-                value: profile.logoPath.isEmpty ? '—' : profile.logoPath),
+                title: tr.isArabic ? 'الشعار' : 'Logo',
+                value: profile.logoDataBase64.isNotEmpty
+                    ? (profile.logoFileName.isEmpty
+                        ? (tr.isArabic ? 'محفوظ في قاعدة البيانات' : 'Stored in database')
+                        : profile.logoFileName)
+                    : '—'),
             _InfoTile(
                 icon: Icons.receipt_long_outlined,
                 title: tr.text('invoice_footer'),
@@ -2364,56 +2368,163 @@ class SettingsPage extends StatelessWidget {
 
   Future<void> _editOrganizationBranding(
       BuildContext context, StoreProfile profile) async {
-    final logoController = TextEditingController(text: profile.logoPath);
     final footerController = TextEditingController(text: profile.footerNote);
     final tr = AppLocalizations.of(context);
+    var logoDataBase64 = profile.logoDataBase64;
+    var logoFileName = profile.logoFileName;
+    var logoMimeType = profile.logoMimeType;
+
+    String chooseLogoLabel() {
+      if (tr.isArabic) return 'اختيار الشعار';
+      if (tr.locale.languageCode == 'fr') return 'Choisir le logo';
+      return 'Choose logo';
+    }
+
+    String removeLogoLabel() {
+      if (tr.isArabic) return 'إزالة الشعار';
+      if (tr.locale.languageCode == 'fr') return 'Supprimer le logo';
+      return 'Remove logo';
+    }
+
+    String storedLabel() {
+      if (tr.isArabic) return 'يُحفظ الشعار داخل قاعدة البيانات ويُزامن مع الأجهزة.';
+      if (tr.locale.languageCode == 'fr') {
+        return 'Le logo est stocké dans la base de données et synchronisé entre les appareils.';
+      }
+      return 'The logo is stored in the database and synced across devices.';
+    }
 
     final result = await showDialog<StoreProfile>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(tr.text('organization_branding')),
-          content: ResponsiveDialogBox(
-            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                      controller: logoController,
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text(tr.text('organization_branding')),
+            content: ResponsiveDialogBox(
+              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (logoDataBase64.isNotEmpty) ...[
+                      Container(
+                        height: 120,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Theme.of(context).dividerColor),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Image.memory(
+                          base64Decode(logoDataBase64),
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        logoFileName.isEmpty ? storedLabel() : logoFileName,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final picked = await FilePicker.platform.pickFiles(
+                                type: FileType.image,
+                                withData: true,
+                                allowMultiple: false,
+                              );
+                              if (picked == null || picked.files.isEmpty) return;
+                              final file = picked.files.single;
+                              final bytes = file.bytes;
+                              if (bytes == null || bytes.isEmpty) return;
+                              const maxLogoBytes = 2 * 1024 * 1024;
+                              if (bytes.length > maxLogoBytes) {
+                                if (!dialogContext.mounted) return;
+                                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                  SnackBar(
+                                    content: Text(tr.isArabic
+                                        ? 'حجم الشعار كبير. الحد الأقصى 2 MB.'
+                                        : 'Logo is too large. Maximum size is 2 MB.'),
+                                  ),
+                                );
+                                return;
+                              }
+                              final extension = (file.extension ?? '').toLowerCase();
+                              final mime = switch (extension) {
+                                'jpg' || 'jpeg' => 'image/jpeg',
+                                'webp' => 'image/webp',
+                                'gif' => 'image/gif',
+                                _ => 'image/png',
+                              };
+                              setDialogState(() {
+                                logoDataBase64 = base64Encode(bytes);
+                                logoFileName = file.name;
+                                logoMimeType = mime;
+                              });
+                            },
+                            icon: const Icon(Icons.image_outlined),
+                            label: Text(chooseLogoLabel()),
+                          ),
+                        ),
+                        if (logoDataBase64.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: removeLogoLabel(),
+                            onPressed: () => setDialogState(() {
+                              logoDataBase64 = '';
+                              logoFileName = '';
+                              logoMimeType = '';
+                            }),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      storedLabel(),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: footerController,
+                      minLines: 2,
+                      maxLines: 4,
                       decoration:
-                          InputDecoration(labelText: tr.text('logo_path'))),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: footerController,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration:
-                        InputDecoration(labelText: tr.text('invoice_footer')),
-                  ),
-                ],
+                          InputDecoration(labelText: tr.text('invoice_footer')),
+                    ),
+                  ],
+                ),
               ),
             ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(tr.text('cancel'))),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(
+                    dialogContext,
+                    profile.copyWith(
+                      logoPath: '',
+                      logoDataBase64: logoDataBase64,
+                      logoFileName: logoFileName,
+                      logoMimeType: logoMimeType,
+                      footerNote: footerController.text.trim().isEmpty
+                          ? tr.text('default_invoice_footer')
+                          : footerController.text.trim(),
+                    ),
+                  );
+                },
+                child: Text(tr.text('save')),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(tr.text('cancel'))),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(
-                  dialogContext,
-                  profile.copyWith(
-                    logoPath: logoController.text.trim(),
-                    footerNote: footerController.text.trim().isEmpty
-                        ? tr.text('default_invoice_footer')
-                        : footerController.text.trim(),
-                  ),
-                );
-              },
-              child: Text(tr.text('save')),
-            ),
-          ],
         );
       },
     );

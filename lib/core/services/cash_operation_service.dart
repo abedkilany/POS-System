@@ -32,6 +32,7 @@ class CashOperationService {
     required String cashLocationId,
     required double amount,
     String cashDrawerSessionId = '',
+    required String counterpartAccountId,
     String currency = 'USD',
     String notes = '',
     String createdBy = '',
@@ -47,6 +48,7 @@ class CashOperationService {
       direction: 'in',
       cashLocationId: cashLocationId,
       cashDrawerSessionId: cashDrawerSessionId,
+      counterpartAccountId: counterpartAccountId,
       amount: amount,
       currency: currency,
       notes: notes,
@@ -64,6 +66,7 @@ class CashOperationService {
     required String cashLocationId,
     required double amount,
     String cashDrawerSessionId = '',
+    required String counterpartAccountId,
     String currency = 'USD',
     String notes = '',
     String createdBy = '',
@@ -79,6 +82,7 @@ class CashOperationService {
       direction: 'out',
       cashLocationId: cashLocationId,
       cashDrawerSessionId: cashDrawerSessionId,
+      counterpartAccountId: counterpartAccountId,
       amount: amount,
       currency: currency,
       notes: notes,
@@ -96,6 +100,7 @@ class CashOperationService {
     required String cashLocationId,
     required double amount,
     String cashDrawerSessionId = '',
+    required String counterpartAccountId,
     String currency = 'USD',
     String notes = '',
     String createdBy = '',
@@ -111,6 +116,7 @@ class CashOperationService {
       direction: 'out',
       cashLocationId: cashLocationId,
       cashDrawerSessionId: cashDrawerSessionId,
+      counterpartAccountId: counterpartAccountId,
       amount: amount,
       currency: currency,
       notes: notes,
@@ -129,6 +135,7 @@ class CashOperationService {
     required String direction,
     required String cashLocationId,
     required String cashDrawerSessionId,
+    required String counterpartAccountId,
     required double amount,
     required String currency,
     required String notes,
@@ -142,12 +149,16 @@ class CashOperationService {
   }) async {
     final cleanLocationId = cashLocationId.trim();
     if (cleanLocationId.isEmpty) throw ArgumentError('Cash location is required.');
+    final cleanCounterpartAccountId = counterpartAccountId.trim();
+    if (cleanCounterpartAccountId.isEmpty) {
+      throw ArgumentError('Counterpart account is required.');
+    }
     final cleanAmount = _money(amount);
     if (cleanAmount <= 0) throw ArgumentError('Amount must be greater than zero.');
     final when = (date ?? DateTime.now()).toUtc();
     final key = idempotencyKey.trim();
 
-    return _db.transaction(() async {
+    final result = await _db.transaction(() async {
       if (key.isNotEmpty) {
         final existing = await _db.customSelect(
           "SELECT id, journal_entry_id FROM cash_operations WHERE idempotency_key = ? AND deleted_at = '' LIMIT 1",
@@ -189,19 +200,20 @@ class CashOperationService {
         }
       }
 
-      final settingsRows = await _db.customSelect(
-        "SELECT key, account_id FROM accounting_settings WHERE key IN ('default_equity_account_id', 'default_expense_account_id')",
-      ).get();
-      final settings = <String, String>{
-        for (final row in settingsRows)
-          row.data['key']?.toString() ?? '': row.data['account_id']?.toString() ?? '',
-      };
-      final counterpart = type == 'expense'
-          ? (settings['default_expense_account_id']?.trim() ?? '')
-          : (settings['default_equity_account_id']?.trim().isNotEmpty == true
-              ? settings['default_equity_account_id']!.trim()
-              : 'acc_equity');
-      if (counterpart.isEmpty) throw StateError('Required accounting account is not configured.');
+      if (cleanCounterpartAccountId == cashAccountId) {
+        throw StateError('Counterpart account cannot be the same as the cash account.');
+      }
+      final counterpartRow = await _db.customSelect(
+        "SELECT id, subtype FROM accounts WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
+        variables: <Variable<Object>>[Variable<String>(cleanCounterpartAccountId)],
+      ).getSingleOrNull();
+      if (counterpartRow == null) {
+        throw StateError('Selected counterpart account does not exist or is inactive.');
+      }
+      if ((counterpartRow.data['subtype']?.toString() ?? '') == 'group') {
+        throw StateError('A posting account must be selected as the counterpart.');
+      }
+      final counterpart = cleanCounterpartAccountId;
 
       final id = _newId('cashop');
       final referenceNo = _referenceNo(type, when);
@@ -219,7 +231,7 @@ class CashOperationService {
           referenceId: id,
           referenceNo: referenceNo,
           description: description,
-          source: 'cash',
+          source: 'system',
           createdBy: createdBy.trim(),
           storeId: storeId.trim(),
           branchId: branchId.trim(),
@@ -295,6 +307,8 @@ class CashOperationService {
       );
       return CashOperationResult(id: id, journalEntryId: entryId);
     });
+    AccountingService.notifyCommittedMutation();
+    return result;
   }
 
   String _newId(String prefix) => '${prefix}_${DateTime.now().toUtc().microsecondsSinceEpoch}_${_random.nextInt(1 << 32).toRadixString(16)}';

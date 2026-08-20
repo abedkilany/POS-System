@@ -25,10 +25,30 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  window_lifecycle_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "ventio/window_lifecycle",
+          &flutter::StandardMethodCodec::GetInstance());
+  window_lifecycle_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() == "allowClose") {
+          allow_close_ = true;
+          close_request_pending_ = false;
+          result->Success();
+          PostMessage(GetHandle(), WM_CLOSE, 0, 0);
+          return;
+        }
+        result->NotImplemented();
+      });
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    // Open Ventio maximized on Windows from the first visible frame.
+    ::ShowWindow(this->GetHandle(), SW_MAXIMIZE);
   });
 
   // Flutter can complete the first frame before the "show window" callback is
@@ -40,6 +60,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  window_lifecycle_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -62,6 +83,19 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_CLOSE:
+      if (!allow_close_) {
+        if (!close_request_pending_ && window_lifecycle_channel_) {
+          close_request_pending_ = true;
+          window_lifecycle_channel_->InvokeMethod(
+              "requestClose",
+              std::make_unique<flutter::EncodableValue>());
+        }
+        // Keep the native window alive until Dart flushes pending writes, runs
+        // WAL checkpoint(TRUNCATE), closes Drift, and calls allowClose.
+        return 0;
+      }
+      break;
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;

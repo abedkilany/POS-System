@@ -818,6 +818,16 @@ class AppStoreRecoveryService {
                 aliases: <String>['inventory_migration_adjustments'],
               ),
             ),
+            if (LocalDatabaseService.phase8AccountingSnapshotTables.keys
+                .any(decoded.containsKey))
+              LocalDatabaseService.replacePhase8AccountingSnapshotRowsImmediate(
+                <String, List<Map<String, dynamic>>>{
+                  for (final key in
+                      LocalDatabaseService.phase8AccountingSnapshotTables.keys)
+                    if (decoded.containsKey(key))
+                      key: _snapshotListMaps(decoded, key),
+                },
+              ),
             replaceRows(AppStore._inventoryCountsKey,
                 _snapshotListMaps(decoded, 'inventoryCounts')),
             replaceRows(AppStore._warehousesKey,

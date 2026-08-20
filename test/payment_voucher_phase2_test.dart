@@ -1,4 +1,4 @@
-import 'package:drift/drift.dart' hide isNotNull;
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ventio/core/services/cash_ledger_service.dart';
@@ -471,6 +471,103 @@ void main() {
     ).getSingle();
     expect((balance.data['current_balance'] as num).toDouble(), 100,
         reason: 'legacy account-transaction backfill must not change live balance');
+  });
+
+
+  // Phase 9 regression: voucher posting and compatibility account ledger must
+  // commit together. These assertions read SQLite directly, not AppStore RAM.
+  test('Phase 9 receipt/payment persist account ledger in voucher transaction', () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedDrawer(db);
+    await _seedSale(db, id: 'sale-p9', invoiceNo: 'INV-P9', customerId: 'cust-p9', total: 50);
+    await _seedPurchase(db, id: 'purchase-p9', purchaseNo: 'PUR-P9', supplierId: 'sup-p9', total: 50);
+    final service = PaymentVoucherService(db);
+
+    await service.createReceipt(
+      id: 'receipt-p9', voucherNo: 'RC-P9', customerId: 'cust-p9', customerName: 'Customer',
+      amount: 20, cashLocationId: 'drawer-1', cashDrawerSessionId: 'shift-1',
+      deviceId: 'dev-1', storeId: 'store-1', branchId: 'main',
+      allocations: const <PaymentAllocationDraft>[
+        PaymentAllocationDraft(referenceId: 'sale-p9', referenceNumber: 'INV-P9', amount: 20),
+      ],
+    );
+    final customerMovement = await db.customSelect(
+      "SELECT credit FROM account_transactions WHERE id = 'receipt-p9-customer-payment' AND deleted_at = ''",
+    ).getSingleOrNull();
+    expect(customerMovement, isNotNull);
+    expect((customerMovement!.data['credit'] as num).toDouble(), 20);
+
+    await service.createPayment(
+      id: 'payment-p9', voucherNo: 'PV-P9', supplierId: 'sup-p9', supplierName: 'Supplier',
+      amount: 15, cashLocationId: 'drawer-1', cashDrawerSessionId: 'shift-1',
+      deviceId: 'dev-1', storeId: 'store-1', branchId: 'main',
+      allocations: const <PaymentAllocationDraft>[
+        PaymentAllocationDraft(referenceId: 'purchase-p9', referenceNumber: 'PUR-P9', amount: 15),
+      ],
+    );
+    final supplierMovement = await db.customSelect(
+      "SELECT debit FROM account_transactions WHERE id = 'payment-p9-supplier-payment' AND deleted_at = ''",
+    ).getSingleOrNull();
+    expect(supplierMovement, isNotNull);
+    expect((supplierMovement!.data['debit'] as num).toDouble(), 15);
+  });
+
+  test('Phase 9 voucher reversal persists matching account-ledger reversal', () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedDrawer(db);
+    await _seedSale(db, id: 'sale-rev-p9', invoiceNo: 'INV-REV-P9', customerId: 'cust-rev-p9', total: 40);
+    final service = PaymentVoucherService(db);
+    await service.createReceipt(
+      id: 'receipt-rev-p9', voucherNo: 'RC-REV-P9', customerId: 'cust-rev-p9', customerName: 'Customer',
+      amount: 10, cashLocationId: 'drawer-1', cashDrawerSessionId: 'shift-1',
+      deviceId: 'dev-1', storeId: 'store-1', branchId: 'main',
+      allocations: const <PaymentAllocationDraft>[
+        PaymentAllocationDraft(referenceId: 'sale-rev-p9', referenceNumber: 'INV-REV-P9', amount: 10),
+      ],
+    );
+    expect(await service.reverseReceiptVoucher(voucherId: 'receipt-rev-p9', deviceId: 'dev-1'), isTrue);
+    final reversal = await db.customSelect(
+      "SELECT debit, credit FROM account_transactions WHERE id = 'receipt-rev-p9-customer-payment-reversal' AND deleted_at = ''",
+    ).getSingleOrNull();
+    expect(reversal, isNotNull);
+    expect((reversal!.data['debit'] as num).toDouble(), 10);
+    expect((reversal.data['credit'] as num).toDouble(), 0);
+  });
+  test('Phase 9 account-ledger failure rolls back the whole receipt transaction', () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedDrawer(db);
+    await _seedSale(db, id: 'sale-fail-p9', invoiceNo: 'INV-FAIL-P9', customerId: 'cust-fail-p9', total: 50);
+    await db.customStatement('''
+      CREATE TRIGGER p9_fail_account_transaction
+      BEFORE INSERT ON account_transactions
+      WHEN NEW.id = 'receipt-fail-p9-customer-payment'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced account ledger failure');
+      END;
+    ''');
+    final service = PaymentVoucherService(db);
+    await expectLater(
+      service.createReceipt(
+        id: 'receipt-fail-p9', voucherNo: 'RC-FAIL-P9',
+        customerId: 'cust-fail-p9', customerName: 'Customer', amount: 10,
+        cashLocationId: 'drawer-1', cashDrawerSessionId: 'shift-1',
+        deviceId: 'dev-1', storeId: 'store-1', branchId: 'main',
+        allocations: const <PaymentAllocationDraft>[
+          PaymentAllocationDraft(referenceId: 'sale-fail-p9', referenceNumber: 'INV-FAIL-P9', amount: 10),
+        ],
+      ),
+      throwsA(anything),
+    );
+    expect(await db.customSelect("SELECT id FROM receipt_vouchers WHERE id = 'receipt-fail-p9'").getSingleOrNull(), isNull);
+    expect(await db.customSelect("SELECT id FROM journal_entries WHERE reference_type = 'receipt_voucher' AND reference_id = 'receipt-fail-p9'").getSingleOrNull(), isNull);
+    expect(await db.customSelect("SELECT id FROM cash_ledger_transactions WHERE reference_type = 'receipt_voucher' AND reference_id = 'receipt-fail-p9'").getSingleOrNull(), isNull);
+    final balance = await db.customSelect("SELECT current_balance FROM cash_locations WHERE id = 'drawer-1'").getSingle();
+    expect((balance.data['current_balance'] as num).toDouble(), 100);
+    final sale = await db.customSelect("SELECT paid_amount FROM sales WHERE id = 'sale-fail-p9'").getSingle();
+    expect((sale.data['paid_amount'] as num).toDouble(), 0);
   });
 
 }

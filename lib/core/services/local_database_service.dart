@@ -117,6 +117,22 @@ class LocalDatabaseService {
   }
 
   @visibleForTesting
+  static Future<void> useSqliteDatabaseForTesting(
+    VentioDriftDatabase db,
+  ) async {
+    _memoryStoreForTesting = null;
+    _webStore = null;
+    _webPreferences = null;
+    _webIndexedStore = null;
+    SqliteMigrationManager.attachDatabaseOverride(db);
+    _sqliteMirror
+      ..clear()
+      ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(db))
+      ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(db));
+    _sqliteReady = true;
+  }
+
+  @visibleForTesting
   static Future<void> resetForTesting() async {
     _memoryStoreForTesting = null;
     _webStore = null;
@@ -751,6 +767,179 @@ class LocalDatabaseService {
         .toList(growable: false);
   }
 
+  static const Map<String, String> phase8AccountingSnapshotTables = <String, String>{
+    'accountingAccounts': 'accounts',
+    'accountingSettings': 'accounting_settings',
+    'accountingPeriods': 'accounting_periods',
+    'paymentAccounts': 'payment_accounts',
+    'cashLocations': 'cash_locations',
+    'cashDrawerSessions': 'cash_drawer_sessions',
+    'cashTransfers': 'cash_transfers',
+    'receiptVouchers': 'receipt_vouchers',
+    'paymentVouchers': 'payment_vouchers',
+    'paymentAllocations': 'payment_allocations',
+    'cashOperations': 'cash_operations',
+    'cashLedgerTransactions': 'cash_ledger_transactions',
+    'journalEntries': 'journal_entries',
+    'journalLines': 'journal_lines',
+    'accountingAuditLog': 'accounting_audit_log',
+  };
+
+  static Future<Map<String, List<Map<String, dynamic>>>>
+      getPhase8AccountingSnapshotRows() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return const <String, List<Map<String, dynamic>>>{};
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return const <String, List<Map<String, dynamic>>>{};
+    final result = <String, List<Map<String, dynamic>>>{};
+    for (final entry in phase8AccountingSnapshotTables.entries) {
+      final rows = await db.customSelect('SELECT * FROM ${entry.value}').get();
+      result[entry.key] = rows
+          .map((row) => Map<String, dynamic>.from(row.data))
+          .toList(growable: false);
+    }
+    return result;
+  }
+
+  static Future<void> replacePhase8AccountingSnapshotRowsImmediate(
+    Map<String, List<Map<String, dynamic>>> collections,
+  ) async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) return;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return;
+    const deleteOrder = <String>[
+      'accounting_audit_log',
+      'journal_lines',
+      'payment_allocations',
+      'cash_ledger_transactions',
+      'cash_operations',
+      'cash_transfers',
+      'receipt_vouchers',
+      'payment_vouchers',
+      'cash_drawer_sessions',
+      'payment_accounts',
+      'cash_locations',
+      'journal_entries',
+      'accounting_periods',
+      'accounting_settings',
+      'accounts',
+    ];
+    final tableToCollection = <String, String>{
+      for (final entry in phase8AccountingSnapshotTables.entries)
+        entry.value: entry.key,
+    };
+    for (final table in deleteOrder) {
+      final key = tableToCollection[table]!;
+      if (!collections.containsKey(key)) continue;
+      await db.customStatement('DELETE FROM $table');
+    }
+    for (final table in deleteOrder.reversed) {
+      final key = tableToCollection[table]!;
+      final rows = collections[key];
+      if (rows == null) continue;
+      for (final row in rows) {
+        if (row.isEmpty) continue;
+        final columns = row.keys.toList(growable: false);
+        final placeholders = List<String>.filled(columns.length, '?').join(', ');
+        await db.customStatement(
+          'INSERT INTO $table (${columns.join(', ')}) VALUES ($placeholders)',
+          columns.map((column) => row[column]).toList(growable: false),
+        );
+      }
+    }
+  }
+
+  static Future<Map<String, List<Map<String, dynamic>>>>
+      getPhase8AccountingDeltaRows(DateTime since) async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return const <String, List<Map<String, dynamic>>>{};
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return const <String, List<Map<String, dynamic>>>{};
+    final threshold = since.toUtc().toIso8601String();
+    final result = <String, List<Map<String, dynamic>>>{};
+    for (final entry in phase8AccountingSnapshotTables.entries) {
+      final rows = entry.value == 'cash_drawer_sessions'
+          ? await db.customSelect(
+              'SELECT * FROM cash_drawer_sessions WHERE updated_at >= ?',
+              variables: <Variable<Object>>[Variable<String>(threshold)],
+            ).get()
+          : entry.value == 'accounting_audit_log'
+              ? await db.customSelect(
+                  'SELECT * FROM accounting_audit_log WHERE created_at >= ?',
+                  variables: <Variable<Object>>[Variable<String>(threshold)],
+                ).get()
+              : await db.customSelect(
+                  'SELECT * FROM ${entry.value} WHERE updated_at >= ?',
+                  variables: <Variable<Object>>[Variable<String>(threshold)],
+                ).get();
+      if (rows.isEmpty) continue;
+      result[entry.key] = rows
+          .map((row) => Map<String, dynamic>.from(row.data))
+          .toList(growable: false);
+    }
+    return result;
+  }
+
+  static Future<void> upsertPhase8AccountingSnapshotRowsImmediate(
+    Map<String, List<Map<String, dynamic>>> collections,
+  ) async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) return;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return;
+    const insertOrder = <String>[
+      'accounts',
+      'accounting_audit_log',
+      'accounting_settings',
+      'accounting_periods',
+      'journal_entries',
+      'cash_locations',
+      'payment_accounts',
+      'cash_drawer_sessions',
+      'receipt_vouchers',
+      'payment_vouchers',
+      'cash_transfers',
+      'cash_operations',
+      'cash_ledger_transactions',
+      'payment_allocations',
+      'journal_lines',
+    ];
+    final tableToCollection = <String, String>{
+      for (final entry in phase8AccountingSnapshotTables.entries)
+        entry.value: entry.key,
+    };
+    for (final table in insertOrder) {
+      final key = tableToCollection[table]!;
+      final rows = collections[key];
+      if (rows == null) continue;
+      for (final row in rows) {
+        if (row.isEmpty) continue;
+        final columns = row.keys.toList(growable: false);
+        final primaryKey = table == 'accounting_settings' ? 'key' : 'id';
+        if (!columns.contains(primaryKey)) continue;
+        final placeholders = List<String>.filled(columns.length, '?').join(', ');
+        final updates = columns
+            .where((column) => column != primaryKey)
+            .map((column) => '$column = excluded.$column')
+            .join(', ');
+        final conflict = updates.isEmpty
+            ? 'ON CONFLICT($primaryKey) DO NOTHING'
+            : table == 'cash_drawer_sessions'
+                ? 'ON CONFLICT($primaryKey) DO UPDATE SET $updates '
+                    "WHERE NOT (cash_drawer_sessions.status IN ('closed', 'void') AND excluded.status = 'open') "
+                    'AND (excluded.revision > cash_drawer_sessions.revision '
+                    'OR (excluded.revision = cash_drawer_sessions.revision '
+                    'AND excluded.updated_at > cash_drawer_sessions.updated_at))'
+                : 'ON CONFLICT($primaryKey) DO UPDATE SET $updates';
+        await db.customStatement(
+          'INSERT INTO $table (${columns.join(', ')}) VALUES ($placeholders) $conflict',
+          columns.map((column) => row[column]).toList(growable: false),
+        );
+      }
+    }
+  }
+
   static Future<List<AccountTransaction>?>
       getAccountTransactionsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
@@ -857,6 +1046,11 @@ class LocalDatabaseService {
       return null;
     }
     return SupplierRepository.getAll();
+  }
+
+  static Future<Expense?> getExpenseFromSqliteById(String id) async {
+    if (!canQueryBusinessSqlite) return null;
+    return ExpenseRepository.getById(id);
   }
 
   static Future<List<Expense>?> getExpensesFromSqlite() async {

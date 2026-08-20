@@ -64,3 +64,11 @@ transport; a Host may expose both LAN and Direct.
 4. Select LAN or Direct and complete Host pairing.
 
 Retired transport endpoints return `LEGACY_SYNC_REMOVED` and cannot move business data.
+
+## Phase 7 completion hardening
+
+The Phase 7 maintenance workflow is exposed from Maintenance > Maintenance Actions as **Phase 7 Migration** for users with maintenance-management permission. The operation is intentionally manual (not startup-triggered), idempotent, and reports a run as `blocked` whenever reconciliation errors remain.
+
+Reconciliation now validates voucher amount vs active allocations/unallocated balance, allocation voucher/document/party integrity, missing or duplicate journals, missing or duplicate Cash Ledger voucher movements, unbalanced posted journals, and customer/supplier legacy balances against accounting control-account party balances. Cash vouchers without a Cash Ledger row are blocking errors.
+
+Regression coverage includes receipt migration/idempotency, supplier payment migration, preservation of live cash balances, missing-cash-location blocking, and allocation/voucher mismatch detection.

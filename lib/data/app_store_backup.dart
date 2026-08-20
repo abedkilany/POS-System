@@ -216,6 +216,14 @@ extension AppStoreBackupExtensions on AppStore {
         business('accountTransactions', 'Account transactions',
             hasList('accountTransactions'),
             count: listCount('accountTransactions')),
+        business(
+          'cashAccounting',
+          'Cash and accounting',
+          LocalDatabaseService.phase8AccountingSnapshotTables.keys
+              .any(hasList),
+          count: LocalDatabaseService.phase8AccountingSnapshotTables.keys
+              .fold<int>(0, (sum, key) => sum + listCount(key)),
+        ),
         business('manufacturing', 'Manufacturing',
             hasList('billsOfMaterials') || hasList('manufacturingOrders'),
             count: listCount('billsOfMaterials') +

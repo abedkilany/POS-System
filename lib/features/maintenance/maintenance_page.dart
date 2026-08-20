@@ -32,6 +32,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   int _advancedToolsTapCount = 0;
   bool _stressLabUnlocked = false;
   bool _stressLabButtonHidden = false;
+  bool _phase7Running = false;
   Timer? _stressLabHideTimer;
   bool get _showAdvancedTools =>
       kDebugMode || widget.store.canManageMaintenance;
@@ -240,6 +241,71 @@ class _MaintenancePageState extends State<MaintenancePage> {
     _hideStressLabButton();
     _stressLabHideTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _runCashPhase7Migration() async {
+    if (_phase7Running || !widget.store.canManageMaintenance) return;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Phase 7 — Legacy Migration & Reconciliation'),
+            content: const Text(
+              'This maintenance operation migrates legacy customer/supplier payments, repairs missing accounting references, and performs a full cash/accounting reconciliation. It is idempotent and does not move historical cash a second time.\n\nRun Phase 7 now?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Run Phase 7'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+
+    setState(() => _phase7Running = true);
+    try {
+      final report = await _service.runCashPhase7Migration();
+      if (!mounted) return;
+      final errorCount = report.issues.where((issue) => issue.severity == 'error').length;
+      final warningCount = report.issues.where((issue) => issue.severity == 'warning').length;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(report.hasErrors ? 'Phase 7 completed with blocking issues' : 'Phase 7 completed'),
+          content: SingleChildScrollView(
+            child: SelectableText(
+              'Run: ${report.runId}\n'
+              'Legacy receipts: ${report.legacyReceiptsFound}\n'
+              'Legacy payments: ${report.legacyPaymentsFound}\n'
+              'Vouchers created: ${report.vouchersCreated}\n'
+              'Allocations created: ${report.allocationsCreated}\n'
+              'Invoice journals created: ${report.invoiceEntriesCreated}\n'
+              'Voucher journals created: ${report.voucherEntriesCreated}\n'
+              'Cash Ledger rows created: ${report.ledgerRowsCreated}\n'
+              'Payment caches rebuilt: ${report.paymentCachesRebuilt}\n'
+              'Errors: $errorCount\nWarnings: $warningCount\n\n'
+              '${report.hasErrors ? 'Phase 7 is NOT cleanly reconciled. Review cash_phase7_issues before accepting the migration.' : 'No blocking reconciliation errors were found.'}',
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+          ],
+        ),
+      );
+      if (mounted) await _refresh(deep: true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Phase 7 failed: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _phase7Running = false);
+    }
   }
 
   @override
@@ -501,6 +567,16 @@ class _MaintenancePageState extends State<MaintenancePage> {
                   : null,
               icon: const Icon(Icons.download_for_offline_outlined),
               label: Text(tr.text('windows_installer_versions')),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('CashPhase7MigrationButton'),
+              onPressed: widget.store.canManageMaintenance && !_phase7Running
+                  ? _runCashPhase7Migration
+                  : null,
+              icon: _phase7Running
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.account_balance_outlined),
+              label: const Text('Phase 7 Migration'),
             ),
           ],
         ),

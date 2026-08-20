@@ -11,6 +11,11 @@ class PaymentAllocation {
     this.currency = 'USD',
     this.referenceCurrency = 'USD',
     this.exchangeRate = 1,
+    this.status = 'active',
+    this.reversalReason = '',
+    this.reversedBy = '',
+    this.reversedByUserId = '',
+    this.reversedAt,
     DateTime? createdAt,
     DateTime? updatedAt,
     this.deletedAt,
@@ -31,6 +36,8 @@ class PaymentAllocation {
   final String currency;
   final String referenceCurrency;
   final double exchangeRate;
+  final String status, reversalReason, reversedBy, reversedByUserId;
+  final DateTime? reversedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? deletedAt;
@@ -53,6 +60,11 @@ class PaymentAllocation {
         'currency': currency,
         'referenceCurrency': referenceCurrency,
         'exchangeRate': exchangeRate,
+        'status': status,
+        'reversalReason': reversalReason,
+        'reversedBy': reversedBy,
+        'reversedByUserId': reversedByUserId,
+        'reversedAt': reversedAt?.toIso8601String(),
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'deletedAt': deletedAt?.toIso8601String(),
@@ -78,6 +90,11 @@ class PaymentAllocation {
       currency: json['currency']?.toString() ?? 'USD',
       referenceCurrency: json['referenceCurrency']?.toString() ?? 'USD',
       exchangeRate: value(json['exchangeRate']) <= 0 ? 1 : value(json['exchangeRate']),
+      status: json['status']?.toString() ?? 'active',
+      reversalReason: json['reversalReason']?.toString() ?? '',
+      reversedBy: json['reversedBy']?.toString() ?? '',
+      reversedByUserId: json['reversedByUserId']?.toString() ?? '',
+      reversedAt: DateTime.tryParse(json['reversedAt']?.toString() ?? ''),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? now,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? now,
       deletedAt: DateTime.tryParse(json['deletedAt']?.toString() ?? ''),

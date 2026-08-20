@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/localized_domain_exception.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/page_timing_scope.dart';
@@ -3745,15 +3746,13 @@ class _SalesPageState extends State<SalesPage> {
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled &&
-                                            sale.returnedAmount <= 0 &&
-                                            widget.store.deliveryNoteForSale(
-                                                    sale.id) ==
-                                                null &&
-                                            widget.store.canEditSales)
-                                        ? () => _startEditingSale(sale)
+                                            widget.store.hasPermission(
+                                                AppPermission.salesCancel))
+                                        ? () => _returnSale(context, sale)
                                         : null,
-                                    icon: const Icon(Icons.edit_outlined),
-                                    label: Text(tr.text('edit')),
+                                    icon: const Icon(
+                                        Icons.assignment_return_outlined),
+                                    label: Text(_saleReturnLabel(tr)),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled &&
@@ -4003,13 +4002,11 @@ class _SalesPageState extends State<SalesPage> {
               ),
               OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
-                        sale.returnedAmount <= 0 &&
-                        widget.store.deliveryNoteForSale(sale.id) == null &&
-                        widget.store.canEditSales)
-                    ? () => _startEditingSale(sale)
+                        widget.store.hasPermission(AppPermission.salesCancel))
+                    ? () => _returnSale(context, sale)
                     : null,
-                icon: const Icon(Icons.edit_outlined),
-                label: Text(tr.text('edit')),
+                icon: const Icon(Icons.assignment_return_outlined),
+                label: Text(_saleReturnLabel(tr)),
               ),
               OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
@@ -5191,51 +5188,78 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  void _startEditingSale(Sale sale) {
-    if (!widget.store.canEditSales ||
-        sale.isCancelled ||
-        sale.returnedAmount > 0 ||
-        widget.store.deliveryNoteForSale(sale.id) != null) {
+  String _saleReturnLabel(AppLocalizations tr) {
+    switch (tr.locale.languageCode) {
+      case 'ar':
+        return 'مرتجع الفاتورة';
+      case 'fr':
+        return 'Retour de facture';
+      default:
+        return 'Return invoice';
+    }
+  }
+
+  Future<void> _returnSale(BuildContext sheetContext, Sale sale) async {
+    if (!widget.store.hasPermission(AppPermission.salesCancel) ||
+        sale.isCancelled) {
       return;
     }
-    final draftItems = <_DraftSaleItem>[];
-    for (final item in sale.items) {
-      final product = widget.store.productById(item.productId);
-      if (product == null) continue;
-      draftItems.add(_DraftSaleItem(
-        product: product,
-        quantity: item.quantity,
-        saleUnit: ProductSaleUnit(
-          // Keep the cart label on the product name while preserving the
-          // original unit details in the subtitle and saved invoice data.
-          id: 'base',
-          name: item.unitName,
-          conversionToBase: item.conversionToBase,
-          price: item.unitPrice,
-          isDefault: true,
+    final tr = AppLocalizations.of(sheetContext);
+    final confirmed = await showDialog<bool>(
+      context: sheetContext,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_saleReturnLabel(tr)),
+        content: Text(
+          tr.isArabic
+              ? 'هل تريد إنشاء مرتجع للكمية المتبقية من الفاتورة ${sale.invoiceNo} وإعادة الأصناف إلى المخزون؟'
+              : tr.locale.languageCode == 'fr'
+                  ? 'Voulez-vous retourner la quantité restante de la facture ${sale.invoiceNo} et remettre les articles en stock ?'
+                  : 'Return the remaining quantity of invoice ${sale.invoiceNo} and restore the items to stock?',
         ),
-      ));
-    }
-    if (draftItems.isEmpty) return;
-    setState(() {
-      _editingSale = sale;
-      _cart
-        ..clear()
-        ..addAll(draftItems);
-      _selectedCustomerId = sale.customerId;
-      _selectedWarehouseId = sale.warehouseId;
-      _paymentMethod = sale.paymentMethod;
-      _invoiceCurrency = sale.invoiceCurrency;
-      _paymentCurrency = sale.paymentCurrency;
-      _discountCurrency = sale.discountCurrency;
-      _discountController.text = sale.discount.toStringAsFixed(2);
-      _paidAmountController.text = sale.paidAmount.toStringAsFixed(2);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text(
-              '${AppLocalizations.of(context).text('edit')} ${sale.invoiceNo}')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('confirm')),
+          ),
+        ],
+      ),
     );
+    if (confirmed != true) return;
+
+    try {
+      await widget.store.returnSale(sale.id, restoreStock: true);
+      if (!mounted) return;
+      setState(() {
+        _salesQueryFuture = null;
+        _salesQueryFutureKey = '';
+        _invoiceDetailsFutureById.clear();
+        _invoiceSearchIndexCache.invalidate();
+      });
+      if (sheetContext.mounted && Navigator.of(sheetContext).canPop()) {
+        Navigator.of(sheetContext).pop();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            tr.isArabic
+                ? 'تم إنشاء مرتجع الفاتورة وإعادة المخزون.'
+                : tr.locale.languageCode == 'fr'
+                    ? 'Le retour de facture a été créé et le stock restauré.'
+                    : 'Invoice return created and stock restored.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizedErrorText(tr, error))),
+      );
+    }
   }
 
   Future<void> _saveCurrentInvoice({required bool printAfterSave}) async {
@@ -5411,10 +5435,16 @@ class _SalesPageState extends State<SalesPage> {
       debugPrint('Invoice action failed: $error\n$stackTrace');
       if (!mounted) return;
       final message = AppLocalizations.of(context).text(failureMessageKey);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(failureMessageKey == 'thermal_print_failed'
-              ? '$message ($error)'
-              : message)));
+      final errorText = error.toString();
+      final visibleError = errorText.length > 320
+          ? '${errorText.substring(0, 320)}…'
+          : errorText;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 12),
+          content: SelectableText('$message\n$visibleError'),
+        ),
+      );
     }
   }
 

@@ -38,9 +38,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
   int _page = 0;
   String _direction = '';
   String _type = '';
-  _CashDatePreset _datePreset = _CashDatePreset.today;
-  bool _currentShiftOnly = true;
-  DateTimeRange? _customRange;
   late Future<_CashHistorySnapshot> _future;
 
   CashLedgerService get _ledger => CashLedgerService.current();
@@ -48,7 +45,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
   @override
   void initState() {
     super.initState();
-    _currentShiftOnly = widget.currentSessionId.isNotEmpty;
     _future = _load();
   }
 
@@ -58,7 +54,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
     if (oldWidget.refreshKey != widget.refreshKey ||
         oldWidget.cashLocationId != widget.cashLocationId ||
         oldWidget.currentSessionId != widget.currentSessionId) {
-      if (widget.currentSessionId.isEmpty) _currentShiftOnly = false;
       _page = 0;
       _reload();
     }
@@ -72,35 +67,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
   }
 
   String _l(AppLocalizations tr, String en, String ar) => tr.isArabic ? ar : en;
-
-  ({DateTime? from, DateTime? to}) _dateRange() {
-    final now = DateTime.now();
-    DateTime startOfDay(DateTime value) => DateTime(value.year, value.month, value.day);
-    final today = startOfDay(now);
-    switch (_datePreset) {
-      case _CashDatePreset.today:
-        return (from: today, to: today.add(const Duration(days: 1)).subtract(const Duration(microseconds: 1)));
-      case _CashDatePreset.yesterday:
-        final day = today.subtract(const Duration(days: 1));
-        return (from: day, to: today.subtract(const Duration(microseconds: 1)));
-      case _CashDatePreset.thisWeek:
-        final start = today.subtract(Duration(days: today.weekday - 1));
-        return (from: start, to: now);
-      case _CashDatePreset.thisMonth:
-        return (from: DateTime(now.year, now.month, 1), to: now);
-      case _CashDatePreset.custom:
-        final range = _customRange;
-        if (range == null) return (from: null, to: null);
-        return (
-          from: DateTime(range.start.year, range.start.month, range.start.day),
-          to: DateTime(range.end.year, range.end.month, range.end.day)
-              .add(const Duration(days: 1))
-              .subtract(const Duration(microseconds: 1)),
-        );
-      case _CashDatePreset.all:
-        return (from: null, to: null);
-    }
-  }
 
   Future<_CashHistorySnapshot> _load() async {
     if (widget.cashLocationId.trim().isEmpty) {
@@ -117,14 +83,20 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
       // This never changes the stored cash balance and is idempotent.
       await PaymentVoucherService(database).backfillLegacyCashLedger();
     }
-    final sessionId = _currentShiftOnly ? widget.currentSessionId : '';
-    final presetRange = _dateRange();
-    DateTime? from = presetRange.from;
-    DateTime? to = presetRange.to;
-    if (_currentShiftOnly && sessionId.isNotEmpty) {
-      from = await _ledger.sessionOpenedAt(sessionId);
-      to = DateTime.now();
+    final sessionId = widget.currentSessionId.trim();
+    if (sessionId.isEmpty) {
+      return const _CashHistorySnapshot(
+        rows: <CashLedgerTransaction>[],
+        total: 0,
+        summary: CashLedgerSummary(movementCount: 0, cashIn: 0, cashOut: 0),
+      );
     }
+    // The cash history is intentionally locked to the open shift. The
+    // cash_drawer_session_id is authoritative, so no date window is applied.
+    // This also prevents legacy document dates from hiding movements that
+    // belong to the current shift.
+    DateTime? from;
+    DateTime? to;
     final args = (
       cashLocationId: widget.cashLocationId,
       cashDrawerSessionId: sessionId,
@@ -247,30 +219,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
                     ),
                   ),
                 ),
-                DropdownButton<_CashDatePreset>(
-                  value: _datePreset,
-                  onChanged: _currentShiftOnly ? null : (value) async {
-                    if (value == null) return;
-                    if (value == _CashDatePreset.custom) {
-                      final now = DateTime.now();
-                      final picked = await showDateRangePicker(
-                        context: context,
-                        firstDate: DateTime(now.year - 10),
-                        lastDate: DateTime(now.year + 1),
-                        initialDateRange: _customRange,
-                      );
-                      if (picked == null || !mounted) return;
-                      _customRange = picked;
-                    }
-                    _changeFilter(() => _datePreset = value);
-                  },
-                  items: _CashDatePreset.values
-                      .map((value) => DropdownMenuItem(
-                            value: value,
-                            child: Text(_dateLabel(tr, value)),
-                          ))
-                      .toList(growable: false),
-                ),
                 DropdownButton<String>(
                   value: _direction,
                   onChanged: (value) => _changeFilter(() => _direction = value ?? ''),
@@ -299,13 +247,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
                     DropdownMenuItem(value: 'reversal', child: Text(_l(tr, 'Reversal', 'عكس حركة'))),
                   ],
                 ),
-                if (widget.currentSessionId.isNotEmpty)
-                  FilterChip(
-                    selected: _currentShiftOnly,
-                    onSelected: (value) => _changeFilter(() => _currentShiftOnly = value),
-                    avatar: const Icon(Icons.timelapse_rounded, size: 18),
-                    label: Text(_l(tr, 'Current shift only', 'الوردية الحالية فقط')),
-                  ),
               ],
             ),
           ),
@@ -510,8 +451,15 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
           if (widget.store.canManageAccounting &&
               item.reversalOfId.isEmpty &&
               item.type != 'reversal' &&
-              (<String>{'cash_deposit', 'cash_withdrawal', 'cash_transfer'}
-                      .contains(item.referenceType) ||
+              (<String>{
+                'cash_deposit',
+                'cash_withdrawal',
+                'cash_transfer',
+                'receipt_voucher',
+                'payment_voucher',
+                'sale_refund',
+                'purchase_refund',
+              }.contains(item.referenceType) ||
                   (item.referenceType == 'expense' &&
                       item.referenceId.startsWith('cashop'))))
             TextButton.icon(
@@ -538,16 +486,34 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
                   ),
                 );
                 if (confirmed != true) return;
-                await CashReversalService.current().reverseReference(
-                  referenceType: item.referenceType,
-                  referenceId: item.referenceId,
-                  reason: 'Cash history reversal',
-                  createdBy: widget.store.currentRole,
-                  deviceId: widget.store.appIdentity.deviceId,
-                );
-                if (!dialogContext.mounted) return;
-                Navigator.pop(dialogContext);
-                _reload();
+                try {
+                  final reversed = await CashReversalService.current().reverseReference(
+                    referenceType: item.referenceType,
+                    referenceId: item.referenceId,
+                    reason: 'Cash history reversal',
+                    createdBy: widget.store.currentUser?.fullName.trim().isNotEmpty == true
+                        ? widget.store.currentUser!.fullName.trim()
+                        : (widget.store.currentUser?.username ?? widget.store.currentRole),
+                    createdByUserId: widget.store.currentUser?.id ?? '',
+                    deviceId: widget.store.appIdentity.deviceId,
+                  );
+                  if (reversed <= 0) {
+                    throw StateError(_l(
+                      tr,
+                      'The cash movement was not reversed.',
+                      'لم يتم عكس حركة الصندوق.',
+                    ));
+                  }
+                  await widget.store.refreshAccountTransactionsFromSqlite();
+                  if (!dialogContext.mounted) return;
+                  Navigator.pop(dialogContext);
+                  _reload();
+                } catch (error) {
+                  if (!dialogContext.mounted) return;
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+                  );
+                }
               },
               icon: const Icon(Icons.undo_rounded),
               label: Text(_l(tr, 'Reverse', 'عكس')),
@@ -571,26 +537,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
         ],
       ),
     );
-  }
-
-  String _dateLabel(AppLocalizations tr, _CashDatePreset value) {
-    switch (value) {
-      case _CashDatePreset.today:
-        return _l(tr, 'Today', 'اليوم');
-      case _CashDatePreset.yesterday:
-        return _l(tr, 'Yesterday', 'أمس');
-      case _CashDatePreset.thisWeek:
-        return _l(tr, 'This week', 'هذا الأسبوع');
-      case _CashDatePreset.thisMonth:
-        return _l(tr, 'This month', 'هذا الشهر');
-      case _CashDatePreset.custom:
-        final range = _customRange;
-        if (range == null) return _l(tr, 'Custom range', 'فترة مخصصة');
-        final format = DateFormat('yyyy-MM-dd');
-        return '${format.format(range.start)} → ${format.format(range.end)}';
-      case _CashDatePreset.all:
-        return _l(tr, 'All time', 'كل الفترات');
-    }
   }
 
   String _typeLabel(AppLocalizations tr, String value) {
@@ -636,8 +582,6 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
     }
   }
 }
-
-enum _CashDatePreset { today, yesterday, thisWeek, thisMonth, custom, all }
 
 class _CashHistorySnapshot {
   const _CashHistorySnapshot({required this.rows, required this.total, required this.summary});

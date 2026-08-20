@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'dart:ui' show Locale;
 
 import 'package:flutter/services.dart';
@@ -22,6 +24,15 @@ class PurchasePdfService {
       await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'),
     );
     final labels = _PurchasePdfLabels(locale.languageCode);
+    pw.MemoryImage? logoImage;
+    if (profile.logoDataBase64.trim().isNotEmpty) {
+      try {
+        logoImage = pw.MemoryImage(base64Decode(profile.logoDataBase64));
+      } catch (_) {
+        logoImage = null;
+      }
+    }
+
     final pdf = pw.Document(
       theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont),
     );
@@ -33,6 +44,18 @@ class PurchasePdfService {
         textDirection:
             labels.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         build: (_) => [
+          if (logoImage != null) ...[
+            pw.Align(
+              alignment: pw.Alignment.topCenter,
+              child: pw.Image(
+                logoImage,
+                width: 110,
+                height: 70,
+                fit: pw.BoxFit.contain,
+              ),
+            ),
+            pw.SizedBox(height: 12),
+          ],
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             crossAxisAlignment: pw.CrossAxisAlignment.start,

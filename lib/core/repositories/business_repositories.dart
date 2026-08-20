@@ -230,6 +230,12 @@ class ExpenseRepository {
     );
   }
 
+  static Future<Expense?> getById(String id) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.readExpenseById(db, id);
+  }
+
   static Future<List<Expense>?> getAll() async {
     final db = _businessDb();
     if (db == null) return null;

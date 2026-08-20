@@ -360,6 +360,8 @@ class AppStore extends ChangeNotifier {
   static const String walkInCustomerName = 'Walk-in Customer';
 
   static const _productsKey = 'products_v4';
+  static const _phase8AccountingSyncCursorKey =
+      'phase8_accounting_sync_cursor_v1';
   static const _customersKey = 'customers_v4';
   static const _salesKey = 'sales_v4';
   static const _creditNotesKey = 'credit_notes_v1';
@@ -508,11 +510,8 @@ class AppStore extends ChangeNotifier {
   bool _productDerivedDataDirty = false;
   Timer? _productDerivedDataFlushTimer;
   Future<void>? _productDerivedDataFlushInFlight;
-  final Map<String, Future<void>> _pendingSaleAccountingTasks =
-      <String, Future<void>>{};
   final Map<String, Future<bool>> _pendingPurchaseAccountingTasks =
       <String, Future<bool>>{};
-  Future<void> _saleAccountingQueue = Future<void>.value();
   Future<void> _purchaseAccountingQueue = Future<void>.value();
   static const int _maxPurchaseAccountingBacklog = 200;
   UnmodifiableListView<SaleQuotation>? _cachedSaleQuotations;
@@ -1073,6 +1072,20 @@ class AppStore extends ChangeNotifier {
 
   Future<void> ensureCreditNotesLoaded() async {
     if (_creditNotes.isNotEmpty) return;
+    // credit_notes_v1 is stored as a scalar JSON list rather than a typed
+    // business table. Read the scalar mirror first so SQLite desktop installs
+    // retain return history across app restarts; _decodeDeferredList alone only
+    // discovers typed entity keys in the SQLite startup path.
+    final raw = LocalDatabaseService.getString(_creditNotesKey);
+    if (raw != null && raw.trim().isNotEmpty) {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        _creditNotes.addAll(decoded.map((item) => CreditNote.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            )));
+        return;
+      }
+    }
     _creditNotes.addAll(await _decodeDeferredList<CreditNote>(
       _creditNotesKey,
       CreditNote.fromJson,
@@ -2278,6 +2291,7 @@ class AppStore extends ChangeNotifier {
   bool get canManageExpenses => hasPermission(AppPermission.expensesManage);
   bool get canViewAccounting => canAccessPage('accounting');
   bool get canManageAccounting => hasPermission(AppPermission.accountingManage);
+  bool get canManageCashBox => hasPermission(AppPermission.cashBoxManage);
   bool get canViewInventory => canAccessPage('inventory');
   bool get canManageInventory => hasAnyPermission(<String>{
         AppPermission.inventoryWarehousesManage,
@@ -3862,6 +3876,12 @@ class AppStore extends ChangeNotifier {
   /// DatabasePage can edit the persistent local database directly. Without this
   /// refresh, screens that already cached products, identity, users, stock, or
   /// reports in AppStore keep showing old values until a full app restart.
+  /// Reloads the compatibility customer/supplier ledger after a direct
+  /// SQLite financial reversal performed outside AppStore.
+  Future<void> refreshAccountTransactionsFromSqlite() async {
+    await refreshAfterDatabaseChange(_accountTransactionsKey);
+  }
+
   Future<void> refreshAfterDatabaseChange(String key) async {
     try {
       switch (key) {
@@ -6313,64 +6333,6 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  void _scheduleSaleAccounting(Sale sale) {
-    if (!AccountingService.isAvailable) return;
-    final saleId = sale.id.trim();
-    if (saleId.isEmpty) return;
-    final future = _saleAccountingQueue.then(
-      (_) => _postSaleAccounting(sale),
-      onError: (_) => _postSaleAccounting(sale),
-    );
-    _saleAccountingQueue = future.then<void>(
-      (_) {},
-      onError: (_) {},
-    );
-    _pendingSaleAccountingTasks[saleId] = future;
-    unawaited(
-      future.whenComplete(() {
-        if (identical(_pendingSaleAccountingTasks[saleId], future)) {
-          _pendingSaleAccountingTasks.remove(saleId);
-        }
-      }),
-    );
-  }
-
-  Future<void> _postSaleAccounting(Sale sale) async {
-    try {
-      await AccountingService.recordSale(sale, paymentPostedSeparately: true);
-    } catch (error, stackTrace) {
-      unawaited(
-        AppLogger.error(
-          area: 'sales',
-          action: 'record_sale_accounting',
-          message: 'Sale accounting posting failed.',
-          details: 'saleId=${sale.id} invoiceNo=${sale.invoiceNo} error=$error',
-          stackTrace: stackTrace.toString(),
-          userId: _activeUser?.id ?? '',
-          storeId: appIdentity.storeId,
-          branchId: appIdentity.branchId,
-          sessionId: _deviceId,
-          traceId: _deviceId,
-          devicePlatform: appIdentity.platform.name,
-          deviceModel: appIdentity.deviceName.isNotEmpty
-              ? appIdentity.deviceName
-              : _deviceId,
-          isImportant: true,
-        ),
-      );
-    }
-  }
-
-  Future<void> _waitForPendingSaleAccounting(String saleId) async {
-    final pending = _pendingSaleAccountingTasks[saleId.trim()];
-    if (pending == null) return;
-    try {
-      await pending;
-    } catch (_) {
-      // The background poster already logged the failure.
-    }
-  }
-
   Future<bool> _schedulePurchaseAccounting(Purchase purchase) async {
     if (!AccountingService.isAvailable) return true;
     final purchaseId = purchase.id.trim();
@@ -6452,7 +6414,6 @@ class AppStore extends ChangeNotifier {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
       final pending = <Future<void>>[
-        ..._pendingSaleAccountingTasks.values,
         ..._pendingPurchaseAccountingTasks.values,
       ];
       if (pending.isEmpty) return;
@@ -6582,6 +6543,10 @@ class AppStore extends ChangeNotifier {
 
   Future<Purchase?> _purchaseByIdFromSqlite(String id) {
     return LocalDatabaseService.getPurchaseFromSqliteById(id);
+  }
+
+  Future<Expense?> _expenseByIdFromSqlite(String id) {
+    return LocalDatabaseService.getExpenseFromSqliteById(id);
   }
 
   void _putStockMovementAtIndex(StockMovement movement, int index) {
@@ -8372,6 +8337,92 @@ class AppStore extends ChangeNotifier {
     });
   }
 
+  DateTime? _phase8AccountingSyncCursor;
+  bool _phase8AccountingSyncCaptureInFlight = false;
+  bool _phase8AccountingSyncCapturePending = false;
+
+  DateTime? _loadPhase8AccountingSyncCursor() {
+    final raw =
+        LocalDatabaseService.getString(_phase8AccountingSyncCursorKey)?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw)?.toUtc();
+  }
+
+  Future<void> _persistPhase8AccountingSyncCursor(DateTime value) async {
+    final normalized = value.toUtc();
+    await LocalDatabaseService.setString(
+      _phase8AccountingSyncCursorKey,
+      normalized.toIso8601String(),
+    );
+    _phase8AccountingSyncCursor = normalized;
+  }
+
+  /// Runs after login before the automatic sync transports start.
+  ///
+  /// The cursor is persisted through LocalDatabaseService, which means SQLite
+  /// owns it on native platforms. On the first Phase 8 launch we establish a
+  /// baseline without replaying the entire historical accounting database. On
+  /// later launches we capture everything committed after the last durable
+  /// cursor, including a transaction that committed immediately before a
+  /// process crash.
+  Future<void> recoverPhase8AccountingSyncAfterStartup() async {
+    if (SqliteMigrationManager.database == null) return;
+    await ensureSyncDataLoaded();
+    final storedCursor = _loadPhase8AccountingSyncCursor();
+    if (storedCursor == null) {
+      await _persistPhase8AccountingSyncCursor(DateTime.now().toUtc());
+      return;
+    }
+    _phase8AccountingSyncCursor = storedCursor;
+    await recordPhase8AccountingMutationForSync();
+  }
+
+  Future<void> recordPhase8AccountingMutationForSync() async {
+    if (SqliteMigrationManager.database == null) return;
+    if (_phase8AccountingSyncCaptureInFlight) {
+      _phase8AccountingSyncCapturePending = true;
+      return;
+    }
+    _phase8AccountingSyncCaptureInFlight = true;
+    final capturedAt = DateTime.now().toUtc();
+    try {
+      var since = _phase8AccountingSyncCursor ??
+          _loadPhase8AccountingSyncCursor();
+      // Startup recovery normally establishes the durable baseline before any
+      // user mutation is possible. Keep a narrow defensive fallback for tests
+      // or non-standard callers that invoke a mutation hook before recovery.
+      since ??= capturedAt.subtract(const Duration(seconds: 5));
+
+      final collections =
+          await LocalDatabaseService.getPhase8AccountingDeltaRows(since);
+      if (collections.isNotEmpty) {
+        _recordSyncChange(
+          entityType: 'cash_accounting_delta',
+          entityId: capturedAt.microsecondsSinceEpoch.toString(),
+          operation: 'upsert',
+          payload: <String, dynamic>{
+            'capturedAt': capturedAt.toIso8601String(),
+            'collections': collections,
+          },
+        );
+        // Persist the queue/event before moving the durable cursor. If the
+        // process dies before this succeeds, the old cursor remains and the
+        // rows are captured again on restart rather than being lost.
+        await _saveSyncStateOnly();
+      }
+      // Advancing an empty scan is safe and avoids repeatedly rescanning an
+      // unchanged accounting database. This happens only after the read and,
+      // when needed, the sync event persistence have completed successfully.
+      await _persistPhase8AccountingSyncCursor(capturedAt);
+    } finally {
+      _phase8AccountingSyncCaptureInFlight = false;
+      if (_phase8AccountingSyncCapturePending) {
+        _phase8AccountingSyncCapturePending = false;
+        unawaited(recordPhase8AccountingMutationForSync());
+      }
+    }
+  }
+
   bool get _isLanClientConfigured {
     final raw = LocalDatabaseService.getString('lan_sync_settings_v2');
     if (raw == null || raw.trim().isEmpty) return false;
@@ -8785,6 +8836,39 @@ class AppStore extends ChangeNotifier {
   double _safeAccountAmount(double value) =>
       value.isFinite && value > 0 ? value : 0;
 
+  Future<void> _persistAccountTransactionInExistingTransaction(
+    dynamic sqliteDb,
+    AccountTransaction transaction,
+  ) async {
+    await BusinessSqliteStore.upsertEntityPayloads(
+      sqliteDb,
+      _accountTransactionsKey,
+      <Map<String, dynamic>>[transaction.toJson()],
+      sortIndices: const <int?>[0],
+    );
+  }
+
+  Future<void> _persistAccountTransactionSqliteFirst(
+    AccountTransaction transaction,
+  ) async {
+    if (!LocalDatabaseService.isSqliteAuthoritative) return;
+    try {
+      await LocalDatabaseService.upsertBusinessEntityJsons(
+        _accountTransactionsKey,
+        <Map<String, dynamic>>[transaction.toJson()],
+      );
+    } finally {
+      // _withSyncMeta() stages account transactions for the generic dirty-row
+      // writer. A direct SQLite-first write owns persistence for this row, so
+      // remove that staged copy on both success and failure. On failure the
+      // exception is rethrown and RAM/UI is left untouched.
+      _sqliteDirtyBusinessRows[_accountTransactionsKey]?.remove(transaction.id);
+      if (_sqliteDirtyBusinessRows[_accountTransactionsKey]?.isEmpty ?? false) {
+        _sqliteDirtyBusinessRows.remove(_accountTransactionsKey);
+      }
+    }
+  }
+
   Future<void> addOrUpdateAccountTransaction(
     AccountTransaction transaction,
   ) async {
@@ -8819,6 +8903,7 @@ class AppStore extends ChangeNotifier {
       isCreate: index == -1,
     );
     final previous = index == -1 ? null : _accountTransactions[index];
+    await _persistAccountTransactionSqliteFirst(synced);
     _putAccountTransactionAtIndex(
       synced,
       index == -1 ? _accountTransactions.length : index,
@@ -8849,6 +8934,7 @@ class AppStore extends ChangeNotifier {
       clearDeletedAt: false,
     );
     final previous = _accountTransactions[index];
+    await _persistAccountTransactionSqliteFirst(deleted);
     _putAccountTransactionAtIndex(deleted, index);
     _replaceAccountTransactionInLedgerCache(
       previous: previous,
@@ -8871,11 +8957,11 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _upsertAccountTransactionInternal(
+  Future<void> _upsertAccountTransactionInternal(
     AccountTransaction transaction,
     DateTime now, {
     String operation = 'upsert',
-  }) {
+  }) async {
     final normalized = transaction.copyWith(
       accountType: transaction.accountType.trim().toLowerCase(),
       accountName: transaction.accountName.trim(),
@@ -8899,6 +8985,10 @@ class AppStore extends ChangeNotifier {
       isCreate: index == -1,
     );
     final previous = index == -1 ? null : _accountTransactions[index];
+
+    // Financial account movements are SQLite-first: persist before RAM/UI.
+    await _persistAccountTransactionSqliteFirst(synced);
+
     _putAccountTransactionAtIndex(
       synced,
       index == -1 ? _accountTransactions.length : index,
@@ -8915,13 +9005,13 @@ class AppStore extends ChangeNotifier {
     );
   }
 
-  void _recordPurchaseLedger(Purchase purchase, DateTime now) {
+  Future<void> _recordPurchaseLedger(Purchase purchase, DateTime now) async {
     if (!purchase.isReceived ||
         purchase.isCancelled ||
         purchase.supplierId.trim().isEmpty) {
       return;
     }
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
         id: '${purchase.id}-purchase-invoice',
         accountType: 'supplier',
@@ -8947,12 +9037,12 @@ class AppStore extends ChangeNotifier {
   }
 
 
-  void _recordPurchaseInvoiceCorrectionLedger(
+  Future<void> _recordPurchaseInvoiceCorrectionLedger(
     Purchase purchase,
     DateTime now, {
     required int editVersion,
     String reason = 'Purchase corrected',
-  }) {
+  }) async {
     if (purchase.supplierId.trim().isEmpty) return;
     final invoiceId = '${purchase.id}-purchase-invoice';
     final invoiceIndex = _accountTransactions.indexWhere(
@@ -8961,7 +9051,7 @@ class AppStore extends ChangeNotifier {
     if (invoiceIndex == -1) return;
     final total = _accountTransactions[invoiceIndex].credit;
     if (total <= 0) return;
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
         id: '${purchase.id}-purchase-correction-$editVersion',
         accountType: 'supplier',
@@ -8986,12 +9076,12 @@ class AppStore extends ChangeNotifier {
     );
   }
 
-  void _recordPurchaseCancelLedger(
+  Future<void> _recordPurchaseCancelLedger(
     Purchase purchase,
     DateTime now, {
     String reason = '',
     bool isReturn = false,
-  }) {
+  }) async {
     if (purchase.supplierId.trim().isEmpty) return;
     // Reverse the amounts that were actually posted, rather than rebuilding
     // them from the current Purchase object. A purchase can have been edited
@@ -9004,18 +9094,12 @@ class AppStore extends ChangeNotifier {
     if (invoiceIndex == -1) return;
     final total = _accountTransactions[invoiceIndex].credit;
     if (total <= 0) return;
-    final paymentId = '${purchase.id}-purchase-payment';
-    final paid = _accountTransactions
-        .where((transaction) => transaction.id == paymentId)
-        .fold<double>(0, (sum, transaction) => sum + transaction.debit)
-        .clamp(0, total)
-        .toDouble();
     final note = reason.trim().isEmpty
         ? (isReturn
             ? 'Purchase return ${purchase.purchaseNo}'
             : 'Purchase cancelled')
         : reason.trim();
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
         id: isReturn
             ? '${purchase.id}-purchase-return'
@@ -9040,46 +9124,14 @@ class AppStore extends ChangeNotifier {
       now,
       operation: isReturn ? 'purchase_return' : 'purchase_cancel',
     );
-    if (paid > 0) {
-      _upsertAccountTransactionInternal(
-        AccountTransaction(
-          id: isReturn
-              ? '${purchase.id}-purchase-return-payment-reversal'
-              : '${purchase.id}-purchase-payment-reversal',
-          accountType: 'supplier',
-          accountId: purchase.supplierId,
-          accountName: purchase.supplierName,
-          date: now,
-          type: 'paymentReversal',
-          paymentMethod: purchase.paymentMethod,
-          referenceId: purchase.id,
-          referenceNo: purchase.purchaseNo,
-          debit: 0,
-          credit: paid,
-          note: isReturn
-              ? 'Refund/reversal of payment for returned purchase ${purchase.purchaseNo}'
-              : 'Reversal of payment for cancelled purchase ${purchase.purchaseNo}',
-          createdAt: now,
-          updatedAt: now,
-          deviceId: _deviceId,
-          storeId: appIdentity.storeId,
-          branchId: appIdentity.branchId,
-          lastModifiedByDeviceId: _deviceId,
-        ),
-        now,
-        operation: isReturn
-            ? 'purchase_return_payment_reversal'
-            : 'purchase_payment_reversal',
-      );
-    }
   }
 
-  void _recordSaleLedger(Sale sale, DateTime now) {
+  Future<void> _recordSaleLedger(Sale sale, DateTime now) async {
     final accountId = sale.customerId.trim().isNotEmpty
         ? sale.customerId.trim()
         : sale.customerName.trim();
     if (accountId.isEmpty) return;
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
         id: '${sale.id}-sale-invoice',
         accountType: 'customer',
@@ -9106,11 +9158,11 @@ class AppStore extends ChangeNotifier {
   }
 
 
-  void _recordSaleInvoiceCorrectionLedger(
+  Future<void> _recordSaleInvoiceCorrectionLedger(
     Sale sale,
     DateTime now, {
     required int editVersion,
-  }) {
+  }) async {
     final accountId = sale.customerId.trim().isNotEmpty
         ? sale.customerId.trim()
         : sale.customerName.trim();
@@ -9123,7 +9175,7 @@ class AppStore extends ChangeNotifier {
         ? sale.invoiceTotal
         : _accountTransactions[invoiceIndex].debit;
     if (total <= 0) return;
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
         id: '${sale.id}-sale-correction-$editVersion',
         accountType: 'customer',
@@ -9149,11 +9201,12 @@ class AppStore extends ChangeNotifier {
     );
   }
 
-  void _recordSaleCancelLedger(
+  Future<void> _recordSaleCancelLedger(
     Sale sale,
     DateTime now, {
     bool isReturn = false,
-  }) {
+    String returnReferenceId = '',
+  }) async {
     final accountId = sale.customerId.trim().isNotEmpty
         ? sale.customerId.trim()
         : sale.customerName.trim();
@@ -9165,10 +9218,13 @@ class AppStore extends ChangeNotifier {
             .clamp(0, double.infinity)
             .toDouble());
     if (total <= 0) return;
-    final paid = sale.paidAmount.clamp(0, total).toDouble();
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
-        id: isReturn ? '${sale.id}-sale-return' : '${sale.id}-sale-cancel',
+        id: isReturn
+            ? (returnReferenceId.trim().isEmpty
+                ? '${sale.id}-sale-return'
+                : '${sale.id}-sale-return-${returnReferenceId.trim()}')
+            : '${sale.id}-sale-cancel',
         accountType: 'customer',
         accountId: accountId,
         accountName: sale.customerName,
@@ -9190,149 +9246,10 @@ class AppStore extends ChangeNotifier {
       now,
       operation: isReturn ? 'sale_return' : 'sale_cancel',
     );
-    if (paid > 0) {
-      final cashPart = sale.paymentMethod == 'Cash'
-          ? paid
-          : sale.cashReceivedAmount.clamp(0, paid).toDouble();
-      final nonCashPart = (paid - cashPart).clamp(0, paid).toDouble();
-      if (cashPart > 0) {
-        _upsertAccountTransactionInternal(
-          AccountTransaction(
-            id: isReturn
-                ? (nonCashPart > 0
-                    ? '${sale.id}-sale-return-payment-reversal-cash'
-                    : '${sale.id}-sale-return-payment-reversal')
-                : (nonCashPart > 0
-                    ? '${sale.id}-sale-payment-reversal-cash'
-                    : '${sale.id}-sale-payment-reversal'),
-            accountType: 'customer',
-            accountId: accountId,
-            accountName: sale.customerName,
-            date: now,
-            type: 'paymentReversal',
-            paymentMethod: 'Cash',
-            referenceId: sale.id,
-            referenceNo: sale.invoiceNo,
-            debit: cashPart,
-            credit: 0,
-            currency: sale.invoiceCurrency,
-            note: isReturn
-                ? 'Refund/reversal of cash payment for returned sale ${sale.invoiceNo}'
-                : 'Reversal of cash payment for cancelled sale ${sale.invoiceNo}',
-            createdAt: now,
-            updatedAt: now,
-            deviceId: _deviceId,
-            storeId: appIdentity.storeId,
-            branchId: appIdentity.branchId,
-            lastModifiedByDeviceId: _deviceId,
-          ),
-          now,
-          operation: isReturn
-              ? 'sale_return_payment_reversal_cash'
-              : 'sale_payment_reversal_cash',
-        );
-      }
-      if (nonCashPart > 0) {
-        _upsertAccountTransactionInternal(
-          AccountTransaction(
-            id: isReturn
-                ? (cashPart > 0
-                    ? '${sale.id}-sale-return-payment-reversal-${sale.paymentMethod.toLowerCase()}'
-                    : '${sale.id}-sale-return-payment-reversal')
-                : (cashPart > 0
-                    ? '${sale.id}-sale-payment-reversal-${sale.paymentMethod.toLowerCase()}'
-                    : '${sale.id}-sale-payment-reversal'),
-            accountType: 'customer',
-            accountId: accountId,
-            accountName: sale.customerName,
-            date: now,
-            type: 'paymentReversal',
-            paymentMethod: sale.paymentMethod,
-            referenceId: sale.id,
-            referenceNo: sale.invoiceNo,
-            debit: nonCashPart,
-            credit: 0,
-            currency: sale.invoiceCurrency,
-            note: isReturn
-                ? 'Refund/reversal of payment for returned sale ${sale.invoiceNo}'
-                : 'Reversal of payment for cancelled sale ${sale.invoiceNo}',
-            createdAt: now,
-            updatedAt: now,
-            deviceId: _deviceId,
-            storeId: appIdentity.storeId,
-            branchId: appIdentity.branchId,
-            lastModifiedByDeviceId: _deviceId,
-          ),
-          now,
-          operation: isReturn
-              ? 'sale_return_payment_reversal'
-              : 'sale_payment_reversal',
-        );
-      }
-    }
   }
 
-  void _recordExpenseLedger(Expense expense, DateTime now) {
-    final accountId = expense.id.trim();
-    if (accountId.isEmpty || expense.amount <= 0) return;
-    final accountName =
-        expense.title.trim().isEmpty ? 'Expense' : expense.title.trim();
-    final currency = expense.originalCurrency.trim().isEmpty
-        ? 'USD'
-        : expense.originalCurrency.trim().toUpperCase();
-    _upsertAccountTransactionInternal(
-      AccountTransaction(
-        id: '${expense.id}-expense-debit',
-        accountType: 'supplier',
-        accountId: accountId,
-        accountName: accountName,
-        date: expense.date,
-        type: 'expense',
-        referenceId: expense.id,
-        referenceNo: accountName,
-        debit: expense.amount,
-        credit: 0,
-        currency: currency,
-        note: 'Expense ${expense.title}',
-        createdAt: now,
-        updatedAt: now,
-        deviceId: _deviceId,
-        storeId: appIdentity.storeId,
-        branchId: appIdentity.branchId,
-        lastModifiedByDeviceId: _deviceId,
-      ),
-      now,
-      operation: 'expense_post',
-    );
-    _upsertAccountTransactionInternal(
-      AccountTransaction(
-        id: '${expense.id}-expense-credit',
-        accountType: 'supplier',
-        accountId: accountId,
-        accountName: accountName,
-        date: expense.date,
-        type: 'paymentPaid',
-        paymentMethod: 'Cash',
-        referenceId: expense.id,
-        referenceNo: accountName,
-        debit: 0,
-        credit: expense.amount,
-        currency: currency,
-        note: 'Expense settlement ${expense.title}',
-        createdAt: now,
-        updatedAt: now,
-        deviceId: _deviceId,
-        storeId: appIdentity.storeId,
-        branchId: appIdentity.branchId,
-        lastModifiedByDeviceId: _deviceId,
-      ),
-      now,
-      operation: 'expense_payment',
-    );
-  }
-
-  void _reverseExpenseLedger(Expense expense, DateTime now,
-      {String reason = ''}) {
+  Future<void> _reverseExpenseLedger(Expense expense, DateTime now,
+      {String reason = ''}) async {
     final accountId = expense.id.trim();
     if (accountId.isEmpty || expense.amount <= 0) return;
     final accountName =
@@ -9342,7 +9259,7 @@ class AppStore extends ChangeNotifier {
         : expense.originalCurrency.trim().toUpperCase();
     final noteSuffix =
         reason.trim().isEmpty ? 'cancelled expense' : reason.trim();
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
         id: '${expense.id}-expense-debit-reversal',
         accountType: 'supplier',
@@ -9366,7 +9283,7 @@ class AppStore extends ChangeNotifier {
       now,
       operation: 'expense_reverse_debit',
     );
-    _upsertAccountTransactionInternal(
+    await _upsertAccountTransactionInternal(
       AccountTransaction(
         id: '${expense.id}-expense-credit-reversal',
         accountType: 'supplier',
@@ -11132,11 +11049,16 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> postExpense(String id) async {
+  Future<void> postExpense(String id, {bool paidInCash = true}) async {
     requirePermission(AppPermission.expensesManage);
-    final index = _expenseIndexForId(id);
-    if (index == -1) throw ArgumentError('Expense not found.');
-    final expense = _expenses[index];
+    final normalizedId = id.trim();
+    final index = _expenseIndexForId(normalizedId);
+    final expense = index == -1
+        ? await _expenseByIdFromSqlite(normalizedId)
+        : _expenses[index];
+    if (expense == null || expense.isDeleted) {
+      throw ArgumentError('Expense not found.');
+    }
     if (expense.isPosted || expense.isCancelled) return;
     final now = DateTime.now();
     final candidate = _expenseSyncMetaPreview(
@@ -11146,20 +11068,25 @@ class AppStore extends ChangeNotifier {
     // Phase 5: cash/accounting must succeed before the Expense becomes Posted.
     // The preview above has no dirty-row side effect, so a failure cannot leave
     // a latent Posted row that might be persisted by a later unrelated save.
-    await AccountingService.recordExpense(candidate);
-    final posted = _withSyncMeta<Expense>(
-      expense.copyWith(status: 'Posted'),
-      now,
-    );
-    _expenses[index] = posted;
-    _recordExpenseLedger(posted, now);
+    if (paidInCash) {
+      await AccountingService.recordExpense(candidate);
+    } else {
+      await AccountingService.recordExpenseOnCredit(candidate);
+    }
+    // The posted Expense + accounting + cash + compatibility ledger are already
+    // committed atomically. Mirror only when this expense was already resident
+    // in AppStore; SQLite remains the authoritative source for paged expenses.
+    final posted = candidate;
+    if (index != -1) {
+      _expenses[index] = posted;
+    }
     _recordSyncChange(
       entityType: 'expense',
-      entityId: id,
+      entityId: normalizedId,
       operation: 'post',
       payload: posted.toJson(),
     );
-    await _saveDirty(expenses: true, accountTransactions: true, sync: true);
+    await _saveDirty(expenses: false, accountTransactions: false, sync: true);
     _touchExpensesData();
     notifyListeners();
   }
@@ -11213,11 +11140,8 @@ class AppStore extends ChangeNotifier {
     );
 
     for (final item in prepared) {
-      final syncedExpense = _withSyncMeta<Expense>(
-        item.source,
-        now,
-        isCreate: item.isCreate,
-      );
+      // recordExpensesBulk already persisted this preview atomically.
+      final syncedExpense = item.candidate;
       _putExpenseAtIndex(
         syncedExpense,
         item.isCreate ? _expenses.length : item.index,
@@ -11234,15 +11158,14 @@ class AppStore extends ChangeNotifier {
         operation: 'post',
         payload: syncedExpense.toJson(),
       );
-      _recordExpenseLedger(syncedExpense, now);
     }
     await _traceAsync(
       section,
       'save_dirty',
       () => _saveDirty(
         productDerivedData: false,
-        expenses: true,
-        accountTransactions: true,
+        expenses: false,
+        accountTransactions: false,
         sync: true,
       ),
       metadata: <String, Object?>{'count': prepared.length},
@@ -11309,6 +11232,7 @@ class AppStore extends ChangeNotifier {
         createdBy: _actorName(),
         createdByUserId: _activeUser?.id ?? '',
         deviceId: _deviceId,
+        occurredAt: now,
       );
     } else {
       await AccountingService.reverseEntryForReference(
@@ -11318,20 +11242,28 @@ class AppStore extends ChangeNotifier {
         createdBy: _deviceId,
       );
     }
-    final cancelled = _withSyncMeta<Expense>(cancelledPreview, now);
+    final cancelled = sqliteDb != null
+        ? _expenseSyncMetaPreview(cancelledPreview, now)
+        : _withSyncMeta<Expense>(cancelledPreview, now);
     _putExpenseAtIndex(cancelled, index);
-    _reverseExpenseLedger(
-      cancelled,
-      now,
-      reason: reason.trim().isEmpty ? 'Expense cancelled' : reason.trim(),
-    );
+    if (sqliteDb == null) {
+      await _reverseExpenseLedger(
+        cancelled,
+        now,
+        reason: reason.trim().isEmpty ? 'Expense cancelled' : reason.trim(),
+      );
+    }
     _recordSyncChange(
       entityType: 'expense',
       entityId: id,
       operation: 'cancel',
       payload: cancelled.toJson(),
     );
-    await _saveDirty(expenses: true, accountTransactions: true, sync: true);
+    await _saveDirty(
+      expenses: sqliteDb == null,
+      accountTransactions: sqliteDb == null,
+      sync: true,
+    );
     _touchExpensesData();
     notifyListeners();
   }
@@ -12096,6 +12028,290 @@ class AppStore extends ChangeNotifier {
     };
   }
 
+  Future<double> _saleReturnEntitlementFromSqlite(String saleId) async {
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      return 0;
+    }
+    final row = await sqliteDb.customSelect(
+      '''
+      SELECT COALESCE(SUM(credit - debit), 0) AS total
+      FROM account_transactions
+      WHERE deleted_at = ''
+        AND account_type = 'customer'
+        AND transaction_type = 'saleReturn'
+        AND reference_id = ?
+      ''',
+      variables: <Variable<Object>>[Variable<String>(saleId.trim())],
+    ).getSingle();
+    return ((row.data['total'] as num?)?.toDouble() ?? 0)
+        .clamp(0, double.infinity)
+        .toDouble();
+  }
+
+  Future<double> refundableSaleCashAmount(String saleId) async {
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Cash refunds require the SQLite authoritative store.');
+    }
+    final sale = _sales.where((item) => item.id == saleId).firstOrNull ??
+        await _saleByIdFromSqlite(saleId);
+    if (sale == null) return 0;
+
+    // returnedAmount is not a dedicated authoritative sales-table column.
+    // After a SQLite reload it can be zero although the return itself is
+    // already committed. Derive the durable entitlement from SQLite.
+    final sqliteReturnEntitlement =
+        await _saleReturnEntitlementFromSqlite(sale.id);
+    final returnedEntitlement = max(sale.returnedAmount, sqliteReturnEntitlement);
+    final entitlement = returnedEntitlement > 0
+        ? returnedEntitlement
+        : (sale.isCancelled
+            ? (sale.subtotal - sale.discount)
+                .clamp(0, double.infinity)
+                .toDouble()
+            : 0.0);
+    if (entitlement <= 0.000001) return 0;
+    return PaymentVoucherService(sqliteDb).refundableCashForSale(
+      sale.id,
+      maxRefundAmount: entitlement,
+    );
+  }
+
+  Future<double> refundablePurchaseCashAmount(String purchaseId) async {
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Cash refunds require the SQLite authoritative store.');
+    }
+    return PaymentVoucherService(sqliteDb)
+        .refundableCashForPurchase(purchaseId.trim());
+  }
+
+  Future<double> refundSaleCash({
+    required String saleId,
+    double? amount,
+    String notes = '',
+    String idempotencyKey = '',
+    DateTime? date,
+  }) async {
+    requirePermission(AppPermission.salesCancel);
+    final index = _sales.indexWhere((sale) => sale.id == saleId);
+    final sale = index == -1
+        ? await _saleByIdFromSqlite(saleId)
+        : _sales[index];
+    if (sale == null) throw ArgumentError('Sale not found.');
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Cash refunds require the SQLite authoritative store.');
+    }
+    final service = PaymentVoucherService(sqliteDb);
+    final preCancellationTotal =
+        (sale.subtotal - sale.discount).clamp(0, double.infinity).toDouble();
+    final sqliteReturnEntitlement =
+        await _saleReturnEntitlementFromSqlite(sale.id);
+    final returnedEntitlement = max(sale.returnedAmount, sqliteReturnEntitlement);
+    final refundEntitlement = returnedEntitlement > 0
+        ? returnedEntitlement
+        : (sale.isCancelled ? preCancellationTotal : 0.0);
+    if (!sale.isCancelled && refundEntitlement <= 0.000001) {
+      throw StateError(
+        'Cash refunds are only available after the sale is cancelled or returned.',
+      );
+    }
+    final refundable = await service.refundableCashForSale(
+      sale.id,
+      maxRefundAmount: refundEntitlement,
+    );
+    if (refundable <= 0.000001) return 0;
+    final requested = amount ?? refundable;
+    if (!requested.isFinite || requested <= 0) {
+      throw ArgumentError('Refund amount must be greater than zero.');
+    }
+    final context = await _openCashVoucherContext();
+    final refundKey = idempotencyKey.trim().isEmpty
+        ? 'manual:${DateTime.now().microsecondsSinceEpoch}'
+        : idempotencyKey.trim();
+    final refunded = await service.refundSaleCash(
+      saleId: sale.id,
+      invoiceNo: sale.invoiceNo,
+      customerId: sale.customerId,
+      customerName: sale.customerName,
+      requestedAmount: requested,
+      maxRefundAmount: refundEntitlement,
+      currency: sale.invoiceCurrency,
+      cashLocationId: context['cashLocationId'] ?? '',
+      cashDrawerSessionId: context['sessionId'] ?? '',
+      refundKey: refundKey,
+      notes: notes.trim().isEmpty
+          ? 'Cash refund for ${sale.invoiceNo}'
+          : notes.trim(),
+      createdBy: _actorName(),
+      createdByUserId: _activeUser?.id ?? '',
+      deviceId: _deviceId,
+      branchId: appIdentity.branchId,
+      storeId: appIdentity.storeId,
+      date: date,
+    );
+    if (refunded <= 0.000001) return 0;
+
+    // PaymentVoucherService persists the customer refund compatibility row
+    // inside the same SQLite transaction as journal + Cash Ledger + drawer.
+    await refreshAccountTransactionsFromSqlite();
+    return refunded;
+  }
+
+  Future<double> refundPurchaseCash({
+    required String purchaseId,
+    double? amount,
+    String notes = '',
+    String idempotencyKey = '',
+    DateTime? date,
+  }) async {
+    requirePermission(AppPermission.suppliersManage);
+    final index = _purchaseIndexForId(purchaseId);
+    final purchase = index == -1
+        ? await _purchaseByIdFromSqlite(purchaseId)
+        : _purchases[index];
+    if (purchase == null) throw ArgumentError('Purchase not found.');
+    if (!purchase.isCancelled) {
+      throw StateError(
+        'Supplier cash refunds are only available after the purchase is cancelled or returned.',
+      );
+    }
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Cash refunds require the SQLite authoritative store.');
+    }
+    final refundable =
+        await PaymentVoucherService(sqliteDb).refundableCashForPurchase(purchase.id);
+    if (refundable <= 0.000001) return 0;
+    final context = await _openCashVoucherContext();
+    final refundKey = idempotencyKey.trim().isEmpty
+        ? 'manual:${DateTime.now().microsecondsSinceEpoch}:$_deviceId'
+        : idempotencyKey.trim();
+    final refunded = await PaymentVoucherService(sqliteDb).refundPurchaseCash(
+      purchaseId: purchase.id,
+      purchaseNo: purchase.purchaseNo,
+      supplierId: purchase.supplierId,
+      supplierName: purchase.supplierName,
+      cashLocationId: context['cashLocationId'] ?? '',
+      cashDrawerSessionId: context['sessionId'] ?? '',
+      requestedAmount: amount,
+      currency: storeProfile.baseCurrency,
+      notes: notes.trim().isEmpty
+          ? 'Cash refund from supplier for ${purchase.purchaseNo}'
+          : notes.trim(),
+      createdBy: _actorName(),
+      createdByUserId: _activeUser?.id ?? '',
+      deviceId: _deviceId,
+      branchId: appIdentity.branchId,
+      storeId: appIdentity.storeId,
+      refundKey: refundKey,
+      date: date,
+    );
+    if (refunded <= 0.000001) return 0;
+
+    // The supplier compatibility ledger row is inserted atomically by
+    // PaymentVoucherService inside the same SQLite transaction as the refund.
+    // Refresh the in-memory compatibility view only; do not persist a second
+    // copy from AppStore.
+    await refreshAccountTransactionsFromSqlite();
+    return refunded;
+  }
+
+  /// Records a customer receipt or supplier payment at account level without
+  /// allocating it to a specific invoice. Cash payments must always go through
+  /// the voucher + open-drawer path so the account ledger, journal and cash
+  /// ledger cannot diverge.
+  Future<void> settleAccountPayment({
+    required String accountType,
+    required String accountId,
+    required String accountName,
+    required double amount,
+    String paymentMethod = 'Cash',
+    String referenceNo = '',
+    String notes = '',
+    String idempotencyKey = '',
+    DateTime? date,
+  }) async {
+    final type = accountType.trim().toLowerCase();
+    if (type != 'customer' && type != 'supplier') {
+      throw ArgumentError('Account type must be customer or supplier.');
+    }
+    if (!amount.isFinite || amount <= 0) {
+      throw ArgumentError('Payment amount must be greater than zero.');
+    }
+    if (type == 'customer') {
+      requirePermission(AppPermission.salesEdit);
+    } else {
+      requirePermission(AppPermission.suppliersManage);
+    }
+
+    final method = paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
+    var cashLocationId = '';
+    var cashDrawerSessionId = '';
+    if (method.toLowerCase() == 'cash') {
+      requirePermission(AppPermission.cashBoxManage);
+      final context = await _openCashVoucherContext();
+      cashLocationId = context['cashLocationId'] ?? '';
+      cashDrawerSessionId = context['sessionId'] ?? '';
+    }
+
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Account payments require the SQLite authoritative store.');
+    }
+    final when = (date ?? DateTime.now()).toUtc();
+    final key = idempotencyKey.trim().isNotEmpty
+        ? idempotencyKey.trim()
+        : 'account:$type:${accountId.trim()}:payment:${when.microsecondsSinceEpoch}:$_deviceId';
+    final service = PaymentVoucherService(sqliteDb);
+
+    if (type == 'customer') {
+      await service.createReceipt(
+        customerId: accountId.trim(),
+        customerName: accountName.trim(),
+        amount: amount,
+        currency: storeProfile.baseCurrency,
+        paymentMethod: method,
+        cashLocationId: cashLocationId,
+        cashDrawerSessionId: cashDrawerSessionId,
+        allocations: const <PaymentAllocationDraft>[],
+        notes: notes,
+        createdBy: _actorName(),
+        createdByUserId: _activeUser?.id ?? '',
+        deviceId: _deviceId,
+        branchId: appIdentity.branchId,
+        storeId: appIdentity.storeId,
+        idempotencyKey: key,
+        date: when,
+      );
+    } else {
+      await service.createPayment(
+        supplierId: accountId.trim(),
+        supplierName: accountName.trim(),
+        amount: amount,
+        currency: storeProfile.baseCurrency,
+        paymentMethod: method,
+        cashLocationId: cashLocationId,
+        cashDrawerSessionId: cashDrawerSessionId,
+        allocations: const <PaymentAllocationDraft>[],
+        notes: notes,
+        createdBy: _actorName(),
+        createdByUserId: _activeUser?.id ?? '',
+        deviceId: _deviceId,
+        branchId: appIdentity.branchId,
+        storeId: appIdentity.storeId,
+        idempotencyKey: key,
+        date: when,
+      );
+    }
+
+    await refreshAccountTransactionsFromSqlite();
+    await _saveDirty(accountTransactions: true, sync: true);
+    notifyListeners();
+  }
+
   Future<Sale> settleSalePayment({
     required String saleId,
     required double amount,
@@ -12149,7 +12365,7 @@ class AppStore extends ChangeNotifier {
     final key = idempotencyKey.trim().isNotEmpty
         ? idempotencyKey.trim()
         : 'sale:${current.id}:payment:${when.microsecondsSinceEpoch}:$_deviceId';
-    final voucher = await PaymentVoucherService(sqliteDb).createReceipt(
+    await PaymentVoucherService(sqliteDb).createReceipt(
       customerId: current.customerId,
       customerName: current.customerName,
       amount: amount,
@@ -12176,31 +12392,7 @@ class AppStore extends ChangeNotifier {
       idempotencyKey: key,
       date: when,
     );
-    _upsertAccountTransactionInternal(
-      AccountTransaction(
-        id: '${voucher.id}-customer-payment',
-        accountType: 'customer',
-        accountId: current.customerId,
-        accountName: current.customerName,
-        date: voucher.date,
-        type: 'paymentReceived',
-        paymentMethod: voucher.paymentMethod,
-        referenceId: current.id,
-        referenceNo: current.invoiceNo,
-        debit: 0,
-        credit: amount,
-        currency: current.invoiceCurrency,
-        note: notes.trim().isEmpty ? 'Receipt ${voucher.voucherNo}' : notes.trim(),
-        createdAt: voucher.createdAt,
-        updatedAt: voucher.updatedAt,
-        deviceId: _deviceId,
-        storeId: appIdentity.storeId,
-        branchId: appIdentity.branchId,
-        lastModifiedByDeviceId: _deviceId,
-      ),
-      when,
-      operation: 'receipt_voucher_payment',
-    );
+    await refreshAccountTransactionsFromSqlite();
     final updated = await _saleByIdFromSqlite(current.id);
     if (updated == null) throw StateError('Sale payment cache refresh failed.');
     final index = _sales.indexWhere((item) => item.id == updated.id);
@@ -12251,7 +12443,7 @@ class AppStore extends ChangeNotifier {
     final key = idempotencyKey.trim().isNotEmpty
         ? idempotencyKey.trim()
         : 'purchase:${current.id}:payment:${when.microsecondsSinceEpoch}:$_deviceId';
-    final voucher = await PaymentVoucherService(sqliteDb).createPayment(
+    await PaymentVoucherService(sqliteDb).createPayment(
       supplierId: current.supplierId,
       supplierName: current.supplierName,
       amount: amount,
@@ -12278,31 +12470,7 @@ class AppStore extends ChangeNotifier {
       idempotencyKey: key,
       date: when,
     );
-    _upsertAccountTransactionInternal(
-      AccountTransaction(
-        id: '${voucher.id}-supplier-payment',
-        accountType: 'supplier',
-        accountId: current.supplierId,
-        accountName: current.supplierName,
-        date: voucher.date,
-        type: 'paymentPaid',
-        paymentMethod: voucher.paymentMethod,
-        referenceId: current.id,
-        referenceNo: current.purchaseNo,
-        debit: amount,
-        credit: 0,
-        currency: storeProfile.baseCurrency,
-        note: notes.trim().isEmpty ? 'Payment ${voucher.voucherNo}' : notes.trim(),
-        createdAt: voucher.createdAt,
-        updatedAt: voucher.updatedAt,
-        deviceId: _deviceId,
-        storeId: appIdentity.storeId,
-        branchId: appIdentity.branchId,
-        lastModifiedByDeviceId: _deviceId,
-      ),
-      when,
-      operation: 'payment_voucher_payment',
-    );
+    await refreshAccountTransactionsFromSqlite();
     final updated = await _purchaseByIdFromSqlite(current.id);
     if (updated == null) throw StateError('Purchase payment cache refresh failed.');
     final index = _purchaseIndexForId(updated.id);
@@ -12347,6 +12515,35 @@ class AppStore extends ChangeNotifier {
         }
       }
     });
+    final sqliteDb = SqliteMigrationManager.database;
+    if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
+      final purchaseNoPrefix = 'PO-$_purchaseDevicePrefix-';
+      final purchaseIdPrefix = 'purchase_${_purchaseDevicePrefix}_';
+      final row = await sqliteDb.customSelect(
+        '''
+        SELECT MAX(sequence_no) AS max_sequence
+        FROM (
+          SELECT CAST(substr(purchase_no, length(?) + 1) AS INTEGER) AS sequence_no
+          FROM purchases
+          WHERE purchase_no LIKE ?
+          UNION ALL
+          SELECT CAST(substr(entity_id, length(?) + 1) AS INTEGER) AS sequence_no
+          FROM sync_events
+          WHERE entity_type = 'purchase' AND entity_id LIKE ?
+        )
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(purchaseNoPrefix),
+          Variable<String>('$purchaseNoPrefix%'),
+          Variable<String>(purchaseIdPrefix),
+          Variable<String>('$purchaseIdPrefix%'),
+        ],
+      ).getSingleOrNull();
+      final persistedMax = (row?.data['max_sequence'] as num?)?.toInt() ?? 0;
+      if (persistedMax > _purchaseCounter) {
+        _purchaseCounter = persistedMax;
+      }
+    }
     _purchaseCounter += 1;
     final now = DateTime.now();
     final purchaseTotal = items.fold<double>(
@@ -12403,7 +12600,6 @@ class AppStore extends ChangeNotifier {
       version: 1,
       lastModifiedByDeviceId: _deviceId,
     );
-    final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final stockService = StockTransactionService(
         sqliteDb,
@@ -12526,11 +12722,38 @@ class AppStore extends ChangeNotifier {
               deviceId: purchase.deviceId,
               skipExistingMovementLookup: true,
             );
-            _mirrorAuthoritativeStockMovements(receiptMovements);
+          }
+          if (receiveNow) {
+            await AccountingService.recordPurchase(
+              purchase,
+              paymentPostedSeparately: true,
+            );
+            await _persistAccountTransactionInExistingTransaction(
+              sqliteDb,
+              AccountTransaction(
+                id: '${purchase.id}-purchase-invoice',
+                accountType: 'supplier',
+                accountId: purchase.supplierId,
+                accountName: purchase.supplierName,
+                date: purchase.date,
+                type: 'purchaseInvoice',
+                referenceId: purchase.id,
+                referenceNo: purchase.purchaseNo,
+                credit: purchase.subtotal,
+                note: 'Purchase invoice ${purchase.purchaseNo}',
+                createdAt: now,
+                updatedAt: now,
+                deviceId: _deviceId,
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                lastModifiedByDeviceId: _deviceId,
+              ),
+            );
           }
         });
       });
       if (receiveNow) {
+        _mirrorAuthoritativeStockMovements(receiptMovements);
         _traceSync('purchases.createPurchase', 'update_stock_cache', () {
           _applyProductStockCompatibilityDeltas(receiptMovements);
         });
@@ -12545,8 +12768,6 @@ class AppStore extends ChangeNotifier {
           );
         }
       }
-      final accountingPosted =
-          receiveNow ? await _schedulePurchaseAccounting(purchase) : true;
       _traceSync('purchases.createPurchase', 'memory_ledger_and_sync', () {
         _putPurchaseAtIndex(purchase, _purchases.length);
         _recordSyncChange(
@@ -12555,10 +12776,10 @@ class AppStore extends ChangeNotifier {
           operation: 'create',
           payload: purchase.toJson(),
         );
-        if (receiveNow && accountingPosted) {
-          _recordPurchaseLedger(purchase, now);
-        }
       });
+      // Purchase accounting + supplier ledger were committed atomically above.
+      // Do not write the financial ledger a second time after commit.
+      await _saveDirty(purchaseCounter: true, sync: true);
       _touchPurchasesData();
       notifyListeners();
       return purchase;
@@ -12588,7 +12809,7 @@ class AppStore extends ChangeNotifier {
     if (receiveNow) {
       final accountingPosted = await _schedulePurchaseAccounting(purchase);
       if (accountingPosted) {
-        _recordPurchaseLedger(purchase, now);
+        await _recordPurchaseLedger(purchase, now);
         await _saveDirty(accountTransactions: true);
       }
     }
@@ -12935,13 +13156,13 @@ class AppStore extends ChangeNotifier {
         date: now,
       );
     }
-    _recordPurchaseInvoiceCorrectionLedger(
+    await _recordPurchaseInvoiceCorrectionLedger(
       current,
       now,
       editVersion: editVersion,
       reason: 'Purchase corrected',
     );
-    _recordPurchaseLedger(updated, now);
+    await _recordPurchaseLedger(updated, now);
     _putPurchaseAtIndex(updated, index == -1 ? _purchases.length : index);
     _recordSyncChange(
       entityType: 'purchase',
@@ -13157,7 +13378,7 @@ class AppStore extends ChangeNotifier {
       }
       final accountingPosted = await _schedulePurchaseAccounting(received);
       if (accountingPosted) {
-        _recordPurchaseLedger(received, now);
+        await _recordPurchaseLedger(received, now);
       }
       _touchPurchasesData();
       notifyListeners();
@@ -13186,7 +13407,7 @@ class AppStore extends ChangeNotifier {
     );
     final accountingPosted = await _schedulePurchaseAccounting(received);
     if (accountingPosted) {
-      _recordPurchaseLedger(received, now);
+      await _recordPurchaseLedger(received, now);
       await _saveDirty(accountTransactions: true);
     }
     unawaited(
@@ -13380,12 +13601,11 @@ class AppStore extends ChangeNotifier {
         'Only received purchase invoices can be returned. Delete draft invoices instead.',
       );
     }
-    await AccountingService.validatePurchasePayment(
-      paymentMethod: purchase.paymentMethod,
-      paidAmount: purchase.paidAmount,
-      deviceId: purchase.deviceId,
-      branchId: purchase.branchId,
-    );
+    // A purchase return reverses inventory/accounting only. It does not pay
+    // cash out of the drawer, so the original purchase payment must never be
+    // revalidated here. Any cash received back from the supplier is posted
+    // separately through refundPurchaseCash() as a Cash In operation.
+    await _waitForPendingPurchaseAccounting(purchase.id);
     final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final now = DateTime.now();
@@ -13397,6 +13617,7 @@ class AppStore extends ChangeNotifier {
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
       );
+      late Purchase returned;
       await sqliteDb.transaction(() async {
         if (reverseStock && !purchase.reversalApplied) {
           for (var lineIndex = 0;
@@ -13454,7 +13675,7 @@ class AppStore extends ChangeNotifier {
           _closeInventoryCostLayersForPurchase(purchase.id, now);
           reversalApplied = true;
         }
-        final returned = _withSyncMeta<Purchase>(
+        returned = _purchaseSyncMetaPreview(
           purchase.copyWith(
             status: 'Returned',
             cancelledAt: now,
@@ -13465,38 +13686,63 @@ class AppStore extends ChangeNotifier {
           ),
           now,
         );
-        if (index != -1) {
-          _putPurchaseAtIndex(returned, index);
-        } else {
-          _putPurchaseAtIndex(returned, _purchases.length);
-        }
         await BusinessSqliteStore.upsertEntityPayloads(
           sqliteDb,
           _purchasesKey,
           <Map<String, dynamic>>[returned.toJson()],
           sortIndices: <int?>[0],
         );
+        await AccountingService.reverseEntryForReference(
+          referenceType: 'purchase',
+          referenceId: purchase.id,
+          reason: reason.trim().isEmpty ? 'Purchase returned' : reason.trim(),
+          createdBy: _deviceId,
+          adjustCashLocationBalance: false,
+          notifyChange: false,
+        );
+        if (purchase.supplierId.trim().isNotEmpty && purchase.subtotal > 0) {
+          await _persistAccountTransactionInExistingTransaction(
+            sqliteDb,
+            AccountTransaction(
+              id: '${purchase.id}-purchase-return',
+              accountType: 'supplier',
+              accountId: purchase.supplierId,
+              accountName: purchase.supplierName,
+              date: now,
+              type: 'purchaseReturn',
+              referenceId: purchase.id,
+              referenceNo: purchase.purchaseNo,
+              debit: purchase.subtotal,
+              note: reason.trim().isEmpty
+                  ? 'Purchase return ${purchase.purchaseNo}'
+                  : reason.trim(),
+              createdAt: now,
+              updatedAt: now,
+              deviceId: _deviceId,
+              storeId: appIdentity.storeId,
+              branchId: appIdentity.branchId,
+              lastModifiedByDeviceId: _deviceId,
+            ),
+          );
+        }
       });
+      if (index != -1) {
+        _putPurchaseAtIndex(returned, index);
+      } else {
+        _putPurchaseAtIndex(returned, _purchases.length);
+      }
       _recordSyncChange(
         entityType: 'purchase',
         entityId: id,
         operation: 'return',
-        payload: (index != -1 ? _purchases[index] : purchase)
-            .copyWith(
-              status: 'Returned',
-              cancelledAt: DateTime.now(),
-              cancelledByDeviceId: _deviceId,
-              cancelReason: reason.trim(),
-            )
-            .toJson(),
+        payload: returned.toJson(),
       );
-      _recordPurchaseCancelLedger(purchase, DateTime.now(),
-          reason: reason, isReturn: true);
+      // Return ledger was committed inside the authoritative SQLite transaction.
       await _saveDirty(
-        purchases: true,
+        purchases: false,
         products: reverseStock && !purchase.reversalApplied,
         stockMovements: false,
-        accountTransactions: true,
+        accountTransactions: false,
         sync: true,
       );
       await _refreshProductStockCompatibilityCache(
@@ -13570,7 +13816,14 @@ class AppStore extends ChangeNotifier {
       operation: 'return',
       payload: returned.toJson(),
     );
-    _recordPurchaseCancelLedger(purchase, now, reason: reason, isReturn: true);
+    await AccountingService.reverseEntryForReference(
+      referenceType: 'purchase',
+      referenceId: purchase.id,
+      reason: reason.trim().isEmpty ? 'Purchase returned' : reason.trim(),
+      createdBy: _deviceId,
+      adjustCashLocationBalance: false,
+    );
+    await _recordPurchaseCancelLedger(purchase, now, reason: reason, isReturn: true);
     await _saveDirty(
       purchases: true,
       products: reverseStock && !purchase.reversalApplied,
@@ -13635,21 +13888,10 @@ class AppStore extends ChangeNotifier {
         'Only received purchase invoices can be cancelled. Delete draft invoices instead.',
       );
     }
-    await AccountingService.validatePurchasePayment(
-      paymentMethod: purchase.paymentMethod,
-      paidAmount: purchase.paidAmount,
-      deviceId: purchase.deviceId,
-      branchId: purchase.branchId,
-    );
+    // Cancelling a received purchase reverses its business/accounting effect;
+    // it is not a new cash payment. Cash recovery from a supplier is handled
+    // explicitly by the supplier-refund Cash In workflow.
     final sqliteDb = SqliteMigrationManager.database;
-    Map<String, String>? purchaseRefundCashContext;
-    if (sqliteDb != null && purchase.paidAmount > 0) {
-      final refundableCash = await PaymentVoucherService(sqliteDb)
-          .refundableCashForPurchase(purchase.id);
-      if (refundableCash > 0.000001) {
-        purchaseRefundCashContext = await _openCashVoucherContext();
-      }
-    }
     await _waitForPendingPurchaseAccounting(purchase.id);
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final now = DateTime.now();
@@ -13728,26 +13970,6 @@ class AppStore extends ChangeNotifier {
           ),
           now,
         );
-        if (purchaseRefundCashContext != null) {
-          await PaymentVoucherService(sqliteDb).refundPurchaseCash(
-            purchaseId: purchase.id,
-            purchaseNo: purchase.purchaseNo,
-            supplierId: purchase.supplierId,
-            supplierName: purchase.supplierName,
-            cashLocationId: purchaseRefundCashContext['cashLocationId'] ?? '',
-            cashDrawerSessionId: purchaseRefundCashContext['sessionId'] ?? '',
-            currency: storeProfile.baseCurrency,
-            notes: reason.trim().isEmpty
-                ? 'Cash refund from supplier for cancelled purchase ${purchase.purchaseNo}'
-                : reason.trim(),
-            createdBy: _actorName(),
-            createdByUserId: _activeUser?.id ?? '',
-            deviceId: _deviceId,
-            branchId: appIdentity.branchId,
-            storeId: appIdentity.storeId,
-            date: now,
-          );
-        }
         await AccountingService.reverseEntryForReference(
           referenceType: 'purchase',
           referenceId: purchase.id,
@@ -13760,8 +13982,31 @@ class AppStore extends ChangeNotifier {
           <Map<String, dynamic>>[cancelled.toJson()],
           sortIndices: <int?>[0],
         );
+        if (purchase.supplierId.trim().isNotEmpty && purchase.subtotal > 0) {
+          await _persistAccountTransactionInExistingTransaction(
+            sqliteDb,
+            AccountTransaction(
+              id: '${purchase.id}-purchase-cancel',
+              accountType: 'supplier',
+              accountId: purchase.supplierId,
+              accountName: purchase.supplierName,
+              date: now,
+              type: 'cancel',
+              referenceId: purchase.id,
+              referenceNo: purchase.purchaseNo,
+              debit: purchase.subtotal,
+              note: reason.trim().isEmpty ? 'Purchase cancelled' : reason.trim(),
+              createdAt: now,
+              updatedAt: now,
+              deviceId: _deviceId,
+              storeId: appIdentity.storeId,
+              branchId: appIdentity.branchId,
+              lastModifiedByDeviceId: _deviceId,
+            ),
+          );
+        }
       });
-      final cancelled = _withSyncMeta<Purchase>(
+      final cancelled = _purchaseSyncMetaPreview(
         purchase.copyWith(
           status: 'Cancelled',
           cancelledAt: now,
@@ -13782,12 +14027,12 @@ class AppStore extends ChangeNotifier {
         operation: 'cancel',
         payload: cancelled.toJson(),
       );
-      _recordPurchaseCancelLedger(purchase, now, reason: reason);
+      // Cancel ledger was committed inside the authoritative SQLite transaction.
       await _saveDirty(
-        purchases: true,
+        purchases: false,
         products: reverseStock && !purchase.reversalApplied,
         stockMovements: false,
-        accountTransactions: true,
+        accountTransactions: false,
         sync: true,
       );
       await _refreshProductStockCompatibilityCache(
@@ -13861,7 +14106,7 @@ class AppStore extends ChangeNotifier {
       operation: 'cancel',
       payload: cancelled.toJson(),
     );
-    _recordPurchaseCancelLedger(purchase, now, reason: reason);
+    await _recordPurchaseCancelLedger(purchase, now, reason: reason);
     await _waitForPendingPurchaseAccounting(purchase.id);
     await AccountingService.reverseEntryForReference(
       referenceType: 'purchase',
@@ -14865,7 +15110,68 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<ManufacturingOrder> completeManufacturingOrder({
+
+  Future<void> deleteManufacturingOrder(String id) async {
+    requirePermission(AppPermission.productsEdit);
+    final index = _manufacturingOrders.indexWhere((item) => item.id == id);
+    if (index == -1 || _manufacturingOrders[index].isDeleted) return;
+
+    final existing = _manufacturingOrders[index];
+    if (<String>{'completed', 'complete'}.contains(existing.status.trim().toLowerCase())) {
+      throw StateError(
+        'Completed manufacturing orders cannot be deleted because inventory movements have already been posted.',
+      );
+    }
+
+    final now = DateTime.now();
+    final deleted = _withSyncMeta<ManufacturingOrder>(
+      existing.copyWith(
+        deletedAt: now,
+        updatedAt: now,
+      ),
+      now,
+      isCreate: false,
+    );
+
+    final sqliteDb = SqliteMigrationManager.database;
+    if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
+      await sqliteDb.transaction(() async {
+        await BusinessSqliteStore.upsertManufacturingOrderPayloadInTransaction(
+          sqliteDb,
+          deleted.toJson(),
+          id: deleted.id,
+          payloadJson: jsonEncode(deleted.toJson()),
+          createdAt: deleted.createdAt.toIso8601String(),
+          updatedAt: deleted.updatedAt.toIso8601String(),
+          deletedAt: deleted.deletedAt?.toIso8601String() ?? '',
+          sortIndex: 0,
+        );
+      });
+      _manufacturingOrders[index] = deleted;
+      _recordSyncChange(
+        entityType: 'manufacturing_order',
+        entityId: deleted.id,
+        operation: 'delete',
+        payload: deleted.toJson(),
+      );
+      _invalidateDerivedDataCaches();
+      notifyListeners();
+      return;
+    }
+
+    _manufacturingOrders[index] = deleted;
+    _recordSyncChange(
+      entityType: 'manufacturing_order',
+      entityId: deleted.id,
+      operation: 'delete',
+      payload: deleted.toJson(),
+    );
+    await _saveDirty(manufacturingOrders: true, sync: true);
+    _invalidateDerivedDataCaches();
+    notifyListeners();
+  }
+
+  Future<ManufacturingOrder> startManufacturingOrder({
     required String bomId,
     required double quantity,
     String rawMaterialsWarehouseId = '',
@@ -14873,7 +15179,6 @@ class AppStore extends ChangeNotifier {
     String finishedGoodsWarehouseId = '',
     String finishedGoodsWarehouseName = '',
     String notes = '',
-    List<BatchAllocation> outputBatchAllocations = const <BatchAllocation>[],
   }) async {
     requirePermission(AppPermission.productsEdit);
     if (quantity <= 0) {
@@ -14885,7 +15190,6 @@ class AppStore extends ChangeNotifier {
     );
     final output = _findProductById(bom.outputProductId);
     if (output == null) throw ArgumentError('Output product was not found.');
-    final factor = quantity / bom.outputQuantity;
     final now = DateTime.now();
     final rawWarehouse = resolveWarehouseForPurchase(
       warehouseId: rawMaterialsWarehouseId,
@@ -14912,10 +15216,139 @@ class AppStore extends ChangeNotifier {
             : finishedGoodsWarehouseName.trim(),
         notes: notes.trim(),
         date: now,
-        status: 'completed',
+        status: 'in_progress',
       ),
       now,
       isCreate: true,
+    );
+
+    final sqliteDb = SqliteMigrationManager.database;
+    if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
+      await sqliteDb.transaction(() async {
+        await BusinessSqliteStore.upsertManufacturingOrderPayloadInTransaction(
+          sqliteDb,
+          order.toJson(),
+          id: order.id,
+          payloadJson: jsonEncode(order.toJson()),
+          createdAt: order.createdAt.toIso8601String(),
+          updatedAt: order.updatedAt.toIso8601String(),
+          deletedAt: '',
+          sortIndex: 0,
+        );
+      });
+      _manufacturingOrders.add(order);
+      _recordSyncChange(
+        entityType: 'manufacturing_order',
+        entityId: order.id,
+        operation: 'create',
+        payload: order.toJson(),
+      );
+      notifyListeners();
+      return order;
+    }
+
+    _manufacturingOrders.add(order);
+    _recordSyncChange(
+      entityType: 'manufacturing_order',
+      entityId: order.id,
+      operation: 'create',
+      payload: order.toJson(),
+    );
+    await _saveDirty(manufacturingOrders: true, sync: true);
+    notifyListeners();
+    return order;
+  }
+
+  Future<ManufacturingOrder> finishManufacturingOrder({
+    required String orderId,
+    required double actualQuantity,
+    List<BatchAllocation> outputBatchAllocations = const <BatchAllocation>[],
+  }) async {
+    final existing = _manufacturingOrders.firstWhere(
+      (item) => item.id == orderId && !item.isDeleted,
+      orElse: () => throw ArgumentError('Manufacturing order was not found.'),
+    );
+    if (existing.status.toLowerCase() == 'completed') {
+      throw StateError('Manufacturing order is already completed.');
+    }
+    return completeManufacturingOrder(
+      bomId: existing.bomId,
+      quantity: actualQuantity,
+      rawMaterialsWarehouseId: existing.rawMaterialsWarehouseId,
+      rawMaterialsWarehouseName: existing.rawMaterialsWarehouseName,
+      finishedGoodsWarehouseId: existing.finishedGoodsWarehouseId,
+      finishedGoodsWarehouseName: existing.finishedGoodsWarehouseName,
+      notes: existing.notes,
+      outputBatchAllocations: outputBatchAllocations,
+      existingOrderId: existing.id,
+    );
+  }
+
+  Future<ManufacturingOrder> completeManufacturingOrder({
+    required String bomId,
+    required double quantity,
+    String rawMaterialsWarehouseId = '',
+    String rawMaterialsWarehouseName = '',
+    String finishedGoodsWarehouseId = '',
+    String finishedGoodsWarehouseName = '',
+    String notes = '',
+    List<BatchAllocation> outputBatchAllocations = const <BatchAllocation>[],
+    String existingOrderId = '',
+  }) async {
+    requirePermission(AppPermission.productsEdit);
+    if (quantity <= 0) {
+      throw ArgumentError('Manufacturing quantity must be greater than zero.');
+    }
+    final existingOrderIndex = existingOrderId.trim().isEmpty
+        ? -1
+        : _manufacturingOrders.indexWhere(
+            (item) => item.id == existingOrderId && !item.isDeleted,
+          );
+    if (existingOrderId.trim().isNotEmpty && existingOrderIndex == -1) {
+      throw ArgumentError('Manufacturing order was not found.');
+    }
+    final existingOrder = existingOrderIndex == -1
+        ? null
+        : _manufacturingOrders[existingOrderIndex];
+    final bom = _billsOfMaterials.firstWhere(
+      (item) => item.id == bomId && !item.isDeleted && item.isActive,
+      orElse: () => throw ArgumentError('BOM was not found.'),
+    );
+    final output = _findProductById(bom.outputProductId);
+    if (output == null) throw ArgumentError('Output product was not found.');
+    final factor = quantity / bom.outputQuantity;
+    final now = DateTime.now();
+    final rawWarehouse = resolveWarehouseForPurchase(
+      warehouseId: rawMaterialsWarehouseId,
+    );
+    final finishedWarehouse = resolveWarehouseForSale(
+      warehouseId: finishedGoodsWarehouseId,
+    );
+    final order = _withSyncMeta<ManufacturingOrder>(
+      ManufacturingOrder(
+        id: existingOrder?.id ?? '${now.microsecondsSinceEpoch}-mfg',
+        orderNo: existingOrder?.orderNo ??
+            'MFG-${now.microsecondsSinceEpoch.toString().substring(6)}',
+        bomId: bom.id,
+        bomName: bom.name,
+        outputProductId: output.id,
+        outputProductName: output.name,
+        quantity: quantity,
+        rawMaterialsWarehouseId: rawWarehouse.id,
+        rawMaterialsWarehouseName: rawMaterialsWarehouseName.trim().isEmpty
+            ? rawWarehouse.name
+            : rawMaterialsWarehouseName.trim(),
+        finishedGoodsWarehouseId: finishedWarehouse.id,
+        finishedGoodsWarehouseName: finishedGoodsWarehouseName.trim().isEmpty
+            ? finishedWarehouse.name
+            : finishedGoodsWarehouseName.trim(),
+        notes: notes.trim(),
+        date: existingOrder?.date ?? now,
+        createdAt: existingOrder?.createdAt,
+        status: 'completed',
+      ),
+      now,
+      isCreate: existingOrder == null,
     );
     final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
@@ -15102,7 +15535,11 @@ class AppStore extends ChangeNotifier {
         _products[outputIndex] = updatedOutput;
         _rememberSqliteDirtyBusinessRow(_productsKey, updatedOutput.toJson());
       }
-      _manufacturingOrders.add(order);
+      if (existingOrderIndex == -1) {
+        _manufacturingOrders.add(order);
+      } else {
+        _manufacturingOrders[existingOrderIndex] = order;
+      }
       if (producedBatchAllocations.isNotEmpty) {
         _recordInventoryBatchSyncChanges(
           product: output,
@@ -15234,7 +15671,11 @@ class AppStore extends ChangeNotifier {
       );
     }
 
-    _manufacturingOrders.add(order);
+    if (existingOrderIndex == -1) {
+      _manufacturingOrders.add(order);
+    } else {
+      _manufacturingOrders[existingOrderIndex] = order;
+    }
     _recordSyncChange(
       entityType: 'manufacturing_order',
       entityId: order.id,
@@ -15867,6 +16308,37 @@ class AppStore extends ChangeNotifier {
             branchId: appIdentity.branchId,
             deviceId: _deviceId,
           );
+          await AccountingService.recordSale(
+            sale,
+            paymentPostedSeparately: true,
+          );
+          final saleAccountId = sale.customerId.trim().isNotEmpty
+              ? sale.customerId.trim()
+              : sale.customerName.trim();
+          if (saleAccountId.isNotEmpty) {
+            await _persistAccountTransactionInExistingTransaction(
+              sqliteDb,
+              AccountTransaction(
+                id: '${sale.id}-sale-invoice',
+                accountType: 'customer',
+                accountId: saleAccountId,
+                accountName: sale.customerName,
+                date: sale.date,
+                type: 'saleInvoice',
+                referenceId: sale.id,
+                referenceNo: sale.invoiceNo,
+                debit: sale.invoiceTotal,
+                currency: sale.invoiceCurrency,
+                note: 'Sale invoice ${sale.invoiceNo}',
+                createdAt: now,
+                updatedAt: now,
+                deviceId: _deviceId,
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                lastModifiedByDeviceId: _deviceId,
+              ),
+            );
+          }
         });
         _mirrorAuthoritativeStockMovements(stockMovements);
       } else {
@@ -15958,8 +16430,12 @@ class AppStore extends ChangeNotifier {
     }
     _traceSync('sales.createSale', 'record_sale_ledger', () {
       _sales.add(sale);
-      _recordSaleLedger(sale, now);
     });
+    final saleCreateWasAtomic = LocalDatabaseService.isSqliteAuthoritative &&
+        SqliteMigrationManager.database != null;
+    if (!saleCreateWasAtomic) {
+      await _recordSaleLedger(sale, now);
+    }
     _traceSync('sales.createSale', 'record_sync_change', () {
       _recordSyncChange(
         entityType: 'sale',
@@ -15974,13 +16450,10 @@ class AppStore extends ChangeNotifier {
         productDerivedData: productDerivedData,
         sales: false,
         stockMovements: false,
-        accountTransactions: true,
+        accountTransactions: !saleCreateWasAtomic,
         invoiceCounter: true,
         sync: true,
       );
-    });
-    _traceSync('sales.createSale', 'schedule_sale_accounting', () {
-      _scheduleSaleAccounting(sale);
     });
     unawaited(
       AppLogger.info(
@@ -16258,12 +16731,12 @@ class AppStore extends ChangeNotifier {
         date: now,
       );
     }
-    _recordSaleInvoiceCorrectionLedger(
+    await _recordSaleInvoiceCorrectionLedger(
       current,
       now,
       editVersion: editVersion,
     );
-    _recordSaleLedger(updated, now);
+    await _recordSaleLedger(updated, now);
     if (index == -1) {
       _sales.add(updated);
     } else {
@@ -16311,6 +16784,99 @@ class AppStore extends ChangeNotifier {
     return updated;
   }
 
+  Future<Map<String, double>> _returnedSaleQuantitiesByProduct(
+    String saleId,
+  ) async {
+    await ensureCreditNotesLoaded();
+    final totals = <String, double>{};
+    for (final note in _creditNotes) {
+      if (note.originalSaleId != saleId) continue;
+      final status = note.status.trim().toLowerCase();
+      if (status == 'cancelled' || status == 'reversed' || status == 'void') {
+        continue;
+      }
+      for (final item in note.items) {
+        totals.update(
+          item.productId,
+          (value) => value + item.quantity,
+          ifAbsent: () => item.quantity,
+        );
+      }
+    }
+    return totals;
+  }
+
+  List<BatchAllocation> _sliceBatchAllocationsForReturn(
+    List<BatchAllocation> source, {
+    required double offset,
+    required double quantity,
+  }) {
+    if (source.isEmpty || quantity <= 0) return const <BatchAllocation>[];
+    var skip = offset.clamp(0, double.infinity).toDouble();
+    var remaining = quantity;
+    final result = <BatchAllocation>[];
+    for (final allocation in source) {
+      if (remaining <= 0.0000001) break;
+      var available = allocation.quantity;
+      if (skip >= available - 0.0000001) {
+        skip -= available;
+        continue;
+      }
+      if (skip > 0) {
+        available -= skip;
+        skip = 0;
+      }
+      final take = min(available, remaining);
+      if (take > 0.0000001) {
+        result.add(BatchAllocation(
+          batchId: allocation.batchId,
+          quantity: take,
+          supplierBatchNumber: allocation.supplierBatchNumber,
+          manufacturingDate: allocation.manufacturingDate,
+          expirationDate: allocation.expirationDate,
+        ));
+        remaining -= take;
+      }
+    }
+    return result;
+  }
+
+  List<InventoryCostLayerConsumption> _sliceCostConsumptionsForReturn(
+    List<InventoryCostLayerConsumption> source, {
+    required double offset,
+    required double quantity,
+  }) {
+    if (source.isEmpty || quantity <= 0) {
+      return const <InventoryCostLayerConsumption>[];
+    }
+    var skip = offset.clamp(0, double.infinity).toDouble();
+    var remaining = quantity;
+    final result = <InventoryCostLayerConsumption>[];
+    for (final consumption in source) {
+      if (remaining <= 0.0000001) break;
+      var available = consumption.quantity;
+      if (skip >= available - 0.0000001) {
+        skip -= available;
+        continue;
+      }
+      if (skip > 0) {
+        available -= skip;
+        skip = 0;
+      }
+      final take = min(available, remaining);
+      if (take > 0.0000001) {
+        result.add(InventoryCostLayerConsumption(
+          layerId: consumption.layerId,
+          quantity: take,
+          unitCost: consumption.unitCost,
+          currencyCode: consumption.currencyCode,
+        ));
+        remaining -= take;
+      }
+    }
+    return result;
+  }
+
   Future<CreditNote> returnSale(
     String id, {
     bool restoreStock = true,
@@ -16325,56 +16891,126 @@ class AppStore extends ChangeNotifier {
     if (sale.isCancelled) {
       throw StateError('Sale is already cancelled or fully returned.');
     }
+    await ensureCreditNotesLoaded();
 
-    final selectedItems = sale.items
-        .map((item) {
-          final requested =
-              returnedQuantities?[item.productId] ?? item.quantity;
-          if (!requested.isFinite ||
-              requested < 0 ||
-              requested > item.quantity) {
-            throw ArgumentError(
-                'Invalid return quantity for ${item.productName}.');
-          }
-          return SaleItem(
-            productId: item.productId,
-            productName: item.productName,
-            unitPrice: item.unitPrice,
-            quantity: requested,
-            unitCost: item.unitCost,
-            costingMethodAtSale: item.costingMethodAtSale,
-            costCurrency: item.costCurrency,
-            costExchangeRate: item.costExchangeRate,
-            unitName: item.unitName,
-            conversionToBase: item.conversionToBase,
-            baseQuantity: item.effectiveBaseQuantity *
-                (item.quantity == 0 ? 0 : requested / item.quantity),
-          );
-        })
-        .where((item) => item.quantity > 0)
-        .toList();
-    if (selectedItems.isEmpty) {
-      throw ArgumentError('Return quantity must be greater than zero.');
+    const epsilon = 0.000001;
+    final previouslyReturned = await _returnedSaleQuantitiesByProduct(sale.id);
+    final originalByProduct = <String, double>{};
+    for (final item in sale.items) {
+      originalByProduct.update(
+        item.productId,
+        (value) => value + item.quantity,
+        ifAbsent: () => item.quantity,
+      );
     }
-    if (sale.status.toLowerCase() == 'partially returned') {
-      for (final item in selectedItems) {
-        final previous = sale.items.firstWhere(
-          (candidate) => candidate.productId == item.productId,
-          orElse: () => const SaleItem(
-              productId: '', productName: '', unitPrice: 0, quantity: 0),
-        );
-        if (item.quantity > previous.quantity) {
-          throw StateError(
-              'Return quantity cannot exceed the remaining invoice quantity.');
+
+    final requestedByProduct = <String, double>{};
+    if (returnedQuantities == null) {
+      for (final entry in originalByProduct.entries) {
+        final remaining = (entry.value -
+                (previouslyReturned[entry.key] ?? 0))
+            .clamp(0, double.infinity)
+            .toDouble();
+        if (remaining > epsilon) requestedByProduct[entry.key] = remaining;
+      }
+    } else {
+      for (final entry in returnedQuantities.entries) {
+        final original = originalByProduct[entry.key];
+        if (original == null) {
+          throw ArgumentError('Returned product ${entry.key} is not on this sale.');
         }
+        final requested = entry.value;
+        final alreadyReturned = previouslyReturned[entry.key] ?? 0;
+        final remaining = (original - alreadyReturned)
+            .clamp(0, double.infinity)
+            .toDouble();
+        if (!requested.isFinite || requested < 0 || requested > remaining + epsilon) {
+          throw ArgumentError(
+            'Return quantity for ${entry.key} exceeds the remaining invoice quantity ($remaining).',
+          );
+        }
+        if (requested > epsilon) requestedByProduct[entry.key] = requested;
       }
     }
-    final isFullReturn = selectedItems.length == sale.items.length &&
-        selectedItems.every((item) =>
-            item.quantity ==
-            sale.items
-                .firstWhere((source) => source.productId == item.productId)
-                .quantity);
+    if (requestedByProduct.isEmpty) {
+      throw ArgumentError('Return quantity must be greater than zero.');
+    }
+
+    // Distribute previous and requested return quantities across the original
+    // sale lines. This also handles the same product appearing on more than one
+    // line while keeping the original line index for stock-ledger traceability.
+    final priorRemaining = <String, double>{...previouslyReturned};
+    final requestRemaining = <String, double>{...requestedByProduct};
+    final selectedItems = <SaleItem>[];
+    final selectedOriginalLineIndexes = <int>[];
+    for (var originalLineIndex = 0;
+        originalLineIndex < sale.items.length;
+        originalLineIndex += 1) {
+      final item = sale.items[originalLineIndex];
+      var priorForProduct = priorRemaining[item.productId] ?? 0;
+      final priorOnLine = min(item.quantity, priorForProduct);
+      priorForProduct = (priorForProduct - priorOnLine)
+          .clamp(0, double.infinity)
+          .toDouble();
+      priorRemaining[item.productId] = priorForProduct;
+
+      final lineRemaining = (item.quantity - priorOnLine)
+          .clamp(0, double.infinity)
+          .toDouble();
+      var requestedForProduct = requestRemaining[item.productId] ?? 0;
+      final requestedOnLine = min(lineRemaining, requestedForProduct);
+      requestRemaining[item.productId] =
+          (requestedForProduct - requestedOnLine)
+              .clamp(0, double.infinity)
+              .toDouble();
+      if (requestedOnLine <= epsilon) continue;
+
+      final basePerSaleUnit = item.quantity <= epsilon
+          ? item.conversionToBase
+          : item.effectiveBaseQuantity / item.quantity;
+      final priorBaseOnLine = priorOnLine * basePerSaleUnit;
+      final requestedBase = requestedOnLine * basePerSaleUnit;
+      selectedItems.add(SaleItem(
+        productId: item.productId,
+        productName: item.productName,
+        unitPrice: item.unitPrice,
+        quantity: requestedOnLine,
+        unitCost: item.unitCost,
+        costingMethodAtSale: item.costingMethodAtSale,
+        costCurrency: item.costCurrency,
+        costExchangeRate: item.costExchangeRate,
+        costLayerConsumptions: _sliceCostConsumptionsForReturn(
+          item.costLayerConsumptions,
+          offset: priorBaseOnLine,
+          quantity: requestedBase,
+        ),
+        unitName: item.unitName,
+        conversionToBase: item.conversionToBase,
+        baseQuantity: requestedBase,
+        batchAllocations: _sliceBatchAllocationsForReturn(
+          item.batchAllocations,
+          offset: priorBaseOnLine,
+          quantity: requestedBase,
+        ),
+      ));
+      selectedOriginalLineIndexes.add(originalLineIndex);
+    }
+    if (selectedItems.isEmpty ||
+        requestRemaining.values.any((value) => value > epsilon)) {
+      throw StateError('Return quantity cannot exceed the remaining invoice quantity.');
+    }
+
+    final cumulativeReturned = <String, double>{...previouslyReturned};
+    for (final entry in requestedByProduct.entries) {
+      cumulativeReturned.update(
+        entry.key,
+        (value) => value + entry.value,
+        ifAbsent: () => entry.value,
+      );
+    }
+    final isFullReturn = originalByProduct.entries.every((entry) =>
+        (entry.value - (cumulativeReturned[entry.key] ?? 0)).abs() <= epsilon);
+
     final returnedSubtotal =
         selectedItems.fold<double>(0, (sum, item) => sum + item.lineTotal);
     final creditAmount = (returnedSubtotal -
@@ -16383,35 +17019,72 @@ class AppStore extends ChangeNotifier {
                 : sale.discount * (returnedSubtotal / sale.subtotal)))
         .clamp(0, double.infinity)
         .toDouble();
-    final sqliteDbForRefund = SqliteMigrationManager.database;
-    Map<String, String>? refundCashContext;
-    var refundPostedInStockTransaction = false;
-    if (sqliteDbForRefund != null && sale.paidAmount > 0) {
-      final refundableCash = await PaymentVoucherService(sqliteDbForRefund)
-          .refundableCashForSale(sale.id);
-      if (refundableCash > 0.000001) {
-        refundCashContext = await _openCashVoucherContext();
-      }
-    }
-
     final now = DateTime.now();
+    final returnOperationKey =
+        '${sale.id}:sale_return:${now.microsecondsSinceEpoch}';
     final returnedSaleBase = sale.copyWith(
       status: isFullReturn ? 'Returned' : 'Partially Returned',
-      items: selectedItems,
-      paymentStatus: 'returned',
-      paidAmount: 0,
-      cashReceivedAmount: 0,
-      paidAmountInPaymentCurrency: 0,
-      cashReceivedAmountInPaymentCurrency: 0,
-      paidBaseAmount: 0,
-      exchangeDifferenceAmount: 0,
+      // Keep the original invoice lines. Returned quantities are represented by
+      // immutable credit notes, so a second partial return can be validated
+      // against the original quantities instead of a truncated sale payload.
+      items: sale.items,
+      paymentStatus: isFullReturn ? 'returned' : sale.paymentStatus,
+      paidAmount: isFullReturn ? 0 : sale.paidAmount,
+      cashReceivedAmount: isFullReturn ? 0 : sale.cashReceivedAmount,
+      paidAmountInPaymentCurrency:
+          isFullReturn ? 0 : sale.paidAmountInPaymentCurrency,
+      cashReceivedAmountInPaymentCurrency:
+          isFullReturn ? 0 : sale.cashReceivedAmountInPaymentCurrency,
+      paidBaseAmount: isFullReturn ? 0 : sale.paidBaseAmount,
+      exchangeDifferenceAmount:
+          isFullReturn ? 0 : sale.exchangeDifferenceAmount,
+      returnedAmount: sale.returnedAmount + creditAmount,
       note: 'Returned on ${now.toIso8601String()}',
     );
     final returnedSale = _saleSyncMetaPreview(returnedSaleBase, now);
+    final creditNoteNumber = (_creditNotes.length + 1).toString().padLeft(6, '0');
+    final preparedCreditNote = CreditNote(
+      id: 'credit_note_${now.microsecondsSinceEpoch}',
+      creditNoteNo: 'CN-$creditNoteNumber',
+      originalSaleId: sale.id,
+      originalInvoiceNo: sale.invoiceNo,
+      customerName: sale.customerName,
+      customerId: sale.customerId,
+      date: now,
+      items: selectedItems,
+      amount: creditAmount,
+      currency: sale.invoiceCurrency,
+      refundMethod: 'Customer balance',
+      note: 'مرتجع مرتبط بالفاتورة ${sale.invoiceNo}',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final returnCogs = selectedItems.fold<double>(
+      0,
+      (sum, item) => sum + item.lineCost,
+    );
+    final ledgerSale = isFullReturn
+        ? sale
+        : sale.copyWith(
+            items: selectedItems,
+            discount: sale.subtotal <= 0
+                ? 0
+                : sale.discount * (returnedSubtotal / sale.subtotal),
+            transactionAmount: 0,
+            baseAmount: 0,
+            paidAmount: sale.paidAmount *
+                (sale.subtotal <= 0 ? 0 : returnedSubtotal / sale.subtotal),
+          );
+    final returnAccountId = sale.customerId.trim().isNotEmpty
+        ? sale.customerId.trim()
+        : sale.customerName.trim();
+    final returnLedgerTotal = ledgerSale.invoiceTotal > 0
+        ? ledgerSale.invoiceTotal
+        : ((ledgerSale.items.fold<double>(0, (sum, item) => sum + item.lineTotal) -
+                ledgerSale.discount)
+            .clamp(0, double.infinity)
+            .toDouble());
     if (restoreStock) {
-      for (final item in selectedItems) {
-        _restoreInventoryCostLayersFromSaleItem(item, now);
-      }
       final sqliteDb = SqliteMigrationManager.database;
       if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
         final stockService = StockTransactionService(
@@ -16423,10 +17096,11 @@ class AppStore extends ChangeNotifier {
         );
         final batchService = BatchInventoryService(sqliteDb);
         await sqliteDb.transaction(() async {
-          for (var lineIndex = 0;
-              lineIndex < selectedItems.length;
-              lineIndex += 1) {
-            final item = selectedItems[lineIndex];
+          for (var selectedIndex = 0;
+              selectedIndex < selectedItems.length;
+              selectedIndex += 1) {
+            final item = selectedItems[selectedIndex];
+            final originalLineIndex = selectedOriginalLineIndexes[selectedIndex];
             final product = _findProductById(item.productId);
             if (product != null && item.batchAllocations.isNotEmpty) {
               await batchService.restoreInTransaction(
@@ -16443,7 +17117,9 @@ class AppStore extends ChangeNotifier {
             final movementAllocations = item.batchAllocations.isEmpty
                 ? <BatchAllocation>[
                     BatchAllocation(
-                        batchId: '', quantity: item.effectiveBaseQuantity)
+                      batchId: '',
+                      quantity: item.effectiveBaseQuantity,
+                    )
                   ]
                 : item.batchAllocations;
             for (var batchIndex = 0;
@@ -16451,18 +17127,21 @@ class AppStore extends ChangeNotifier {
                 batchIndex += 1) {
               final allocation = movementAllocations[batchIndex];
               final hasBatch = allocation.batchId.isNotEmpty;
-              final originalMovement = StockMovement(
-                id: hasBatch
-                    ? '${sale.id}-${item.productId}-${allocation.batchId}-sale-$lineIndex'
-                    : '${sale.id}-${item.productId}-sale-$lineIndex',
+              final sourceMovementId = hasBatch
+                  ? '${sale.id}-${item.productId}-${allocation.batchId}-sale-$originalLineIndex'
+                  : '${sale.id}-${item.productId}-sale-$originalLineIndex';
+              final movementId =
+                  '$returnOperationKey:$originalLineIndex:$batchIndex';
+              final returnMovement = StockMovement(
+                id: movementId,
                 productId: item.productId,
                 productName: item.productName,
-                type: 'sale',
-                quantity: -allocation.quantity,
-                date: sale.date,
+                type: 'sale_return',
+                quantity: allocation.quantity,
+                date: now,
                 referenceId: sale.id,
                 referenceNo: sale.invoiceNo,
-                reason: 'Sale invoice',
+                reason: 'Sale returned',
                 unitCost: item.unitCostPerBase,
                 warehouseId: sale.warehouseId.isEmpty
                     ? Warehouse.defaultId
@@ -16471,28 +17150,26 @@ class AppStore extends ChangeNotifier {
                     ? Warehouse.defaultName
                     : sale.warehouseName,
                 batchId: allocation.batchId,
-                movementGroupId: sale.id,
-                documentLineId: '${sale.id}-line-$lineIndex',
-                sourceMovementId: '',
-                reversalOfMovementId: '',
-                idempotencyKey: hasBatch
-                    ? '${sale.id}:sale:$lineIndex:$batchIndex'
-                    : '${sale.id}:sale:$lineIndex',
-                createdAt: sale.createdAt,
-                updatedAt: sale.updatedAt,
-                deviceId: sale.deviceId,
-                syncStatus: sale.syncStatus,
-                storeId: sale.storeId,
-                branchId: sale.branchId,
-                version: sale.version,
-                lastModifiedByDeviceId: sale.lastModifiedByDeviceId,
+                movementGroupId: returnOperationKey,
+                documentLineId: '${sale.id}-line-$originalLineIndex',
+                sourceMovementId: sourceMovementId,
+                reversalOfMovementId: sourceMovementId,
+                idempotencyKey: movementId,
+                createdAt: now,
+                updatedAt: now,
+                deviceId: _deviceId,
+                syncStatus: 'pending',
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                lastModifiedByDeviceId: _deviceId,
               );
-              await stockService.recordReversalInTransaction(
-                originalMovement: originalMovement,
+              await stockService.recordMovementsInTransaction(
                 operationType: 'sale_return',
                 documentType: 'sale',
                 documentId: sale.id,
-                reason: 'Sale returned',
+                movementGroupId: returnOperationKey,
+                idempotencyKey: movementId,
+                movements: <StockMovement>[returnMovement],
                 storeId: appIdentity.storeId,
                 branchId: appIdentity.branchId,
                 deviceId: _deviceId,
@@ -16503,40 +17180,65 @@ class AppStore extends ChangeNotifier {
             sqliteDb,
             _salesKey,
             <Map<String, dynamic>>[returnedSale.toJson()],
-            sortIndices: <int?>[0],
+            sortIndices: <int?>[index == -1 ? 0 : index],
           );
-          if (refundCashContext != null && creditAmount > 0) {
-            await PaymentVoucherService(sqliteDb).refundSaleCash(
-              saleId: sale.id,
-              invoiceNo: sale.invoiceNo,
-              customerId: sale.customerId,
-              customerName: sale.customerName,
-              requestedAmount: creditAmount,
-              currency: sale.invoiceCurrency,
-              cashLocationId: refundCashContext['cashLocationId'] ?? '',
-              cashDrawerSessionId: refundCashContext['sessionId'] ?? '',
-              refundKey: 'return:${(sale.returnedAmount + creditAmount).toStringAsFixed(6)}',
-              notes: 'Refund for returned sale ${sale.invoiceNo}',
-              createdBy: _actorName(),
-              createdByUserId: _activeUser?.id ?? '',
-              deviceId: _deviceId,
-              branchId: appIdentity.branchId,
-              storeId: appIdentity.storeId,
-              date: now,
+          await BusinessSqliteStore.saveKeyJson(
+            sqliteDb,
+            _creditNotesKey,
+            jsonEncode(<CreditNote>[..._creditNotes, preparedCreditNote]
+                .map((item) => item.toJson())
+                .toList()),
+          );
+          await AccountingService.recordSaleReturn(
+            sale: sale,
+            returnReferenceId: preparedCreditNote.id,
+            date: now,
+            returnAmount: creditAmount,
+            returnCogs: returnCogs,
+            createdBy: _deviceId,
+          );
+          if (returnAccountId.isNotEmpty && returnLedgerTotal > 0) {
+            await _persistAccountTransactionInExistingTransaction(
+              sqliteDb,
+              AccountTransaction(
+                id: '${sale.id}-sale-return-${preparedCreditNote.id}',
+                accountType: 'customer',
+                accountId: returnAccountId,
+                accountName: sale.customerName,
+                date: now,
+                type: 'saleReturn',
+                referenceId: sale.id,
+                referenceNo: sale.invoiceNo,
+                credit: returnLedgerTotal,
+                currency: sale.invoiceCurrency,
+                note: 'Sale return ${sale.invoiceNo}',
+                createdAt: now,
+                updatedAt: now,
+                deviceId: _deviceId,
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                lastModifiedByDeviceId: _deviceId,
+              ),
             );
-            refundPostedInStockTransaction = true;
           }
         });
+        for (final item in selectedItems) {
+          _restoreInventoryCostLayersFromSaleItem(item, now);
+        }
       } else {
-        for (var lineIndex = 0;
-            lineIndex < selectedItems.length;
-            lineIndex += 1) {
-          final item = selectedItems[lineIndex];
-          final index = _productIndexById[item.productId];
-          if (index == null) continue;
-          final product = _products[index];
+        for (final item in selectedItems) {
+          _restoreInventoryCostLayersFromSaleItem(item, now);
+        }
+        for (var selectedIndex = 0;
+            selectedIndex < selectedItems.length;
+            selectedIndex += 1) {
+          final item = selectedItems[selectedIndex];
+          final originalLineIndex = selectedOriginalLineIndexes[selectedIndex];
+          final productIndex = _productIndexById[item.productId];
+          if (productIndex == null) continue;
+          final product = _products[productIndex];
           if (!product.trackStock) continue;
-          _products[index] = _withSyncMeta<Product>(
+          _products[productIndex] = _withSyncMeta<Product>(
             product.copyWith(
               stock: product.stock + item.effectiveBaseQuantity,
             ),
@@ -16544,7 +17246,7 @@ class AppStore extends ChangeNotifier {
           );
           _addStockMovement(
             StockMovement(
-              id: '${sale.id}-${item.productId}-sale-return-$lineIndex',
+              id: '$returnOperationKey:$originalLineIndex',
               productId: item.productId,
               productName: item.productName,
               type: 'sale_return',
@@ -16560,11 +17262,13 @@ class AppStore extends ChangeNotifier {
               warehouseName: sale.warehouseName.isEmpty
                   ? Warehouse.defaultName
                   : sale.warehouseName,
-              movementGroupId: sale.id,
-              documentLineId: '${sale.id}-line-$lineIndex',
-              sourceMovementId: '',
-              reversalOfMovementId: '',
-              idempotencyKey: '${sale.id}:sale_return:$lineIndex',
+              movementGroupId: returnOperationKey,
+              documentLineId: '${sale.id}-line-$originalLineIndex',
+              sourceMovementId:
+                  '${sale.id}-${item.productId}-sale-$originalLineIndex',
+              reversalOfMovementId:
+                  '${sale.id}-${item.productId}-sale-$originalLineIndex',
+              idempotencyKey: '$returnOperationKey:$originalLineIndex',
               createdAt: now,
               updatedAt: now,
               deviceId: _deviceId,
@@ -16581,29 +17285,6 @@ class AppStore extends ChangeNotifier {
         selectedItems.map((item) => item.productId),
       );
     }
-    if (!refundPostedInStockTransaction &&
-        sqliteDbForRefund != null &&
-        refundCashContext != null &&
-        creditAmount > 0) {
-      await PaymentVoucherService(sqliteDbForRefund).refundSaleCash(
-        saleId: sale.id,
-        invoiceNo: sale.invoiceNo,
-        customerId: sale.customerId,
-        customerName: sale.customerName,
-        requestedAmount: creditAmount,
-        currency: sale.invoiceCurrency,
-        cashLocationId: refundCashContext['cashLocationId'] ?? '',
-        cashDrawerSessionId: refundCashContext['sessionId'] ?? '',
-        refundKey: 'return:${(sale.returnedAmount + creditAmount).toStringAsFixed(6)}',
-        notes: 'Refund for returned sale ${sale.invoiceNo}',
-        createdBy: _actorName(),
-        createdByUserId: _activeUser?.id ?? '',
-        deviceId: _deviceId,
-        branchId: appIdentity.branchId,
-        storeId: appIdentity.storeId,
-        date: now,
-      );
-    }
     _recordSyncChange(
       entityType: 'sale',
       entityId: id,
@@ -16611,52 +17292,97 @@ class AppStore extends ChangeNotifier {
       payload: returnedSale.toJson(),
     );
     if (index != -1) {
-      _sales[index] = _withSyncMeta<Sale>(
-        sale.copyWith(
-          status: isFullReturn ? 'Returned' : sale.status,
-          returnedAmount: sale.returnedAmount + creditAmount,
-          paidAmount: isFullReturn ? 0 : sale.paidAmount,
-          cashReceivedAmount: isFullReturn ? 0 : sale.cashReceivedAmount,
-          paidAmountInPaymentCurrency:
-              isFullReturn ? 0 : sale.paidAmountInPaymentCurrency,
-          cashReceivedAmountInPaymentCurrency:
-              isFullReturn ? 0 : sale.cashReceivedAmountInPaymentCurrency,
-          note: 'Credit note issued for ${sale.invoiceNo}',
-        ),
-        now,
-      );
+      _sales[index] = returnedSale;
       _touchDataRevisions(sales: true);
     }
-    final creditNote = await issueCreditNote(
-      originalSale: sale,
-      items: selectedItems,
-      amount: creditAmount,
-      refundMethod: sale.paymentMethod.toLowerCase() == 'cash'
-          ? 'Cash'
-          : 'Customer balance',
-      note: 'مرتجع مرتبط بالفاتورة ${sale.invoiceNo}',
-    );
-    final ledgerSale = isFullReturn
-        ? sale
-        : sale.copyWith(
-            items: selectedItems,
-            discount: sale.subtotal <= 0
-                ? 0
-                : sale.discount * (returnedSubtotal / sale.subtotal),
-            transactionAmount: 0,
-            baseAmount: 0,
-            paidAmount: sale.paidAmount *
-                (sale.subtotal <= 0 ? 0 : returnedSubtotal / sale.subtotal),
+    late CreditNote creditNote;
+    final authoritativeSqlite = LocalDatabaseService.isSqliteAuthoritative &&
+        SqliteMigrationManager.database != null;
+    if (authoritativeSqlite) {
+      if (!restoreStock) {
+        final sqliteDb = SqliteMigrationManager.database!;
+        await sqliteDb.transaction(() async {
+          await BusinessSqliteStore.upsertEntityPayloads(
+            sqliteDb,
+            _salesKey,
+            <Map<String, dynamic>>[returnedSale.toJson()],
+            sortIndices: <int?>[index == -1 ? 0 : index],
           );
-    _recordSaleCancelLedger(ledgerSale, now, isReturn: true);
+          await BusinessSqliteStore.saveKeyJson(
+            sqliteDb,
+            _creditNotesKey,
+            jsonEncode(<CreditNote>[..._creditNotes, preparedCreditNote]
+                .map((item) => item.toJson())
+                .toList()),
+          );
+          await AccountingService.recordSaleReturn(
+            sale: sale,
+            returnReferenceId: preparedCreditNote.id,
+            date: now,
+            returnAmount: creditAmount,
+            returnCogs: returnCogs,
+            createdBy: _deviceId,
+          );
+          if (returnAccountId.isNotEmpty && returnLedgerTotal > 0) {
+            await _persistAccountTransactionInExistingTransaction(
+              sqliteDb,
+              AccountTransaction(
+                id: '${sale.id}-sale-return-${preparedCreditNote.id}',
+                accountType: 'customer',
+                accountId: returnAccountId,
+                accountName: sale.customerName,
+                date: now,
+                type: 'saleReturn',
+                referenceId: sale.id,
+                referenceNo: sale.invoiceNo,
+                credit: returnLedgerTotal,
+                currency: sale.invoiceCurrency,
+                note: 'Sale return ${sale.invoiceNo}',
+                createdAt: now,
+                updatedAt: now,
+                deviceId: _deviceId,
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                lastModifiedByDeviceId: _deviceId,
+              ),
+            );
+          }
+        });
+      }
+      creditNote = preparedCreditNote;
+      _creditNotes.add(creditNote);
+      // Sale-return ledger was committed inside the authoritative SQLite transaction.
+    } else {
+      creditNote = await issueCreditNote(
+        originalSale: sale,
+        items: selectedItems,
+        amount: creditAmount,
+        refundMethod: 'Customer balance',
+        note: 'مرتجع مرتبط بالفاتورة ${sale.invoiceNo}',
+      );
+      await AccountingService.recordSaleReturn(
+        sale: sale,
+        returnReferenceId: creditNote.id,
+        date: now,
+        returnAmount: creditAmount,
+        returnCogs: returnCogs,
+        createdBy: _deviceId,
+      );
+      await _recordSaleCancelLedger(
+        ledgerSale,
+        now,
+        isReturn: true,
+        returnReferenceId: creditNote.id,
+      );
+    }
     final productDerivedData = restoreStock &&
-        sale.items.any((item) => item.costLayerConsumptions.isNotEmpty);
+        selectedItems.any((item) => item.costLayerConsumptions.isNotEmpty);
     await _saveDirty(
       products: restoreStock,
       productDerivedData: productDerivedData,
-      sales: true,
+      sales: !authoritativeSqlite,
       stockMovements: false,
-      accountTransactions: true,
+      accountTransactions: !authoritativeSqlite,
       sync: true,
     );
     notifyListeners();
@@ -16676,18 +17402,7 @@ class AppStore extends ChangeNotifier {
     }
     if (sale.isCancelled) return;
 
-    final sqliteDbForRefund = SqliteMigrationManager.database;
-    Map<String, String>? refundCashContext;
-    var cancelRefundPostedInStockTransaction = false;
     var cancelJournalReversedInSqliteTransaction = false;
-    if (sqliteDbForRefund != null && sale.paidAmount > 0) {
-      final refundableCash = await PaymentVoucherService(sqliteDbForRefund)
-          .refundableCashForSale(sale.id);
-      if (refundableCash > 0.000001) {
-        refundCashContext = await _openCashVoucherContext();
-      }
-    }
-    await _waitForPendingSaleAccounting(sale.id);
 
     final now = DateTime.now();
     final cancelledSaleBase = sale.copyWith(
@@ -16793,27 +17508,6 @@ class AppStore extends ChangeNotifier {
               );
             }
           }
-          if (refundCashContext != null && sale.paidAmount > 0) {
-            await PaymentVoucherService(sqliteDb).refundSaleCash(
-              saleId: sale.id,
-              invoiceNo: sale.invoiceNo,
-              customerId: sale.customerId,
-              customerName: sale.customerName,
-              requestedAmount: sale.paidAmount,
-              currency: sale.invoiceCurrency,
-              cashLocationId: refundCashContext['cashLocationId'] ?? '',
-              cashDrawerSessionId: refundCashContext['sessionId'] ?? '',
-              refundKey: 'cancel',
-              notes: 'Refund for cancelled sale ${sale.invoiceNo}',
-              createdBy: _actorName(),
-              createdByUserId: _activeUser?.id ?? '',
-              deviceId: _deviceId,
-              branchId: appIdentity.branchId,
-              storeId: appIdentity.storeId,
-              date: now,
-            );
-            cancelRefundPostedInStockTransaction = true;
-          }
           await AccountingService.reverseEntryForReference(
             referenceType: 'sale',
             referenceId: sale.id,
@@ -16827,6 +17521,39 @@ class AppStore extends ChangeNotifier {
             <Map<String, dynamic>>[cancelledSale.toJson()],
             sortIndices: <int?>[0],
           );
+          final saleAccountId = sale.customerId.trim().isNotEmpty
+              ? sale.customerId.trim()
+              : sale.customerName.trim();
+          final saleLedgerTotal = sale.invoiceTotal > 0
+              ? sale.invoiceTotal
+              : ((sale.items.fold<double>(0, (sum, item) => sum + item.lineTotal) -
+                      sale.discount)
+                  .clamp(0, double.infinity)
+                  .toDouble());
+          if (saleAccountId.isNotEmpty && saleLedgerTotal > 0) {
+            await _persistAccountTransactionInExistingTransaction(
+              sqliteDb,
+              AccountTransaction(
+                id: '${sale.id}-sale-cancel',
+                accountType: 'customer',
+                accountId: saleAccountId,
+                accountName: sale.customerName,
+                date: now,
+                type: 'cancel',
+                referenceId: sale.id,
+                referenceNo: sale.invoiceNo,
+                credit: saleLedgerTotal,
+                currency: sale.invoiceCurrency,
+                note: 'Sale cancelled',
+                createdAt: now,
+                updatedAt: now,
+                deviceId: _deviceId,
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                lastModifiedByDeviceId: _deviceId,
+              ),
+            );
+          }
         });
       } else {
         for (var lineIndex = 0; lineIndex < sale.items.length; lineIndex += 1) {
@@ -16881,29 +17608,61 @@ class AppStore extends ChangeNotifier {
       );
     }
 
-    if (!cancelRefundPostedInStockTransaction &&
-        sqliteDbForRefund != null &&
-        refundCashContext != null &&
-        sale.paidAmount > 0) {
-      await PaymentVoucherService(sqliteDbForRefund).refundSaleCash(
-        saleId: sale.id,
-        invoiceNo: sale.invoiceNo,
-        customerId: sale.customerId,
-        customerName: sale.customerName,
-        requestedAmount: sale.paidAmount,
-        currency: sale.invoiceCurrency,
-        cashLocationId: refundCashContext['cashLocationId'] ?? '',
-        cashDrawerSessionId: refundCashContext['sessionId'] ?? '',
-        refundKey: 'cancel',
-        notes: 'Refund for cancelled sale ${sale.invoiceNo}',
-        createdBy: _actorName(),
-        createdByUserId: _activeUser?.id ?? '',
-        deviceId: _deviceId,
-        branchId: appIdentity.branchId,
-        storeId: appIdentity.storeId,
-        date: now,
-      );
+    final authoritativeCancelDb = SqliteMigrationManager.database;
+    if (!restoreStock &&
+        LocalDatabaseService.isSqliteAuthoritative &&
+        authoritativeCancelDb != null) {
+      await authoritativeCancelDb.transaction(() async {
+        await AccountingService.reverseEntryForReference(
+          referenceType: 'sale',
+          referenceId: sale.id,
+          reason: 'Sale cancelled',
+          createdBy: _deviceId,
+          notifyChange: false,
+        );
+        cancelJournalReversedInSqliteTransaction = true;
+        await BusinessSqliteStore.upsertEntityPayloads(
+          authoritativeCancelDb,
+          _salesKey,
+          <Map<String, dynamic>>[cancelledSale.toJson()],
+          sortIndices: const <int?>[0],
+        );
+        final saleAccountId = sale.customerId.trim().isNotEmpty
+            ? sale.customerId.trim()
+            : sale.customerName.trim();
+        final saleLedgerTotal = sale.invoiceTotal > 0
+            ? sale.invoiceTotal
+            : ((sale.items.fold<double>(0, (sum, item) => sum + item.lineTotal) -
+                    sale.discount)
+                .clamp(0, double.infinity)
+                .toDouble());
+        if (saleAccountId.isNotEmpty && saleLedgerTotal > 0) {
+          await _persistAccountTransactionInExistingTransaction(
+            authoritativeCancelDb,
+            AccountTransaction(
+              id: '${sale.id}-sale-cancel',
+              accountType: 'customer',
+              accountId: saleAccountId,
+              accountName: sale.customerName,
+              date: now,
+              type: 'cancel',
+              referenceId: sale.id,
+              referenceNo: sale.invoiceNo,
+              credit: saleLedgerTotal,
+              currency: sale.invoiceCurrency,
+              note: 'Sale cancelled',
+              createdAt: now,
+              updatedAt: now,
+              deviceId: _deviceId,
+              storeId: appIdentity.storeId,
+              branchId: appIdentity.branchId,
+              lastModifiedByDeviceId: _deviceId,
+            ),
+          );
+        }
+      });
     }
+
     if (!cancelJournalReversedInSqliteTransaction) {
       await AccountingService.reverseEntryForReference(
         referenceType: 'sale',
@@ -16912,7 +17671,11 @@ class AppStore extends ChangeNotifier {
         createdBy: _deviceId,
       );
     }
-    cancelledSale = _withSyncMeta<Sale>(cancelledSaleBase, now);
+    final saleCancelWasAtomic = LocalDatabaseService.isSqliteAuthoritative &&
+        SqliteMigrationManager.database != null;
+    cancelledSale = saleCancelWasAtomic
+        ? _saleSyncMetaPreview(cancelledSaleBase, now)
+        : _withSyncMeta<Sale>(cancelledSaleBase, now);
     if (index != -1) {
       _sales[index] = cancelledSale;
     }
@@ -16922,13 +17685,15 @@ class AppStore extends ChangeNotifier {
       operation: 'cancel',
       payload: cancelledSale.toJson(),
     );
-    _recordSaleCancelLedger(sale, now);
+    if (!saleCancelWasAtomic) {
+      await _recordSaleCancelLedger(sale, now);
+    }
     await _saveDirty(
       products: restoreStock,
       productDerivedData: false,
-      sales: true,
+      sales: !saleCancelWasAtomic,
       stockMovements: false,
-      accountTransactions: true,
+      accountTransactions: !saleCancelWasAtomic,
       sync: true,
     );
     notifyListeners();
@@ -17074,12 +17839,14 @@ class AppStore extends ChangeNotifier {
         await LocalDatabaseService.getStockMovementsFromSqlite();
     final sqliteWarehouses =
         await LocalDatabaseService.getWarehousesFromSqlite();
+    final phase8AccountingRows =
+        await LocalDatabaseService.getPhase8AccountingSnapshotRows();
     final exportWarehouses =
         sqliteWarehouses != null && sqliteWarehouses.isNotEmpty
             ? sqliteWarehouses
             : _warehouses;
     return {
-      'version': 12,
+      'version': 13,
       'generatedAt': DateTime.now().toIso8601String(),
       'schemaVersion': 17,
       'backupType':
@@ -17230,6 +17997,8 @@ class AppStore extends ChangeNotifier {
                 : _businessBackupJson(item),
           )
           .toList(),
+      for (final entry in phase8AccountingRows.entries)
+        entry.key: entry.value,
       if (includeDeviceAndSyncState) 'deviceId': _deviceId,
       if (includeDeviceAndSyncState)
         'syncChanges':
@@ -17372,6 +18141,8 @@ class AppStore extends ChangeNotifier {
         await LocalDatabaseService.getStockMovementsFromSqlite();
     final sqliteWarehouses =
         await LocalDatabaseService.getWarehousesFromSqlite();
+    final phase8AccountingRows =
+        await LocalDatabaseService.getPhase8AccountingSnapshotRows();
     final exportWarehouses =
         sqliteWarehouses != null && sqliteWarehouses.isNotEmpty
             ? sqliteWarehouses
@@ -17379,7 +18150,7 @@ class AppStore extends ChangeNotifier {
     final all = <String, List<dynamic>>{
       '_meta': <dynamic>[
         <String, dynamic>{
-          'version': 14,
+          'version': 15,
           'generatedAt': DateTime.now().toIso8601String(),
           'schemaVersion': 17,
           'invoiceCounter': _invoiceCounter,
@@ -17439,6 +18210,8 @@ class AppStore extends ChangeNotifier {
       'expenses': _expenses.map((item) => item.toJson()).toList(),
       'accountTransactions':
           _accountTransactions.map((item) => item.toJson()).toList(),
+      for (final entry in phase8AccountingRows.entries)
+        entry.key: entry.value,
       'billsOfMaterials':
           _billsOfMaterials.map((item) => item.toJson()).toList(),
       'manufacturingOrders':
@@ -18226,6 +18999,11 @@ class AppStore extends ChangeNotifier {
       'inventoryMigrationAdjustments',
       aliases: <String>['inventory_migration_adjustments'],
     );
+    final phase8AccountingSnapshotRows =
+        <String, List<Map<String, dynamic>>>{
+      for (final key in LocalDatabaseService.phase8AccountingSnapshotTables.keys)
+        if (decoded.containsKey(key)) key: decodeEntityList(key),
+    };
     final inventoryCounts = (decoded['inventoryCounts'] as List<dynamic>? ?? [])
         .map(
           (item) => InventoryCountSession.fromJson(
@@ -18550,6 +19328,11 @@ class AppStore extends ChangeNotifier {
             .replaceInventoryMigrationAdjustmentsRowsImmediate(
           inventoryMigrationAdjustmentRows,
         );
+        if (phase8AccountingSnapshotRows.isNotEmpty) {
+          await LocalDatabaseService.replacePhase8AccountingSnapshotRowsImmediate(
+            phase8AccountingSnapshotRows,
+          );
+        }
       });
     }
 
@@ -21247,11 +22030,26 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool _shutdownPrepared = false;
+
+  /// Finishes Ventio-owned buffered work before the SQLite connection is
+  /// checkpointed and closed during desktop shutdown.
+  Future<void> prepareForShutdown() async {
+    if (_shutdownPrepared) return;
+    _shutdownPrepared = true;
+    _productDerivedDataFlushTimer?.cancel();
+    _productDerivedDataFlushTimer = null;
+    await _flushProductDerivedData();
+    await LocalDatabaseService.flushPendingWrites();
+  }
+
   @override
   void dispose() {
     _productDerivedDataFlushTimer?.cancel();
-    unawaited(_flushProductDerivedData());
-    unawaited(LocalDatabaseService.flushPendingWrites());
+    if (!_shutdownPrepared) {
+      unawaited(_flushProductDerivedData());
+      unawaited(LocalDatabaseService.flushPendingWrites());
+    }
     super.dispose();
   }
 }

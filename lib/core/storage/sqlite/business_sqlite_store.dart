@@ -2098,6 +2098,32 @@ class BusinessSqliteStore {
         .toList(growable: false);
   }
 
+  static Future<Expense?> readExpenseById(
+    VentioDriftDatabase db,
+    String id,
+  ) async {
+    final normalizedId = id.trim();
+    if (normalizedId.isEmpty) return null;
+    final rows = await db.customSelect('''
+      SELECT id, title, category, amount, original_amount AS originalAmount,
+             original_currency AS originalCurrency,
+             exchange_rate_at_entry AS exchangeRateAtEntry,
+             expense_date AS date, notes, expense_status AS status,
+             cancel_reason AS cancelReason,
+             cancelled_by_device_id AS cancelledByDeviceId,
+             cancelled_at AS cancelledAt, created_at AS createdAt,
+             updated_at AS updatedAt, deleted_at AS deletedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM expenses
+      WHERE id = ?
+      LIMIT 1
+    ''', variables: <Variable<Object>>[Variable<String>(normalizedId)]).get();
+    if (rows.isEmpty) return null;
+    return Expense.fromJson(Map<String, dynamic>.from(rows.first.data));
+  }
+
   static Future<List<Expense>> readExpenses(VentioDriftDatabase db) async {
     final rows = await db.customSelect('''
       SELECT id, title, category, amount, original_amount AS originalAmount,

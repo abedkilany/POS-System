@@ -159,11 +159,83 @@ class SqliteMigrationManager {
 
   static Future<SqliteMigrationStatus> initializePhase2() => initializePhase3();
 
-  @visibleForTesting
-  static void useDatabaseForTesting(VentioDriftDatabase database) {
+  static void attachDatabaseOverride(VentioDriftDatabase database) {
     _database = database;
     _initialized = true;
     _lastError = null;
+  }
+
+  @visibleForTesting
+  static void useDatabaseForTesting(VentioDriftDatabase database) {
+    attachDatabaseOverride(database);
+  }
+
+  /// Flushes WAL pages into the main SQLite file and closes the Drift database.
+  ///
+  /// This is intended for a graceful application shutdown. Ventio keeps WAL
+  /// enabled during normal operation for concurrency/performance, then forces a
+  /// final TRUNCATE checkpoint so a standalone `ventio.sqlite` contains all
+  /// committed data before the process exits.
+  static Future<void> shutdown({
+    Duration retryDelay = const Duration(milliseconds: 150),
+    int maxAttempts = 4,
+  }) async {
+    final db = _database;
+    if (db == null) {
+      _initialized = false;
+      return;
+    }
+
+    Object? checkpointError;
+    try {
+      // Give SQLite a bounded amount of time to finish any short-lived lock.
+      await db.customStatement('PRAGMA busy_timeout = 5000;');
+
+      for (var attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          final rows = await db
+              .customSelect('PRAGMA wal_checkpoint(TRUNCATE);')
+              .get();
+          if (rows.isEmpty) {
+            checkpointError = null;
+            break;
+          }
+
+          // wal_checkpoint returns: busy, log, checkpointed. A zero busy value
+          // means the checkpoint completed without another connection blocking it.
+          final data = rows.first.data;
+          final busy = (data['busy'] as num?)?.toInt() ??
+              (data.values.isNotEmpty ? (data.values.first as num?)?.toInt() : 0) ??
+              0;
+          if (busy == 0) {
+            checkpointError = null;
+            break;
+          }
+          checkpointError = StateError(
+            'SQLite WAL checkpoint remained busy (attempt $attempt/$maxAttempts).',
+          );
+        } catch (error) {
+          checkpointError = error;
+        }
+
+        if (attempt < maxAttempts) {
+          await Future<void>.delayed(retryDelay);
+        }
+      }
+
+      if (checkpointError != null) {
+        // Closing is still safe: committed WAL data remains durable and SQLite
+        // will recover it on the next open. Surface the condition in debug logs.
+        debugPrint('SQLite shutdown checkpoint warning: $checkpointError');
+      }
+    } finally {
+      // Clear the shared reference before awaiting close so no new caller can
+      // start work on a database that is shutting down.
+      _database = null;
+      _initialized = false;
+      _lastError = checkpointError;
+      await db.close();
+    }
   }
 
   static Future<void> resetForTesting() async {

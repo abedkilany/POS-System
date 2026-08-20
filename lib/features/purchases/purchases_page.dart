@@ -635,12 +635,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                   widget.store.canManagePurchases
                               ? () => _deleteDraftPurchase(context, purchase.id)
                               : null,
-                          onEdit: (purchase.status == 'Draft' ||
-                                      purchase.isReceived) &&
-                                  widget.store.canManagePurchases
-                              ? () => _openPurchaseDialog(context,
-                                  editing: purchase)
-                              : null,
                           onPermanentDelete:
                               purchase.status.toLowerCase() == 'cancelled' &&
                                       widget.store.hasPermission(
@@ -1271,7 +1265,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
   Future<void> _showPurchaseDetails(
       BuildContext context, Purchase purchase) async {
-    final tr = AppLocalizations.of(context);
+    final parentContext = context;
+    final tr = AppLocalizations.of(parentContext);
     final statusText = purchase.isReturned
         ? tr.text('returned')
         : purchase.status.toLowerCase() == 'cancelled'
@@ -1400,28 +1395,19 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       ),
                     OutlinedButton.icon(
                       onPressed: () {
-                        Navigator.pop(context);
-                        _openPurchaseDialog(context, template: purchase);
+                        Navigator.pop(sheetContext);
+                        if (!parentContext.mounted) return;
+                        _openPurchaseDialog(parentContext, template: purchase);
                       },
                       icon: const Icon(Icons.copy_all_outlined),
                       label: Text(tr.text('duplicate_purchase')),
                     ),
-                    if ((!purchase.isCancelled) &&
-                        (purchase.status == 'Draft' || purchase.isReceived) &&
-                        widget.store.canManagePurchases)
-                      FilledButton.icon(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          _openPurchaseDialog(context, editing: purchase);
-                        },
-                        icon: const Icon(Icons.edit_outlined),
-                        label: Text(tr.text('edit_purchase')),
-                      ),
                     if (!purchase.isReceived && !purchase.isCancelled)
                       FilledButton.icon(
                         onPressed: () {
-                          Navigator.pop(context);
-                          _receivePurchase(context, purchase.id);
+                          Navigator.pop(sheetContext);
+                          if (!parentContext.mounted) return;
+                          _receivePurchase(parentContext, purchase.id);
                         },
                         icon: const Icon(Icons.download_done),
                         label: Text(tr.text('receive')),
@@ -1429,8 +1415,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                     if (purchase.isReceived && !purchase.isReturned)
                       OutlinedButton.icon(
                         onPressed: () {
-                          Navigator.pop(context);
-                          _returnPurchase(context, purchase.id);
+                          Navigator.pop(sheetContext);
+                          if (!parentContext.mounted) return;
+                          _returnPurchase(parentContext, purchase.id);
                         },
                         icon: const Icon(Icons.assignment_return_outlined),
                         label: Text(tr.text('return_purchase')),
@@ -1438,8 +1425,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                     if (!purchase.isReceived && !purchase.isCancelled)
                       OutlinedButton.icon(
                         onPressed: () {
-                          Navigator.pop(context);
-                          _deleteDraftPurchase(context, purchase.id);
+                          Navigator.pop(sheetContext);
+                          if (!parentContext.mounted) return;
+                          _deleteDraftPurchase(parentContext, purchase.id);
                         },
                         icon: const Icon(Icons.delete_outline),
                         label: Text(tr.text('delete_draft_purchase')),
@@ -1449,8 +1437,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             .hasPermission(AppPermission.databaseManage))
                       OutlinedButton.icon(
                         onPressed: () {
-                          Navigator.pop(context);
-                          _permanentlyDeletePurchase(context, purchase.id);
+                          Navigator.pop(sheetContext);
+                          if (!parentContext.mounted) return;
+                          _permanentlyDeletePurchase(parentContext, purchase.id);
                         },
                         icon: const Icon(Icons.delete_forever_outlined),
                         label: Text(tr.text('permanently_delete')),
@@ -3773,7 +3762,6 @@ class _PurchaseTile extends StatelessWidget {
     this.onReceive,
     this.onCancel,
     this.onDeleteDraft,
-    this.onEdit,
     this.onPermanentDelete,
     this.onDuplicate,
   });
@@ -3785,7 +3773,6 @@ class _PurchaseTile extends StatelessWidget {
       onReceive,
       onCancel,
       onDeleteDraft,
-      onEdit,
       onPermanentDelete,
       onDuplicate;
 
@@ -3832,19 +3819,12 @@ class _PurchaseTile extends StatelessWidget {
       tooltip: tr.text('actions'),
       onSelected: (value) {
         if (value == 'duplicate') onDuplicate?.call();
-        if (value == 'edit') onEdit?.call();
         if (value == 'receive') onReceive?.call();
         if (value == 'return') onCancel?.call();
         if (value == 'delete_draft') onDeleteDraft?.call();
         if (value == 'permanent_delete') onPermanentDelete?.call();
       },
       itemBuilder: (context) => [
-        if (onEdit != null)
-          PopupMenuItem(
-              value: 'edit',
-              child: ListTile(
-                  leading: const Icon(Icons.edit_outlined),
-                  title: Text(tr.text('edit_purchase')))),
         PopupMenuItem(
             value: 'duplicate',
             child: ListTile(

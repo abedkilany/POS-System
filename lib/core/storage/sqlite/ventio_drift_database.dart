@@ -15,7 +15,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 20;
+  int get schemaVersion => 21;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -2193,6 +2193,45 @@ class VentioDriftDatabase extends GeneratedDatabase {
       );
     ''');
 
+    // Phase 7: durable legacy-cash migration and reconciliation audit.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_phase7_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL DEFAULT '',
+        legacy_receipts_found INTEGER NOT NULL DEFAULT 0,
+        legacy_payments_found INTEGER NOT NULL DEFAULT 0,
+        vouchers_created INTEGER NOT NULL DEFAULT 0,
+        allocations_created INTEGER NOT NULL DEFAULT 0,
+        invoice_entries_created INTEGER NOT NULL DEFAULT 0,
+        voucher_entries_created INTEGER NOT NULL DEFAULT 0,
+        ledger_rows_created INTEGER NOT NULL DEFAULT 0,
+        payment_caches_rebuilt INTEGER NOT NULL DEFAULT 0,
+        issue_count INTEGER NOT NULL DEFAULT 0,
+        message TEXT NOT NULL DEFAULT ''
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_phase7_runs_started ON cash_phase7_runs(started_at DESC);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_phase7_issues (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'warning',
+        issue_type TEXT NOT NULL,
+        entity_type TEXT NOT NULL DEFAULT '',
+        entity_id TEXT NOT NULL DEFAULT '',
+        reference_no TEXT NOT NULL DEFAULT '',
+        details TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES cash_phase7_runs(id) ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_phase7_issues_run ON cash_phase7_issues(run_id, severity, issue_type);');
+
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS accounting_audit_log (
         id TEXT PRIMARY KEY NOT NULL,
@@ -2369,6 +2408,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
         notes TEXT NOT NULL DEFAULT '',
         created_by TEXT NOT NULL DEFAULT '',
         approved_by TEXT NOT NULL DEFAULT '',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         deleted_at TEXT NOT NULL DEFAULT '',
@@ -2391,6 +2434,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('cash_transfers', 'created_by_user_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('cash_transfers', 'device_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('cash_transfers', 'idempotency_key', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_transfers', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
     await customStatement(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_transfers_idempotency ON cash_transfers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
 
@@ -2413,6 +2460,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
         closed_by_user_id TEXT NOT NULL DEFAULT '',
         store_id TEXT NOT NULL DEFAULT '',
         branch_id TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
         CHECK (status IN ('open', 'closed', 'void'))
       );
     ''');
@@ -2424,6 +2473,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
         "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('cash_drawer_sessions', 'closed_by_user_id',
         "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_drawer_sessions', 'updated_at',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_drawer_sessions', 'revision',
+        'INTEGER NOT NULL DEFAULT 1');
+    await customStatement(
+        "UPDATE cash_drawer_sessions SET updated_at = CASE WHEN closed_at <> '' THEN closed_at ELSE opened_at END WHERE updated_at = ''");
+    await customStatement(
+        "UPDATE cash_drawer_sessions SET revision = 2 WHERE status IN ('closed', 'void') AND revision < 2");
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_location ON cash_drawer_sessions(cash_location_id, status);');
     await customStatement(
@@ -2493,6 +2550,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
         currency TEXT NOT NULL DEFAULT 'USD',
         journal_entry_id TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'posted',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
         notes TEXT NOT NULL DEFAULT '',
         created_by TEXT NOT NULL DEFAULT '',
         created_by_user_id TEXT NOT NULL DEFAULT '',
@@ -2512,6 +2573,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
     ''');
     await _ensureColumn(
         'cash_operations', 'status', "TEXT NOT NULL DEFAULT 'posted'");
+    await _ensureColumn(
+        'cash_operations', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_operations', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_operations', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_operations', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_cash_operations_location_date ON cash_operations(cash_location_id, operation_date DESC);');
     await customStatement(
@@ -2535,6 +2604,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
         cash_location_id TEXT NOT NULL DEFAULT '',
         cash_drawer_session_id TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'posted',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
         notes TEXT NOT NULL DEFAULT '',
         created_by TEXT NOT NULL DEFAULT '',
         created_by_user_id TEXT NOT NULL DEFAULT '',
@@ -2561,6 +2634,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_store_branch_date ON receipt_vouchers(store_id, branch_id, voucher_date DESC);');
     await customStatement(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_receipt_vouchers_idempotency ON receipt_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+    await _ensureColumn('receipt_vouchers', 'reversed_at',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('receipt_vouchers', 'reversal_reason',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('receipt_vouchers', 'reversed_by',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('receipt_vouchers', 'reversed_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS payment_vouchers (
@@ -2602,6 +2683,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_store_branch_date ON payment_vouchers(store_id, branch_id, voucher_date DESC);');
     await customStatement(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_vouchers_idempotency ON payment_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+    await _ensureColumn('payment_vouchers', 'reversed_at',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_vouchers', 'reversal_reason',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_vouchers', 'reversed_by',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_vouchers', 'reversed_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS payment_allocations (
@@ -2616,6 +2705,11 @@ class VentioDriftDatabase extends GeneratedDatabase {
         currency TEXT NOT NULL DEFAULT 'USD',
         reference_currency TEXT NOT NULL DEFAULT 'USD',
         exchange_rate REAL NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'active',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         deleted_at TEXT NOT NULL DEFAULT '',
@@ -2635,6 +2729,18 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_payment_allocations_reference ON payment_allocations(reference_type, reference_id);');
     await customStatement(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_allocations_target_per_voucher ON payment_allocations(voucher_type, voucher_id, reference_type, reference_id) WHERE deleted_at = '';");
+    await _ensureColumn('payment_allocations', 'status',
+        "TEXT NOT NULL DEFAULT 'active'");
+    await _ensureColumn('payment_allocations', 'reversed_at',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_allocations', 'reversal_reason',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_allocations', 'reversed_by',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_allocations', 'reversed_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_allocations_status ON payment_allocations(status, reference_type, reference_id);');
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cheques (

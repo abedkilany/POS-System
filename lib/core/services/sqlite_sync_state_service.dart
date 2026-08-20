@@ -1536,6 +1536,10 @@ class SqliteSyncStateService {
           await _applyInventoryBatchChange(db, context, change);
           businessChanged = true;
           break;
+        case 'cash_accounting_delta':
+          await _applyCashAccountingDelta(change);
+          businessChanged = true;
+          break;
       }
 
       if (mirrorToDirect &&
@@ -1570,6 +1574,28 @@ class SqliteSyncStateService {
     if (changed) {
       await _refreshSyncKeys(context);
     }
+  }
+
+  Future<void> _applyCashAccountingDelta(SyncChange change) async {
+    final rawCollections = change.payload['collections'];
+    if (rawCollections is! Map) return;
+    final collections = <String, List<Map<String, dynamic>>>{};
+    for (final entry in rawCollections.entries) {
+      final key = entry.key.toString();
+      if (!LocalDatabaseService.phase8AccountingSnapshotTables.containsKey(key)) {
+        continue;
+      }
+      final value = entry.value;
+      if (value is! List) continue;
+      collections[key] = value
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+    }
+    if (collections.isEmpty) return;
+    await LocalDatabaseService.upsertPhase8AccountingSnapshotRowsImmediate(
+      collections,
+    );
   }
 
   Future<void> _applyBusinessEntityChange(

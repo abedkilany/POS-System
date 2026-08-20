@@ -17,6 +17,7 @@ import 'core/services/accounting_service.dart';
 import 'core/services/google_drive_backup_service.dart';
 import 'core/services/lan_sync_service.dart';
 import 'core/services/local_auto_backup_service.dart';
+import 'core/storage/sqlite/sqlite_migration_manager.dart';
 import 'core/services/app_update_service.dart';
 import 'core/services/account_auth_service.dart';
 import 'core/services/page_timing_scope.dart';
@@ -82,12 +83,19 @@ class _VentioAppState extends State<VentioApp> {
   bool _autoSnapshotProgressDialogOpen = false;
   bool _firstFrameMarked = false;
   String _startupError = '';
+  static const MethodChannel _windowLifecycleChannel =
+      MethodChannel('ventio/window_lifecycle');
+  bool _shutdownInProgress = false;
 
   @override
   void initState() {
     super.initState();
+    _windowLifecycleChannel.setMethodCallHandler(_handleWindowLifecycleCall);
     _registerPageTimings();
-    AccountingService.setMutationListener(() => _store.notifyListeners());
+    AccountingService.setMutationListener(() {
+      _store.notifyListeners();
+      unawaited(_store.recordPhase8AccountingMutationForSync());
+    });
     _initializeApp();
   }
 
@@ -136,6 +144,8 @@ class _VentioAppState extends State<VentioApp> {
       'ventio_app.start_sync_after_login',
       () async {
         await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (!mounted || _store.activeUser == null) return;
+        await _store.recoverPhase8AccountingSyncAfterStartup();
         if (!mounted || _store.activeUser == null) return;
         unawaited(_autoSyncController.start());
         unawaited(_autoDirectSyncController.start());
@@ -235,8 +245,40 @@ class _VentioAppState extends State<VentioApp> {
     navigator.pop();
   }
 
+  Future<void> _handleWindowLifecycleCall(MethodCall call) async {
+    if (call.method == 'requestClose') {
+      await _gracefulShutdownAndCloseWindow();
+    }
+  }
+
+  Future<void> _gracefulShutdownAndCloseWindow() async {
+    if (_shutdownInProgress) return;
+    _shutdownInProgress = true;
+    try {
+      // Stop producers first so no sync/background task can enqueue a write
+      // while SQLite is being checkpointed and closed.
+      await _autoSyncController.stop();
+      _autoDirectSyncController.stop();
+      await UnifiedSyncFactory.disposeDirect(_store);
+
+      await _store.prepareForShutdown();
+      await SqliteMigrationManager.shutdown();
+    } catch (error, stackTrace) {
+      debugPrint('Graceful shutdown failed: $error\n$stackTrace');
+      // Never delete WAL on failure. SQLite keeps committed WAL data durable
+      // and will recover it on the next launch.
+    } finally {
+      try {
+        await _windowLifecycleChannel.invokeMethod<void>('allowClose');
+      } on MissingPluginException {
+        // Non-Windows platforms don't install the native close interceptor.
+      }
+    }
+  }
+
   @override
   void dispose() {
+    _windowLifecycleChannel.setMethodCallHandler(null);
     unawaited(_autoSyncController.stop());
     _autoDirectSyncController.stop();
     unawaited(UnifiedSyncFactory.disposeDirect(_store));

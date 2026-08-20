@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/services/cash_phase7_migration_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
@@ -82,6 +83,14 @@ class MaintenanceService {
       'startupTimingSummary': StartupTimingService.startupSummaryJson(),
       'startupTiming': StartupTimingService.snapshotJson(),
     });
+  }
+
+  Future<CashPhase7Report> runCashPhase7Migration() async {
+    final db = SqliteMigrationManager.database;
+    if (db == null) {
+      throw StateError('SQLite database is not initialized.');
+    }
+    return CashPhase7MigrationService(db).run();
   }
 
   Future<MaintenanceRepairResult> runRepair(

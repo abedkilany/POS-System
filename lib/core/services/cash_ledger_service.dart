@@ -255,6 +255,11 @@ class CashLedgerService {
       final result = <CashLedgerTransaction>[];
       for (final row in rows) {
         if (row.reversalOfId.isNotEmpty) continue;
+        final existing = await _db.customSelect(
+          "SELECT id FROM cash_ledger_transactions WHERE reversal_of_id = ? AND deleted_at = '' LIMIT 1",
+          variables: <Variable<Object>>[Variable<String>(row.id)],
+        ).getSingleOrNull();
+        if (existing != null) continue;
         result.add(await reverseTransactionInExistingTransaction(
           row,
           reason: reason,
