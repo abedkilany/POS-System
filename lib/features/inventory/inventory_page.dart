@@ -1,0 +1,3186 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+
+import '../../core/localization/app_localizations.dart';
+import '../../core/localization/localized_domain_exception.dart';
+import '../../core/services/local_database_service.dart';
+import '../../core/utils/responsive.dart';
+import '../../core/utils/currency_utils.dart';
+import '../../core/utils/revision_cache.dart';
+import '../../core/services/page_timing_scope.dart';
+import '../../core/services/sql_result_export_service.dart';
+import '../../core/services/warehouse_inventory_pdf_service.dart';
+import '../../data/app_store.dart';
+import '../../models/inventory_count.dart';
+import '../../models/product.dart';
+import '../../models/stock_movement.dart';
+import '../../models/user_role.dart';
+import '../../models/warehouse.dart';
+import '../../widgets/page_data_load_indicator.dart';
+import '../../widgets/summary_card.dart';
+import '../barcode/barcode_scanner_page.dart';
+import 'batch_allocation_dialog.dart';
+import 'warehouse_transfer_page.dart';
+
+String _movementTypeLabel(AppLocalizations tr, String type) {
+  switch (type) {
+    case 'auto_correction':
+      return tr.text('auto_correction');
+    case 'purchase_receive':
+      return tr.text('purchase_received');
+    case 'purchase_return':
+      return tr.text('purchase_return');
+    case 'purchase_cancel':
+      return tr.text('purchase_cancel');
+    case 'sale':
+      return tr.text('sale_invoice');
+    case 'sale_return':
+      return tr.text('return_sale');
+    case 'sale_restore':
+      return tr.text('sale_restore');
+    case 'sale_cancel':
+      return tr.text('sale_cancel');
+    case 'paymentReceived':
+      return tr.text('payment_received');
+    case 'paymentPaid':
+      return tr.text('payment_paid');
+    case 'paymentReversal':
+      return tr.text('payment_reversal');
+    case 'transfer_in':
+    case 'warehouse_transfer_in':
+      return tr.text('warehouse_transfer_in');
+    case 'transfer_out':
+    case 'warehouse_transfer_out':
+      return tr.text('warehouse_transfer_out');
+    case 'count_adjustment':
+      return tr.text('count_adjustment');
+    case 'manufacturing_consume':
+      return tr.text('manufacturing_consume');
+    case 'manufacturing_produce':
+      return tr.text('manufacturing_output');
+    case 'manufacturing_output':
+      return tr.text('manufacturing_output');
+    default:
+      return type.replaceAll('_', ' ');
+  }
+}
+
+class InventoryPage extends StatefulWidget {
+  const InventoryPage({super.key, required this.store});
+
+  final AppStore store;
+
+  @override
+  State<InventoryPage> createState() => _InventoryPageState();
+}
+
+class _InventoryOverviewMetrics {
+  const _InventoryOverviewMetrics({
+    required this.productCount,
+    required this.totalUnits,
+    required this.lowStockCount,
+    required this.inventoryRetailValue,
+    required this.pendingAutoCorrectionCount,
+  });
+
+  final int productCount;
+  final double totalUnits;
+  final int lowStockCount;
+  final double inventoryRetailValue;
+  final int pendingAutoCorrectionCount;
+
+  factory _InventoryOverviewMetrics.fromStore(AppStore store) {
+    final products = store.stockTrackedProducts;
+    var totalUnits = 0.0;
+    var lowStockCount = 0;
+    var inventoryRetailValue = 0.0;
+    for (final product in products) {
+      totalUnits += product.stock;
+      inventoryRetailValue += product.usdPrice * product.stock;
+      if (product.stock <= product.lowStockThreshold) {
+        lowStockCount += 1;
+      }
+    }
+    return _InventoryOverviewMetrics(
+      productCount: store.products.length,
+      totalUnits: totalUnits,
+      lowStockCount: lowStockCount,
+      inventoryRetailValue: inventoryRetailValue,
+      pendingAutoCorrectionCount: store.pendingAutoCorrectionCount,
+    );
+  }
+}
+
+class _ExpiryBatchesTab extends StatefulWidget {
+  const _ExpiryBatchesTab({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_ExpiryBatchesTab> createState() => _ExpiryBatchesTabState();
+}
+
+class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
+  String query = '';
+  String status = 'all';
+
+  Future<void> _changeStatus(Map<String, dynamic> row, String value) async {
+    await widget.store.setExpiryBatchStatus(row['batchId'].toString(), value);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _adjustBatch(
+    Map<String, dynamic> row, {
+    required bool dispose,
+  }) async {
+    final controller = TextEditingController(
+      text: dispose ? (row['quantity'] as num? ?? 0).toString() : '',
+    );
+    final tr = AppLocalizations.of(context);
+    final value = await showDialog<double>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title:
+            Text(dispose ? tr.text('dispose_batch') : tr.text('batch_count')),
+        content: TextField(
+          controller: controller,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: tr.text('quantity')),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, double.tryParse(controller.text.trim())),
+            child: Text(tr.text('save')),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || value < 0) return;
+    final current = (row['quantity'] as num? ?? 0).toDouble();
+    final delta = dispose ? -value : value - current;
+    if (delta == 0) return;
+    await widget.store.adjustExpiryBatchStock(
+      productId: row['productId'].toString(),
+      warehouseId: row['warehouseId'].toString(),
+      batchId: row['batchId'].toString(),
+      quantityDelta: delta,
+      reason: dispose ? 'Expired batch disposal' : 'Batch stock count',
+      adjustmentCategory: dispose ? 'expired' : 'stock_count_adjustment',
+    );
+    if (dispose && value >= current) {
+      await widget.store
+          .setExpiryBatchStatus(row['batchId'].toString(), 'disposed');
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _reverseLatestBatchAdjustment(Map<String, dynamic> row) async {
+    final tr = AppLocalizations.of(context);
+    final batchId = row['batchId']?.toString() ?? '';
+    final candidates = widget.store.stockMovements
+        .where((movement) =>
+            movement.batchId == batchId &&
+            movement.reversalOfMovementId.isEmpty &&
+            (movement.type == 'inventory_loss' ||
+                movement.type == 'count_adjustment'))
+        .toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    if (candidates.isEmpty) return;
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: Text(tr.text('reverse_batch_adjustment')),
+          content: TextField(
+              controller: controller,
+              decoration: InputDecoration(labelText: tr.text('reason'))),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(AppLocalizations.of(context).text('cancel'))),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, controller.text),
+                child: Text(tr.text('reverse'))),
+          ],
+        );
+      },
+    );
+    if (reason == null) return;
+    await widget.store
+        .reverseExpiryBatchAdjustment(candidates.first.id, reason: reason);
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return FutureBuilder<List<Map<String, dynamic>>?>(
+      future: LocalDatabaseService.getExpiryBatchReportFromSqlite(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final allRows = snapshot.data ?? const <Map<String, dynamic>>[];
+        final normalizedQuery = query.trim().toLowerCase();
+        final canManageCorrections = widget.store.hasPermission(
+          AppPermission.inventoryCorrectionsManage,
+        );
+        final canExport = widget.store.hasPermission(
+          AppPermission.reportsExport,
+        );
+        final rows = allRows.where((row) {
+          final rowStatus = row['status']?.toString() ?? 'active';
+          if (status != 'all' && rowStatus != status) return false;
+          if (normalizedQuery.isEmpty) return true;
+          return '${row['productName']} ${row['supplierBatchNumber']} ${row['warehouseId']}'
+              .toLowerCase()
+              .contains(normalizedQuery);
+        }).toList();
+        if (rows.isEmpty) {
+          return Center(child: Text(tr.text('no_expiry_batches')));
+        }
+        final today = DateTime.now();
+        final startOfToday = DateTime(today.year, today.month, today.day);
+        final expiredCount = allRows.where((row) {
+          final expiry =
+              DateTime.tryParse(row['expirationDate']?.toString() ?? '');
+          return expiry != null && expiry.isBefore(startOfToday);
+        }).length;
+        final expiringSoonCount = allRows.where((row) {
+          final expiry =
+              DateTime.tryParse(row['expirationDate']?.toString() ?? '');
+          if (expiry == null || expiry.isBefore(startOfToday)) return false;
+          final alertDays = (row['alertDays'] as num? ?? 30).toInt();
+          return expiry.difference(startOfToday).inDays <= alertDays;
+        }).length;
+        final atRiskValue = allRows.fold<double>(0, (sum, row) {
+          final expiry =
+              DateTime.tryParse(row['expirationDate']?.toString() ?? '');
+          if (expiry == null) return sum;
+          final alertDays = (row['alertDays'] as num? ?? 30).toInt();
+          if (expiry.difference(startOfToday).inDays > alertDays) return sum;
+          return sum +
+              (row['quantity'] as num? ?? 0).toDouble() *
+                  (row['unitCost'] as num? ?? 0).toDouble();
+        });
+        return Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Wrap(spacing: 12, runSpacing: 8, children: [
+              Chip(
+                  avatar: const Icon(Icons.error_outline, color: Colors.red),
+                  label: Text('${tr.text('expired')}: $expiredCount')),
+              Chip(
+                  avatar: const Icon(Icons.notification_important_outlined,
+                      color: Colors.orange),
+                  label:
+                      Text('${tr.text('expiring_soon')}: $expiringSoonCount')),
+              Chip(
+                  avatar: const Icon(Icons.payments_outlined),
+                  label: Text(
+                      '${tr.text('estimated_value')}: ${formatUsdReferenceAmount(atRiskValue, widget.store.storeProfile)}')),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Row(children: [
+              Expanded(
+                  child: TextField(
+                decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search),
+                    labelText: tr.text('search')),
+                onChanged: (value) => setState(() => query = value),
+              )),
+              const SizedBox(width: 12),
+              DropdownButton<String>(
+                value: status,
+                items: <String>['all', 'active', 'blocked', 'disposed']
+                    .map((value) => DropdownMenuItem(
+                        value: value, child: Text(tr.text(value))))
+                    .toList(),
+                onChanged: (value) => setState(() => status = value ?? 'all'),
+              ),
+              IconButton(
+                tooltip: tr.text('export_csv'),
+                icon: const Icon(Icons.download_outlined),
+                onPressed: rows.isEmpty || !canExport
+                    ? null
+                    : () async {
+                        try {
+                          await SqlResultExportService.exportRows(
+                            rows: rows
+                                .map((row) => Map<String, Object?>.from(row))
+                                .toList(),
+                            format: 'csv',
+                            baseFileName: 'ventio-expiry-batches',
+                          );
+                        } catch (error) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(localizedErrorText(
+                                    AppLocalizations.of(context), error)),
+                              ),
+                            );
+                          }
+                        }
+                      },
+              ),
+            ]),
+          ),
+          Expanded(
+              child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            itemCount: rows.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final row = rows[index];
+              final expiry =
+                  DateTime.tryParse(row['expirationDate']?.toString() ?? '');
+              final days = expiry == null
+                  ? null
+                  : DateTime(expiry.year, expiry.month, expiry.day)
+                      .difference(startOfToday)
+                      .inDays;
+              final color = days == null
+                  ? Colors.grey
+                  : days < 0
+                      ? Colors.red
+                      : days <= 30
+                          ? Colors.orange
+                          : Colors.green;
+              final quantity = (row['quantity'] as num? ?? 0).toDouble();
+              return Card(
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: color.withValues(alpha: .14),
+                    child: Icon(Icons.event_outlined, color: color),
+                  ),
+                  title: Text(row['productName']?.toString() ?? ''),
+                  subtitle: Text([
+                    if ((row['supplierBatchNumber']?.toString() ?? '')
+                        .isNotEmpty)
+                      '${tr.text('batch_number')}: ${row['supplierBatchNumber']}',
+                    '${tr.text('warehouse')}: ${row['warehouseId']}',
+                    '${tr.text('quantity')}: ${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 2)}',
+                  ].join(' • ')),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            expiry == null
+                                ? tr.text('no_expiration_date')
+                                : MaterialLocalizations.of(context)
+                                    .formatMediumDate(expiry),
+                            style: TextStyle(
+                                color: color, fontWeight: FontWeight.w700),
+                          ),
+                          if (days != null)
+                            Text(days < 0
+                                ? tr.text('expired')
+                                : '$days ${tr.text('days')}'),
+                        ]),
+                    PopupMenuButton<String>(
+                      enabled: canManageCorrections,
+                      onSelected: (value) async {
+                        if (value == 'count') {
+                          await _adjustBatch(row, dispose: false);
+                        }
+                        if (value == 'dispose') {
+                          await _adjustBatch(row, dispose: true);
+                        }
+                        if (value == 'block') {
+                          await _changeStatus(row, 'blocked');
+                        }
+                        if (value == 'activate') {
+                          await _changeStatus(row, 'active');
+                        }
+                        if (value == 'reverse') {
+                          await _reverseLatestBatchAdjustment(row);
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        PopupMenuItem(
+                            value: 'count',
+                            child: Text(tr.text('batch_count'))),
+                        PopupMenuItem(
+                            value: 'dispose',
+                            child: Text(tr.text('dispose_batch'))),
+                        PopupMenuItem(
+                            value: 'reverse',
+                            child: Text(tr.text('reverse_adjustment'))),
+                        if ((row['status']?.toString() ?? 'active') ==
+                            'blocked')
+                          PopupMenuItem(
+                              value: 'activate',
+                              child: Text(tr.text('activate_batch')))
+                        else
+                          PopupMenuItem(
+                              value: 'block',
+                              child: Text(tr.text('block_batch'))),
+                      ],
+                    ),
+                  ]),
+                ),
+              );
+            },
+          )),
+        ]);
+      },
+    );
+  }
+}
+
+class _InventoryPageState extends State<InventoryPage>
+    with SingleTickerProviderStateMixin {
+  String query = '';
+  final TextEditingController _searchController = TextEditingController();
+  late final TabController _tabController =
+      TabController(length: 7, vsync: this);
+  Future<_InventoryProductsResult?>? _inventoryProductsFuture;
+  String _inventoryProductsFutureKey = '';
+  int _visibleInventoryProductCount = 100;
+  final RevisionKeyCache<List<Product>> _filteredProductsCache =
+      RevisionKeyCache<List<Product>>();
+  final RevisionValueCache<_InventoryOverviewMetrics> _overviewCache =
+      RevisionValueCache<_InventoryOverviewMetrics>();
+
+  Future<double> _warehouseStock(
+    String productId,
+    String warehouseId,
+  ) async {
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return widget.store.warehouseStockFromSqlite(
+        productId,
+        warehouseId: warehouseId,
+      );
+    }
+    return widget.store.stockForWarehouse(productId, warehouseId);
+  }
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
+    _searchController.dispose();
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant InventoryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
+      _inventoryProductsFuture = null;
+      _inventoryProductsFutureKey = '';
+      _visibleInventoryProductCount = 100;
+      _filteredProductsCache.invalidate();
+      _overviewCache.invalidate();
+    }
+  }
+
+  Future<void> _scanInventorySearchBarcode() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => const PageTimingScope(
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(),
+        ),
+      ),
+    );
+    if (!mounted || code == null || code.trim().isEmpty) return;
+    setState(() {
+      query = code.trim();
+      _searchController.text = query;
+      _visibleInventoryProductCount = 100;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewInventory) {
+      return _InventoryAccessDenied(
+        title: tr.text('inventory'),
+        message: tr.text('no_access_current_role'),
+      );
+    }
+    if (!widget.store.isCoreDataLoaded) {
+      return const Center(child: CircularProgressIndicator.adaptive());
+    }
+    final normalizedQuery = query.trim().toLowerCase();
+    final overview = _overviewCache.getOrCompute(
+      widget.store.inventoryRevision,
+      () => _InventoryOverviewMetrics.fromStore(widget.store),
+    );
+    final canViewOverview =
+        widget.store.hasPermission(AppPermission.inventoryView) ||
+            widget.store.hasPermission(AppPermission.reportsView) ||
+            widget.store.hasPermission(AppPermission.productsCreate) ||
+            widget.store.hasPermission(AppPermission.productsEdit) ||
+            widget.store.hasPermission(AppPermission.productsDelete);
+    final canManageWarehouses =
+        widget.store.hasPermission(AppPermission.inventoryWarehousesManage);
+    final canViewMovements = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryMovementsView,
+      AppPermission.reportsView,
+    });
+    final canViewCorrections = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryCorrectionsManage,
+      AppPermission.inventoryMovementsView,
+      AppPermission.reportsView,
+    });
+    final canManageCounts =
+        widget.store.hasPermission(AppPermission.inventoryCountsManage);
+    final canViewWasteLoss = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryWasteView,
+      AppPermission.reportsView,
+    });
+    final canManageWaste = widget.store.hasPermission(
+      AppPermission.inventoryWasteManage,
+    );
+
+    if (!canViewOverview &&
+        !canManageWarehouses &&
+        !canViewMovements &&
+        !canViewCorrections &&
+        !canManageCounts &&
+        !canViewWasteLoss) {
+      return _InventoryAccessDenied(
+        title: tr.text('inventory'),
+        message: tr.text('no_access_current_role'),
+      );
+    }
+
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_InventoryProductsResult?>(
+        future: _queryInventoryProductsFromSqlite(normalizedQuery),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildInventoryShell(
+              tr,
+              products: result.items,
+              productsTotalCount: result.totalCount,
+              overview: overview,
+              canManageWarehouses: canManageWarehouses,
+              canViewMovements: canViewMovements,
+              canViewCorrections: canViewCorrections,
+              canManageCounts: canManageCounts,
+              canViewWasteLoss: canViewWasteLoss,
+              canManageWaste: canManageWaste,
+              loadingProducts:
+                  snapshot.connectionState == ConnectionState.waiting &&
+                      result.items.isEmpty,
+              onLoadMoreProducts: result.hasMore
+                  ? () => _loadMoreInventoryProducts(result.totalCount)
+                  : null,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildInventoryShell(
+              tr,
+              products: const <Product>[],
+              productsTotalCount: 0,
+              overview: overview,
+              canManageWarehouses: canManageWarehouses,
+              canViewMovements: canViewMovements,
+              canViewCorrections: canViewCorrections,
+              canManageCounts: canManageCounts,
+              canViewWasteLoss: canViewWasteLoss,
+              canManageWaste: canManageWaste,
+              loadingProducts: true,
+            );
+          }
+          final fallbackProducts = _productsFromMemory(normalizedQuery);
+          return _buildInventoryShell(
+            tr,
+            products: fallbackProducts,
+            productsTotalCount: fallbackProducts.length,
+            overview: overview,
+            canManageWarehouses: canManageWarehouses,
+            canViewMovements: canViewMovements,
+            canViewCorrections: canViewCorrections,
+            canManageCounts: canManageCounts,
+            canViewWasteLoss: canViewWasteLoss,
+            canManageWaste: canManageWaste,
+          );
+        },
+      );
+    }
+
+    final products = _productsFromMemory(normalizedQuery);
+    return _buildInventoryShell(
+      tr,
+      products: products,
+      productsTotalCount: products.length,
+      overview: overview,
+      canManageWarehouses: canManageWarehouses,
+      canViewMovements: canViewMovements,
+      canViewCorrections: canViewCorrections,
+      canManageCounts: canManageCounts,
+      canViewWasteLoss: canViewWasteLoss,
+      canManageWaste: canManageWaste,
+    );
+  }
+
+  List<Product> _productsFromMemory(String normalizedQuery) {
+    return _filteredProductsCache.getOrCompute(
+      widget.store.inventoryRevision,
+      normalizedQuery,
+      () => _filterProducts(widget.store.stockTrackedProducts, normalizedQuery),
+    );
+  }
+
+  Future<_InventoryProductsResult?> _queryInventoryProductsFromSqlite(
+    String normalizedQuery,
+  ) {
+    final limit = _visibleInventoryProductCount.clamp(1, 500).toInt();
+    final key = '${widget.store.inventoryRevision}|$normalizedQuery|$limit';
+    if (_inventoryProductsFuture == null ||
+        _inventoryProductsFutureKey != key) {
+      _inventoryProductsFutureKey = key;
+      _inventoryProductsFuture = () async {
+        final page = await LocalDatabaseService.queryProductsFromSqlite(
+          query: normalizedQuery,
+          limit: limit,
+          stockTrackedOnly: true,
+        );
+        if (page == null) return null;
+        return _InventoryProductsResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _inventoryProductsFuture!;
+  }
+
+  void _loadMoreInventoryProducts(int totalCount) {
+    setState(() {
+      _visibleInventoryProductCount =
+          math.min(totalCount, _visibleInventoryProductCount + 100);
+    });
+  }
+
+  Widget _buildInventoryShell(
+    AppLocalizations tr, {
+    required List<Product> products,
+    required int productsTotalCount,
+    required _InventoryOverviewMetrics overview,
+    required bool canManageWarehouses,
+    required bool canViewMovements,
+    required bool canViewCorrections,
+    required bool canManageCounts,
+    required bool canViewWasteLoss,
+    required bool canManageWaste,
+    bool loadingProducts = false,
+    VoidCallback? onLoadMoreProducts,
+  }) {
+    return Column(
+      children: [
+        Material(
+          color: Theme.of(context).colorScheme.surface,
+          child: TabBar(
+            controller: _tabController,
+            tabs: [
+              Tab(text: tr.text('inventory_overview')),
+              Tab(text: tr.text('warehouses')),
+              Tab(text: tr.text('stock_movements')),
+              Tab(text: tr.text('auto_corrections')),
+              Tab(text: tr.text('stock_count')),
+              Tab(text: tr.text('waste_loss_report')),
+              Tab(text: tr.text('expiry_batches')),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _InventoryOverview(
+                store: widget.store,
+                products: products,
+                totalCount: productsTotalCount,
+                overview: overview,
+                query: query,
+                searchController: _searchController,
+                onScanBarcode: _scanInventorySearchBarcode,
+                onQuery: (value) => setState(() {
+                  query = value;
+                  _visibleInventoryProductCount = 100;
+                }),
+                onAdjust: widget.store.hasPermission(
+                        AppPermission.inventoryCorrectionsManage)
+                    ? _openAdjustmentDialog
+                    : null,
+                canAdjust: widget.store.hasPermission(
+                  AppPermission.inventoryCorrectionsManage,
+                ),
+                loading: loadingProducts,
+                onLoadMore: onLoadMoreProducts,
+              ),
+              _WarehousesTab(store: widget.store),
+              _MovementsList(store: widget.store),
+              _AutoCorrectionsTab(store: widget.store),
+              _StockCountTab(store: widget.store),
+              _WasteLossReportDb(
+                store: widget.store,
+                canManageWaste: canManageWaste,
+              ),
+              _ExpiryBatchesTab(store: widget.store),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openAdjustmentDialog(String productId) async {
+    final tr = AppLocalizations.of(context);
+    final product = widget.store.stockTrackedProducts
+        .firstWhere((item) => item.id == productId);
+    final qtyController = TextEditingController();
+    final notesController = TextEditingController();
+    final evidenceController = TextEditingController();
+    var selectedWarehouseId = widget.store.resolveWarehouseForPurchase().id;
+    var category = 'damage';
+    final categories = <String, String>{
+      'damage': tr.text('adjustment_damage'),
+      'expired': tr.text('adjustment_expired'),
+      'free_sample': tr.text('adjustment_free_sample'),
+      'internal_consumption': tr.text('adjustment_internal_consumption'),
+      'stock_count_shortage': tr.text('adjustment_stock_count_shortage'),
+      'stock_count_overage': tr.text('adjustment_stock_count_overage'),
+      'other': tr.text('adjustment_other'),
+    };
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('${tr.text('adjust_stock')} • ${product.name}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FutureBuilder<double>(
+                  future: _warehouseStock(product.id, selectedWarehouseId),
+                  builder: (context, snapshot) {
+                    final currentStock = snapshot.data ??
+                        widget.store.stockForWarehouse(
+                          product.id,
+                          selectedWarehouseId,
+                        );
+                    return Text(
+                      '${tr.text('current_stock')}: ${currentStock.toStringAsFixed(2)}',
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedWarehouseId,
+                  decoration: InputDecoration(labelText: tr.text('warehouse')),
+                  items: widget.store.warehouses
+                      .map((warehouse) => DropdownMenuItem<String>(
+                            value: warehouse.id,
+                            child: Text(warehouse.name),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    setDialogState(() {
+                      selectedWarehouseId = widget.store
+                          .resolveWarehouseForPurchase(warehouseId: value ?? '')
+                          .id;
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: category,
+                  decoration: InputDecoration(
+                      labelText: tr.text('adjustment_reason_type')),
+                  items: categories.entries
+                      .map((entry) => DropdownMenuItem(
+                          value: entry.key, child: Text(entry.value)))
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => category = value ?? category),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                    controller: qtyController,
+                    decoration: InputDecoration(
+                        labelText: tr.text('quantity_delta'),
+                        helperText: tr.text('quantity_delta_help')),
+                    keyboardType: const TextInputType.numberWithOptions(
+                        signed: true, decimal: true)),
+                const SizedBox(height: 12),
+                TextField(
+                    controller: notesController,
+                    decoration:
+                        InputDecoration(labelText: tr.text('notes_optional')),
+                    minLines: 1,
+                    maxLines: 3),
+                const SizedBox(height: 12),
+                TextField(
+                    controller: evidenceController,
+                    decoration: InputDecoration(
+                        labelText: tr.text('evidence_optional'),
+                        helperText: tr.text('evidence_optional_help'))),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () async {
+                final delta = double.tryParse(qtyController.text.trim()) ?? 0;
+                if (delta == 0) return;
+                try {
+                  final allocations = product.expiryTrackingEnabled && delta > 0
+                      ? await showBatchAllocationDialog(
+                          context,
+                          product: product,
+                          expectedQuantity: delta,
+                          sourceId:
+                              'adjustment-${DateTime.now().microsecondsSinceEpoch}',
+                        )
+                      : null;
+                  if (product.expiryTrackingEnabled &&
+                      delta > 0 &&
+                      allocations == null) {
+                    return;
+                  }
+                  await widget.store.adjustStock(
+                    productId: productId,
+                    warehouseId: selectedWarehouseId,
+                    quantityDelta: delta,
+                    reason: categories[category] ?? category,
+                    adjustmentCategory: category,
+                    notes: notesController.text,
+                    evidenceRef: evidenceController.text,
+                    batchAllocations: allocations ?? const [],
+                  );
+                  if (context.mounted) Navigator.pop(context);
+                  if (mounted) setState(() {});
+                } catch (error) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(localizedErrorText(
+                            AppLocalizations.of(context), error))));
+                  }
+                }
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InventoryProductsResult {
+  const _InventoryProductsResult({
+    required this.items,
+    required this.totalCount,
+  });
+
+  final List<Product> items;
+  final int totalCount;
+
+  bool get hasMore => items.length < totalCount;
+}
+
+class _StockMovementsQueryResult {
+  const _StockMovementsQueryResult({
+    required this.items,
+    required this.totalCount,
+  });
+
+  final List<StockMovement> items;
+  final int totalCount;
+
+  bool get hasMore => items.length < totalCount;
+}
+
+class _InventoryOverview extends StatelessWidget {
+  const _InventoryOverview(
+      {required this.store,
+      required this.products,
+      required this.totalCount,
+      required this.overview,
+      required this.query,
+      required this.searchController,
+      required this.onScanBarcode,
+      required this.onQuery,
+      required this.onAdjust,
+      required this.canAdjust,
+      required this.loading,
+      required this.onLoadMore});
+
+  final AppStore store;
+  final List<Product> products;
+  final int totalCount;
+  final _InventoryOverviewMetrics overview;
+  final String query;
+  final TextEditingController searchController;
+  final VoidCallback onScanBarcode;
+  final ValueChanged<String> onQuery;
+  final ValueChanged<String>? onAdjust;
+  final bool canAdjust;
+  final bool loading;
+  final VoidCallback? onLoadMore;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final pageInsets = VentioResponsive.pageInsets(context);
+
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: pageInsets,
+          sliver: SliverList(
+            delegate: SliverChildListDelegate([
+              Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: [
+                  SummaryCard(
+                      title: tr.text('product_count'),
+                      value: '${overview.productCount}',
+                      icon: Icons.inventory_2_outlined),
+                  SummaryCard(
+                      title: tr.text('total_units'),
+                      value: '${overview.totalUnits}',
+                      icon: Icons.layers_outlined),
+                  SummaryCard(
+                      title: tr.text('low_stock_alerts'),
+                      value: '${overview.lowStockCount}',
+                      icon: Icons.warning_amber_rounded),
+                  SummaryCard(
+                      title: tr.text('inventory_value'),
+                      value: formatUsdReferenceAmount(
+                          overview.inventoryRetailValue, store.storeProfile),
+                      icon: Icons.payments_outlined),
+                  SummaryCard(
+                      title: tr.text('pending_auto_corrections'),
+                      value: '${overview.pendingAutoCorrectionCount}',
+                      icon: Icons.notifications_active_outlined),
+                ],
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: searchController,
+                decoration: InputDecoration(
+                  hintText: tr.text('search_inventory'),
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: IconButton(
+                    tooltip: tr.text('scan_with_camera'),
+                    onPressed: onScanBarcode,
+                    icon: const Icon(Icons.camera_alt_outlined),
+                  ),
+                ),
+                onChanged: onQuery,
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Column(
+                  children: [
+                    ListTile(
+                      title: Text(tr.text('inventory_overview'),
+                          style: Theme.of(context).textTheme.titleMedium),
+                      subtitle: Text(tr.text('inventory_page_desc')),
+                      trailing: PageDataLoadIndicator(
+                        loadedCount: products.length,
+                        totalCount: totalCount,
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    if (loading)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: CircularProgressIndicator.adaptive(),
+                        ),
+                      )
+                    else if (products.isEmpty)
+                      Padding(
+                          padding: VentioResponsive.pageInsets(context),
+                          child: Text(tr.text('no_inventory_items'))),
+                  ],
+                ),
+              ),
+            ]),
+          ),
+        ),
+        if (products.isNotEmpty)
+          SliverPadding(
+            padding: EdgeInsetsDirectional.only(
+              start: pageInsets.left,
+              end: pageInsets.right,
+              bottom: pageInsets.bottom,
+            ),
+            sliver: SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.crossAxisExtent < 620;
+                return SliverFixedExtentList(
+                  itemExtent: compact ? 128 : 82,
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final product = products[index];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 1),
+                        child: Card(
+                          margin: EdgeInsets.zero,
+                          shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.zero),
+                          child: _InventoryProductTile(
+                            product: product,
+                            store: store,
+                            compact: compact,
+                            canAdjust: canAdjust,
+                            onAdjust: onAdjust,
+                          ),
+                        ),
+                      );
+                    },
+                    childCount: products.length,
+                  ),
+                );
+              },
+            ),
+          ),
+        if (onLoadMore != null)
+          SliverPadding(
+            padding: EdgeInsetsDirectional.only(
+              start: pageInsets.left,
+              end: pageInsets.right,
+              bottom: pageInsets.bottom,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: Center(
+                child: TextButton.icon(
+                  onPressed: onLoadMore,
+                  icon: const Icon(Icons.expand_more),
+                  label: Text(
+                    '${tr.text('more')} (${products.length}/$totalCount)',
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _InventoryProductTile extends StatelessWidget {
+  const _InventoryProductTile(
+      {required this.product,
+      required this.store,
+      required this.compact,
+      required this.onAdjust,
+      required this.canAdjust});
+
+  final Product product;
+  final AppStore store;
+  final bool compact;
+  final ValueChanged<String>? onAdjust;
+  final bool canAdjust;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final isLow =
+        product.trackStock && product.stock <= product.lowStockThreshold;
+    final meta = Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(formatUsdReferenceAmount(product.price, store.storeProfile)),
+        Chip(
+            avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null,
+            label: Text('${tr.text('stock')}: ${product.stock}')),
+        if (canAdjust)
+          TextButton.icon(
+              onPressed: onAdjust == null ? null : () => onAdjust!(product.id),
+              icon: const Icon(Icons.tune),
+              label: Text(tr.text('adjust'))),
+      ],
+    );
+    if (compact) {
+      return ListTile(
+        leading: CircleAvatar(
+            child: Icon(isLow
+                ? Icons.warning_amber_rounded
+                : Icons.inventory_2_outlined)),
+        title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${product.code} • ${product.category}',
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 6),
+            meta,
+          ],
+        ),
+      );
+    }
+    return ListTile(
+      leading: CircleAvatar(
+          child: Icon(isLow
+              ? Icons.warning_amber_rounded
+              : Icons.inventory_2_outlined)),
+      title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${product.code} • ${product.category}',
+          maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxWidth: VentioResponsive.clampToScreen(context, 360,
+                min: 180, horizontalPadding: 120)),
+        child: Align(alignment: AlignmentDirectional.centerEnd, child: meta),
+      ),
+    );
+  }
+}
+
+List<Product> _filterProducts(List<Product> products, String query) {
+  final value = query.trim().toLowerCase();
+  if (value.isEmpty) return products;
+  return products.where((item) {
+    return item.name.toLowerCase().contains(value) ||
+        item.code.toLowerCase().contains(value) ||
+        item.barcode.toLowerCase().contains(value) ||
+        item.category.toLowerCase().contains(value) ||
+        item.effectiveSaleUnits
+            .any((unit) => unit.barcode.toLowerCase().contains(value)) ||
+        item.effectivePurchaseUnits
+            .any((unit) => unit.barcode.toLowerCase().contains(value));
+  }).toList(growable: false);
+}
+
+class _WarehousesTab extends StatefulWidget {
+  const _WarehousesTab({required this.store});
+  final AppStore store;
+
+  @override
+  State<_WarehousesTab> createState() => _WarehousesTabState();
+}
+
+class _WarehousesTabState extends State<_WarehousesTab> {
+  Future<Map<String, List<_WarehouseProductStock>>>? _stockRowsFuture;
+  String _stockRowsFutureKey = '';
+
+  @override
+  void didUpdateWidget(covariant _WarehousesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _stockRowsFuture = null;
+      _stockRowsFutureKey = '';
+    }
+  }
+
+  Future<Map<String, List<_WarehouseProductStock>>>
+      _loadStockRowsByWarehouse() async {
+    final warehouses = widget.store.warehouses;
+    final products = widget.store.stockTrackedProducts;
+    final productsById = <String, Product>{
+      for (final product in products) product.id: product,
+    };
+    final balances = await widget.store.warehouseStockBalancesFromSqlite();
+    final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
+      for (final warehouse in warehouses)
+        warehouse.id: <_WarehouseProductStock>[],
+    };
+
+    for (final warehouseEntry in balances.entries) {
+      final rows = stockRowsByWarehouse[warehouseEntry.key];
+      if (rows == null) continue;
+      for (final productEntry in warehouseEntry.value.entries) {
+        final product = productsById[productEntry.key];
+        if (product == null) continue;
+        rows.add(_WarehouseProductStock(
+          product: product,
+          stock: productEntry.value,
+        ));
+      }
+      rows.sort((a, b) => a.product.name.compareTo(b.product.name));
+    }
+    return stockRowsByWarehouse;
+  }
+
+  Future<Map<String, List<_WarehouseProductStock>>>
+      _stockRowsByWarehouseFuture() {
+    final key =
+        '${widget.store.appIdentity.storeId}:${widget.store.inventoryRevision}';
+    if (_stockRowsFuture == null || _stockRowsFutureKey != key) {
+      _stockRowsFutureKey = key;
+      _stockRowsFuture = _loadStockRowsByWarehouse();
+    }
+    return _stockRowsFuture!;
+  }
+
+  Future<void> _createWarehouse() async {
+    final tr = AppLocalizations.of(context);
+    final nameController = TextEditingController();
+    final codeController = TextEditingController();
+    final locationController = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('create_warehouse')),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+                controller: nameController,
+                decoration:
+                    InputDecoration(labelText: tr.text('warehouse_name'))),
+            const SizedBox(height: 12),
+            TextField(
+                controller: codeController,
+                decoration:
+                    InputDecoration(labelText: tr.text('code_optional'))),
+            const SizedBox(height: 12),
+            TextField(
+                controller: locationController,
+                decoration:
+                    InputDecoration(labelText: tr.text('location_optional'))),
+          ]),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () async {
+              try {
+                await widget.store.createWarehouse(
+                    name: nameController.text,
+                    code: codeController.text,
+                    location: locationController.text);
+                if (context.mounted) Navigator.pop(context);
+                if (mounted) setState(() {});
+              } catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(localizedErrorText(
+                          AppLocalizations.of(context), error))));
+                }
+              }
+            },
+            child: Text(tr.text('save')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _transferStock() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => WarehouseTransferPage(store: widget.store),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _stockRowsFuture = null;
+      _stockRowsFutureKey = '';
+    });
+  }
+
+  Future<void> _printWarehouseInventory(
+    Warehouse warehouse,
+    List<_WarehouseProductStock> rows,
+  ) async {
+    try {
+      await WarehouseInventoryPdfService.printWarehouseInventory(
+        warehouse: warehouse,
+        rows: rows
+            .map(
+              (row) => WarehouseInventoryPdfRow(
+                product: row.product,
+                stock: row.stock,
+              ),
+            )
+            .toList(growable: false),
+        profile: widget.store.storeProfile,
+        locale: Localizations.localeOf(context),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (!widget.store.hasPermission(
+      AppPermission.inventoryWarehousesManage,
+    )) {
+      return _InventorySectionDenied(
+        title: tr.text('warehouses'),
+        message: tr.text('warehouse_management_no_access'),
+      );
+    }
+    final warehouses = widget.store.warehouses;
+    return FutureBuilder<Map<String, List<_WarehouseProductStock>>>(
+      future: _stockRowsByWarehouseFuture(),
+      builder: (context, snapshot) {
+        final stockRowsByWarehouse = snapshot.data;
+        return ListView.builder(
+          padding: VentioResponsive.pageInsets(context),
+          itemCount: warehouses.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Wrap(spacing: 12, runSpacing: 12, children: [
+                  FilledButton.icon(
+                      onPressed: _createWarehouse,
+                      icon: const Icon(Icons.add_business_outlined),
+                      label: Text(tr.text('create_warehouse'))),
+                  OutlinedButton.icon(
+                      onPressed: warehouses.length < 2 ? null : _transferStock,
+                      icon: const Icon(Icons.swap_horiz),
+                      label: Text(tr.text('transfer_stock'))),
+                ]),
+              );
+            }
+            final warehouse = warehouses[index - 1];
+            final rows = stockRowsByWarehouse?[warehouse.id] ??
+                const <_WarehouseProductStock>[];
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ExpansionTile(
+                leading:
+                    const CircleAvatar(child: Icon(Icons.warehouse_outlined)),
+                title: Row(
+                  children: [
+                    Expanded(child: Text(warehouse.name)),
+                    IconButton(
+                      tooltip:
+                          Localizations.localeOf(context).languageCode == 'ar'
+                              ? 'طباعة محتوى المستودع'
+                              : 'Print warehouse inventory',
+                      onPressed: stockRowsByWarehouse == null
+                          ? null
+                          : () => _printWarehouseInventory(warehouse, rows),
+                      icon: const Icon(Icons.print_outlined),
+                    ),
+                  ],
+                ),
+                subtitle: Text([
+                  if (warehouse.code.isNotEmpty) warehouse.code,
+                  if (warehouse.location.isNotEmpty) warehouse.location
+                ].join(' • ')),
+                children: [
+                  if (stockRowsByWarehouse == null)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else ...[
+                    for (final row in rows.take(100))
+                      ListTile(
+                        dense: true,
+                        title: Text(row.product.name),
+                        trailing: Text('${row.stock}'),
+                      ),
+                    if (rows.isEmpty)
+                      Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(tr.text('no_inventory_items'))),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _WarehouseProductStock {
+  const _WarehouseProductStock({required this.product, required this.stock});
+
+  final Product product;
+  final double stock;
+}
+
+class _MovementsList extends StatefulWidget {
+  const _MovementsList({required this.store});
+  final AppStore store;
+
+  @override
+  State<_MovementsList> createState() => _MovementsListState();
+}
+
+class _MovementsListState extends State<_MovementsList> {
+  static final RevisionKeyCache<List<StockMovement>> _movementsCache =
+      RevisionKeyCache<List<StockMovement>>();
+  Future<_StockMovementsQueryResult?>? _movementsFuture;
+  String _movementsFutureKey = '';
+  int _visibleMovementCount = 100;
+
+  @override
+  void didUpdateWidget(covariant _MovementsList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _movementsFuture = null;
+      _movementsFutureKey = '';
+      _visibleMovementCount = 100;
+    }
+  }
+
+  Future<_StockMovementsQueryResult?> _queryMovementsFromSqlite() {
+    final limit = _visibleMovementCount.clamp(1, 500).toInt();
+    final key = '${widget.store.stockMovementsRevision}|$limit';
+    if (_movementsFuture == null || _movementsFutureKey != key) {
+      _movementsFutureKey = key;
+      _movementsFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          limit: limit,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _movementsFuture!;
+  }
+
+  void _loadMoreMovements(int totalCount) {
+    setState(() {
+      _visibleMovementCount = math.min(totalCount, _visibleMovementCount + 100);
+      _movementsFuture = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryMovementsView,
+      AppPermission.reportsView,
+    })) {
+      return _InventorySectionDenied(
+        title: tr.text('stock_movements'),
+        message: tr.text('stock_movement_history_no_access'),
+      );
+    }
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_StockMovementsQueryResult?>(
+        future: _queryMovementsFromSqlite(),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildMovementsView(
+              context,
+              tr,
+              result.items,
+              totalCount: result.totalCount,
+              loading: snapshot.connectionState == ConnectionState.waiting &&
+                  result.items.isEmpty,
+              onLoadMore: result.hasMore
+                  ? () => _loadMoreMovements(result.totalCount)
+                  : null,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildMovementsView(
+              context,
+              tr,
+              const <StockMovement>[],
+              totalCount: 0,
+              loading: true,
+            );
+          }
+          return _buildMovementsFromMemory(context, tr);
+        },
+      );
+    }
+    return _buildMovementsFromMemory(context, tr);
+  }
+
+  Widget _buildMovementsFromMemory(BuildContext context, AppLocalizations tr) {
+    final movements = _movementsCache.getOrCompute(
+      widget.store.stockMovementsRevision,
+      widget.store.appIdentity.storeId,
+      () => widget.store.stockMovements.toList(growable: false),
+    );
+    final visible = movements.take(200).toList(growable: false);
+    return _buildMovementsView(
+      context,
+      tr,
+      visible,
+      totalCount: movements.length,
+    );
+  }
+
+  Widget _buildMovementsView(
+    BuildContext context,
+    AppLocalizations tr,
+    List<StockMovement> movements, {
+    required int totalCount,
+    bool loading = false,
+    VoidCallback? onLoadMore,
+  }) {
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        PageDataLoadIndicator(
+          loadedCount: movements.length,
+          totalCount: totalCount,
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: loading
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator.adaptive()),
+                )
+              : movements.isEmpty
+                  ? Padding(
+                      padding: VentioResponsive.pageInsets(context),
+                      child: Text(tr.text('no_stock_movements')))
+                  : Column(
+                      children: [
+                        for (final movement in movements) ...[
+                          ListTile(
+                            leading: CircleAvatar(
+                                child: Icon(movement.quantity >= 0
+                                    ? Icons.add
+                                    : Icons.remove)),
+                            title: Text(movement.productName),
+                            subtitle: Text(
+                                "${_movementTypeLabel(tr, movement.type)} • ${movement.warehouseName} • ${movement.referenceNo} • ${movement.date.toLocal().toString().split('.').first}\n${movement.reason}${movement.notes.isNotEmpty ? ' • ${movement.notes}' : ''}${movement.evidenceRef.isNotEmpty ? ' • ${tr.text('evidence')}: ${movement.evidenceRef}' : ''}"),
+                            isThreeLine: true,
+                            trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                      movement.quantity > 0
+                                          ? '+${movement.quantity}'
+                                          : '${movement.quantity}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium),
+                                  if (movement.unitCost > 0)
+                                    Text(formatUsdReferenceAmount(
+                                        movement.value,
+                                        widget.store.storeProfile)),
+                                ]),
+                          ),
+                          const Divider(height: 1),
+                        ],
+                      ],
+                    ),
+        ),
+        if (onLoadMore != null && movements.length < totalCount) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.center,
+            child: OutlinedButton.icon(
+              onPressed: onLoadMore,
+              icon: const Icon(Icons.expand_more),
+              label: Text(tr.text('load_more')),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AutoCorrectionsTab extends StatefulWidget {
+  const _AutoCorrectionsTab({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_AutoCorrectionsTab> createState() => _AutoCorrectionsTabState();
+}
+
+class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
+  bool showReviewed = false;
+  final RevisionKeyCache<List<StockMovement>> _allCache =
+      RevisionKeyCache<List<StockMovement>>();
+  final RevisionKeyCache<List<StockMovement>> _pendingCache =
+      RevisionKeyCache<List<StockMovement>>();
+  Future<_StockMovementsQueryResult?>? _correctionsFuture;
+  Future<_StockMovementsQueryResult?>? _pendingCountFuture;
+  Future<_StockMovementsQueryResult?>? _allCountFuture;
+  String _correctionsFutureKey = '';
+  String _pendingCountFutureKey = '';
+  String _allCountFutureKey = '';
+  int _visibleCorrectionCount = 100;
+
+  @override
+  void didUpdateWidget(covariant _AutoCorrectionsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _allCache.invalidate();
+      _pendingCache.invalidate();
+      _correctionsFuture = null;
+      _pendingCountFuture = null;
+      _allCountFuture = null;
+      _correctionsFutureKey = '';
+      _pendingCountFutureKey = '';
+      _allCountFutureKey = '';
+      _visibleCorrectionCount = 100;
+    }
+  }
+
+  Future<_StockMovementsQueryResult?> _queryCorrectionsFromSqlite({
+    required bool reviewed,
+    required int limit,
+  }) {
+    final key = '${widget.store.stockMovementsRevision}|$reviewed|$limit';
+    if (_correctionsFuture == null || _correctionsFutureKey != key) {
+      _correctionsFutureKey = key;
+      _correctionsFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          type: 'auto_correction',
+          reviewed: reviewed,
+          limit: limit,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _correctionsFuture!;
+  }
+
+  Future<_StockMovementsQueryResult?> _queryPendingCorrectionsCount() {
+    final key = '${widget.store.stockMovementsRevision}|pending_count';
+    if (_pendingCountFuture == null || _pendingCountFutureKey != key) {
+      _pendingCountFutureKey = key;
+      _pendingCountFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          type: 'auto_correction',
+          reviewed: false,
+          limit: 1,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _pendingCountFuture!;
+  }
+
+  Future<_StockMovementsQueryResult?> _queryAllCorrectionsCount() {
+    final key = '${widget.store.stockMovementsRevision}|all_count';
+    if (_allCountFuture == null || _allCountFutureKey != key) {
+      _allCountFutureKey = key;
+      _allCountFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          type: 'auto_correction',
+          limit: 1,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _allCountFuture!;
+  }
+
+  void _loadMoreCorrections(int totalCount) {
+    setState(() {
+      _visibleCorrectionCount =
+          math.min(totalCount, _visibleCorrectionCount + 100);
+      _correctionsFuture = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final canReview = widget.store.hasPermission(
+      AppPermission.inventoryCorrectionsManage,
+    );
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryCorrectionsManage,
+      AppPermission.inventoryMovementsView,
+      AppPermission.reportsView,
+    })) {
+      return _InventorySectionDenied(
+        title: tr.text('auto_corrections'),
+        message: tr.text('auto_correction_review_no_access'),
+      );
+    }
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      final reviewed = showReviewed;
+      final limit = _visibleCorrectionCount.clamp(1, 500).toInt();
+      return FutureBuilder<_StockMovementsQueryResult?>(
+        future: _queryCorrectionsFromSqlite(
+          reviewed: reviewed,
+          limit: limit,
+        ),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result == null &&
+              snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator.adaptive());
+          }
+          if (result == null || snapshot.hasError) {
+            return _buildCorrectionsFromMemory(context, tr, canReview);
+          }
+          return FutureBuilder<List<_StockMovementsQueryResult?>>(
+            future: Future.wait(<Future<_StockMovementsQueryResult?>>[
+              _queryPendingCorrectionsCount(),
+              _queryAllCorrectionsCount(),
+            ]),
+            builder: (context, countSnapshot) {
+              final counts = countSnapshot.data;
+              final pendingCount = counts?[0]?.totalCount ?? result.totalCount;
+              final allCount = counts?[1]?.totalCount ?? result.totalCount;
+              return _buildCorrectionsView(context, tr,
+                  canReview: canReview,
+                  corrections: result.items,
+                  totalCount: result.totalCount,
+                  pendingCount: pendingCount,
+                  allCount: allCount,
+                  onLoadMore: result.hasMore
+                      ? () => _loadMoreCorrections(result.totalCount)
+                      : null);
+            },
+          );
+        },
+      );
+    }
+    return _buildCorrectionsFromMemory(context, tr, canReview);
+  }
+
+  Widget _buildCorrectionsFromMemory(
+    BuildContext context,
+    AppLocalizations tr,
+    bool canReview,
+  ) {
+    final allCorrections = _allCache.getOrCompute(
+      widget.store.stockMovementsRevision,
+      widget.store.appIdentity.storeId,
+      () => widget.store.autoCorrectionMovements.toList(growable: false),
+    );
+    final pending = _pendingCache.getOrCompute(
+      widget.store.stockMovementsRevision,
+      '${widget.store.appIdentity.storeId}|pending',
+      () => widget.store.pendingAutoCorrectionMovements.toList(growable: false),
+    );
+    final corrections = showReviewed ? allCorrections : pending;
+    return _buildCorrectionsView(
+      context,
+      tr,
+      canReview: canReview,
+      corrections: corrections,
+      totalCount: corrections.length,
+      pendingCount: pending.length,
+      allCount: allCorrections.length,
+    );
+  }
+
+  Widget _buildCorrectionsView(
+    BuildContext context,
+    AppLocalizations tr, {
+    required bool canReview,
+    required List<StockMovement> corrections,
+    required int totalCount,
+    required int pendingCount,
+    required int allCount,
+    VoidCallback? onLoadMore,
+  }) {
+    double totalQty = 0;
+    double totalValue = 0;
+    for (final item in corrections) {
+      totalQty += item.quantity.abs();
+      totalValue += item.value;
+    }
+
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: [
+            SummaryCard(
+                title: tr.text('pending_auto_corrections'),
+                value: '$pendingCount',
+                icon: Icons.notifications_active_outlined),
+            SummaryCard(
+                title: tr.text('auto_corrections'),
+                value: '$allCount',
+                icon: Icons.inventory_outlined),
+            SummaryCard(
+                title: tr.text('quantity'),
+                value: totalQty.toStringAsFixed(
+                    totalQty.truncateToDouble() == totalQty ? 0 : 2),
+                icon: Icons.add_box_outlined),
+            SummaryCard(
+                title: tr.text('estimated_value'),
+                value: formatUsdReferenceAmount(
+                    totalValue, widget.store.storeProfile),
+                icon: Icons.payments_outlined),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: SwitchListTile(
+            value: showReviewed,
+            onChanged: (value) => setState(() => showReviewed = value),
+            title: Text(tr.text('show_reviewed_corrections')),
+            subtitle: Text(tr.text('show_reviewed_corrections_desc')),
+            secondary: const Icon(Icons.history_outlined),
+          ),
+        ),
+        const SizedBox(height: 12),
+        PageDataLoadIndicator(
+          loadedCount: corrections.length,
+          totalCount: totalCount,
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: corrections.isEmpty
+              ? Padding(
+                  padding: VentioResponsive.pageInsets(context),
+                  child: Text(showReviewed
+                      ? tr.text('no_auto_corrections')
+                      : tr.text('no_pending_auto_corrections')),
+                )
+              : Column(
+                  children: [
+                    ListTile(
+                      leading: const CircleAvatar(
+                          child: Icon(Icons.fact_check_outlined)),
+                      title: Text(tr.text('auto_corrections_need_review'),
+                          style: Theme.of(context).textTheme.titleMedium),
+                      subtitle:
+                          Text(tr.text('auto_corrections_need_review_desc')),
+                    ),
+                    const Divider(height: 1),
+                    for (final movement in corrections) ...[
+                      ListTile(
+                        leading: CircleAvatar(
+                          child: Icon(movement.isReviewed
+                              ? Icons.check_circle_outline
+                              : Icons.warning_amber_rounded),
+                        ),
+                        title: Text(movement.productName),
+                        subtitle: Text([
+                          '${tr.text('quantity')}: +${movement.quantity}',
+                          if (movement.referenceNo.isNotEmpty)
+                            '${tr.text('invoice')}: ${movement.referenceNo}',
+                          movement.date.toLocal().toString().split('.').first,
+                          if (movement.deviceId.isNotEmpty)
+                            '${tr.text('device')}: ${movement.deviceId}',
+                          if (movement.reviewedBy.isNotEmpty)
+                            '${tr.text('reviewed_by')}: ${movement.reviewedBy}',
+                        ].join(' • ')),
+                        isThreeLine: true,
+                        trailing: movement.isReviewed
+                            ? const Icon(Icons.done_all_outlined)
+                            : canReview
+                                ? FilledButton.icon(
+                                    onPressed: () =>
+                                        _reviewMovement(movement.id),
+                                    icon: const Icon(Icons.check),
+                                    label: Text(tr.text('mark_reviewed')),
+                                  )
+                                : const Icon(Icons.lock_outline),
+                      ),
+                      const Divider(height: 1),
+                    ],
+                  ],
+                ),
+        ),
+        if (onLoadMore != null && corrections.length < totalCount) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.center,
+            child: OutlinedButton.icon(
+              onPressed: onLoadMore,
+              icon: const Icon(Icons.expand_more),
+              label: Text(tr.text('load_more')),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _reviewMovement(String id) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      await widget.store.reviewAutoCorrection(id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(tr.text('auto_correction_marked_reviewed'))));
+        setState(() {});
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
+      }
+    }
+  }
+}
+
+class _StockCountTab extends StatefulWidget {
+  const _StockCountTab({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_StockCountTab> createState() => _StockCountTabState();
+}
+
+class _StockCountTabState extends State<_StockCountTab> {
+  String query = '';
+  final RevisionKeyCache<List<Product>> _productsCache =
+      RevisionKeyCache<List<Product>>();
+  final RevisionKeyCache<Map<String, InventoryCountLine>> _lineLookupCache =
+      RevisionKeyCache<Map<String, InventoryCountLine>>();
+  final RevisionKeyCache<Map<String, int>> _movementCountCache =
+      RevisionKeyCache<Map<String, int>>();
+  Future<Map<String, int>?>? _movementCountsFuture;
+  String _movementCountsFutureKey = '';
+
+  @override
+  void didUpdateWidget(covariant _StockCountTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _productsCache.invalidate();
+      _lineLookupCache.invalidate();
+      _movementCountCache.invalidate();
+      _movementCountsFuture = null;
+      _movementCountsFutureKey = '';
+    }
+  }
+
+  Map<String, DateTime> _countedAtByProduct(InventoryCountSession? active) {
+    final result = <String, DateTime>{};
+    if (active == null) return result;
+    for (final line in active.lines) {
+      final countedAt = line.countedAt;
+      if (countedAt == null) continue;
+      result[line.productId] = countedAt;
+    }
+    return result;
+  }
+
+  Map<String, int> _movementCountsFromMemory(
+    InventoryCountSession? active,
+    Map<String, DateTime> countedAtByProduct,
+  ) {
+    return _movementCountCache.getOrCompute(
+      widget.store.inventoryRevision,
+      active?.id ?? 'no_active',
+      () {
+        final counts = <String, int>{
+          for (final productId in countedAtByProduct.keys) productId: 0,
+        };
+        for (final movement in widget.store.stockMovements) {
+          final countedAt = countedAtByProduct[movement.productId];
+          if (countedAt == null) continue;
+          if (movement.type == 'count_adjustment' ||
+              !movement.date.isAfter(countedAt)) {
+            continue;
+          }
+          counts[movement.productId] = (counts[movement.productId] ?? 0) + 1;
+        }
+        return counts;
+      },
+    );
+  }
+
+  Future<Map<String, int>?> _movementCountsFromSqlite(
+    InventoryCountSession? active,
+    Map<String, DateTime> countedAtByProduct,
+  ) {
+    if (countedAtByProduct.isEmpty ||
+        !LocalDatabaseService.canQueryBusinessSqlite) {
+      return Future<Map<String, int>?>.value(null);
+    }
+    final key =
+        '${widget.store.inventoryRevision}|${active?.id ?? 'no_active'}|${countedAtByProduct.length}';
+    if (_movementCountsFuture == null || _movementCountsFutureKey != key) {
+      _movementCountsFutureKey = key;
+      _movementCountsFuture =
+          LocalDatabaseService.countStockMovementsAfterByProductFromSqlite(
+              countedAtByProduct);
+    }
+    return _movementCountsFuture!;
+  }
+
+  Widget _buildActiveStockCountCard(
+    AppLocalizations tr,
+    InventoryCountSession active,
+    List<Product> products,
+    Map<String, InventoryCountLine> lineLookup,
+    Map<String, int> movementCounts,
+  ) {
+    return Card(
+      child: Column(
+        children: [
+          ListTile(
+            leading:
+                const CircleAvatar(child: Icon(Icons.inventory_2_outlined)),
+            title: Text('${tr.text('active_stock_count')} • ${active.countNo}'),
+            subtitle: Text(
+                '${tr.text('warehouse')}: ${active.warehouseName} • ${tr.text('started_at')}: ${active.createdAt.toLocal().toString().split('.').first}'),
+          ),
+          const Divider(height: 1),
+          for (final product in products.take(200))
+            _StockCountProductTile(
+                store: widget.store,
+                product: product,
+                line: lineLookup[product.id],
+                movementsAfter: movementCounts[product.id] ?? 0),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (!widget.store.hasPermission(
+      AppPermission.inventoryCountsManage,
+    )) {
+      return _InventorySectionDenied(
+        title: tr.text('stock_count'),
+        message: tr.text('stock_count_actions_no_access'),
+      );
+    }
+    final sessions = widget.store.inventoryCountSessions;
+    final active = widget.store.activeInventoryCountSession;
+    final lineLookup = _lineLookupCache.getOrCompute(
+      widget.store.inventoryRevision,
+      active?.id ?? 'no_active',
+      () {
+        final map = <String, InventoryCountLine>{};
+        if (active != null) {
+          for (final line in active.lines) {
+            map[line.productId] = line;
+          }
+        }
+        return map;
+      },
+    );
+    final countedAtByProduct = _countedAtByProduct(active);
+    final fallbackMovementCounts =
+        _movementCountsFromMemory(active, countedAtByProduct);
+    final needle = query.trim().toLowerCase();
+    final products = _productsCache.getOrCompute(
+      widget.store.inventoryRevision,
+      '${active?.id ?? 'no_active'}|$needle',
+      () => widget.store.stockTrackedProducts.where((product) {
+        if (active == null || needle.isEmpty) return true;
+        return product.name.toLowerCase().contains(needle) ||
+            product.code.toLowerCase().contains(needle);
+      }).toList(growable: false),
+    );
+
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: [
+            SummaryCard(
+                title: tr.text('stock_count_sessions'),
+                value: '${sessions.length}',
+                icon: Icons.assignment_outlined),
+            SummaryCard(
+                title: tr.text('open_stock_count'),
+                value: active == null ? '0' : '1',
+                icon: Icons.pending_actions_outlined),
+            if (active != null)
+              SummaryCard(
+                  title: tr.text('counted_products'),
+                  value: '${active.countedLines}/${active.totalLines}',
+                  icon: Icons.fact_check_outlined),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr.text('stock_count'),
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(tr.text('stock_count_desc')),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: active == null ? _startCount : null,
+                      icon: const Icon(Icons.add_task_outlined),
+                      label: Text(tr.text('start_stock_count')),
+                    ),
+                    if (active != null) ...[
+                      FilledButton.icon(
+                        onPressed: active.countedLines == 0
+                            ? null
+                            : () => _approveCount(active.id),
+                        icon: const Icon(Icons.verified_outlined),
+                        label: Text(tr.text('approve_stock_count')),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _cancelCount(active.id),
+                        icon: const Icon(Icons.cancel_outlined),
+                        label: Text(tr.text('cancel')),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (active != null) ...[
+          const SizedBox(height: 16),
+          TextField(
+            decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                labelText: tr.text('search_products')),
+            onChanged: (value) => setState(() => query = value),
+          ),
+          const SizedBox(height: 12),
+          FutureBuilder<Map<String, int>?>(
+            future: _movementCountsFromSqlite(active, countedAtByProduct),
+            builder: (context, snapshot) {
+              return _buildActiveStockCountCard(
+                tr,
+                active,
+                products,
+                lineLookup,
+                snapshot.data ?? fallbackMovementCounts,
+              );
+            },
+          ),
+          /*
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const CircleAvatar(
+                      child: Icon(Icons.inventory_2_outlined)),
+                  title: Text(
+                      '${tr.text('active_stock_count')} • ${active.countNo}'),
+                  subtitle: Text(
+                      '${tr.text('warehouse')}: ${active.warehouseName} • ${tr.text('started_at')}: ${active.createdAt.toLocal().toString().split('.').first}'),
+                ),
+                const Divider(height: 1),
+                for (final product in products.take(200))
+                  _StockCountProductTile(
+                      store: widget.store,
+                      product: product,
+                      line: lineLookup[product.id],
+                      movementsAfter: movementCounts[product.id] ?? 0),
+              ],
+            ),
+          ),
+          */
+        ],
+        const SizedBox(height: 16),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.history_outlined),
+                title: Text(tr.text('previous_stock_counts')),
+              ),
+              const Divider(height: 1),
+              if (sessions.isEmpty)
+                Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(tr.text('no_stock_counts')))
+              else
+                for (final session in sessions.take(20))
+                  ListTile(
+                    leading: Icon(session.isApproved
+                        ? Icons.verified_outlined
+                        : session.isReversed
+                            ? Icons.undo_outlined
+                            : session.isOpen
+                                ? Icons.pending_actions_outlined
+                                : Icons.cancel_outlined),
+                    title: Text(session.countNo),
+                    subtitle: Text(
+                        '${tr.text('status')}: ${session.status} • ${tr.text('warehouse')}: ${session.warehouseName} • ${tr.text('counted_products')}: ${session.countedLines}/${session.totalLines}'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(session.createdAt
+                            .toLocal()
+                            .toString()
+                            .split(' ')
+                            .first),
+                        if (session.isApproved) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: tr.text('reverse_approved_count'),
+                            onPressed: () => _reverseCount(session),
+                            icon: const Icon(Icons.undo_outlined),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _startCount() async {
+    try {
+      final tr = AppLocalizations.of(context);
+      final selected = await showDialog<Warehouse>(
+        context: context,
+        builder: (dialogContext) {
+          final initial = widget.store.resolveWarehouseForPurchase();
+          var selectedWarehouse = initial;
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(tr.text('start_stock_count')),
+              content: DropdownButtonFormField<String>(
+                initialValue: selectedWarehouse.id,
+                decoration: InputDecoration(labelText: tr.text('warehouse')),
+                items: widget.store.warehouses
+                    .map(
+                      (warehouse) => DropdownMenuItem<String>(
+                        value: warehouse.id,
+                        child: Text(warehouse.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setDialogState(() {
+                    selectedWarehouse = widget.store
+                        .resolveWarehouseForPurchase(warehouseId: value ?? '');
+                  });
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(tr.text('cancel')),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, selectedWarehouse),
+                  child: Text(tr.text('start')),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      if (selected == null) return;
+      await widget.store.createInventoryCountSession(
+        warehouseId: selected.id,
+        warehouseName: selected.name,
+      );
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
+      }
+    }
+  }
+
+  Future<void> _approveCount(String id) async {
+    try {
+      await widget.store.approveInventoryCount(id);
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
+      }
+    }
+  }
+
+  Future<void> _reverseCount(InventoryCountSession session) async {
+    final reasonController = TextEditingController();
+    try {
+      final tr = AppLocalizations.of(context);
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(tr.text('reverse_approved_count')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr
+                  .format('reverse_count_message', {'count': session.countNo})),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reasonController,
+                decoration: InputDecoration(
+                  labelText: tr.text('reversal_reason'),
+                  hintText: tr.text('reversal_reason_hint'),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(tr.text('reverse_count')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      await widget.store.reverseInventoryCount(
+        session.id,
+        reason: reasonController.text.trim(),
+      );
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
+      }
+    } finally {
+      reasonController.dispose();
+    }
+  }
+
+  Future<void> _cancelCount(String id) async {
+    try {
+      await widget.store.cancelInventoryCount(id);
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
+      }
+    }
+  }
+}
+
+class _StockCountProductTile extends StatelessWidget {
+  const _StockCountProductTile(
+      {required this.store,
+      required this.product,
+      required this.line,
+      required this.movementsAfter});
+
+  final AppStore store;
+  final Product product;
+  final InventoryCountLine? line;
+  final int movementsAfter;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return ListTile(
+      title: Text(product.name),
+      subtitle: Text([
+        '${tr.text('system_stock')}: ${line?.snapshotStock ?? product.stock}',
+        if (line?.isCounted == true)
+          '${tr.text('counted')}: ${line!.countedQty}',
+        if (line?.countedAt != null)
+          '${tr.text('counted_at')}: ${line!.countedAt!.toLocal().toString().split('.').first}',
+        if (movementsAfter > 0)
+          '⚠ ${tr.text('movements_after_count')}: $movementsAfter',
+      ].join(' • ')),
+      isThreeLine: true,
+      trailing: Wrap(
+        spacing: 8,
+        children: [
+          if (line?.isCounted == true)
+            OutlinedButton.icon(
+              onPressed: () => _resetCount(context),
+              icon: const Icon(Icons.restart_alt_outlined),
+              label: Text(tr.text('reset_count')),
+            ),
+          FilledButton(
+            onPressed: () => _enterCount(context),
+            child: Text(line?.isCounted == true
+                ? tr.text('recount')
+                : tr.text('count')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _resetCount(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final shouldReset = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('reset_count')),
+        content: Text(tr.text('reset_count_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('reset_count')),
+          ),
+        ],
+      ),
+    );
+    if (shouldReset != true) return;
+    try {
+      final activeSessionId = store.activeInventoryCountSession?.id;
+      if (activeSessionId == null) return;
+      await store.resetInventoryCountLine(
+        sessionId: activeSessionId,
+        productId: product.id,
+      );
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
+      }
+    }
+  }
+
+  Future<void> _enterCount(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final controller = TextEditingController();
+    final value = await showDialog<double>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${tr.text('count')} • ${product.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(labelText: tr.text('actual_quantity')),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, double.tryParse(controller.text.trim())),
+            child: Text(tr.text('save')),
+          ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    try {
+      final activeSessionId = store.activeInventoryCountSession?.id;
+      if (activeSessionId == null) return;
+      await store.countInventoryLine(
+          sessionId: activeSessionId, productId: product.id, countedQty: value);
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
+      }
+    }
+  }
+}
+
+Future<void> _openWasteLossDialog(BuildContext context, AppStore store) async {
+  final tr = AppLocalizations.of(context);
+  final products = store.stockTrackedProducts;
+  final warehouses = store.warehouses;
+  if (products.isEmpty || warehouses.isEmpty) return;
+  final quantityController = TextEditingController();
+  final notesController = TextEditingController();
+  var productId = products.first.id;
+  var warehouseId = store.resolveWarehouseForPurchase().id;
+  var category = 'damage';
+  final categories = <String, String>{
+    'damage': tr.text('adjustment_damage'),
+    'expired': tr.text('adjustment_expired'),
+    'free_sample': tr.text('adjustment_free_sample'),
+    'internal_consumption': tr.text('adjustment_internal_consumption'),
+    'other': tr.text('adjustment_other'),
+  };
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: Text(tr.text('record_waste_loss')),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: productId,
+                decoration: InputDecoration(labelText: tr.text('product')),
+                items: products
+                    .map((product) => DropdownMenuItem<String>(
+                          value: product.id,
+                          child: Text(product.name),
+                        ))
+                    .toList(),
+                onChanged: (value) => setDialogState(() {
+                  productId = value ?? productId;
+                }),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: warehouseId,
+                decoration: InputDecoration(labelText: tr.text('warehouse')),
+                items: warehouses
+                    .map((warehouse) => DropdownMenuItem<String>(
+                          value: warehouse.id,
+                          child: Text(warehouse.name),
+                        ))
+                    .toList(),
+                onChanged: (value) => setDialogState(() {
+                  warehouseId = value ?? warehouseId;
+                }),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: category,
+                decoration: InputDecoration(
+                  labelText: tr.text('adjustment_reason_type'),
+                ),
+                items: categories.entries
+                    .map((entry) => DropdownMenuItem<String>(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ))
+                    .toList(),
+                onChanged: (value) => setDialogState(() {
+                  category = value ?? category;
+                }),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: quantityController,
+                decoration: InputDecoration(
+                  labelText: tr.text('waste_quantity'),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notesController,
+                decoration: InputDecoration(
+                  labelText: tr.text('notes_optional'),
+                ),
+                minLines: 1,
+                maxLines: 3,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final quantity =
+                  double.tryParse(quantityController.text.trim()) ?? 0;
+              if (quantity <= 0) return;
+              try {
+                await store.recordWasteLoss(
+                  productId: productId,
+                  warehouseId: warehouseId,
+                  quantity: quantity,
+                  reason: categories[category] ?? category,
+                  adjustmentCategory: category,
+                  notes: notesController.text.trim(),
+                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } catch (error) {
+                if (dialogContext.mounted) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(
+                      content: Text(localizedErrorText(
+                        AppLocalizations.of(dialogContext),
+                        error,
+                      )),
+                    ),
+                  );
+                }
+              }
+            },
+            child: Text(tr.text('save')),
+          ),
+        ],
+      ),
+    ),
+  );
+  quantityController.dispose();
+  notesController.dispose();
+}
+
+bool _hasWasteReversal(AppStore store, StockMovement movement) {
+  return store.stockMovements.any(
+    (item) => item.reversalOfMovementId == movement.id,
+  );
+}
+
+Future<void> _showWasteLossDetails(
+  BuildContext context,
+  AppStore store,
+  StockMovement movement, {
+  required bool canManageWaste,
+  required Future<void> Function(StockMovement movement) onDelete,
+}) async {
+  final tr = AppLocalizations.of(context);
+  final reversed = _hasWasteReversal(store, movement);
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(movement.productName),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _wasteDetailRow(tr.text('waste_detail_quantity'),
+                movement.quantity.abs().toString()),
+            _wasteDetailRow(tr.text('waste_detail_value'),
+                formatUsdReferenceAmount(movement.value, store.storeProfile)),
+            _wasteDetailRow(tr.text('waste_detail_reason'),
+                _adjustmentCategoryLabel(tr, movement.adjustmentCategory)),
+            _wasteDetailRow(
+                tr.text('waste_detail_warehouse'), movement.warehouseName),
+            _wasteDetailRow(tr.text('waste_detail_date'),
+                movement.date.toLocal().toString().substring(0, 16)),
+            if (movement.notes.trim().isNotEmpty)
+              _wasteDetailRow(tr.text('waste_detail_notes'), movement.notes),
+            if (reversed)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  tr.text('waste_already_reversed'),
+                  style: TextStyle(
+                    color: Theme.of(dialogContext).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        if (canManageWaste && !reversed)
+          TextButton.icon(
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: dialogContext,
+                builder: (confirmContext) => AlertDialog(
+                  title: Text(tr.text('delete_waste_loss')),
+                  content: Text(tr.text('delete_waste_loss_confirmation')),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(confirmContext, false),
+                      child: Text(tr.text('cancel')),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(confirmContext, true),
+                      child: Text(tr.text('confirm_delete')),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed != true) return;
+              try {
+                await onDelete(movement);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } catch (error) {
+                if (dialogContext.mounted) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(
+                      content: Text(localizedErrorText(
+                          AppLocalizations.of(dialogContext), error)),
+                    ),
+                  );
+                }
+              }
+            },
+            icon: const Icon(Icons.delete_outline),
+            label: Text(tr.text('delete_waste_loss')),
+          ),
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: Text(tr.text('close')),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _wasteDetailRow(String label, String value) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: RichText(
+      text: TextSpan(
+        style: const TextStyle(color: Colors.black87),
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          TextSpan(text: value),
+        ],
+      ),
+    ),
+  );
+}
+
+class _WasteLossReportDb extends StatefulWidget {
+  const _WasteLossReportDb({
+    required this.store,
+    required this.canManageWaste,
+  });
+  final AppStore store;
+  final bool canManageWaste;
+
+  @override
+  State<_WasteLossReportDb> createState() => _WasteLossReportDbState();
+}
+
+class _WasteLossReportDbState extends State<_WasteLossReportDb> {
+  Future<_StockMovementsQueryResult?>? _future;
+  String _futureKey = '';
+  int _visibleCount = 100;
+
+  Future<_StockMovementsQueryResult?> _queryWasteLossFromSqlite() {
+    final limit = _visibleCount.clamp(1, 500).toInt();
+    final key = '${widget.store.stockMovementsRevision}|$limit';
+    if (_future == null || _futureKey != key) {
+      _futureKey = key;
+      _future = () async {
+        final page = await LocalDatabaseService.queryWasteLossFromSqlite(
+          limit: limit,
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _future!;
+  }
+
+  void _loadMore(int totalCount) {
+    setState(() {
+      _visibleCount = math.min(totalCount, _visibleCount + 100);
+      _future = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryWasteView,
+      AppPermission.reportsView,
+    })) {
+      return _InventorySectionDenied(
+        title: tr.text('waste_loss_report'),
+        message: tr.text('waste_loss_reporting_no_access'),
+      );
+    }
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      return _WasteLossReport(
+        store: widget.store,
+        canManageWaste: widget.canManageWaste,
+      );
+    }
+    return FutureBuilder<_StockMovementsQueryResult?>(
+      future: _queryWasteLossFromSqlite(),
+      builder: (context, snapshot) {
+        final result = snapshot.data;
+        if (result == null &&
+            snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        if (result == null || snapshot.hasError) {
+          return _WasteLossReport(
+            store: widget.store,
+            canManageWaste: widget.canManageWaste,
+          );
+        }
+        return _WasteLossReportView(
+          store: widget.store,
+          movements: result.items,
+          totalCount: result.totalCount,
+          canManageWaste: widget.canManageWaste,
+          onDelete: (movement) async {
+            await widget.store.deleteWasteLoss(movement.id);
+            if (mounted) {
+              setState(() {
+                _future = null;
+              });
+            }
+          },
+          onLoadMore:
+              result.hasMore ? () => _loadMore(result.totalCount) : null,
+        );
+      },
+    );
+  }
+}
+
+class _WasteLossReportView extends StatelessWidget {
+  const _WasteLossReportView({
+    required this.store,
+    required this.movements,
+    required this.totalCount,
+    required this.canManageWaste,
+    required this.onDelete,
+    this.onLoadMore,
+  });
+
+  final AppStore store;
+  final List<StockMovement> movements;
+  final int totalCount;
+  final bool canManageWaste;
+  final Future<void> Function(StockMovement movement) onDelete;
+  final VoidCallback? onLoadMore;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final activeMovements = movements
+        .where((movement) => !_hasWasteReversal(store, movement))
+        .toList(growable: false);
+    final totals = <String, _WasteTotal>{};
+    double totalValue = 0;
+    double totalQty = 0;
+    for (final movement in activeMovements) {
+      final key = movement.adjustmentCategory.isEmpty
+          ? 'other'
+          : movement.adjustmentCategory;
+      final current = totals[key] ?? _WasteTotal();
+      current.quantity += movement.quantity.abs();
+      current.value += movement.value;
+      current.count += 1;
+      totals[key] = current;
+      totalValue += movement.value;
+      totalQty += movement.quantity.abs();
+    }
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        if (canManageWaste)
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: FilledButton.icon(
+              onPressed: () => _openWasteLossDialog(context, store),
+              icon: const Icon(Icons.delete_sweep_outlined),
+              label: Text(tr.text('record_waste_loss')),
+            ),
+          ),
+        if (canManageWaste) const SizedBox(height: 16),
+        Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: [
+            SummaryCard(
+                title: tr.text('loss_movements'),
+                value: '${activeMovements.length}',
+                icon: Icons.report_problem_outlined),
+            SummaryCard(
+                title: tr.text('loss_quantity'),
+                value: totalQty.toStringAsFixed(
+                    totalQty.truncateToDouble() == totalQty ? 0 : 2),
+                icon: Icons.remove_circle_outline),
+            SummaryCard(
+                title: tr.text('loss_value'),
+                value: formatUsdReferenceAmount(totalValue, store.storeProfile),
+                icon: Icons.money_off_outlined),
+          ],
+        ),
+        const SizedBox(height: 20),
+        PageDataLoadIndicator(
+          loadedCount: movements.length,
+          totalCount: totalCount,
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                title: Text(
+                  tr.text('waste_loss_records'),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              const Divider(height: 1),
+              if (movements.isEmpty)
+                Padding(
+                  padding: VentioResponsive.pageInsets(context),
+                  child: Text(tr.text('no_waste_loss_records')),
+                )
+              else
+                for (final movement in movements) ...[
+                  ListTile(
+                    leading: CircleAvatar(
+                      child: Icon(
+                        _hasWasteReversal(store, movement)
+                            ? Icons.undo_outlined
+                            : Icons.delete_sweep_outlined,
+                      ),
+                    ),
+                    title: Text(movement.productName),
+                    subtitle: Text(
+                      '${_adjustmentCategoryLabel(tr, movement.adjustmentCategory)} • '
+                      '${tr.text('quantity')}: ${movement.quantity.abs()} • '
+                      '${movement.date.toLocal().toString().substring(0, 16)}',
+                    ),
+                    trailing: Text(formatUsdReferenceAmount(
+                        movement.value, store.storeProfile)),
+                    onTap: () => _showWasteLossDetails(
+                      context,
+                      store,
+                      movement,
+                      canManageWaste:
+                          canManageWaste && movement.type == 'inventory_loss',
+                      onDelete: onDelete,
+                    ),
+                  ),
+                  const Divider(height: 1),
+                ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: totals.isEmpty
+              ? Padding(
+                  padding: VentioResponsive.pageInsets(context),
+                  child: Text(tr.text('no_waste_loss_records')))
+              : Column(
+                  children: [
+                    ListTile(
+                        title: Text(tr.text('waste_loss_by_reason'),
+                            style: Theme.of(context).textTheme.titleMedium)),
+                    const Divider(height: 1),
+                    for (final entry in totals.entries) ...[
+                      ListTile(
+                        leading: const CircleAvatar(
+                            child: Icon(Icons.category_outlined)),
+                        title: Text(_adjustmentCategoryLabel(tr, entry.key)),
+                        subtitle: Text(
+                            '${tr.text('movements')}: ${entry.value.count} • ${tr.text('quantity')}: ${entry.value.quantity}'),
+                        trailing: Text(formatUsdReferenceAmount(
+                            entry.value.value, store.storeProfile)),
+                      ),
+                      const Divider(height: 1),
+                    ],
+                  ],
+                ),
+        ),
+        if (onLoadMore != null && movements.length < totalCount) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.center,
+            child: OutlinedButton.icon(
+              onPressed: onLoadMore,
+              icon: const Icon(Icons.expand_more),
+              label: Text(tr.text('load_more')),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _WasteLossReport extends StatelessWidget {
+  const _WasteLossReport({
+    required this.store,
+    required this.canManageWaste,
+  });
+  final AppStore store;
+  final bool canManageWaste;
+  static final RevisionKeyCache<List<StockMovement>> _rowsCache =
+      RevisionKeyCache<List<StockMovement>>();
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (!store.hasAnyPermission(<String>{
+      AppPermission.inventoryWasteView,
+      AppPermission.reportsView,
+    })) {
+      return _InventorySectionDenied(
+        title: tr.text('waste_loss_report'),
+        message: tr.text('waste_loss_reporting_no_access'),
+      );
+    }
+    final lossMovements = _rowsCache.getOrCompute(
+      store.stockMovementsRevision,
+      store.appIdentity.storeId,
+      () => store.stockMovements
+          .where((item) =>
+              item.type == 'inventory_loss' ||
+              (item.type == 'inventory_adjustment' && item.quantity < 0))
+          .toList(growable: false),
+    );
+    return _WasteLossReportView(
+      store: store,
+      movements: lossMovements,
+      totalCount: lossMovements.length,
+      canManageWaste: canManageWaste,
+      onDelete: (movement) => store.deleteWasteLoss(movement.id),
+    );
+  }
+}
+
+class _InventoryAccessDenied extends StatelessWidget {
+  const _InventoryAccessDenied({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: VentioResponsive.pageInsets(context),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InventorySectionDenied extends StatelessWidget {
+  const _InventorySectionDenied({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        _InventoryAccessDenied(title: title, message: message),
+      ],
+    );
+  }
+}
+
+class _WasteTotal {
+  double quantity = 0;
+  double value = 0;
+  int count = 0;
+}
+
+String _adjustmentCategoryLabel(AppLocalizations tr, String key) {
+  switch (key) {
+    case 'damage':
+      return tr.text('adjustment_damage');
+    case 'expired':
+      return tr.text('adjustment_expired');
+    case 'free_sample':
+      return tr.text('adjustment_free_sample');
+    case 'internal_consumption':
+      return tr.text('adjustment_internal_consumption');
+    case 'stock_count_shortage':
+      return tr.text('adjustment_stock_count_shortage');
+    case 'stock_count_overage':
+      return tr.text('adjustment_stock_count_overage');
+    default:
+      return tr.text('adjustment_other');
+  }
+}

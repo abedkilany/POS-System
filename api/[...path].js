@@ -1,0 +1,140 @@
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '25mb',
+    },
+  },
+};
+
+import health from '../server_api/health.js';
+import deployHealth from '../server_api/deploy-health.js';
+import authRegister from '../server_api/auth/register.js';
+import authLogin from '../server_api/auth/login.js';
+import authSession from '../server_api/auth/session.js';
+import authLogout from '../server_api/auth/logout.js';
+import authPasswordReset from '../server_api/auth/password-reset.js';
+import accountChangePassword from '../server_api/account/change-password.js';
+import accountOwnerProfile from '../server_api/account/owner-profile.js';
+import adminSubscribers from '../server_api/admin/subscribers.js';
+import adminPasswordReset from '../server_api/admin/password-reset.js';
+import deviceRevoke from '../server_api/sync/device-revoke.js';
+import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
+import deviceSuspend from '../server_api/sync/device-suspend.js';
+import deviceAccess from '../server_api/sync/device-access.js';
+import deviceKey from '../server_api/sync/device-key.js';
+import iceConfig from '../server_api/sync/ice-config.js';
+import devices from '../server_api/sync/devices.js';
+import entitlement from '../server_api/sync/entitlement.js';
+import hostHeartbeat from '../server_api/sync/host-heartbeat.js';
+import pairingClaim from '../server_api/sync/pairing/claim.js';
+import pairingCreate from '../server_api/sync/pairing/create.js';
+import pairingStatus from '../server_api/sync/pairing/status.js';
+import recoveryClaim from '../server_api/sync/recovery/claim.js';
+import signal from '../server_api/sync/signal.js';
+import { directRealtimeTicketHandler, realtimeTicketHandler } from '../server_api/sync/realtime.js';
+import googleDriveAuthStart from '../server_api/google-drive/auth-start.js';
+import googleDriveCallback from '../server_api/google-drive/callback.js';
+import googleDriveStatus from '../server_api/google-drive/status.js';
+import googleDriveRefresh from '../server_api/google-drive/refresh.js';
+
+const routes = new Map([
+  ['health', health],
+  ['deploy-health', deployHealth],
+  ['auth/register', authRegister],
+  ['auth/login', authLogin],
+  ['auth/session', authSession],
+  ['auth/logout', authLogout],
+  ['auth/password-reset', authPasswordReset],
+  ['account/change-password', accountChangePassword],
+  ['account/owner-profile', accountOwnerProfile],
+  ['admin/subscribers', adminSubscribers],
+  ['admin/password-reset', adminPasswordReset],
+  ['sync/device-revoke', deviceRevoke],
+  ['sync/device-wipe-ack', deviceWipeAck],
+  ['sync/device-suspend', deviceSuspend],
+  ['sync/device-access', deviceAccess],
+  ['sync/device-key', deviceKey],
+  ['sync/ice-config', iceConfig],
+  ['sync/devices', devices],
+  ['sync/entitlement', entitlement],
+  ['sync/host-heartbeat', hostHeartbeat],
+  ['sync/pairing/claim', pairingClaim],
+  ['sync/pairing/create', pairingCreate],
+  ['sync/pairing/status', pairingStatus],
+  ['sync/recovery/claim', recoveryClaim],
+  ['sync/signal', signal],
+  ['sync/realtime-ticket', realtimeTicketHandler],
+  ['sync/direct-ticket', directRealtimeTicketHandler],
+  ['google-drive/auth-start', googleDriveAuthStart],
+  ['google-drive/callback', googleDriveCallback],
+  ['google-drive/status', googleDriveStatus],
+  ['google-drive/refresh', googleDriveRefresh],
+]);
+
+function normalizePath(req) {
+  const queryPath = req.query?.path;
+  if (Array.isArray(queryPath)) return queryPath.join('/').replace(/^\/+|\/+$/g, '');
+  if (typeof queryPath === 'string' && queryPath.trim()) return queryPath.replace(/^\/+|\/+$/g, '');
+
+  const rawUrl = req.url || '';
+  const pathname = rawUrl.split('?')[0] || '';
+  return pathname.replace(/^\/api\//, '').replace(/^\/+|\/+$/g, '');
+}
+
+function allowedOrigins() {
+  const raw = (process.env.VENTIO_API_ALLOWED_ORIGINS || '').trim();
+  if (!raw) return (process.env.NODE_ENV || '').toLowerCase() === 'production' ? [] : ['*'];
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function applyCors(req, res) {
+  const origins = allowedOrigins();
+  const origin = String(req.headers.origin || '').trim();
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+  if (origins.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (origin && origins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (origin && !isProduction) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (origin && isProduction) {
+    return false;
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Accept, Authorization, X-Device-Id, X-Device-Token, X-Device-Role, X-Sync-Transport, X-Store-Id, X-Branch-Id',
+  );
+  return true;
+}
+
+export default async function handler(req, res) {
+  if (!applyCors(req, res)) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Origin is not allowed.',
+    });
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  const path = normalizePath(req);
+  const route = routes.get(path);
+  if (!route) {
+    return res.status(404).json({
+      ok: false,
+      error: 'API route not found.',
+      path,
+    });
+  }
+  return route(req, res);
+}

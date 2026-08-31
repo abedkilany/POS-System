@@ -1,0 +1,281 @@
+import 'purchase_item.dart';
+import 'posted_document_snapshot.dart';
+
+class Purchase {
+  Purchase({
+    required this.id,
+    required this.purchaseNo,
+    required this.supplierId,
+    required this.supplierName,
+    required this.date,
+    required this.status,
+    required this.items,
+    this.note = '',
+    this.paymentStatus = 'paid',
+    this.paymentMethod = 'Cash',
+    this.paidAmount = 0,
+    this.warehouseId = 'main',
+    this.warehouseName = 'Main warehouse',
+    this.cancelReason = '',
+    this.cancelledByDeviceId = '',
+    this.reversalApplied = false,
+    this.cancelledAt,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    this.deletedAt,
+    this.deviceId = '',
+    this.syncStatus = 'pending',
+    this.storeId = '',
+    this.branchId = '',
+    this.version = 1,
+    this.lastModifiedByDeviceId = '',
+    this.postedSnapshot,
+  })  : createdAt =
+            createdAt ?? updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+        updatedAt =
+            updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+        subtotal = _computeSubtotal(status, items),
+        totalUnits = _computeTotalUnits(items),
+        searchText = _buildSearchText(
+          purchaseNo,
+          supplierName,
+          note,
+          status,
+          paymentStatus,
+          paymentMethod,
+          cancelReason,
+          items,
+        );
+
+  final String id,
+      purchaseNo,
+      supplierId,
+      supplierName,
+      status,
+      note,
+      paymentStatus,
+      paymentMethod,
+      warehouseId,
+      warehouseName,
+      cancelReason,
+      cancelledByDeviceId;
+  final DateTime date, createdAt, updatedAt;
+  final DateTime? deletedAt, cancelledAt;
+  final bool reversalApplied;
+  final double paidAmount;
+  final List<PurchaseItem> items;
+  final double subtotal;
+  final double totalUnits;
+  final String searchText;
+  final String deviceId, syncStatus, storeId, branchId, lastModifiedByDeviceId;
+  final int version;
+  final PostedDocumentSnapshot? postedSnapshot;
+
+  bool get isDeleted => deletedAt != null;
+  bool get isDraft => status.toLowerCase() == 'draft';
+  bool get isReceived => status.toLowerCase() == 'received';
+  bool get isReturned => status.toLowerCase() == 'returned';
+  bool get isCancelled => status.toLowerCase() == 'cancelled' || isReturned;
+  double get balanceDue =>
+      (subtotal - paidAmount).clamp(0, double.infinity).toDouble();
+  double get taxAmount => isCancelled ? 0 : (postedSnapshot?.totals.tax ?? 0);
+  double get taxableAmount => isCancelled
+      ? 0
+      : (postedSnapshot == null
+          ? subtotal
+          : postedSnapshot!.lines.fold<double>(
+              0, (sum, line) => sum + line.taxableBase));
+  bool get hasTaxBreakdown =>
+      postedSnapshot != null &&
+      !postedSnapshot!.legacyBackfill &&
+      postedSnapshot!.currency.taxSchemaVersion >= 2 &&
+      postedSnapshot!.lines.any((line) => line.taxMode != 'none');
+
+
+  static double _computeSubtotal(String status, List<PurchaseItem> items) {
+    if (status.toLowerCase() == 'cancelled' ||
+        status.toLowerCase() == 'returned') {
+      return 0;
+    }
+    return items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+  }
+
+  static double _computeTotalUnits(List<PurchaseItem> items) =>
+      items.fold<double>(0, (sum, item) => sum + item.baseQuantity);
+
+  static String _normalizeSearchPart(String value) =>
+      value.trim().toLowerCase();
+
+  static String _buildSearchText(
+    String purchaseNo,
+    String supplierName,
+    String note,
+    String status,
+    String paymentStatus,
+    String paymentMethod,
+    String cancelReason,
+    List<PurchaseItem> items,
+  ) {
+    final parts = <String>[
+      purchaseNo,
+      supplierName,
+      note,
+      status,
+      paymentStatus,
+      paymentMethod,
+      cancelReason,
+      for (final item in items) item.productName,
+    ];
+    return parts
+        .map(_normalizeSearchPart)
+        .where((part) => part.isNotEmpty)
+        .join(' ');
+  }
+
+  Purchase copyWith(
+          {String? purchaseNo,
+          String? supplierId,
+          String? supplierName,
+          DateTime? date,
+          String? status,
+          List<PurchaseItem>? items,
+          String? note,
+          String? paymentStatus,
+          String? paymentMethod,
+          double? paidAmount,
+          String? warehouseId,
+          String? warehouseName,
+          String? cancelReason,
+          String? cancelledByDeviceId,
+          bool? reversalApplied,
+          DateTime? cancelledAt,
+          DateTime? createdAt,
+          DateTime? updatedAt,
+          DateTime? deletedAt,
+          bool clearDeletedAt = false,
+          bool clearCancelledAt = false,
+          bool clearCancelReason = false,
+          bool clearCancelledByDeviceId = false,
+          String? deviceId,
+          String? syncStatus,
+          String? storeId,
+          String? branchId,
+          int? version,
+          String? lastModifiedByDeviceId,
+          PostedDocumentSnapshot? postedSnapshot,
+          bool clearPostedSnapshot = false}) =>
+      Purchase(
+        id: id,
+        purchaseNo: purchaseNo ?? this.purchaseNo,
+        supplierId: supplierId ?? this.supplierId,
+        supplierName: supplierName ?? this.supplierName,
+        date: date ?? this.date,
+        status: status ?? this.status,
+        items: items ?? this.items,
+        note: note ?? this.note,
+        paymentStatus: paymentStatus ?? this.paymentStatus,
+        paymentMethod: paymentMethod ?? this.paymentMethod,
+        paidAmount: paidAmount ?? this.paidAmount,
+        warehouseId: warehouseId ?? this.warehouseId,
+        warehouseName: warehouseName ?? this.warehouseName,
+        cancelReason:
+            clearCancelReason ? '' : (cancelReason ?? this.cancelReason),
+        cancelledByDeviceId: clearCancelledByDeviceId
+            ? ''
+            : (cancelledByDeviceId ?? this.cancelledByDeviceId),
+        reversalApplied: reversalApplied ?? this.reversalApplied,
+        cancelledAt:
+            clearCancelledAt ? null : (cancelledAt ?? this.cancelledAt),
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+        deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
+        deviceId: deviceId ?? this.deviceId,
+        syncStatus: syncStatus ?? this.syncStatus,
+        storeId: storeId ?? this.storeId,
+        branchId: branchId ?? this.branchId,
+        version: version ?? this.version,
+        lastModifiedByDeviceId:
+            lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
+        postedSnapshot: clearPostedSnapshot
+            ? null
+            : (postedSnapshot ?? this.postedSnapshot),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'purchaseNo': purchaseNo,
+        'supplierId': supplierId,
+        'supplierName': supplierName,
+        'date': date.toIso8601String(),
+        'status': status,
+        'items': items.map((item) => item.toJson()).toList(),
+        'note': note,
+        'paymentStatus': paymentStatus,
+        'paymentMethod': paymentMethod,
+        'paidAmount': paidAmount,
+        'warehouseId': warehouseId,
+        'warehouseName': warehouseName,
+        'cancelReason': cancelReason,
+        'cancelledByDeviceId': cancelledByDeviceId,
+        'reversalApplied': reversalApplied,
+        'cancelledAt': cancelledAt?.toIso8601String(),
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'deletedAt': deletedAt?.toIso8601String(),
+        'deviceId': deviceId,
+        'syncStatus': syncStatus,
+        'storeId': storeId,
+        'branchId': branchId,
+        'version': version,
+        'lastModifiedByDeviceId': lastModifiedByDeviceId,
+        'postedSnapshot': postedSnapshot?.toJson(),
+      };
+
+  factory Purchase.fromJson(Map<String, dynamic> json) {
+    final updated = DateTime.tryParse(json['updatedAt']?.toString() ?? '') ??
+        DateTime.now();
+    return Purchase(
+      id: json['id']?.toString() ?? '',
+      purchaseNo: json['purchaseNo']?.toString() ?? '',
+      supplierId: json['supplierId']?.toString() ?? '',
+      supplierName: json['supplierName']?.toString() ?? '',
+      date: DateTime.tryParse(json['date']?.toString() ?? '') ?? updated,
+      status: json['status']?.toString() ?? 'Draft',
+      items: (json['items'] as List? ?? const [])
+          .map((item) =>
+              PurchaseItem.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList(),
+      note: json['note']?.toString() ?? '',
+      paymentStatus: json['paymentStatus']?.toString() ?? 'paid',
+      paymentMethod: json['paymentMethod']?.toString() ?? 'Cash',
+      paidAmount: (json['paidAmount'] as num? ?? 0).toDouble(),
+      warehouseId: json['warehouseId']?.toString().isNotEmpty == true
+          ? json['warehouseId']!.toString()
+          : 'main',
+      warehouseName: json['warehouseName']?.toString().isNotEmpty == true
+          ? json['warehouseName']!.toString()
+          : 'Main warehouse',
+      cancelReason: json['cancelReason']?.toString() ?? '',
+      cancelledByDeviceId: json['cancelledByDeviceId']?.toString() ?? '',
+      reversalApplied: json['reversalApplied'] == true,
+      cancelledAt: DateTime.tryParse(json['cancelledAt']?.toString() ?? ''),
+      createdAt:
+          DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? updated,
+      updatedAt: updated,
+      deletedAt: DateTime.tryParse(json['deletedAt']?.toString() ?? ''),
+      deviceId: json['deviceId']?.toString() ?? '',
+      syncStatus: json['syncStatus']?.toString() ?? 'synced',
+      storeId: json['storeId']?.toString() ?? '',
+      branchId: json['branchId']?.toString() ?? '',
+      version: (json['version'] as num? ?? 1).toInt(),
+      lastModifiedByDeviceId: json['lastModifiedByDeviceId']?.toString() ??
+          json['deviceId']?.toString() ??
+          '',
+      postedSnapshot: json['postedSnapshot'] is Map
+          ? PostedDocumentSnapshot.fromJson(
+              Map<String, dynamic>.from(json['postedSnapshot'] as Map),
+            )
+          : null,
+    );
+  }
+}

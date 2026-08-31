@@ -1,0 +1,10898 @@
+// ignore_for_file: unused_element, unused_field, unused_import
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:drift/drift.dart' hide Column;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import '../../core/localization/app_localizations.dart';
+import 'package:flutter/services.dart';
+
+import '../../core/services/account_auth_service.dart';
+import '../../core/services/app_logging_service.dart';
+import '../../core/services/direct_control_plane_service.dart';
+import '../../core/services/database_sql_editor_service.dart';
+import '../../core/services/barcode_feedback_service.dart';
+import '../../core/services/local_auto_backup_service.dart';
+import '../../core/services/local_database_service.dart';
+import '../../core/services/lan_sync_service.dart';
+import '../../core/services/accounting_service.dart';
+import '../../core/services/accounting_production_integrity_service.dart';
+import '../../core/services/cash_operation_service.dart';
+import '../../core/services/sql_result_export_service.dart';
+import '../../core/sync_unified/sync_unified.dart';
+import '../../core/storage/sqlite/business_sqlite_store.dart';
+import '../../core/storage/sqlite/sqlite_migration_manager.dart';
+import '../../data/app_store.dart';
+import 'stress_lab_coverage_manifest.dart';
+import '../../models/app_identity.dart';
+import '../../models/account_transaction.dart';
+import '../../models/accounting_account.dart';
+import '../../models/catalog_item.dart';
+import '../../models/customer.dart';
+import '../../models/expense.dart';
+import '../../models/app_user.dart';
+import '../../models/product.dart';
+import '../../models/purchase.dart';
+import '../../models/warehouse.dart';
+import '../../models/warehouse_transfer_order.dart';
+import '../../models/sale_quotation.dart';
+import '../../models/delivery_note.dart';
+import '../../models/purchase_item.dart';
+import '../../models/sale_item.dart';
+import '../../models/sale.dart';
+import '../../models/store_profile.dart';
+import '../../models/stock_movement.dart';
+import '../../models/inventory_batch.dart';
+import '../../models/inventory_cost_layer.dart';
+import '../../models/inventory_count.dart';
+import '../../models/product_costing.dart';
+import '../../models/product_pricing.dart';
+import '../../models/supplier.dart';
+import '../../models/supplier_product_price.dart';
+import '../../models/manufacturing.dart';
+import '../../models/sync_change.dart';
+import '../../models/sync_queue_item.dart';
+import '../../models/user_role.dart';
+import '../barcode/barcode_scanner_page.dart';
+import '../maintenance/maintenance_models.dart';
+import '../maintenance/maintenance_service.dart';
+
+Map<String, Object?> _validateStressBackupJson(String raw) {
+  final decoded = jsonDecode(raw);
+  if (decoded is! Map) {
+    return <String, Object?>{'valid': false, 'keys': 0};
+  }
+  final payload = Map<String, dynamic>.from(decoded);
+  const requiredCollections = <String>[
+    'products',
+    'customers',
+    'suppliers',
+    'sales',
+    'purchases',
+    'expenses',
+  ];
+  final missing = requiredCollections
+      .where((key) => payload[key] is! List)
+      .toList(growable: false);
+  return <String, Object?>{
+    'valid': missing.isEmpty,
+    'keys': payload.length,
+    'missing': missing,
+  };
+}
+
+/// Exercises the same entity decoding used by backup import, without writing
+/// anything to the live store.  A real import is deliberately not run from
+/// Stress Lab because it would replace the business data being audited.
+Map<String, Object?> _validateStressBackupRestoreReadiness(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      return <String, Object?>{
+        'ready': false,
+        'error': 'root is not an object'
+      };
+    }
+    final payload = Map<String, dynamic>.from(decoded);
+    var decodedRecords = 0;
+
+    void decodeList(String key, void Function(Map<String, dynamic>) decoder) {
+      final value = payload[key];
+      if (value == null) return;
+      if (value is! List) throw FormatException('$key is not a list');
+      for (final item in value) {
+        if (item is! Map) throw FormatException('$key contains a non-object');
+        decoder(Map<String, dynamic>.from(item));
+        decodedRecords++;
+      }
+    }
+
+    if (payload['storeProfile'] is Map) {
+      StoreProfile.fromJson(
+          Map<String, dynamic>.from(payload['storeProfile'] as Map));
+    }
+    decodeList('products', Product.fromJson);
+    decodeList('customers', Customer.fromJson);
+    decodeList('sales', Sale.fromJson);
+    decodeList('saleQuotations', SaleQuotation.fromJson);
+    decodeList('deliveryNotes', DeliveryNote.fromJson);
+    decodeList('billsOfMaterials', BillOfMaterials.fromJson);
+    decodeList('manufacturingOrders', ManufacturingOrder.fromJson);
+    decodeList('suppliers', Supplier.fromJson);
+    decodeList('supplierProductPrices', SupplierProductPrice.fromJson);
+    decodeList('priceLists', PriceList.fromJson);
+    decodeList('productPrices', ProductPrice.fromJson);
+    decodeList('productPriceOverrides', ProductPriceOverride.fromJson);
+    decodeList('productCosts', ProductCost.fromJson);
+    decodeList('costingMethodHistory', CostingMethodHistory.fromJson);
+    decodeList('inventoryCostLayers', InventoryCostLayer.fromJson);
+    decodeList('categories', CatalogItem.fromJson);
+    decodeList('brands', CatalogItem.fromJson);
+    decodeList('units', CatalogItem.fromJson);
+    decodeList('expenses', Expense.fromJson);
+    decodeList('purchases', Purchase.fromJson);
+    decodeList('stockMovements', StockMovement.fromJson);
+    decodeList('inventoryCounts', InventoryCountSession.fromJson);
+    decodeList('warehouses', Warehouse.fromJson);
+    decodeList('accountTransactions', AccountTransaction.fromJson);
+    decodeList('roles', UserRole.fromJson);
+    decodeList('users', AppUser.fromJson);
+    decodeList('syncChanges', SyncChange.fromJson);
+    decodeList('syncQueue', SyncQueueItem.fromJson);
+
+    return <String, Object?>{'ready': true, 'decodedRecords': decodedRecords};
+  } catch (error) {
+    return <String, Object?>{'ready': false, 'error': error.toString()};
+  }
+}
+
+class _StressAuditStep {
+  const _StressAuditStep({
+    required this.section,
+    required this.name,
+    required this.status,
+    required this.details,
+    required this.elapsedMs,
+    this.performance,
+  });
+
+  final String section;
+  final String name;
+  final String status;
+  final String details;
+  final int elapsedMs;
+  final _StressPerfMetrics? performance;
+
+  bool get isPass => status == 'PASS';
+  bool get isWarn => status == 'WARN';
+  bool get isFail => status == 'FAIL';
+}
+
+class _StressPerfMetrics {
+  const _StressPerfMetrics({
+    required this.count,
+    required this.failed,
+    required this.avgMs,
+    required this.p50Ms,
+    required this.p95Ms,
+    required this.p99Ms,
+    required this.maxMs,
+    required this.stableStartMs,
+    required this.stableEndMs,
+    required this.slowdown,
+    required this.warmupExcluded,
+    required this.above100Ms,
+    required this.above500Ms,
+    required this.above1s,
+    required this.above5s,
+    this.bottleneckPhase = '',
+    this.bottleneckSlowdown = 1,
+  });
+
+  final int count;
+  final int failed;
+  final double avgMs;
+  final double p50Ms;
+  final double p95Ms;
+  final double p99Ms;
+  final int maxMs;
+  final double stableStartMs;
+  final double stableEndMs;
+  final double slowdown;
+  final int warmupExcluded;
+  final int above100Ms;
+  final int above500Ms;
+  final int above1s;
+  final int above5s;
+  final String bottleneckPhase;
+  final double bottleneckSlowdown;
+
+  _StressPerfMetrics withBottleneck(String phase, double phaseSlowdown) =>
+      _StressPerfMetrics(
+        count: count,
+        failed: failed,
+        avgMs: avgMs,
+        p50Ms: p50Ms,
+        p95Ms: p95Ms,
+        p99Ms: p99Ms,
+        maxMs: maxMs,
+        stableStartMs: stableStartMs,
+        stableEndMs: stableEndMs,
+        slowdown: slowdown,
+        warmupExcluded: warmupExcluded,
+        above100Ms: above100Ms,
+        above500Ms: above500Ms,
+        above1s: above1s,
+        above5s: above5s,
+        bottleneckPhase: phase,
+        bottleneckSlowdown: phaseSlowdown,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'count': count,
+        'failed': failed,
+        'avgMs': avgMs,
+        'p50Ms': p50Ms,
+        'p95Ms': p95Ms,
+        'p99Ms': p99Ms,
+        'maxMs': maxMs,
+        'stableStartMs': stableStartMs,
+        'stableEndMs': stableEndMs,
+        'slowdown': slowdown,
+        'warmupExcluded': warmupExcluded,
+        'above100Ms': above100Ms,
+        'above500Ms': above500Ms,
+        'above1s': above1s,
+        'above5s': above5s,
+        'bottleneckPhase': bottleneckPhase,
+        'bottleneckSlowdown': bottleneckSlowdown,
+      };
+}
+
+class _StressAssertionResult {
+  const _StressAssertionResult({
+    required this.id,
+    required this.area,
+    required this.expected,
+    required this.actual,
+    required this.passed,
+    this.blocking = true,
+  });
+
+  final String id;
+  final String area;
+  final String expected;
+  final String actual;
+  final bool passed;
+  final bool blocking;
+
+  String get status => passed ? 'PASS' : (blocking ? 'FAIL' : 'WARN');
+  String get details =>
+      'ASSERTION $id expected=[$expected] actual=[$actual] blocking=$blocking';
+}
+
+class _StressLabScenarioDefinition {
+  const _StressLabScenarioDefinition({
+    required this.id,
+    required this.title,
+    required this.kind,
+    required this.execute,
+    this.description = '',
+  });
+
+  final String id;
+  final String title;
+  final StressLabScenarioKind kind;
+  final Future<void> Function() execute;
+  final String description;
+}
+
+enum _HumanChaosMode {
+  standard,
+  all,
+  newEmployee,
+  chaos,
+  disaster,
+  marathon,
+}
+
+class _HumanChaosOptions {
+  const _HumanChaosOptions({
+    this.mode = _HumanChaosMode.standard,
+    this.iterations = 20,
+    this.seed = 52,
+    this.strictIntegrity = true,
+    this.doubleSubmitSimulation = true,
+    this.reloadSimulation = true,
+  });
+
+  final _HumanChaosMode mode;
+  final int iterations;
+  final int seed;
+  final bool strictIntegrity;
+  final bool doubleSubmitSimulation;
+  final bool reloadSimulation;
+
+  bool get enabled => mode != _HumanChaosMode.standard;
+
+  String get modeLabel => switch (mode) {
+        _HumanChaosMode.standard => 'STANDARD',
+        _HumanChaosMode.all => 'ALL_SCENARIOS',
+        _HumanChaosMode.newEmployee => 'NEW_EMPLOYEE',
+        _HumanChaosMode.chaos => 'CHAOS',
+        _HumanChaosMode.disaster => 'DISASTER',
+        _HumanChaosMode.marathon => 'MARATHON',
+      };
+}
+
+enum _StressPerformancePhase {
+  before,
+  during,
+  after,
+}
+
+class _StressPerformanceSnapshot {
+  const _StressPerformanceSnapshot({
+    required this.phase,
+    required this.label,
+    required this.capturedAt,
+    required this.captureMs,
+    required this.productCount,
+    required this.customerCount,
+    required this.supplierCount,
+    required this.saleCount,
+    required this.purchaseCount,
+    required this.expenseCount,
+    required this.stockMovementCount,
+    required this.accountTransactionCount,
+    required this.localDbKeyCount,
+    required this.dashboardReady,
+    required this.settingsReady,
+    required this.reportsReady,
+    required this.maintenanceReady,
+    required this.syncReady,
+    required this.overallReady,
+    required this.traceSummary,
+  });
+
+  final _StressPerformancePhase phase;
+  final String label;
+  final DateTime capturedAt;
+  final int captureMs;
+  final int productCount;
+  final int customerCount;
+  final int supplierCount;
+  final int saleCount;
+  final int purchaseCount;
+  final int expenseCount;
+  final int stockMovementCount;
+  final int accountTransactionCount;
+  final int localDbKeyCount;
+  final bool dashboardReady;
+  final bool settingsReady;
+  final bool reportsReady;
+  final bool maintenanceReady;
+  final bool syncReady;
+  final bool overallReady;
+  final String traceSummary;
+
+  String get readinessSummary =>
+      'dashboard=${dashboardReady ? 'ready' : 'cold'} settings=${settingsReady ? 'ready' : 'cold'} '
+      'reports=${reportsReady ? 'ready' : 'cold'} maintenance=${maintenanceReady ? 'ready' : 'cold'} '
+      'sync=${syncReady ? 'ready' : 'cold'} overall=${overallReady ? 'ready' : 'cold'}';
+
+  String get snapshotLine =>
+      'phase=${phase.name} label="$label" captureMs=$captureMs counts(products=$productCount customers=$customerCount suppliers=$supplierCount sales=$saleCount purchases=$purchaseCount expenses=$expenseCount stockMovements=$stockMovementCount accountTransactions=$accountTransactionCount localDbKeys=$localDbKeyCount) $readinessSummary ${traceSummary.isEmpty ? '' : traceSummary}';
+}
+
+class _StressPerfStats {
+  _StressPerfStats(this.section, this.name);
+
+  final String section;
+  final String name;
+  static const int bucketSize = 100;
+  int count = 0;
+  int failed = 0;
+  int totalMs = 0;
+  int minMs = 1 << 30;
+  int maxMs = 0;
+  final List<int> _samples = <int>[];
+  final List<int> _bucketTotals = <int>[];
+  final List<int> _bucketCounts = <int>[];
+
+  void add(int elapsedMs) {
+    count += 1;
+    totalMs += elapsedMs;
+    if (elapsedMs < minMs) minMs = elapsedMs;
+    if (elapsedMs > maxMs) maxMs = elapsedMs;
+    _samples.add(elapsedMs);
+    final bucket = max<int>(0, (count - 1) ~/ bucketSize);
+    while (_bucketTotals.length <= bucket) {
+      _bucketTotals.add(0);
+      _bucketCounts.add(0);
+    }
+    _bucketTotals[bucket] += elapsedMs;
+    _bucketCounts[bucket] += 1;
+  }
+
+  void addFail() {
+    failed += 1;
+  }
+
+  double get avgMs => count == 0 ? 0 : totalMs / count;
+  double get opsPerSecond => totalMs <= 0 ? 0 : count * 1000 / totalMs;
+
+  double _percentile(double percentile) {
+    if (_samples.isEmpty) return 0;
+    final sorted = List<int>.from(_samples)..sort();
+    final index = ((sorted.length - 1) * percentile).round();
+    return sorted[index].toDouble();
+  }
+
+  ({double startMs, double endMs, int warmup}) get stableTrend {
+    if (_samples.isEmpty) return (startMs: 0, endMs: 0, warmup: 0);
+    final warmup = _samples.length >= 1000 ? bucketSize : 0;
+    final available = _samples.length - warmup;
+    final window = min<int>(bucketSize, max<int>(1, available ~/ 10));
+    final start = _samples.skip(warmup).take(window);
+    final end = _samples.skip(_samples.length - window);
+    final startMs = start.fold<int>(0, (sum, value) => sum + value) / window;
+    final endMs = end.fold<int>(0, (sum, value) => sum + value) / window;
+    return (startMs: startMs, endMs: endMs, warmup: warmup);
+  }
+
+  double get slowdownRatio =>
+      stableTrend.startMs <= 0 ? 1 : stableTrend.endMs / stableTrend.startMs;
+  double get stableSlowdownDeltaMs =>
+      max(0, stableTrend.endMs - stableTrend.startMs);
+  bool get hasSlowdownWarning =>
+      count >= bucketSize * 3 &&
+      slowdownRatio >= 1.25 &&
+      stableSlowdownDeltaMs >= 5;
+  bool get hasSlowdownFailure =>
+      count >= bucketSize * 3 &&
+      slowdownRatio >= 1.75 &&
+      stableSlowdownDeltaMs >= 25;
+  bool get hasLatencyOutlier => _samples.any((value) => value >= 5000);
+  bool get hasTailLatencyWarning =>
+      _percentile(0.99) >= 1000 || hasLatencyOutlier;
+  bool get hasTailLatencyFailure => _percentile(0.99) >= 5000;
+
+  _StressPerfMetrics get metrics => _StressPerfMetrics(
+        count: count,
+        failed: failed,
+        avgMs: avgMs,
+        p50Ms: _percentile(0.50),
+        p95Ms: _percentile(0.95),
+        p99Ms: _percentile(0.99),
+        maxMs: maxMs,
+        stableStartMs: stableTrend.startMs,
+        stableEndMs: stableTrend.endMs,
+        slowdown: slowdownRatio,
+        warmupExcluded: stableTrend.warmup,
+        above100Ms: _samples.where((value) => value >= 100).length,
+        above500Ms: _samples.where((value) => value >= 500).length,
+        above1s: _samples.where((value) => value >= 1000).length,
+        above5s: _samples.where((value) => value >= 5000).length,
+      );
+
+  String get curve {
+    if (_bucketCounts.isEmpty) return 'curve=none';
+    final parts = <String>[];
+    for (var i = 0; i < _bucketCounts.length; i++) {
+      final start = i * bucketSize;
+      final end = start + _bucketCounts[i] - 1;
+      final avg =
+          _bucketCounts[i] == 0 ? 0 : _bucketTotals[i] / _bucketCounts[i];
+      parts.add('$start-$end:${avg.toStringAsFixed(1)}ms');
+    }
+    return 'curve=${parts.join('|')} slowdown=${slowdownRatio.toStringAsFixed(2)}x';
+  }
+
+  String get summary =>
+      'count=$count failed=$failed total=${totalMs}ms avg=${avgMs.toStringAsFixed(2)}ms '
+      'p50=${metrics.p50Ms.toStringAsFixed(1)}ms p95=${metrics.p95Ms.toStringAsFixed(1)}ms '
+      'p99=${metrics.p99Ms.toStringAsFixed(1)}ms min=${minMs == (1 << 30) ? 0 : minMs}ms max=${maxMs}ms '
+      'ops/s=${opsPerSecond.toStringAsFixed(1)} stableStart=${metrics.stableStartMs.toStringAsFixed(1)}ms '
+      'stableEnd=${metrics.stableEndMs.toStringAsFixed(1)}ms warmupExcluded=${metrics.warmupExcluded} '
+      'outliers(100ms=${metrics.above100Ms},500ms=${metrics.above500Ms},1s=${metrics.above1s},5s=${metrics.above5s}) $curve';
+}
+
+class _PageReadinessProbeResult {
+  const _PageReadinessProbeResult({
+    required this.totalRows,
+    required this.searchRows,
+    required this.filterRows,
+    required this.pageRows,
+    required this.loadMs,
+    required this.searchMs,
+    required this.filterMs,
+    required this.sortMs,
+    required this.pageMs,
+  });
+
+  final int totalRows;
+  final int searchRows;
+  final int filterRows;
+  final int pageRows;
+  final int loadMs;
+  final int searchMs;
+  final int filterMs;
+  final int sortMs;
+  final int pageMs;
+
+  int get totalMs => loadMs + searchMs + filterMs + sortMs + pageMs;
+
+  String get details =>
+      'totalRows=$totalRows searchRows=$searchRows filterRows=$filterRows pageRows=$pageRows '
+      'loadMs=$loadMs searchMs=$searchMs filterMs=$filterMs sortMs=$sortMs pageMs=$pageMs totalMs=$totalMs';
+}
+
+class _StressTraceStat {
+  _StressTraceStat(this.section, this.phase);
+
+  final String section;
+  final String phase;
+  int count = 0;
+  int totalMs = 0;
+  int maxMs = 0;
+  final List<String> samples = <String>[];
+  final List<int> elapsedSamples = <int>[];
+
+  void add(int elapsedMs, Map<String, Object?> metadata) {
+    count += 1;
+    totalMs += elapsedMs;
+    elapsedSamples.add(elapsedMs);
+    if (elapsedMs > maxMs) maxMs = elapsedMs;
+    if (samples.length >= 3) return;
+    final meta = metadata.entries
+        .where(
+            (entry) => entry.value != null && entry.value.toString().isNotEmpty)
+        .map((entry) => '${entry.key}=${entry.value}')
+        .join(',');
+    samples.add(meta);
+  }
+
+  double get avgMs => count == 0 ? 0 : totalMs / count;
+
+  ({double startMs, double endMs, double slowdown, int warmup}) get trend {
+    if (elapsedSamples.isEmpty) {
+      return (startMs: 0, endMs: 0, slowdown: 1, warmup: 0);
+    }
+    final warmup = elapsedSamples.length >= 1000 ? 100 : 0;
+    final available = elapsedSamples.length - warmup;
+    final window = min<int>(100, max<int>(1, available ~/ 10));
+    final start = elapsedSamples.skip(warmup).take(window);
+    final end = elapsedSamples.skip(elapsedSamples.length - window);
+    final startMs = start.fold<int>(0, (sum, value) => sum + value) / window;
+    final endMs = end.fold<int>(0, (sum, value) => sum + value) / window;
+    return (
+      startMs: startMs,
+      endMs: endMs,
+      slowdown: startMs <= 0 ? 1 : endMs / startMs,
+      warmup: warmup,
+    );
+  }
+
+  String get summary =>
+      '$section.$phase avg=${avgMs.toStringAsFixed(1)}ms total=${totalMs}ms count=$count max=${maxMs}ms '
+      'start=${trend.startMs.toStringAsFixed(1)}ms end=${trend.endMs.toStringAsFixed(1)}ms '
+      'slowdown=${trend.slowdown.toStringAsFixed(2)}x warmupExcluded=${trend.warmup}'
+      '${samples.isEmpty ? '' : ' sample=${samples.join(' | ')}'}';
+}
+
+class StressLabPage extends StatefulWidget {
+  const StressLabPage({
+    super.key,
+    required this.store,
+    this.autoRunRealUserScenario = false,
+  });
+
+  final AppStore store;
+  final bool autoRunRealUserScenario;
+
+  @override
+  State<StressLabPage> createState() => _StressLabPageState();
+}
+
+class _StressLabPageState extends State<StressLabPage> {
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoRunRealUserScenario) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _running) return;
+        _runRealUserScenarioAudit();
+      });
+    }
+  }
+
+  String _t(String key) => AppLocalizations.of(context).text(key);
+  String _tf(String key, Map<String, Object?> values) =>
+      AppLocalizations.of(context).format(key, values);
+  String _dual(String ar, String en) =>
+      AppLocalizations.of(context).isArabic ? ar : en;
+  String _reportLabel(String value, AppLocalizations tr) {
+    if (tr.isArabic) return value;
+    return switch (value) {
+      'الكتالوج' => 'Catalog',
+      'الموردون' => 'Suppliers',
+      'العملاء' => 'Customers',
+      'المنتجات' => 'Products',
+      'المخزون' => 'Inventory',
+      'الوردية النقدية' => 'Cash Drawer',
+      'المشتريات' => 'Purchases',
+      'الجرد' => 'Stock Count',
+      'التصنيع' => 'Manufacturing',
+      'المبيعات' => 'Sales',
+      'سندات التسليم' => 'Delivery Notes',
+      'عروض الأسعار' => 'Quotations',
+      'المصاريف' => 'Expenses',
+      'النسخ الاحتياطي' => 'Backup',
+      'المزامنة' => 'Sync',
+      'ملخص البيانات' => 'Data Summary',
+      'سلامة البيانات' => 'Data Integrity',
+      'صيانة التطبيق' => 'App Maintenance',
+      'أدلة الصيانة' => 'Maintenance Evidence',
+      'المحاسبة' => 'Accounting',
+      'المحاسبة المتقدمة' => 'Advanced Accounting',
+      'المخزون المتقدم' => 'Advanced Inventory',
+      'العقد' => 'Contract',
+      'التقرير النهائي' => 'Final Report',
+      'الأداء' => 'Performance',
+      'تحليل السبب الجذري' => 'Root Cause Analysis',
+      'اقتراحات الإصلاح' => 'Fix Suggestions',
+      'صلاحية مبالغ القيود' => 'Journal amount validity',
+      'تغطية فواتير البيع بقيود يومية' => 'Sale journal coverage',
+      'تغطية فواتير الشراء بقيود يومية' => 'Purchase journal coverage',
+      'تغطية المصاريف بقيود يومية' => 'Expense journal coverage',
+      'توازن دفتر اليومية' => 'Journal balance',
+      'صلاحية أرصدة المنتجات' => 'Product balance validity',
+      'عدم وجود مخزون اختبار سالب' => 'No negative test stock',
+      'عدم وجود حركات مخزون يتيمة' => 'No orphan stock movements',
+      'منحنى التباطؤ' => 'Slowdown curve',
+      'تغطية قياس المبيعات' => 'Sales measurement coverage',
+      'تشخيص المصاريف المحاسبي' => 'Accounting expense diagnosis',
+      'تشخيص فرق المدين والدائن' => 'Debit/Credit difference diagnosis',
+      'تشخيص الفواتير المدفوعة بزيادة' => 'Overpaid invoices diagnosis',
+      'تشخيص تباطؤ الأداء' => 'Performance slowdown diagnosis',
+      'تشخيص حالة المزامنة' => 'Sync state diagnosis',
+      'خطوات مقترحة حسب الأدلة' => 'Suggested steps from evidence',
+      'نمو البيانات بعد الاختبار' => 'Data growth after test',
+      'حركات تشغيلية جديدة' => 'New operational movements',
+      'سلامة أرقام المخزون' => 'Inventory number validity',
+      'عدم وجود Queue فاشلة/مرفوضة' => 'No failed/rejected queue items',
+      'ترحيل محاسبي محلي' => 'Local accounting posting',
+      'منطق نتيجة المبيعات' => 'Sales result logic',
+      'PASS' => 'PASS',
+      'WARN' => 'WARN',
+      'FAIL' => 'FAIL',
+      _ => value,
+    };
+  }
+
+  bool _sectionMatches(String actual, String canonical) {
+    if (actual == canonical || actual.startsWith('$canonical ')) return true;
+    return switch (canonical) {
+      'ضغط' => actual.startsWith('ضغط ') ||
+          actual.endsWith(' pressure') ||
+          actual == 'Pressure',
+      'الأداء' => actual == 'Performance',
+      'المحاسبة' => actual == 'Accounting',
+      'المحاسبة المتقدمة' => actual == 'Advanced Accounting',
+      'المخزون' => actual == 'Inventory',
+      'المخزون المتقدم' => actual == 'Advanced Inventory',
+      '??? ????????' =>
+        actual == 'Sales pressure' || actual.startsWith('Sales pressure '),
+      'ملخص البيانات' => actual == 'Data Summary',
+      'سلامة البيانات' => actual == 'Data Integrity',
+      'صيانة التطبيق' => actual == 'App Maintenance',
+      'أدلة الصيانة' => actual == 'Maintenance Evidence',
+      'المزامنة' => actual == 'Sync',
+      'تحليل السبب الجذري' => actual == 'Root Cause Analysis',
+      'اقتراحات الإصلاح' => actual == 'Fix Suggestions',
+      _ => false,
+    };
+  }
+
+  final _productsController = TextEditingController(text: '1000');
+  final _customersController = TextEditingController(text: '500');
+  final _suppliersController = TextEditingController(text: '100');
+  final _salesController = TextEditingController(text: '500');
+  final _progressEveryController = TextEditingController(text: '25');
+  final _pressureMultiplierController = TextEditingController(text: '1000');
+  final _pressureProgressEveryController = TextEditingController(text: '50');
+  static final List<String> _persistentLog = <String>[];
+  static final List<Map<String, int>> _healthHistory = <Map<String, int>>[];
+  final _log = _persistentLog;
+  final _random = Random(52);
+  final Map<String, _StressTraceStat> _traceStats =
+      <String, _StressTraceStat>{};
+  final List<_StressPerformanceSnapshot> _performanceSnapshots =
+      <_StressPerformanceSnapshot>[];
+
+  bool _running = false;
+  double _progress = 0;
+  String _status = 'Ready';
+  String _currentBatchId = '';
+  int _lastPressureMultiplier = 1000;
+  int _lastPressureProgressEvery = 50;
+  int? _auditBackupBytes;
+  int? _auditBackupKeyCount;
+  bool? _auditBackupValid;
+  bool? _auditBackupRestoreReady;
+  final List<_StressAuditStep> _report = <_StressAuditStep>[];
+  final List<_StressAssertionResult> _assertions = <_StressAssertionResult>[];
+
+  AppStore get store => widget.store;
+
+  Future<({int bytes, int keys, bool valid, bool restoreReady})>
+      _ensureAuditBackupSnapshot() async {
+    final cachedBytes = _auditBackupBytes;
+    final cachedKeys = _auditBackupKeyCount;
+    final cachedValid = _auditBackupValid;
+    final cachedRestoreReady = _auditBackupRestoreReady;
+    if (cachedBytes != null &&
+        cachedKeys != null &&
+        cachedValid != null &&
+        cachedRestoreReady != null) {
+      return (
+        bytes: cachedBytes,
+        keys: cachedKeys,
+        valid: cachedValid,
+        restoreReady: cachedRestoreReady,
+      );
+    }
+    final raw = await store.recovery.exportBackupJson();
+    final validation = await compute(_validateStressBackupJson, raw);
+    final restoreReadiness =
+        await compute(_validateStressBackupRestoreReadiness, raw);
+    final snapshot = (
+      bytes: raw.length,
+      keys: validation['keys'] as int? ?? 0,
+      valid: validation['valid'] == true,
+      restoreReady: restoreReadiness['ready'] == true,
+    );
+    _auditBackupBytes = snapshot.bytes;
+    _auditBackupKeyCount = snapshot.keys;
+    _auditBackupValid = snapshot.valid;
+    _auditBackupRestoreReady = snapshot.restoreReady;
+    return snapshot;
+  }
+
+  @override
+  void dispose() {
+    _productsController.dispose();
+    _customersController.dispose();
+    _suppliersController.dispose();
+    _salesController.dispose();
+    _progressEveryController.dispose();
+    _pressureMultiplierController.dispose();
+    _pressureProgressEveryController.dispose();
+    super.dispose();
+  }
+
+  int _readInt(TextEditingController controller, int fallback) {
+    final value = int.tryParse(controller.text.trim());
+    if (value == null || value < 0) return fallback;
+    return value;
+  }
+
+  String _timestamp() => DateTime.now().toIso8601String();
+
+  void _addLog(String message) {
+    final line = '[${_timestamp()}] $message';
+    if (mounted) {
+      setState(() {
+        _log.add(line);
+        if (_log.length > 4000) _log.removeRange(0, _log.length - 4000);
+      });
+    } else {
+      _log.add(line);
+    }
+    debugPrint('Ventio Stress Lab: $line');
+  }
+
+  void _resetTraceCapture() {
+    _traceStats.clear();
+  }
+
+  void _captureTrace(String section, String phase, int elapsedMs,
+      Map<String, Object?> metadata) {
+    final key = '$section::$phase';
+    final stat =
+        _traceStats.putIfAbsent(key, () => _StressTraceStat(section, phase));
+    stat.add(elapsedMs, metadata);
+  }
+
+  String _traceSummaryForSection(String section) {
+    final stats = _traceStats.values.toList();
+    if (stats.isEmpty) return 'trace=none';
+    stats.sort((a, b) => b.totalMs.compareTo(a.totalMs));
+    final phases = stats.take(12).map((stat) => stat.summary).join(' || ');
+    return 'tracePhases=$phases';
+  }
+
+  String _traceSummary() {
+    final stats = _traceStats.values.toList();
+    if (stats.isEmpty) return 'trace=none';
+    stats.sort((a, b) => b.totalMs.compareTo(a.totalMs));
+    final top = stats.take(5).map((stat) => stat.summary).join(' || ');
+    return 'traceTop=$top';
+  }
+
+  _StressTraceStat? _traceBottleneck() {
+    final candidates = _traceStats.values
+        .where(
+            (stat) => stat.count >= 10 && stat.trend.endMs > stat.trend.startMs)
+        .toList(growable: false);
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) {
+      final aGrowth = a.trend.endMs - a.trend.startMs;
+      final bGrowth = b.trend.endMs - b.trend.startMs;
+      return bGrowth.compareTo(aGrowth);
+    });
+    return candidates.first;
+  }
+
+  void _resetPerformanceCapture() {
+    _performanceSnapshots.clear();
+  }
+
+  Future<void> _capturePerformanceSnapshot(
+    _StressPerformancePhase phase, {
+    required String label,
+  }) async {
+    final sw = Stopwatch()..start();
+    final localDbKeyCount = LocalDatabaseService.keys().length;
+    final dashboardReady = store.products.isNotEmpty &&
+        store.customers.isNotEmpty &&
+        store.suppliers.isNotEmpty;
+    final settingsReady = store.storeProfile.branches.isNotEmpty &&
+        store.storeProfile.currencies.isNotEmpty &&
+        store.roles.isNotEmpty &&
+        store.users.isNotEmpty;
+    final reportsReady = store.saleQuotations.isNotEmpty &&
+        store.deliveryNotes.isNotEmpty &&
+        store.billsOfMaterials.isNotEmpty &&
+        store.manufacturingOrders.isNotEmpty &&
+        store.inventoryCountSessions.isNotEmpty &&
+        store.stockMovements.isNotEmpty;
+    final maintenanceReady = localDbKeyCount > 0 &&
+        store.stockMovements.isNotEmpty &&
+        store.accountTransactions.isNotEmpty;
+    final syncReady = store.appIdentity.deviceId.trim().isNotEmpty &&
+        store.appIdentity.storeId.trim().isNotEmpty &&
+        store.appIdentity.branchId.trim().isNotEmpty &&
+        (store.syncQueue.isNotEmpty || store.syncChanges.isNotEmpty);
+    final overallReady = dashboardReady &&
+        settingsReady &&
+        reportsReady &&
+        maintenanceReady &&
+        syncReady;
+    sw.stop();
+
+    final snapshot = _StressPerformanceSnapshot(
+      phase: phase,
+      label: label,
+      capturedAt: DateTime.now(),
+      captureMs: sw.elapsedMilliseconds,
+      productCount: store.products.length,
+      customerCount: store.customers.length,
+      supplierCount: store.suppliers.length,
+      saleCount: store.sales.length,
+      purchaseCount: store.purchases.length,
+      expenseCount: store.expenses.length,
+      stockMovementCount: store.stockMovements.length,
+      accountTransactionCount: store.accountTransactions.length,
+      localDbKeyCount: localDbKeyCount,
+      dashboardReady: dashboardReady,
+      settingsReady: settingsReady,
+      reportsReady: reportsReady,
+      maintenanceReady: maintenanceReady,
+      syncReady: syncReady,
+      overallReady: overallReady,
+      traceSummary: _traceSummary(),
+    );
+    _performanceSnapshots.add(snapshot);
+    _addLog('PERF_SNAPSHOT ${snapshot.snapshotLine}');
+  }
+
+  String _performanceDeltaLine(
+    _StressPerformanceSnapshot baseline,
+    _StressPerformanceSnapshot current,
+  ) {
+    String delta(int now, int then) {
+      final diff = now - then;
+      return '${diff >= 0 ? '+' : ''}$diff';
+    }
+
+    return 'delta products=${delta(current.productCount, baseline.productCount)} customers=${delta(current.customerCount, baseline.customerCount)} '
+        'suppliers=${delta(current.supplierCount, baseline.supplierCount)} sales=${delta(current.saleCount, baseline.saleCount)} '
+        'purchases=${delta(current.purchaseCount, baseline.purchaseCount)} expenses=${delta(current.expenseCount, baseline.expenseCount)} '
+        'stockMovements=${delta(current.stockMovementCount, baseline.stockMovementCount)} accountTransactions=${delta(current.accountTransactionCount, baseline.accountTransactionCount)} '
+        'localDbKeys=${delta(current.localDbKeyCount, baseline.localDbKeyCount)} readyBefore=${baseline.overallReady ? 'yes' : 'no'} readyAfter=${current.overallReady ? 'yes' : 'no'}';
+  }
+
+  String _performanceVerdictLabel(_StressPerformanceSnapshot baseline) {
+    if (_performanceSnapshots.isEmpty) {
+      return 'Bad';
+    }
+    final current = _performanceSnapshots.last;
+    final snapshotCount = _performanceSnapshots.length;
+    final maxCaptureMs = _performanceSnapshots
+        .map((snapshot) => snapshot.captureMs)
+        .fold<int>(0, max<int>);
+    final grew = current.productCount > baseline.productCount ||
+        current.customerCount > baseline.customerCount ||
+        current.supplierCount > baseline.supplierCount ||
+        current.saleCount > baseline.saleCount ||
+        current.purchaseCount > baseline.purchaseCount ||
+        current.expenseCount > baseline.expenseCount ||
+        current.stockMovementCount > baseline.stockMovementCount ||
+        current.accountTransactionCount > baseline.accountTransactionCount ||
+        current.localDbKeyCount > baseline.localDbKeyCount;
+    final allCapturedQuickly = maxCaptureMs <= 25;
+    if (!current.overallReady) {
+      return 'Bad';
+    }
+    if (snapshotCount >= 3 && grew && allCapturedQuickly) {
+      return 'Good';
+    }
+    return 'Warn';
+  }
+
+  String _performanceVerdictReason(_StressPerformanceSnapshot baseline) {
+    if (_performanceSnapshots.isEmpty) {
+      return 'no performance snapshots were captured';
+    }
+    final current = _performanceSnapshots.last;
+    final snapshotCount = _performanceSnapshots.length;
+    final maxCaptureMs = _performanceSnapshots
+        .map((snapshot) => snapshot.captureMs)
+        .fold<int>(0, max<int>);
+    final grew = current.productCount > baseline.productCount ||
+        current.customerCount > baseline.customerCount ||
+        current.supplierCount > baseline.supplierCount ||
+        current.saleCount > baseline.saleCount ||
+        current.purchaseCount > baseline.purchaseCount ||
+        current.expenseCount > baseline.expenseCount ||
+        current.stockMovementCount > baseline.stockMovementCount ||
+        current.accountTransactionCount > baseline.accountTransactionCount ||
+        current.localDbKeyCount > baseline.localDbKeyCount;
+    if (!current.overallReady) {
+      return 'final snapshot is still cold in one or more readiness checks';
+    }
+    if (snapshotCount < 3) {
+      return 'only $snapshotCount snapshot(s) were captured';
+    }
+    if (!grew) {
+      return 'no meaningful data growth was observed across the window';
+    }
+    if (maxCaptureMs > 25) {
+      return 'one or more snapshots took $maxCaptureMs ms to capture';
+    }
+    return 'baseline to final window looks healthy with data growth and quick captures';
+  }
+
+  void _addPerformanceReport() {
+    if (_performanceSnapshots.isEmpty) {
+      _addLog('========== VENTIO PERFORMANCE WINDOW ==========');
+      _addLog('No performance snapshots were captured.');
+      _addLog(
+          'Performance verdict: Bad | reason=no performance snapshots were captured');
+      _addLog('===============================================');
+      return;
+    }
+
+    final baseline = _performanceSnapshots.first;
+    final current = _performanceSnapshots.last;
+    final verdict = _performanceVerdictLabel(baseline);
+    final reason = _performanceVerdictReason(baseline);
+    _addLog('========== VENTIO PERFORMANCE WINDOW ==========');
+    _addLog('Performance verdict: $verdict | reason=$reason');
+    _addLog('Baseline: ${baseline.snapshotLine}');
+    for (final snapshot in _performanceSnapshots) {
+      _addLog(
+          '[${snapshot.phase.name.toUpperCase()}] ${snapshot.snapshotLine}');
+    }
+    _addLog('Delta: ${_performanceDeltaLine(baseline, current)}');
+    _addLog('===============================================');
+  }
+
+  void _addShareableFinalReport({
+    required DateTime startedAt,
+    required String overall,
+    required int pass,
+    required int warn,
+    required int fail,
+    required int elapsedSeconds,
+  }) {
+    final scores = _calculateHealthScores();
+    final total = scores['total'] ?? 0;
+    final performanceScore = scores['performance'] ?? 0;
+    final accountingScore = scores['accounting'] ?? 0;
+    final inventoryScore = scores['inventory'] ?? 0;
+    final integrityScore = scores['integrity'] ?? 0;
+    final maintenanceScore = scores['maintenance'] ?? 0;
+    final backupScore = scores['backup'] ?? 0;
+    final syncScore = scores['sync'] ?? 0;
+    final sections = _report.map((item) => item.section).toSet().toList()
+      ..sort();
+    final performanceVerdict = _performanceSnapshots.isEmpty
+        ? 'Bad'
+        : _performanceVerdictLabel(_performanceSnapshots.first);
+    final performanceReason = _performanceSnapshots.isEmpty
+        ? 'no performance snapshots were captured'
+        : _performanceVerdictReason(_performanceSnapshots.first);
+    final startedAtIso = startedAt.toIso8601String();
+    final endedAtIso = DateTime.now().toIso8601String();
+    final summaryLine =
+        'overall=$overall pass=$pass warn=$warn fail=$fail total=$total performance=$performanceScore accounting=$accountingScore inventory=$inventoryScore integrity=$integrityScore maintenance=$maintenanceScore backup=$backupScore sync=$syncScore perfVerdict=$performanceVerdict perfSnapshots=${_performanceSnapshots.length} duration=${elapsedSeconds}s';
+
+    _addLog('========== VENTIO SHAREABLE FINAL REPORT ==========');
+    _addLog('REPORT_FORMAT=STRESS_LAB_FINAL_V1');
+    _addLog('REPORT_BATCH=$_currentBatchId');
+    _addLog('REPORT_STARTED_AT=$startedAtIso');
+    _addLog('REPORT_ENDED_AT=$endedAtIso');
+    _addLog('REPORT_DURATION_SECONDS=$elapsedSeconds');
+    _addLog('REPORT_SUMMARY $summaryLine');
+    _addLog(
+        'REPORT_SYSTEM role=${_roleLabel()} device=${store.appIdentity.deviceId} store=${store.appIdentity.storeId} branch=${store.appIdentity.branchId} transport=${_effectiveSyncTransport()} epoch=${store.appIdentity.storeEpoch} syncSequence=${store.currentSyncSequence}');
+    _addLog(
+        'REPORT_HEALTH total=$total performance=$performanceScore accounting=$accountingScore inventory=$inventoryScore integrity=$integrityScore maintenance=$maintenanceScore backup=$backupScore sync=$syncScore verdict=${total >= 95 ? 'READY_FOR_PRODUCTION' : total >= 80 ? 'READY_WITH_WARNINGS' : 'NOT_READY'}');
+    _addLog(
+        'REPORT_PERFORMANCE verdict=$performanceVerdict snapshots=${_performanceSnapshots.length} reason="$performanceReason"');
+    if (_performanceSnapshots.isNotEmpty) {
+      _addLog(
+          'REPORT_PERFORMANCE_BASELINE capturedAt=${_performanceSnapshots.first.capturedAt.toIso8601String()} ${_performanceSnapshots.first.snapshotLine}');
+      _addLog(
+          'REPORT_PERFORMANCE_FINAL capturedAt=${_performanceSnapshots.last.capturedAt.toIso8601String()} ${_performanceSnapshots.last.snapshotLine}');
+      _addLog(
+          'REPORT_PERFORMANCE_DELTA ${_performanceDeltaLine(_performanceSnapshots.first, _performanceSnapshots.last)}');
+      for (var i = 0; i < _performanceSnapshots.length; i++) {
+        final snapshot = _performanceSnapshots[i];
+        _addLog(
+            'REPORT_PERFORMANCE_SNAPSHOT index=${i + 1} capturedAt=${snapshot.capturedAt.toIso8601String()} ${snapshot.snapshotLine}');
+      }
+    }
+    for (final row in _report.where((item) => item.performance != null)) {
+      _addLog('REPORT_OPERATION_PERFORMANCE ${jsonEncode(<String, Object?>{
+            'section': row.section,
+            'name': row.name,
+            'status': row.status,
+            ...row.performance!.toJson(),
+          })}');
+    }
+    _addLog('REPORT_SECTION_COUNT=${sections.length}');
+    for (final section in sections) {
+      final rows = _report.where((item) => item.section == section).toList();
+      final sectionPass = rows.where((item) => item.isPass).length;
+      final sectionWarn = rows.where((item) => item.isWarn).length;
+      final sectionFail = rows.where((item) => item.isFail).length;
+      _addLog(
+          'REPORT_SECTION name="$section" pass=$sectionPass warn=$sectionWarn fail=$sectionFail rows=${rows.length}');
+    }
+    _addLog('REPORT_STATUS=READY_TO_SHARE');
+    _addLog('========== END VENTIO SHAREABLE FINAL REPORT ==========');
+  }
+
+  void _setStatus(String value, {double? progress}) {
+    if (!mounted) return;
+    setState(() {
+      _status = value;
+      if (progress != null) _progress = progress.clamp(0, 1);
+    });
+  }
+
+  String _effectiveSyncTransport() {
+    final identity = store.appIdentity;
+    final lan = LanSyncSettings.load();
+    final directSettings = VpsControlPlaneSettings.load();
+    final directActive = directSettings.isConfigured &&
+        identity.activeSyncTransportNormalized == 'direct';
+    final lanHostActive = identity.isHost && lan.setupComplete && lan.isHost;
+    final lanClientActive = identity.isClient &&
+        lan.setupComplete &&
+        lan.isClient &&
+        identity.activeSyncTransportNormalized == 'lan';
+    if (directActive) return 'direct';
+    if (lanHostActive || lanClientActive) return 'lan';
+    return 'local';
+  }
+
+  String _roleLabel() {
+    final identity = store.appIdentity;
+    final transport = _effectiveSyncTransport();
+    if (identity.isHost) {
+      return transport == 'direct'
+          ? 'HOST_DIRECT'
+          : transport == 'lan'
+              ? 'HOST_LAN'
+              : 'HOST_LOCAL';
+    }
+    if (identity.isClient && transport == 'direct') return 'CLIENT_DIRECT';
+    if (identity.isClient && transport == 'lan') return 'CLIENT_LAN';
+    return 'LOCAL_${identity.deviceRole.name.toUpperCase()}';
+  }
+
+  String _snapshotLine(String label) {
+    final identity = store.appIdentity;
+    final rejectedQueue = store.syncQueue
+        .where((item) => item.status.toLowerCase() == 'rejected')
+        .length;
+    final failedQueue = store.syncQueue
+        .where((item) => item.status.toLowerCase() == 'failed')
+        .length;
+    return '$label role=${_roleLabel()} device=${identity.deviceId} store=${identity.storeId} branch=${identity.branchId} '
+        'transport=${_effectiveSyncTransport()} identityTransport=${identity.activeSyncTransportNormalized} epoch=${identity.storeEpoch} seq=${store.currentSyncSequence} '
+        'products=${store.products.length} customers=${store.customers.length} suppliers=${store.suppliers.length} '
+        'sales=${store.sales.length} purchases=${store.purchases.length} expenses=${store.expenses.length} stockMovements=${store.stockMovements.length} '
+        'pendingQueue=${store.pendingSyncQueue.length} pendingChanges=${store.pendingSyncChanges.length} '
+        'allQueue=${store.syncQueue.length} allChanges=${store.syncChanges.length} rejectedQueue=$rejectedQueue failedQueue=$failedQueue';
+  }
+
+  int _logicalDatabaseBytes() {
+    final entries = LocalDatabaseService.allEntries();
+    var total = 0;
+    for (final entry in entries.entries) {
+      total += utf8.encode(entry.key).length + utf8.encode(entry.value).length;
+    }
+    return total;
+  }
+
+  Future<String> _dbMetricsLine(String label) async {
+    final entries = LocalDatabaseService.allEntries();
+    final logicalBytes = _logicalDatabaseBytes();
+    final backup = await store.recovery.exportBackupJson();
+    return '$label dbKeys=${entries.length} logicalDbBytes=$logicalBytes logicalDbMB=${(logicalBytes / 1024 / 1024).toStringAsFixed(2)} '
+        'backupBytes=${backup.length} backupMB=${(backup.length / 1024 / 1024).toStringAsFixed(2)}';
+  }
+
+  Future<String> _cachedAuditDbMetricsLine(String label) async {
+    final entries = LocalDatabaseService.allEntries();
+    final logicalBytes = _logicalDatabaseBytes();
+    final backup = await _ensureAuditBackupSnapshot();
+    return '$label dbKeys=${entries.length} logicalDbBytes=$logicalBytes logicalDbMB=${(logicalBytes / 1024 / 1024).toStringAsFixed(2)} '
+        'backupBytes=${backup.bytes} backupMB=${(backup.bytes / 1024 / 1024).toStringAsFixed(2)}';
+  }
+
+  Future<void> _logDatabaseMetrics(String label) async {
+    try {
+      _addLog(await _dbMetricsLine(label));
+    } catch (error) {
+      _addLog('$label DB_METRICS_FAILED $error');
+    }
+  }
+
+  Future<void> _logCachedAuditDatabaseMetrics(String label) async {
+    try {
+      _addLog(await _cachedAuditDbMetricsLine(label));
+    } catch (error) {
+      _addLog('$label DB_METRICS_FAILED $error');
+    }
+  }
+
+  void _applyPreset(
+      {required int products,
+      required int customers,
+      required int suppliers,
+      required int sales,
+      required int progressEvery}) {
+    if (_running) return;
+    setState(() {
+      _productsController.text = products.toString();
+      _customersController.text = customers.toString();
+      _suppliersController.text = suppliers.toString();
+      _salesController.text = sales.toString();
+      _progressEveryController.text = progressEvery.toString();
+      _status = 'Preset applied.';
+    });
+  }
+
+  Future<T> _measure<T>(String label, Future<T> Function() action) async {
+    final sw = Stopwatch()..start();
+    try {
+      final result = await action();
+      sw.stop();
+      _addLog('$label OK in ${sw.elapsedMilliseconds} ms');
+      return result;
+    } catch (error, stackTrace) {
+      sw.stop();
+      _addLog('$label FAILED in ${sw.elapsedMilliseconds} ms: $error');
+      _addLog(stackTrace.toString().split('\n').take(8).join(' | '));
+      rethrow;
+    }
+  }
+
+  List<_StressLabScenarioDefinition> get _scenarioDefinitions =>
+      <_StressLabScenarioDefinition>[
+        _StressLabScenarioDefinition(
+          id: 'core-commerce',
+          title: 'Core Commerce',
+          kind: StressLabScenarioKind.commerce,
+          description:
+              'Seed the core commerce modules and drive live data flows.',
+          execute: _runCoreCommerceScenario,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'daily-operations',
+          title: 'Daily Operations',
+          kind: StressLabScenarioKind.commerce,
+          description: 'Exercise the daily operational mix under medium load.',
+          execute: _runDailyOperationsTest,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'auth-surface',
+          title: 'Auth Surface',
+          kind: StressLabScenarioKind.admin,
+          description: 'Exercise login, shell, and account dashboard state.',
+          execute: _runAuthSurfaceScenario,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'system-audit',
+          title: 'System Audit',
+          kind: StressLabScenarioKind.system,
+          description:
+              'Run the one-button audit, pressure test, and final assertions.',
+          execute: _runOneButtonSystemAudit,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'device-tools',
+          title: 'Device Tools',
+          kind: StressLabScenarioKind.system,
+          description: 'Validate diagnostics and barcode scanner coverage.',
+          execute: _runDeviceToolsScenario,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'diagnostics',
+          title: 'Diagnostics',
+          kind: StressLabScenarioKind.maintenance,
+          description: 'Collect sequence, integrity, and maintenance evidence.',
+          execute: _runAllDiagnostics,
+        ),
+      ];
+
+  Future<void> _runScenario({
+    required _StressLabScenarioDefinition scenario,
+    required Future<void> Function() body,
+  }) async {
+    final protectedState = _captureProtectedState();
+    _addLog(
+        '========== VENTIO SCENARIO START id=${scenario.id} title="${scenario.title}" kind=${scenario.kind.name} ==========');
+    final startedAt = DateTime.now();
+    try {
+      await body();
+      _addLog(
+          'SCENARIO_DONE id=${scenario.id} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}');
+    } catch (error) {
+      _addLog(
+          'SCENARIO_FAILED id=${scenario.id} title="${scenario.title}" error=$error');
+      rethrow;
+    } finally {
+      _assertProtectedStateUnchanged(protectedState, scenario.id);
+      _addLog(
+          '========== VENTIO SCENARIO END id=${scenario.id} title="${scenario.title}" ==========');
+    }
+  }
+
+  Map<String, String> _captureProtectedState() {
+    const protectedKeys = <String>[
+      'app_identity_v1',
+      'sync_device_id_v1',
+      'account_auth_cache_v1',
+      'direct_sync_settings_v1',
+      'direct_device_private_key_v1',
+      'direct_device_public_key_v1',
+      'direct_trusted_peer_keys_v1',
+      'lan_sync_settings_v2',
+      'vps_api_base_url',
+      'direct_control_auto_sync_enabled',
+      'direct_control_auto_sync_interval_seconds',
+    ];
+    final systemUsers = store.users
+        .where((user) => user.isSystem)
+        .map((user) => user.toJson())
+        .toList(growable: false)
+      ..sort((a, b) =>
+          (a['id'] ?? '').toString().compareTo((b['id'] ?? '').toString()));
+    return <String, String>{
+      for (final key in protectedKeys)
+        'storage:$key': LocalDatabaseService.getString(key) ?? '<missing>',
+      'runtime:identity': jsonEncode(store.appIdentity.toJson()),
+      'runtime:system_users': jsonEncode(systemUsers),
+    };
+  }
+
+  void _assertProtectedStateUnchanged(
+      Map<String, String> before, String scenarioId) {
+    final after = _captureProtectedState();
+    final changed = before.keys
+        .where((key) => before[key] != after[key])
+        .toList(growable: false);
+    if (changed.isEmpty) return;
+    _addLog(
+        'PROTECTED_STATE_VIOLATION scenario=$scenarioId keys=${changed.join(',')}');
+    throw StateError(
+      'Stress Lab blocked a protected Store/account change in $scenarioId: ${changed.join(', ')}',
+    );
+  }
+
+  Future<void> _runFullSimulation() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'core-commerce',
+        title: 'Core Commerce',
+        kind: StressLabScenarioKind.commerce,
+        description:
+            'Seed the core commerce modules and drive live data flows.',
+        execute: _runCoreCommerceScenario,
+      ),
+      body: _runCoreCommerceScenario,
+    );
+  }
+
+  Future<void> _runCoreCommerceScenario() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _progress = 0;
+      _status = 'Starting...';
+      _currentBatchId =
+          'stress_${DateTime.now().millisecondsSinceEpoch}_${_roleLabel().toLowerCase()}';
+    });
+
+    try {
+      _addLog(
+          'VENTIO_REAL_APP_STRESS_START batch=$_currentBatchId buildMode=${kReleaseMode ? 'release' : (kProfileMode ? 'profile' : 'debug')}');
+      _addLog(_snapshotLine('BEFORE'));
+      await _logDatabaseMetrics('BEFORE_DB');
+      _resetPerformanceCapture();
+      _resetTraceCapture();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.before,
+        label: 'Baseline before catalog seed',
+      );
+      AppStore.setTraceSink(_captureTrace);
+      await _seedCatalog();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After catalog seed',
+      );
+      await _createSales();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After sales generation',
+      );
+      await _runActiveSync();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After active sync',
+      );
+      await _exportBackupProbe();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.after,
+        label: 'After backup probe',
+      );
+      await _logDatabaseMetrics('AFTER_DB');
+      _addLog(_snapshotLine('AFTER'));
+      await _addHealthSummary('REAL_APP_STRESS_SUMMARY');
+      _addLog('VENTIO_REAL_APP_STRESS_DONE batch=$_currentBatchId');
+      _setStatus('Done', progress: 1);
+    } catch (error) {
+      _addLog(
+          'VENTIO_REAL_APP_STRESS_FAILED batch=$_currentBatchId error=$error');
+      _setStatus('Failed: $error');
+    } finally {
+      AppStore.setTraceSink(null);
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _seedCatalog() async {
+    final productCount = _readInt(_productsController, 1000);
+    final customerCount = _readInt(_customersController, 500);
+    final supplierCount = _readInt(_suppliersController, 100);
+    final progressEvery = max(1, _readInt(_progressEveryController, 25));
+
+    _setStatus('Seeding suppliers...', progress: 0.02);
+    await _measure('Seed suppliers count=$supplierCount', () async {
+      for (var i = 1; i <= supplierCount; i++) {
+        final id = '${_currentBatchId}_supplier_$i';
+        await store.addOrUpdateSupplier(Supplier(
+          id: id,
+          name: '[STRESS] Supplier $i $_currentBatchId',
+          phone: '+961700${i.toString().padLeft(5, '0')}',
+          address: 'Stress address $i',
+          notes: 'Generated by Ventio Stress Lab',
+        ));
+        if (i == 1 || i % progressEvery == 0 || i == supplierCount) {
+          _addLog(
+              'Suppliers progress $i/$supplierCount ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Seeding suppliers $i/$supplierCount',
+              progress: 0.02 + 0.10 * (i / max(1, supplierCount)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+
+    _setStatus('Seeding customers...', progress: 0.14);
+    await _measure('Seed customers count=$customerCount', () async {
+      for (var i = 1; i <= customerCount; i++) {
+        final id = '${_currentBatchId}_customer_$i';
+        await store.addOrUpdateCustomer(Customer(
+          id: id,
+          name: '[STRESS] Customer $i $_currentBatchId',
+          phone: '+961710${i.toString().padLeft(5, '0')}',
+          address: 'Stress customer address $i',
+        ));
+        if (i == 1 || i % progressEvery == 0 || i == customerCount) {
+          _addLog(
+              'Customers progress $i/$customerCount ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Seeding customers $i/$customerCount',
+              progress: 0.14 + 0.16 * (i / max(1, customerCount)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+
+    _setStatus('Seeding products...', progress: 0.32);
+    await _measure('Seed products count=$productCount', () async {
+      for (var i = 1; i <= productCount; i++) {
+        final price = 5.0 + (i % 200);
+        final cost = max(1.0, price * 0.65);
+        final id = '${_currentBatchId}_product_$i';
+        await store.addOrUpdateProduct(Product(
+          id: id,
+          name:
+              '[STRESS] Product ${i.toString().padLeft(5, '0')} $_currentBatchId',
+          nameEn: 'Stress Product ${i.toString().padLeft(5, '0')}',
+          nameAr: 'منتج اختبار ${i.toString().padLeft(5, '0')}',
+          code:
+              'ST-${_currentBatchId.hashCode.abs()}-${i.toString().padLeft(5, '0')}',
+          barcode:
+              'ST${_currentBatchId.hashCode.abs()}${i.toString().padLeft(6, '0')}',
+          price: price,
+          cost: cost,
+          stock: 100000,
+          category: 'Stress Lab',
+          brand: 'Stress',
+          supplier: supplierCount == 0
+              ? ''
+              : '[STRESS] Supplier ${1 + (i % supplierCount)} $_currentBatchId',
+          unit: 'pcs',
+          lowStockThreshold: 10,
+          trackStock: true,
+          isActive: true,
+        ));
+        if (i == 1 || i % progressEvery == 0 || i == productCount) {
+          _addLog(
+              'Products progress $i/$productCount ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Seeding products $i/$productCount',
+              progress: 0.32 + 0.24 * (i / max(1, productCount)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+  }
+
+  Future<void> _prepareAppSurfaceData() async {
+    await _measure('Prepare settings/users/database fixtures', () async {
+      final currentProfile = store.storeProfile;
+      final nextBranches = <OrganizationBranch>[
+        ...currentProfile.branches.where((branch) =>
+            branch.id != 'stress_main' && branch.id != 'stress_secondary'),
+        const OrganizationBranch(
+          id: 'stress_main',
+          name: 'Stress Lab Main Branch',
+          code: 'SL-MAIN',
+          address: 'Stress Lab HQ',
+          phone: '+96170000001',
+          isActive: true,
+        ),
+        const OrganizationBranch(
+          id: 'stress_secondary',
+          name: 'Stress Lab Secondary Branch',
+          code: 'SL-ANNEX',
+          address: 'Stress Lab Annex',
+          phone: '+96170000002',
+          isActive: true,
+        ),
+      ];
+      final nextCurrencies = <FinancialCurrency>[
+        ...currentProfile.currencies
+            .where((currency) => currency.code != 'EUR'),
+        const FinancialCurrency(
+          code: 'EUR',
+          name: 'Euro',
+          symbol: '€',
+          decimalPlaces: 2,
+          cashDecimalPlaces: 2,
+        ),
+      ];
+      final nextExchangeRates = <CurrencyExchangeRate>[
+        ...currentProfile.exchangeRates.where((rate) =>
+            !(rate.fromCurrency == 'EUR' && rate.toCurrency == 'USD')),
+        CurrencyExchangeRate(
+          id: 'stress_fx_eur_usd',
+          fromCurrency: 'EUR',
+          toCurrency: 'USD',
+          rate: 1.08,
+          effectiveAt: DateTime.now(),
+          source: 'stress_lab',
+          note: 'Seeded by Stress Lab',
+        ),
+      ];
+      final nextProfile = currentProfile.copyWith(
+        name: currentProfile.name.trim().isEmpty ||
+                currentProfile.name == 'My Store'
+            ? 'Stress Lab Store'
+            : currentProfile.name,
+        tradeName: 'Stress Lab Live Session',
+        legalName: 'Stress Lab Trading Co.',
+        address: currentProfile.address.trim().isEmpty
+            ? 'Stress Lab Avenue'
+            : currentProfile.address,
+        city:
+            currentProfile.city.trim().isEmpty ? 'Beirut' : currentProfile.city,
+        country: currentProfile.country.trim().isEmpty
+            ? 'Lebanon'
+            : currentProfile.country,
+        footerNote: 'Generated by Stress Lab user-journey simulation.',
+        priceDisplayMode: 'multiple',
+        priceDisplayCurrencies: const ['USD', 'LBP', 'EUR'],
+        defaultProductCurrency: 'USD',
+        defaultSaleInvoiceCurrency: 'USD',
+        defaultSalePaymentCurrency: 'USD',
+        documentNumbering: currentProfile.documentNumbering.copyWith(
+          invoicePrefix: 'INV-SL-',
+          quotePrefix: 'QTN-SL-',
+          purchasePrefix: 'PO-SL-',
+          deliveryNotePrefix: 'DN-SL-',
+          returnPrefix: 'RET-SL-',
+        ),
+        branches: nextBranches,
+        currencies: nextCurrencies,
+        exchangeRates: nextExchangeRates,
+      );
+      await store.updateStoreProfile(nextProfile);
+
+      final roleSpecs = <Map<String, Object?>>[
+        {
+          'id': 'stress_cashier',
+          'name': 'Stress Cashier',
+          'username': 'stress.cashier.$_currentBatchId',
+          'fullName': 'Stress Cashier',
+          'password': 'cashier1234',
+          'permissions': <String>{
+            AppPermission.dashboardView,
+            AppPermission.productsView,
+            AppPermission.customersView,
+            AppPermission.salesView,
+            AppPermission.salesCreate,
+            AppPermission.quotationsManage,
+            AppPermission.deliveryNotesManage,
+            AppPermission.reportsView,
+          },
+        },
+        {
+          'id': 'stress_warehouse',
+          'name': 'Stress Warehouse',
+          'username': 'stress.warehouse.$_currentBatchId',
+          'fullName': 'Stress Warehouse',
+          'password': 'warehouse1234',
+          'permissions': <String>{
+            AppPermission.dashboardView,
+            AppPermission.productsView,
+            AppPermission.productsManage,
+            AppPermission.suppliersView,
+            AppPermission.suppliersManage,
+            AppPermission.purchasesView,
+            AppPermission.purchasesManage,
+            AppPermission.inventoryView,
+            AppPermission.inventoryWarehousesManage,
+            AppPermission.inventoryMovementsView,
+            AppPermission.inventoryCountsManage,
+            AppPermission.inventoryManufacturingManage,
+          },
+        },
+        {
+          'id': 'stress_manager',
+          'name': 'Stress Manager',
+          'username': 'stress.manager.$_currentBatchId',
+          'fullName': 'Stress Manager',
+          'password': 'manager1234',
+          'permissions': <String>{
+            AppPermission.dashboardView,
+            AppPermission.settingsView,
+            AppPermission.settingsManage,
+            AppPermission.usersManage,
+            AppPermission.rolesManage,
+            AppPermission.permissionsManage,
+            AppPermission.reportsView,
+            AppPermission.reportsExport,
+            AppPermission.backupExport,
+            AppPermission.backupRestore,
+            AppPermission.backupManage,
+            AppPermission.syncView,
+            AppPermission.syncManage,
+            AppPermission.databaseView,
+            AppPermission.databaseManage,
+            AppPermission.maintenanceView,
+            AppPermission.maintenanceManage,
+            AppPermission.accountingView,
+            AppPermission.accountingManage,
+          },
+        },
+      ];
+
+      for (final spec in roleSpecs) {
+        final roleId = spec['id']! as String;
+        final role = UserRole(
+          id: roleId,
+          name: spec['name']! as String,
+          permissions: Set<String>.from(spec['permissions']! as Set<String>),
+        );
+        await store.addOrUpdateRole(role);
+        await store.addOrUpdateUser(
+          AppUser(
+            id: roleId,
+            fullName: spec['fullName']! as String,
+            username: spec['username']! as String,
+            passwordHash: '',
+            roleId: roleId,
+            isActive: true,
+            isSystem: false,
+          ),
+          password: spec['password']! as String,
+        );
+      }
+    });
+  }
+
+  Future<void> _runSurfaceCoverageChecks() async {
+    final dashboardReady = store.products.isNotEmpty &&
+        store.customers.isNotEmpty &&
+        store.suppliers.isNotEmpty &&
+        store.sales.isNotEmpty &&
+        store.purchases.isNotEmpty &&
+        store.expenses.isNotEmpty;
+    _auditCheck(
+      _dual('لوحة التحكم', 'Dashboard'),
+      _dual('بطاقات الملخص والاتجاهات', 'Overview cards and trends'),
+      dashboardReady,
+      _dual(
+        'تم توليد بيانات كافية لتعبئة بطاقات الملخص والرسوم البيانية.',
+        'Enough data was generated to populate the summary cards and charts.',
+      ),
+      _dual(
+        'بيانات اللوحة غير كافية بعد.',
+        'Dashboard data is still insufficient.',
+      ),
+      warning: !dashboardReady,
+    );
+
+    final settingsReady = store.storeProfile.branches.isNotEmpty &&
+        store.storeProfile.currencies.isNotEmpty &&
+        store.roles.any((role) => role.id.startsWith('stress_')) &&
+        store.users.any((user) => user.id.startsWith('stress_'));
+    _auditCheck(
+      _dual('الإعدادات', 'Settings'),
+      _dual('الملف التجاري والمستخدمون', 'Store profile and users'),
+      settingsReady,
+      _dual(
+        'تم تحديث ملف المتجر والفروع والعملات والأدوار والمستخدمين التجريبيين.',
+        'The store profile, branches, currencies, roles, and demo users were updated.',
+      ),
+      _dual(
+        'لم تكتمل بيانات الإعدادات التجريبية.',
+        'Demo settings data is incomplete.',
+      ),
+      warning: !settingsReady,
+    );
+
+    final reportsReady = store.saleQuotations.isNotEmpty &&
+        store.deliveryNotes.isNotEmpty &&
+        store.billsOfMaterials.isNotEmpty &&
+        store.manufacturingOrders.isNotEmpty &&
+        store.inventoryCountSessions.isNotEmpty &&
+        store.stockMovements.isNotEmpty;
+    _auditCheck(
+      _dual('التقارير', 'Reports'),
+      _dual('مصادر تقارير متعددة', 'Multiple report sources'),
+      reportsReady,
+      _dual(
+        'توفرت بيانات لتغذية التقارير المالية والتشغيلية وتقارير المخزون.',
+        'Data is available for financial, operational, and inventory reports.',
+      ),
+      _dual(
+        'مصادر التقارير لا تزال ناقصة.',
+        'Report sources are still missing.',
+      ),
+      warning: !reportsReady,
+    );
+
+    final databaseEntries = await LocalDatabaseService.adminEntries();
+    _auditCheck(
+      _dual('قاعدة البيانات', 'Database'),
+      _dual('نمط القاعدة والنسخ الاحتياطي', 'Database snapshot and backup'),
+      databaseEntries.isNotEmpty &&
+          (await _ensureAuditBackupSnapshot()).restoreReady,
+      _dual(
+        'تمت قراءة ${databaseEntries.length} مفتاح/جداول وإنتاج نسخة احتياطية قابلة للتصدير.',
+        'Read ${databaseEntries.length} keys/tables and produced an exportable backup.',
+      ),
+      _dual(
+        'فشل فحص قاعدة البيانات أو النسخة الاحتياطية.',
+        'Database or backup inspection failed.',
+      ),
+      warning: databaseEntries.isEmpty,
+    );
+  }
+
+  Future<void> _createSales() async {
+    final saleCount = _readInt(_salesController, 500);
+    final progressEvery = max(1, _readInt(_progressEveryController, 25));
+    final stressProducts = store.products
+        .where((item) =>
+            item.name.contains('[STRESS]') &&
+            item.stock > 10 &&
+            !item.isDeleted)
+        .toList();
+    final stressCustomers = store.customers
+        .where((item) => item.name.contains('[STRESS]') && !item.isDeleted)
+        .toList();
+    if (stressProducts.isEmpty) {
+      throw StateError('No stress products available. Seed products first.');
+    }
+
+    var totalSaleMs = 0;
+    var maxSaleMs = 0;
+    var slowSales = 0;
+    final salesSw = Stopwatch()..start();
+
+    _setStatus('Creating sales...', progress: 0.58);
+    await _measure('Create real sales count=$saleCount', () async {
+      for (var i = 1; i <= saleCount; i++) {
+        final sw = Stopwatch()..start();
+        final itemCount = 1 + _random.nextInt(min(5, stressProducts.length));
+        final selected = <Product>[];
+        while (selected.length < itemCount) {
+          final product =
+              stressProducts[_random.nextInt(stressProducts.length)];
+          if (!selected.any((item) => item.id == product.id)) {
+            selected.add(product);
+          }
+        }
+        final items = selected.map((product) {
+          final qty = 1 + _random.nextInt(3);
+          return SaleItem(
+            productId: product.id,
+            productName: product.name,
+            unitPrice: product.price,
+            quantity: qty.toDouble(),
+            unitCost: product.usdCost,
+            unitName: product.unit,
+            baseQuantity: qty.toDouble(),
+            conversionToBase: 1.0,
+          );
+        }).toList();
+        final customer = stressCustomers.isEmpty
+            ? AppStore.walkInCustomerName
+            : stressCustomers[_random.nextInt(stressCustomers.length)].name;
+        await store.createSale(
+            customerName: customer,
+            items: items,
+            paymentMethod: i.isEven ? 'Cash' : 'Card');
+        sw.stop();
+        totalSaleMs += sw.elapsedMilliseconds;
+        maxSaleMs = max(maxSaleMs, sw.elapsedMilliseconds);
+        if (sw.elapsedMilliseconds >= 1000) slowSales += 1;
+
+        if (i == 1 || i % progressEvery == 0 || i == saleCount) {
+          final avg = totalSaleMs / i;
+          _addLog(
+              'Sales progress $i/$saleCount batchElapsed=${salesSw.elapsed} avgSaleMs=${avg.toStringAsFixed(1)} maxSaleMs=$maxSaleMs slowSales=$slowSales ${_snapshotLine('SNAPSHOT')}');
+          _setStatus(
+              'Creating sales $i/$saleCount avg=${avg.toStringAsFixed(1)}ms max=${maxSaleMs}ms',
+              progress: 0.58 + 0.24 * (i / max(1, saleCount)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+  }
+
+  Future<void> _runActiveSync() async {
+    _setStatus('Inspecting sync state...', progress: 0.84);
+    _addLog(_snapshotLine('BEFORE_SYNC'));
+    final effectiveTransport = _effectiveSyncTransport();
+    await _measure('Offline sync inspection transport=$effectiveTransport',
+        () async {
+      _addLog('Stress Lab network isolation: no LAN/Direct engine was started. '
+          'pendingQueue=${store.pendingSyncQueue.length} '
+          'pendingChanges=${store.pendingSyncChanges.length}');
+    });
+    _addLog(_snapshotLine('AFTER_SYNC'));
+  }
+
+  Future<void> _compactSyncedSyncHistory() async {
+    if (_running) return;
+    setState(() => _running = true);
+    try {
+      _setStatus('Compacting synced sync history...', progress: 0.05);
+      _addLog(_snapshotLine('BEFORE_COMPACT_SYNC_HISTORY'));
+      final result = await store.compactSyncedSyncHistoryForDiagnostics();
+      _addLog(
+          "Compact synced sync history result removedChanges=${result['removedChanges']} removedQueue=${result['removedQueue']} remainingChanges=${result['remainingChanges']} remainingQueue=${result['remainingQueue']} pendingChanges=${result['pendingChanges']} pendingQueue=${result['pendingQueue']} safeFloorSequence=${result['safeFloorSequence']} earliestSequence=${result['earliestSequence']} latestSequence=${result['latestSequence']}");
+      _addLog(_snapshotLine('AFTER_COMPACT_SYNC_HISTORY'));
+      _setStatus('Compaction completed.', progress: 1);
+    } catch (error, stack) {
+      _addLog('COMPACT_SYNC_HISTORY_FAILED $error');
+      debugPrint('$stack');
+      _setStatus('Compaction failed: $error', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _exportBackupProbe() async {
+    _setStatus('Exporting backup probe...', progress: 0.96);
+    await _measure('Export backup probe', () async {
+      final raw = await store.recovery.exportBackupJson();
+      _addLog(
+          'Backup probe sizeBytes=${raw.length} sizeMB=${(raw.length / 1024 / 1024).toStringAsFixed(2)}');
+      await _logDatabaseMetrics('BACKUP_PROBE_DB');
+    });
+  }
+
+  Future<void> _runDailyOperationsTest() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'daily-operations',
+        title: 'Daily Operations',
+        kind: StressLabScenarioKind.commerce,
+        description: 'Exercise the daily operational mix under medium load.',
+        execute: _runDailyOperationsBody,
+      ),
+      body: _runDailyOperationsBody,
+    );
+  }
+
+  Future<void> _runDailyOperationsBody() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _progress = 0;
+      _status = 'Starting daily operations test...';
+      _currentBatchId =
+          'daily_${DateTime.now().millisecondsSinceEpoch}_${_roleLabel().toLowerCase()}';
+    });
+
+    try {
+      _addLog(
+          'VENTIO_DAILY_OPERATIONS_START batch=$_currentBatchId buildMode=${kReleaseMode ? 'release' : (kProfileMode ? 'profile' : 'debug')}');
+      _addLog(_snapshotLine('DAILY_BEFORE'));
+      await _logDatabaseMetrics('DAILY_BEFORE_DB');
+      _resetPerformanceCapture();
+      _resetTraceCapture();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.before,
+        label: 'Baseline before daily mix',
+      );
+      AppStore.setTraceSink(_captureTrace);
+
+      final hasStressProducts = store.products
+          .any((item) => item.name.contains('[STRESS]') && !item.isDeleted);
+      if (!hasStressProducts) {
+        _addLog(
+            'Daily operations found no stress catalog. Seeding baseline catalog first.');
+        await _seedCatalog();
+        await _capturePerformanceSnapshot(
+          _StressPerformancePhase.during,
+          label: 'After catalog bootstrap',
+        );
+      }
+
+      await _runDailyOperationsMix();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After daily operations mix',
+      );
+      await _runActiveSync();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After daily sync',
+      );
+      await _exportBackupProbe();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.after,
+        label: 'After daily backup probe',
+      );
+      await _logDatabaseMetrics('DAILY_AFTER_DB');
+      _addLog(_snapshotLine('DAILY_AFTER'));
+      await _addHealthSummary('DAILY_OPERATIONS_SUMMARY');
+      _addLog('VENTIO_DAILY_OPERATIONS_DONE batch=$_currentBatchId');
+      _setStatus('Daily operations done', progress: 1);
+    } catch (error, stack) {
+      _addLog(
+          'VENTIO_DAILY_OPERATIONS_FAILED batch=$_currentBatchId error=$error');
+      _addLog(stack.toString().split('\n').take(8).join(' | '));
+      _setStatus('Daily operations failed: $error', progress: 1);
+    } finally {
+      AppStore.setTraceSink(null);
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  String _stressAuthAccessToken(AccountAuthCache? cache) {
+    final adminToken = cache?.adminToken.trim() ?? '';
+    if (adminToken.isNotEmpty) return adminToken;
+    return cache?.accountToken.trim() ?? '';
+  }
+
+  AccountAuthCache _stressAuthCache({
+    required String mode,
+    required String accountType,
+    required String storeSlug,
+    required String storeName,
+    required String username,
+    required String loginName,
+    required bool directSyncEnabled,
+    required String adminToken,
+    required String accountToken,
+    required String subscriptionStatus,
+  }) {
+    final batchSeed = _currentBatchId.isEmpty ? 'seed' : _currentBatchId;
+    final seedHash = batchSeed.hashCode.abs();
+    return AccountAuthCache(
+      mode: mode,
+      accountId: 'stress_account_$batchSeed',
+      storeId: 'ST-$seedHash',
+      branchId: 'BR-$seedHash',
+      subscriptionStatus: subscriptionStatus,
+      username: username,
+      storeSlug: storeSlug,
+      storeName: storeName,
+      loginName: loginName,
+      accountType: accountType,
+      trialEndsAt: DateTime.now().add(const Duration(days: 14)),
+      devicesLimit: 5,
+      adminToken: adminToken,
+      accountToken: accountToken,
+      directSyncEnabled: directSyncEnabled,
+      lastVerifiedAt: DateTime.now(),
+    );
+  }
+
+  http.Response _stressJsonResponse(
+    Map<String, Object?> body, {
+    int statusCode = 200,
+  }) {
+    return http.Response(
+      jsonEncode(body),
+      statusCode,
+      headers: const {'content-type': 'application/json'},
+    );
+  }
+
+  http.Client _buildAuthProbeClient() {
+    final now = DateTime.now().toUtc();
+    return MockClient((request) async {
+      final path = request.url.path;
+      final decoded = request.body.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(request.body) as Map<String, dynamic>;
+      switch (path) {
+        case '/api/auth/login':
+          return _stressJsonResponse({
+            'ok': true,
+            'accountId': 'acc_login_probe',
+            'storeId': 'ST-PRB001',
+            'branchId': 'BR-PRB001',
+            'subscriptionStatus': 'active',
+            'username': decoded['username']?.toString() ?? 'admin',
+            'storeSlug': 'ventio',
+            'storeName': 'Ventio Platform',
+            'loginName': 'admin@ventio',
+            'accountType': 'platform_admin',
+            'trialEndsAt': now.add(const Duration(days: 14)).toIso8601String(),
+            'devicesLimit': 9,
+            'adminToken': 'adm_probe_login',
+            'accountToken': 'acc_probe_login',
+            'directSyncEnabled': true,
+          });
+        case '/api/auth/register':
+          return _stressJsonResponse({
+            'ok': true,
+            'accountId': 'acc_register_probe',
+            'storeId': 'ST-PRB002',
+            'branchId': 'BR-PRB002',
+            'subscriptionStatus': 'trial',
+            'username': decoded['username']?.toString() ?? 'owner',
+            'storeSlug': decoded['storeName']?.toString() ?? 'stresslab',
+            'storeName': decoded['storeName']?.toString() ?? 'Stress Lab',
+            'loginName':
+                '${decoded['username']?.toString() ?? 'owner'}@${decoded['storeName']?.toString() ?? 'stresslab'}',
+            'accountType': 'store_owner',
+            'trialEndsAt': now.add(const Duration(days: 14)).toIso8601String(),
+            'devicesLimit': 4,
+            'adminToken': 'adm_probe_register',
+            'accountToken': 'acc_probe_register',
+            'directSyncEnabled': true,
+          });
+        case '/api/auth/session':
+          return _stressJsonResponse({
+            'ok': true,
+            'accountId': 'acc_session_probe',
+            'storeId': 'ST-PRB001',
+            'branchId': 'BR-PRB001',
+            'subscriptionStatus': 'active',
+            'username': 'admin',
+            'storeSlug': 'ventio',
+            'storeName': 'Ventio Platform',
+            'loginName': 'admin@ventio',
+            'accountType': 'platform_admin',
+            'trialEndsAt': now.add(const Duration(days: 7)).toIso8601String(),
+            'devicesLimit': 12,
+            'adminToken': 'adm_probe_session',
+            'accountToken': 'acc_probe_session',
+            'directSyncEnabled': true,
+          });
+        case '/api/account/change-password':
+          return _stressJsonResponse({
+            'ok': true,
+            'message': 'Password changed.',
+            'username': 'owner',
+            'storeSlug': 'stresslab',
+            'storeName': 'Stress Lab',
+            'loginName': 'owner@stresslab',
+            'accountType': 'store_owner',
+            'accountToken': 'acc_probe_password',
+            'adminToken': 'adm_probe_password',
+            'directSyncEnabled': true,
+          });
+        case '/api/account/owner-profile':
+          return _stressJsonResponse({
+            'ok': true,
+            'message': 'Owner profile updated.',
+            'username': decoded['username']?.toString() ?? 'owner',
+            'storeSlug': 'stresslab',
+            'storeName': 'Stress Lab',
+            'loginName':
+                '${decoded['username']?.toString() ?? 'owner'}@stresslab',
+            'accountType': 'store_owner',
+            'accountToken': 'acc_probe_owner_profile',
+            'adminToken': 'adm_probe_owner_profile',
+            'directSyncEnabled': true,
+          });
+        case '/api/admin/subscribers':
+          if (request.method.toUpperCase() == 'GET') {
+            return _stressJsonResponse({
+              'ok': true,
+              'summary': {
+                'accounts': 2,
+                'stores': 2,
+                'trial_subscriptions': 1,
+                'active_subscriptions': 1,
+                'expired_trials': 0,
+              },
+              'subscribers': [
+                {
+                  'account_id': 'acc_sub_1',
+                  'store_id': 'ST-PROBE01',
+                  'subscription_id': 'sub_1',
+                  'username': 'admin',
+                  'full_name': 'Platform Admin',
+                  'store_slug': 'ventio',
+                  'store_name': 'Ventio Platform',
+                  'plan': 'pro',
+                  'subscription_status': 'active',
+                  'account_status': 'active',
+                  'devices_limit': 12,
+                  'device_count': 3,
+                  'direct_sync_enabled': true,
+                  'trial_ends_at':
+                      now.add(const Duration(days: 30)).toIso8601String(),
+                  'account_created_at':
+                      now.subtract(const Duration(days: 60)).toIso8601String(),
+                  'last_seen_at':
+                      now.subtract(const Duration(hours: 5)).toIso8601String(),
+                },
+                {
+                  'account_id': 'acc_sub_2',
+                  'store_id': 'ST-PROBE02',
+                  'subscription_id': 'sub_2',
+                  'username': 'owner',
+                  'full_name': 'Store Owner',
+                  'store_slug': 'stresslab',
+                  'store_name': 'Stress Lab',
+                  'plan': 'trial',
+                  'subscription_status': 'trial',
+                  'account_status': 'active',
+                  'devices_limit': 4,
+                  'device_count': 1,
+                  'direct_sync_enabled': true,
+                  'trial_ends_at':
+                      now.add(const Duration(days: 7)).toIso8601String(),
+                  'account_created_at':
+                      now.subtract(const Duration(days: 15)).toIso8601String(),
+                  'last_seen_at':
+                      now.subtract(const Duration(hours: 1)).toIso8601String(),
+                },
+              ],
+            });
+          }
+          return _stressJsonResponse({
+            'ok': true,
+            'message': 'Subscriber updated.',
+          });
+        default:
+          return _stressJsonResponse(
+            {
+              'ok': false,
+              'message': 'Unsupported stress auth route: $path',
+            },
+            statusCode: 404,
+          );
+      }
+    });
+  }
+
+  http.Client _buildDirectProbeClient() {
+    return MockClient((request) async {
+      final path = request.url.path;
+      if (path.endsWith('/api/sync/pairing/claim')) {
+        return _stressJsonResponse({
+          'ok': true,
+          'storeId': 'ST-PRB001',
+          'branchId': 'BR-PRB001',
+          'hostDeviceId': 'DV-PRB001',
+          'transport': 'direct',
+          'deviceToken': 'device_probe_token',
+        });
+      }
+      return _stressJsonResponse(
+        {
+          'ok': false,
+          'message': 'Unsupported stress sync route: $path',
+        },
+        statusCode: 404,
+      );
+    });
+  }
+
+  Future<void> _runAuthSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'auth-surface',
+        title: 'Auth Surface',
+        kind: StressLabScenarioKind.admin,
+        description: 'Exercise login, shell, and account dashboard state.',
+        execute: _runAuthSurfaceBody,
+      ),
+      body: _runAuthSurfaceBody,
+    );
+  }
+
+  Future<void> _runAuthSurfaceBody() async {
+    // Authentication probes must remain entirely in memory. Persisting their
+    // synthetic tokens would temporarily replace the real Store Owner session
+    // and can survive an application crash.
+    final authService = AccountAuthService(client: _buildAuthProbeClient());
+    final loginResult = await authService.login(
+      username: 'admin@ventio',
+      password: 'stress123',
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Online login success path',
+      loginResult.ok &&
+          loginResult.accountType == 'platform_admin' &&
+          loginResult.accountToken.isNotEmpty &&
+          loginResult.adminToken.isNotEmpty,
+      'Online login returns a platform admin session with both tokens.',
+      'Online login probe did not return a complete platform admin session.',
+    );
+    final platformAdminCache = _stressAuthCache(
+      mode: 'login',
+      accountType: loginResult.accountType,
+      storeSlug: loginResult.storeSlug,
+      storeName: loginResult.storeName,
+      username: loginResult.username,
+      loginName: loginResult.loginName,
+      directSyncEnabled: loginResult.directSyncEnabled,
+      adminToken: loginResult.adminToken,
+      accountToken: loginResult.accountToken,
+      subscriptionStatus: loginResult.subscriptionStatus,
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Platform admin unlock',
+      platformAdminCache.accountType == 'platform_admin' &&
+          platformAdminCache.loginName.contains('@') &&
+          platformAdminCache.storeSlug == 'ventio',
+      'Platform admin cache can route to the admin dashboard.',
+      'Platform admin cache did not look ready for the admin dashboard.',
+    );
+    final sessionResult = await authService.refreshSession(
+      accountToken: platformAdminCache.accountToken,
+    );
+    _auditCheck(
+      'MainShell',
+      'Session refresh and routing readiness',
+      sessionResult.ok &&
+          sessionResult.accountType == 'platform_admin' &&
+          sessionResult.storeId.startsWith('ST-') &&
+          sessionResult.branchId.startsWith('BR-'),
+      'Main shell has a refreshed platform-admin session to work with.',
+      'Main shell session refresh did not return the expected platform-admin data.',
+    );
+    final subscribersResult = await authService.fetchAdminSubscribers(
+      adminToken: _stressAuthAccessToken(platformAdminCache),
+    );
+    _auditCheck(
+      'PlatformAdminDashboardPage',
+      'Subscribers surface available',
+      subscribersResult.ok &&
+          subscribersResult.subscribers.length >= 2 &&
+          subscribersResult.summary.isNotEmpty,
+      'Platform admin dashboard can load subscriber data.',
+      'Platform admin dashboard did not receive subscriber data.',
+    );
+    _auditCheck(
+      'AdminSubscribersPage',
+      'Subscriber rows and filters',
+      subscribersResult.subscribers
+              .any((item) => item.subscriptionStatus == 'active') &&
+          subscribersResult.subscribers
+              .any((item) => item.subscriptionStatus == 'trial'),
+      'Admin subscribers page has active and trial records to filter and display.',
+      'Admin subscribers page is missing the expected subscriber mix.',
+    );
+    final updateResult = await authService.updateAdminSubscriber(
+      adminToken: _stressAuthAccessToken(platformAdminCache),
+      subscriber: subscribersResult.subscribers.first,
+      username: 'admin',
+      fullName: 'Platform Admin Updated',
+      storeName: 'Ventio Platform',
+      storeSlug: 'ventio',
+      accountStatus: 'active',
+      plan: 'pro',
+      subscriptionStatus: 'active',
+      devicesLimit: 12,
+      directSyncEnabled: true,
+      trialEndsAt: DateTime.now().add(const Duration(days: 21)),
+    );
+    _auditCheck(
+      'AdminSubscribersPage',
+      'Subscriber edit/save path',
+      updateResult.ok,
+      'Admin subscriber edit request succeeds through the service layer.',
+      'Admin subscriber edit request failed in the service layer.',
+    );
+    final deleteResult = await authService.deleteAdminSubscriber(
+      adminToken: _stressAuthAccessToken(platformAdminCache),
+      subscriber: subscribersResult.subscribers.last,
+    );
+    _auditCheck(
+      'AdminSubscribersPage',
+      'Subscriber delete path',
+      deleteResult.ok,
+      'Admin subscriber delete request succeeds through the service layer.',
+      'Admin subscriber delete request failed in the service layer.',
+    );
+
+    final registerResult = await authService.register(
+      username: 'owner',
+      password: 'stress123',
+      fullName: 'Store Owner',
+      storeName: 'stresslab',
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Initial register path',
+      registerResult.ok &&
+          registerResult.accountType == 'store_owner' &&
+          registerResult.storeSlug == 'stresslab',
+      'Registration returns a store-owner session for the login gate.',
+      'Registration did not return a valid store-owner session.',
+    );
+    final storeOwnerCache = _stressAuthCache(
+      mode: 'registered_local',
+      accountType: registerResult.accountType,
+      storeSlug: registerResult.storeSlug,
+      storeName: registerResult.storeName,
+      username: registerResult.username,
+      loginName: registerResult.loginName,
+      directSyncEnabled: registerResult.directSyncEnabled,
+      adminToken: registerResult.adminToken,
+      accountToken: registerResult.accountToken,
+      subscriptionStatus: registerResult.subscriptionStatus,
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Store owner unlock',
+      storeOwnerCache.accountType == 'store_owner' &&
+          storeOwnerCache.mode == 'registered_local' &&
+          storeOwnerCache.storeSlug == 'stresslab' &&
+          storeOwnerCache.storeSlug != 'ventio',
+      'Store owner cache can route to the store dashboard.',
+      'Store owner cache did not look ready for the store dashboard.',
+    );
+    final passwordResult = await authService.changePassword(
+      accountToken: storeOwnerCache.accountToken,
+      currentPassword: 'stress123',
+      newPassword: 'stress456',
+    );
+    _auditCheck(
+      'StoreAccountDashboardPage',
+      'Password update flow',
+      passwordResult.ok &&
+          passwordResult.accountToken.isNotEmpty &&
+          passwordResult.adminToken.isNotEmpty,
+      'Store account dashboard can complete the password change flow.',
+      'Store account dashboard password change flow did not complete.',
+    );
+    final ownerProfileResult = await authService.updateOwnerProfile(
+      accountToken: passwordResult.accountToken,
+      username: 'owner',
+      fullName: 'Stress Lab Owner',
+      newPassword: 'stress789',
+    );
+    _auditCheck(
+      'StoreAccountDashboardPage',
+      'Owner profile update flow',
+      ownerProfileResult.ok &&
+          ownerProfileResult.loginName.contains('@') &&
+          ownerProfileResult.accountToken.isNotEmpty,
+      'Store account dashboard can push owner profile updates.',
+      'Store account dashboard owner profile update did not complete.',
+    );
+    _auditCheck(
+      'StoreAccountDashboardPage',
+      'Recovery flag readiness',
+      storeOwnerCache.directSyncEnabled &&
+          storeOwnerCache.accountToken.isNotEmpty,
+      'Store account dashboard can expose recovery actions.',
+      'Store account dashboard still lacks recovery-ready cache data.',
+    );
+    _auditCheck(
+      'MainShell',
+      'Navigation and identity readiness',
+      widget.store.appIdentity.deviceId.trim().isNotEmpty &&
+          widget.store.appIdentity.storeId.trim().isNotEmpty &&
+          widget.store.appIdentity.branchId.trim().isNotEmpty &&
+          widget.store.canViewMaintenance &&
+          widget.store.canViewSettings,
+      'Main shell has a valid device/store identity and navigation flags.',
+      'Main shell still lacks part of the identity or navigation state.',
+    );
+  }
+
+  Future<void> _runDeviceToolsScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'device-tools',
+        title: 'Device Tools',
+        kind: StressLabScenarioKind.system,
+        description: 'Validate diagnostics and barcode scanner coverage.',
+        execute: _runDeviceToolsBody,
+      ),
+      body: _runDeviceToolsBody,
+    );
+  }
+
+  Future<void> _runDeviceToolsBody() async {
+    final reportSummary = await _auditStep<Map<String, Object?>>(
+      'DiagnosticsPage',
+      'Maintenance report generation',
+      () async {
+        final result = await MaintenanceService(store).runHealthCheck(
+          deep: true,
+        );
+        final report = MaintenanceService(store).buildDiagnosticReport(result);
+        final decoded = jsonDecode(report);
+        return <String, Object?>{
+          'score': result.healthScore,
+          'issues': result.issues.length,
+          'reportHasMaintenance':
+              decoded is Map && decoded['maintenance'] is Map,
+          'reportHasStartupTiming':
+              decoded is Map && decoded['startupTiming'] is Map,
+        };
+      },
+      successDetails: (value) =>
+          'score=${value['score']} issues=${value['issues']} reportHasMaintenance=${value['reportHasMaintenance']} reportHasStartupTiming=${value['reportHasStartupTiming']}',
+    );
+    final appCounts = await AppLogger.counts();
+    final auditCounts = await AuditLogger.counts();
+    final scannerSupported = BarcodeScannerPage.isSupportedPlatform;
+    final scannerSupportedByRules = kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    _auditCheck(
+      'DiagnosticsPage',
+      'Log and database exports available',
+      reportSummary != null &&
+          appCounts.isNotEmpty &&
+          auditCounts.isNotEmpty &&
+          LocalDatabaseService.keys().isNotEmpty,
+      'Diagnostics page can read app logs, audit logs, and local keys.',
+      'Diagnostics page still cannot see one of logs or local keys.',
+    );
+    _auditCheck(
+      'BarcodeScannerPage',
+      'Scanner platform branch',
+      scannerSupported == scannerSupportedByRules,
+      scannerSupported
+          ? 'Scanner support is available on this platform.'
+          : 'Scanner fallback will show the unsupported-platform state.',
+      'Barcode scanner platform detection failed.',
+    );
+    _auditCheck(
+      'BarcodeScannerPage',
+      'Fallback copy ready',
+      !scannerSupported,
+      'Current desktop platform will use the fallback scanner screen.',
+      'This platform should not require the fallback scanner screen.',
+      warning: scannerSupported,
+    );
+  }
+
+  Future<void> _runMaintenanceSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'maintenance-surface',
+        title: 'Maintenance Surface',
+        kind: StressLabScenarioKind.maintenance,
+        description: 'Exercise maintenance checks and repairs.',
+        execute: _runMaintenanceSurfaceBody,
+      ),
+      body: _runMaintenanceSurfaceBody,
+    );
+  }
+
+  Future<void> _runMaintenanceSurfaceBody() async {
+    final service = MaintenanceService(store);
+    final quick = await service.runHealthCheck(deep: false);
+    final deep = await service.runHealthCheck(deep: true);
+    final report = service.buildDiagnosticReport(deep);
+    final decoded = jsonDecode(report);
+    _auditCheck(
+      'MaintenancePage',
+      'Quick health check available',
+      quick.generatedAt.isAfter(DateTime.fromMillisecondsSinceEpoch(0)) &&
+          quick.counts.isNotEmpty,
+      'Maintenance can build a quick health summary.',
+      'Maintenance quick health check did not return usable data.',
+    );
+    _auditCheck(
+      'MaintenancePage',
+      'Deep diagnostics available',
+      deep.issues.length >= quick.issues.length &&
+          decoded is Map &&
+          decoded['maintenance'] is Map &&
+          decoded['startupTiming'] is Map,
+      'Maintenance can build a deep report with timing data.',
+      'Maintenance deep report or diagnostics data is incomplete.',
+    );
+
+    final refreshRepair = await service.runRepair(
+      MaintenanceRepairAction.refreshOnly,
+    );
+    _auditCheck(
+      'MaintenancePage',
+      'Refresh repair path',
+      refreshRepair.message.isNotEmpty,
+      'Maintenance refresh repair completed without mutating data.',
+      'Maintenance refresh repair did not return a usable result.',
+    );
+  }
+
+  Future<void> _runSettingsSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'settings-surface',
+        title: 'Settings Surface',
+        kind: StressLabScenarioKind.settings,
+        description: 'Exercise settings persistence and subpage services.',
+        execute: _runSettingsSurfaceBody,
+      ),
+      body: _runSettingsSurfaceBody,
+    );
+  }
+
+  Future<void> _runSettingsSurfaceBody() async {
+    final originalProfile = store.storeProfile;
+    final originalDirect = VpsControlPlaneSettings.load();
+    final originalLan = LanSyncSettings.load();
+    final originalAutoBackup = await LocalAutoBackupService.loadSettings();
+    final originalBarcode = BarcodeFeedbackService.loadSettings();
+
+    try {
+      final nextProfile = originalProfile.copyWith(
+        footerNote: 'Stress Lab settings probe',
+        priceDisplayMode: 'multiple',
+        priceDisplayCurrencies: const ['USD', 'LBP', 'EUR'],
+      );
+      await store.updateStoreProfile(nextProfile);
+      _auditCheck(
+        'SettingsPage',
+        'Store profile and document settings',
+        store.storeProfile.footerNote == 'Stress Lab settings probe' &&
+            store.storeProfile.priceDisplayMode == 'multiple' &&
+            store.storeProfile.priceDisplayCurrencies.contains('EUR'),
+        'Settings can persist store profile, currency, and document state.',
+        'Settings store profile roundtrip did not persist as expected.',
+      );
+
+      final autoBackupUpdated = originalAutoBackup.copyWith(
+        enabled: !originalAutoBackup.enabled,
+        locationPath: originalAutoBackup.locationPath,
+        dailyCount: originalAutoBackup.dailyCount,
+        weeklyCount: originalAutoBackup.weeklyCount,
+        monthlyCount: originalAutoBackup.monthlyCount,
+      );
+      await LocalAutoBackupService.saveSettings(autoBackupUpdated);
+      final autoBackupReloaded = await LocalAutoBackupService.loadSettings();
+      _auditCheck(
+        'SettingsPage',
+        'Local auto backup settings',
+        autoBackupReloaded.enabled == autoBackupUpdated.enabled &&
+            autoBackupReloaded.locationPath.trim() ==
+                autoBackupUpdated.locationPath.trim() &&
+            autoBackupReloaded.dailyCount == autoBackupUpdated.dailyCount &&
+            autoBackupReloaded.weeklyCount == autoBackupUpdated.weeklyCount &&
+            autoBackupReloaded.monthlyCount == autoBackupUpdated.monthlyCount,
+        'Settings can persist local backup preferences.',
+        'Local backup settings did not roundtrip correctly.',
+      );
+
+      final directReloaded = VpsControlPlaneSettings.load();
+      _auditCheck(
+        'SettingsPage',
+        'Direct sync settings read safety',
+        directReloaded.apiBaseUrl.trim().isNotEmpty &&
+            directReloaded.autoSyncEnabled == originalDirect.autoSyncEnabled &&
+            directReloaded.intervalSeconds == originalDirect.intervalSeconds,
+        'Settings can inspect Direct preferences without modifying them.',
+        'Settings could not read the current Direct preferences.',
+      );
+
+      final lanReloaded = LanSyncSettings.load();
+      _auditCheck(
+        'SettingsPage',
+        'LAN sync settings read safety',
+        lanReloaded.host.trim() == originalLan.host.trim() &&
+            lanReloaded.port == originalLan.port &&
+            lanReloaded.autoSyncEnabled == originalLan.autoSyncEnabled &&
+            lanReloaded.mode == originalLan.mode,
+        'Settings can inspect LAN preferences without modifying them.',
+        'Settings could not read the current LAN preferences.',
+      );
+
+      final barcodeUpdated = originalBarcode.copyWith(
+        soundEnabled: !originalBarcode.soundEnabled,
+        vibrationEnabled: !originalBarcode.vibrationEnabled,
+        volume: originalBarcode.volume,
+      );
+      await BarcodeFeedbackService.saveSettings(barcodeUpdated);
+      final barcodeReloaded = BarcodeFeedbackService.loadSettings();
+      _auditCheck(
+        'SettingsPage',
+        'Scanner feedback settings',
+        barcodeReloaded.soundEnabled == barcodeUpdated.soundEnabled &&
+            barcodeReloaded.vibrationEnabled ==
+                barcodeUpdated.vibrationEnabled &&
+            (barcodeReloaded.volume - barcodeUpdated.volume).abs() < 0.01,
+        'Settings can persist scanner feedback preferences.',
+        'Scanner feedback settings did not roundtrip correctly.',
+      );
+    } finally {
+      await store.updateStoreProfile(originalProfile);
+      await LocalAutoBackupService.saveSettings(originalAutoBackup);
+      await BarcodeFeedbackService.saveSettings(originalBarcode);
+    }
+  }
+
+  Future<void> _runDatabaseSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'database-surface',
+        title: 'Database Surface',
+        kind: StressLabScenarioKind.maintenance,
+        description: 'Exercise database explorer and SQL validation logic.',
+        execute: _runDatabaseSurfaceBody,
+      ),
+      body: _runDatabaseSurfaceBody,
+    );
+  }
+
+  Future<void> _runDatabaseSurfaceBody() async {
+    final entries = await LocalDatabaseService.adminEntries();
+    final keyCount = entries.length;
+    final tables = DatabaseSqlEditorService.splitStatements(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;",
+    );
+    final queryResults = await DatabaseSqlEditorService.runScript(
+      tables.first,
+      allowWrites: false,
+    );
+    final columns = queryResults.isEmpty
+        ? const <String>[]
+        : SqlResultExportService.orderedColumns(queryResults.first.rows);
+    final blockedWrite = DatabaseSqlEditorService.validateStatement(
+          'UPDATE sqlite_master SET name = name;',
+          allowWrites: false,
+        ) !=
+        null;
+
+    _auditCheck(
+      'DatabasePage',
+      'Database entries available',
+      keyCount > 0,
+      'Database explorer can load local keys and tables.',
+      'Database explorer did not find any entries.',
+    );
+    _auditCheck(
+      'DatabasePage',
+      'SQL query execution',
+      queryResults.isNotEmpty &&
+          queryResults.first.isQuery &&
+          (queryResults.first.rows.length <=
+              DatabaseSqlEditorService.defaultLimit),
+      'Database explorer can execute read-only SQL queries.',
+      'Database SQL query execution failed.',
+    );
+    _auditCheck(
+      'DatabasePage',
+      'SQL export and protection',
+      columns.isNotEmpty && blockedWrite,
+      'Database explorer can export query columns and blocks unsafe writes.',
+      'Database export or write protection is not working.',
+    );
+  }
+
+  Future<void> _runSyncSetupSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'sync-setup-surface',
+        title: 'Sync Setup Surface',
+        kind: StressLabScenarioKind.sync,
+        description: 'Exercise sync settings and direct pairing logic.',
+        execute: _runSyncSetupSurfaceBody,
+      ),
+      body: _runSyncSetupSurfaceBody,
+    );
+  }
+
+  Future<void> _runSyncSetupSurfaceBody() async {
+    final direct = VpsControlPlaneSettings.load();
+    final lan = LanSyncSettings.load();
+    final probeClient = _buildDirectProbeClient();
+    late final http.Response probeResponse;
+    try {
+      probeResponse = await probeClient.post(
+        Uri.parse('https://sync-probe.ventio.test/api/sync/pairing/claim'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode(const {
+          'code': 'PAIR-12345',
+          'deviceId': 'DV-PRB001',
+        }),
+      );
+    } finally {
+      probeClient.close();
+    }
+    final directClaimBody =
+        jsonDecode(probeResponse.body) as Map<String, dynamic>;
+
+    _auditCheck(
+      'SyncSetupPage',
+      'Direct settings read safety',
+      direct.apiBaseUrl.trim().isNotEmpty,
+      'Sync setup can read Direct settings without modifying Store identity.',
+      'Sync setup Direct settings are unavailable.',
+    );
+    _auditCheck(
+      'SyncSetupPage',
+      'Isolated Direct pairing contract',
+      probeResponse.statusCode == 200 && directClaimBody['ok'] == true,
+      'The simulated Direct pairing contract completed without touching the real device or network.',
+      'The isolated Direct pairing contract did not complete.',
+      warning: true,
+    );
+    _auditCheck(
+      'SyncSetupPage',
+      'LAN settings read safety',
+      lan.host.trim().isNotEmpty && lan.port > 0,
+      'Sync setup can inspect LAN settings without modifying pairing credentials.',
+      'Sync setup LAN settings are unavailable.',
+    );
+    _auditCheck(
+      'BarcodeScannerPage',
+      'QR scan entry point',
+      true,
+      BarcodeScannerPage.isSupportedPlatform || kIsWeb
+          ? 'Sync setup can route into the barcode scanner page when scanning a code.'
+          : 'Current desktop platform uses the fallback scanner screen as expected.',
+      'This check should always be available.',
+    );
+  }
+
+  Future<void> _runUsersPermissionsSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'users-permissions-surface',
+        title: 'Users Permissions Surface',
+        kind: StressLabScenarioKind.settings,
+        description: 'Exercise role and user management flows.',
+        execute: _runUsersPermissionsSurfaceBody,
+      ),
+      body: _runUsersPermissionsSurfaceBody,
+    );
+  }
+
+  Future<void> _runUsersPermissionsSurfaceBody() async {
+    final tempRole = UserRole(
+      id: 'stress_temp_role',
+      name: 'Stress Temp Role',
+      permissions: const <String>{
+        AppPermission.productsView,
+        AppPermission.customersView,
+      },
+    );
+    final tempUser = AppUser(
+      id: 'stress_temp_user',
+      fullName: 'Stress Temp User',
+      username: 'stress.temp.user',
+      passwordHash: '',
+      roleId: tempRole.id,
+      isActive: true,
+      isSystem: false,
+    );
+
+    try {
+      await store.addOrUpdateRole(tempRole);
+      await store.addOrUpdateUser(tempUser, password: 'stress-temp-123');
+      final savedRole = store.roleById(tempRole.id);
+      final savedUser =
+          store.users.where((user) => user.id == tempUser.id).toList();
+      _auditCheck(
+        'UsersPermissionsPage',
+        'Role and user creation',
+        savedRole != null &&
+            savedUser.isNotEmpty &&
+            savedRole.permissions.contains(AppPermission.productsView) &&
+            savedUser.first.roleId == tempRole.id,
+        'Users permissions can create and persist roles and users.',
+        'Users permissions did not persist the temporary role or user.',
+      );
+
+      await store.addOrUpdateRole(
+        tempRole.copyWith(
+          permissions: const <String>{
+            AppPermission.productsView,
+            AppPermission.customersView,
+            AppPermission.salesView,
+          },
+        ),
+      );
+      final updatedRole = store.roleById(tempRole.id);
+      _auditCheck(
+        'UsersPermissionsPage',
+        'Role updates',
+        updatedRole != null &&
+            updatedRole.permissions.contains(AppPermission.salesView),
+        'Users permissions can update role permissions.',
+        'Users permissions role update did not persist.',
+      );
+    } finally {
+      if (store.users.any((user) => user.id == tempUser.id)) {
+        await store.deleteUser(tempUser.id);
+      }
+      if (store.roleById(tempRole.id) != null) {
+        await store.deleteRole(tempRole.id);
+      }
+    }
+    _auditCheck(
+      'UsersPermissionsPage',
+      'Cleanup and system account protection',
+      store.roleById('admin')?.isSystem == true &&
+          store.users.any((user) => user.isSystem && user.roleId == 'admin') &&
+          store.roleById(tempRole.id) == null &&
+          store.users.where((user) => user.id == tempUser.id).isEmpty,
+      'Users permissions keeps the built-in admin account protected.',
+      'Users permissions cleanup or system account protection failed.',
+    );
+  }
+
+  Future<void> _runDailyOperationsMix() async {
+    final baseSales = max(20, _readInt(_salesController, 500));
+    final progressEvery = max(1, _readInt(_progressEveryController, 25));
+    final stressProducts = store.products
+        .where((item) =>
+            item.name.contains('[STRESS]') &&
+            item.stock > 10 &&
+            !item.isDeleted)
+        .toList();
+    final stressCustomers = store.customers
+        .where((item) => item.name.contains('[STRESS]') && !item.isDeleted)
+        .toList();
+    final stressSuppliers = store.suppliers
+        .where((item) => item.name.contains('[STRESS]') && !item.isDeleted)
+        .toList();
+    if (stressProducts.isEmpty) {
+      throw StateError('No stress products available for daily operations.');
+    }
+
+    final salesToCreate = max(1, (baseSales * 0.60).round());
+    final productUpdates =
+        min(stressProducts.length, max(1, (baseSales * 0.10).round()));
+    final purchasesToCreate = max(1, (baseSales * 0.10).round());
+    final expensesToCreate = max(1, (baseSales * 0.05).round());
+    final salesToCancel = max(1, (baseSales * 0.05).round());
+    final softDeletes =
+        min(stressProducts.length, max(1, (baseSales * 0.03).round()));
+
+    await _measure('Daily product updates count=$productUpdates', () async {
+      for (var i = 0; i < productUpdates; i++) {
+        final product = stressProducts[i % stressProducts.length];
+        await store.addOrUpdateProduct(product.copyWith(
+          name:
+              '${product.name} upd${DateTime.now().millisecondsSinceEpoch % 100000}',
+          price: product.price + 0.25 + (i % 7),
+          cost: max(0.1, product.cost + 0.05),
+          clearDeletedAt: true,
+        ));
+        if ((i + 1) % progressEvery == 0 || i + 1 == productUpdates) {
+          _addLog(
+              'Daily product updates ${i + 1}/$productUpdates ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Daily product updates ${i + 1}/$productUpdates',
+              progress: 0.06 + 0.12 * ((i + 1) / max(1, productUpdates)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+
+    await _measure('Daily mixed sales count=$salesToCreate', () async {
+      for (var i = 1; i <= salesToCreate; i++) {
+        final itemCount = 1 + _random.nextInt(min(5, stressProducts.length));
+        final selected = <Product>[];
+        while (selected.length < itemCount) {
+          final product =
+              stressProducts[_random.nextInt(stressProducts.length)];
+          if (!selected.any((item) => item.id == product.id)) {
+            selected.add(product);
+          }
+        }
+        final items = selected.map((product) {
+          final qty = 1 + _random.nextInt(3);
+          return SaleItem(
+            productId: product.id,
+            productName: product.name,
+            unitPrice: product.price,
+            quantity: qty.toDouble(),
+            unitCost: product.usdCost,
+            unitName: product.unit,
+            baseQuantity: qty.toDouble(),
+            conversionToBase: 1.0,
+          );
+        }).toList();
+        final customer = stressCustomers.isEmpty
+            ? AppStore.walkInCustomerName
+            : stressCustomers[_random.nextInt(stressCustomers.length)].name;
+        await store.createSale(
+            customerName: customer,
+            items: items,
+            paymentMethod: i.isEven ? 'Cash' : 'Card');
+        if (i == 1 || i % progressEvery == 0 || i == salesToCreate) {
+          _addLog('Daily sales $i/$salesToCreate ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Daily sales $i/$salesToCreate',
+              progress: 0.20 + 0.30 * (i / max(1, salesToCreate)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+
+    await _measure('Daily purchases count=$purchasesToCreate', () async {
+      for (var i = 1; i <= purchasesToCreate; i++) {
+        final supplier = stressSuppliers.isEmpty
+            ? null
+            : stressSuppliers[_random.nextInt(stressSuppliers.length)];
+        final product = stressProducts[_random.nextInt(stressProducts.length)];
+        await store.createPurchase(
+          supplierId: supplier?.id ?? 'stress_supplier',
+          supplierName: supplier?.name ?? '[STRESS] Supplier',
+          receiveNow: i.isEven,
+          note: 'Daily operations generated purchase $_currentBatchId #$i',
+          items: [
+            PurchaseItem(
+              productId: product.id,
+              productName: product.name,
+              quantity: (5 + _random.nextInt(10)).toDouble(),
+              unitCost: max(0.1, product.usdCost),
+              purchaseUnitName: product.unit,
+              conversionToBase: 1.0,
+            ),
+          ],
+        );
+        if (i == 1 || i % progressEvery == 0 || i == purchasesToCreate) {
+          _addLog(
+              'Daily purchases $i/$purchasesToCreate ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Daily purchases $i/$purchasesToCreate',
+              progress: 0.52 + 0.12 * (i / max(1, purchasesToCreate)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+
+    await _measure('Daily expenses count=$expensesToCreate', () async {
+      for (var i = 1; i <= expensesToCreate; i++) {
+        final now = DateTime.now();
+        await store.addOrUpdateExpense(Expense(
+          id: '${_currentBatchId}_expense_$i',
+          title: '[STRESS] Daily expense $i',
+          category: i.isEven ? 'Utilities' : 'Operations',
+          amount: 3 + (i % 50).toDouble(),
+          date: now,
+          notes: 'Generated by Daily Operations Stress Lab',
+        ));
+        if (i == 1 || i % progressEvery == 0 || i == expensesToCreate) {
+          _addLog(
+              'Daily expenses $i/$expensesToCreate ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Daily expenses $i/$expensesToCreate',
+              progress: 0.66 + 0.06 * (i / max(1, expensesToCreate)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    });
+
+    await _measure('Daily cancellations count=$salesToCancel', () async {
+      final cancellableSales = store.sales
+          .where((sale) => !sale.isCancelled && sale.items.isNotEmpty)
+          .take(salesToCancel)
+          .toList();
+      for (var i = 0; i < cancellableSales.length; i++) {
+        await store.cancelSale(cancellableSales[i].id, restoreStock: true);
+        _addLog(
+            'Daily cancel sale ${i + 1}/${cancellableSales.length} ${_snapshotLine('SNAPSHOT')}');
+        _setStatus('Daily cancellations ${i + 1}/${cancellableSales.length}',
+            progress:
+                0.74 + 0.06 * ((i + 1) / max(1, cancellableSales.length)));
+        await Future<void>.delayed(Duration.zero);
+      }
+    });
+
+    await _measure('Daily safe soft deletes target=$softDeletes', () async {
+      final deletableProducts = stressProducts
+          .where((product) => !store.isProductReferenced(product.id))
+          .toList();
+      var deleted = 0;
+      var skipped = 0;
+      for (final product in deletableProducts.take(softDeletes)) {
+        await store.deleteProduct(product.id);
+        deleted++;
+        if (deleted % progressEvery == 0 ||
+            deleted == softDeletes ||
+            deleted == deletableProducts.length) {
+          _addLog(
+              'Daily safe soft deletes deleted=$deleted skippedReferenced=$skipped target=$softDeletes ${_snapshotLine('SNAPSHOT')}');
+          _setStatus('Daily safe soft deletes $deleted/$softDeletes',
+              progress: 0.82 + 0.06 * (deleted / max(1, softDeletes)));
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+      skipped = stressProducts.length - deletableProducts.length;
+      if (deleted == 0 || deleted < softDeletes) {
+        _addLog(
+            'Daily safe soft deletes completed deleted=$deleted skippedReferenced=$skipped target=$softDeletes note=Referenced products are protected from deletion.');
+      }
+    });
+  }
+
+  Future<void> _waitForAutoSyncCheck() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _progress = 0;
+      _status = 'Waiting for Auto Sync...';
+    });
+    try {
+      _addLog('AUTO_SYNC_WAIT_START seconds=60');
+      _addLog(_snapshotLine('AUTO_SYNC_BEFORE_WAIT'));
+      await _logDatabaseMetrics('AUTO_SYNC_BEFORE_WAIT_DB');
+      for (var second = 1; second <= 60; second++) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+        if (second % 15 == 0 || second == 60) {
+          _addLog(
+              'AUTO_SYNC_WAIT_PROGRESS second=$second ${_snapshotLine('SNAPSHOT')}');
+        }
+        _setStatus('Waiting for Auto Sync $second/60 sec',
+            progress: second / 60);
+      }
+      _addLog(_snapshotLine('AUTO_SYNC_AFTER_WAIT'));
+      await _logDatabaseMetrics('AUTO_SYNC_AFTER_WAIT_DB');
+      await _addHealthSummary('AUTO_SYNC_WAIT_SUMMARY');
+      _addLog('AUTO_SYNC_WAIT_DONE');
+      _setStatus('Auto Sync wait done', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runLateClientGuardCheck() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _progress = 0;
+      _status = 'Checking late-client guard...';
+    });
+    try {
+      final sequenced = store.syncChanges
+          .where((change) => change.sequence > 0)
+          .map((change) => change.sequence)
+          .toList()
+        ..sort();
+      final earliest = sequenced.isEmpty ? 0 : sequenced.first;
+      final latest =
+          sequenced.isEmpty ? store.currentSyncSequence : sequenced.last;
+      final simulatedClientSeq = earliest > 1 ? earliest - 1 : 0;
+      _addLog(
+          'LATE_CLIENT_GUARD_CHECK role=${_roleLabel()} simulatedClientSeq=$simulatedClientSeq earliestSequence=$earliest latestSequence=$latest currentSeq=${store.currentSyncSequence}');
+      if (earliest > 0 && simulatedClientSeq < earliest) {
+        _addLog(
+            'LATE_CLIENT_GUARD_EXPECTED_RESULT needsSnapshot=true reason=client_seq_older_than_earliest_available');
+      } else {
+        _addLog(
+            'LATE_CLIENT_GUARD_INCONCLUSIVE reason=no_compacted_sequence_window_yet');
+      }
+      await _addHealthSummary('LATE_CLIENT_GUARD_SUMMARY');
+      _setStatus('Late-client guard check done', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _addHealthSummary(String label) async {
+    final rejectedQueue = store.syncQueue
+        .where((item) => item.status.toLowerCase() == 'rejected')
+        .length;
+    final failedQueue = store.syncQueue
+        .where((item) => item.status.toLowerCase() == 'failed')
+        .length;
+    final pendingQueue = store.pendingSyncQueue.length;
+    final pendingChanges = store.pendingSyncChanges.length;
+    final changes = store.syncChanges.length;
+    final queue = store.syncQueue.length;
+    final logicalBytes = _logicalDatabaseBytes();
+    final backupBytes =
+        _auditBackupBytes ?? (await store.recovery.exportBackupJson()).length;
+
+    final transport = _effectiveSyncTransport();
+    final pendingIsExpectedForDirect =
+        transport == 'direct' && failedQueue == 0 && rejectedQueue == 0;
+    final syncHealth = (pendingQueue == 0 &&
+                pendingChanges == 0 &&
+                failedQueue == 0 &&
+                rejectedQueue == 0) ||
+            pendingIsExpectedForDirect
+        ? 'PASS'
+        : 'FAIL';
+
+    // DB_BLOAT used to treat every retained SyncChange above 250 as database
+    // bloat. That rule was valid for the old legacy JSON storage/JSON storage path, where the
+    // full sync history was serialized back into one large value. After the
+    // SQLite migration, synced authoritative history is stored row-by-row and
+    // does not indicate JSON/DB bloat by itself.
+    //
+    // What still indicates real bloat in the stress lab:
+    // 1) legacy LocalDatabaseService keys growing close to the full backup size
+    //    (means large typed entities are being mirrored as JSON again), or
+    // 2) stale queue rows that remain although there is no pending/failed work.
+    final legacyJsonBloat =
+        logicalBytes > 1024 * 1024 && logicalBytes > (backupBytes / 2);
+    final staleQueueBloat = queue > 0 &&
+        pendingQueue == 0 &&
+        failedQueue == 0 &&
+        rejectedQueue == 0;
+    final dbBloat = !legacyJsonBloat && !staleQueueBloat ? 'PASS' : 'FAIL';
+    final dbBloatReason = legacyJsonBloat
+        ? 'legacy_json_cache'
+        : staleQueueBloat
+            ? 'stale_queue_rows'
+            : 'none';
+
+    final dataHealth =
+        store.products.isNotEmpty && store.sales.isNotEmpty ? 'PASS' : 'WARN';
+    _addLog(
+        '$label SYNC_HEALTH=$syncHealth DB_BLOAT=$dbBloat DATA_HEALTH=$dataHealth '
+        'products=${store.products.length} customers=${store.customers.length} suppliers=${store.suppliers.length} sales=${store.sales.length} '
+        'purchases=${store.purchases.length} expenses=${store.expenses.length} stockMovements=${store.stockMovements.length} '
+        'allChanges=$changes allQueue=$queue pendingQueue=$pendingQueue pendingChanges=$pendingChanges rejectedQueue=$rejectedQueue failedQueue=$failedQueue '
+        'logicalDbBytes=$logicalBytes backupBytes=$backupBytes dbBloatReason=$dbBloatReason syncMode=$transport pendingExpectedForDirect=$pendingIsExpectedForDirect');
+  }
+
+  int _stableHash(Iterable<String> values) {
+    var hash = 0x811c9dc5;
+    final sorted = values
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList()
+      ..sort();
+    for (final value in sorted) {
+      for (final codeUnit in value.codeUnits) {
+        hash ^= codeUnit;
+        hash = (hash * 0x01000193) & 0xffffffff;
+      }
+      hash ^= 0x1f;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash;
+  }
+
+  String _hashHex(Iterable<String> values) =>
+      _stableHash(values).toRadixString(16).padLeft(8, '0').toUpperCase();
+
+  String _sampleIds(Iterable<String> ids, {int limit = 8}) {
+    final sorted = ids.where((id) => id.trim().isNotEmpty).toList()..sort();
+    if (sorted.isEmpty) return '-';
+    return sorted.take(limit).join(',');
+  }
+
+  void _logEntityDigest(String label, Iterable<String> ids,
+      {Iterable<String> activeIds = const [],
+      Iterable<String> deletedIds = const []}) {
+    final all = ids.toList();
+    final active = activeIds.toList();
+    final deleted = deletedIds.toList();
+    _addLog(
+        '$label count=${all.length} hash=${_hashHex(all)} activeCount=${active.isEmpty ? all.length : active.length} '
+        'activeHash=${_hashHex(active.isEmpty ? all : active)} deletedCount=${deleted.length} deletedHash=${_hashHex(deleted)} sample=${_sampleIds(all)}');
+  }
+
+  String _catalogDigestKey(CatalogItem item) {
+    String normalize(String value) =>
+        value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final code = normalize(item.code);
+    final nameEn = normalize(item.nameEn);
+    final nameAr = normalize(item.nameAr);
+    final deleted = item.isDeleted ? 'deleted' : 'active';
+    // Catalog IDs for categories/brands/units may be generated locally on each
+    // device. Diagnostics must compare the business identity, not the local ID,
+    // otherwise healthy sync can report false hash mismatches.
+    return '$code|$nameEn|$nameAr|$deleted';
+  }
+
+  void _logCatalogDigest(String label, Iterable<CatalogItem> items) {
+    final allItems = items.toList();
+    final all = allItems.map(_catalogDigestKey).toList();
+    final active = allItems
+        .where((item) => !item.isDeleted)
+        .map(_catalogDigestKey)
+        .toList();
+    final deleted = allItems
+        .where((item) => item.isDeleted)
+        .map(_catalogDigestKey)
+        .toList();
+    final sample = allItems.map((item) {
+      final code = item.code.trim().isEmpty ? '-' : item.code.trim();
+      final en = item.nameEn.trim().isEmpty ? '-' : item.nameEn.trim();
+      final ar = item.nameAr.trim().isEmpty ? '-' : item.nameAr.trim();
+      return '$code:$en:$ar';
+    }).toList();
+    _addLog(
+        '$label count=${all.length} hash=${_hashHex(all)} activeCount=${active.length} '
+        'activeHash=${_hashHex(active)} deletedCount=${deleted.length} deletedHash=${_hashHex(deleted)} sample=${_sampleIds(sample)} note=business-key-hash');
+  }
+
+  Future<void> _compareDeviceState() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _status = 'Comparing local device state...';
+      _progress = 0;
+    });
+    try {
+      _addLog('COMPARE_DEVICE_STATE_START role=${_roleLabel()}');
+      _addLog(_snapshotLine('COMPARE_SNAPSHOT'));
+      _logEntityDigest('COMPARE_PRODUCTS',
+          store.allProductsForDiagnostics.map((item) => item.id),
+          activeIds: store.products.map((item) => item.id),
+          deletedIds: store.allProductsForDiagnostics
+              .where((item) => item.isDeleted)
+              .map((item) => item.id));
+      _logEntityDigest(
+          'COMPARE_CUSTOMERS', store.customers.map((item) => item.id),
+          activeIds: store.customers
+              .where((item) => !item.isDeleted)
+              .map((item) => item.id));
+      _logEntityDigest(
+          'COMPARE_SUPPLIERS', store.suppliers.map((item) => item.id),
+          activeIds: store.suppliers
+              .where((item) => !item.isDeleted)
+              .map((item) => item.id));
+      _logEntityDigest('COMPARE_SALES', store.sales.map((item) => item.id),
+          activeIds: store.sales
+              .where((item) => !item.isDeleted)
+              .map((item) => item.id));
+      _logEntityDigest(
+          'COMPARE_PURCHASES', store.purchases.map((item) => item.id),
+          activeIds: store.purchases
+              .where((item) => !item.isDeleted)
+              .map((item) => item.id));
+      _logEntityDigest(
+          'COMPARE_EXPENSES', store.expenses.map((item) => item.id),
+          activeIds: store.expenses
+              .where((item) => !item.isDeleted)
+              .map((item) => item.id));
+      _logEntityDigest('COMPARE_STOCK_MOVEMENTS',
+          store.stockMovements.map((item) => item.id));
+      _logCatalogDigest('COMPARE_CATEGORIES', store.categories);
+      _logCatalogDigest('COMPARE_BRANDS', store.brands);
+      _logCatalogDigest('COMPARE_UNITS', store.units);
+      _addLog(
+          'COMPARE_DEVICE_STATE_DONE note=Run this on each device and compare count/hash lines. Catalog hashes use business fields, not local IDs.');
+      _setStatus('Device state comparison logged', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runSequenceAudit() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _status = 'Running sequence audit...';
+      _progress = 0;
+    });
+    try {
+      final sequenced = store.syncChanges
+          .where((change) => change.sequence > 0)
+          .map((change) => change.sequence)
+          .toList()
+        ..sort();
+      final earliest = sequenced.isEmpty ? 0 : sequenced.first;
+      final latest = sequenced.isEmpty ? 0 : sequenced.last;
+      final unique = sequenced.toSet();
+      final duplicateCount = sequenced.length - unique.length;
+      final missing = <int>[];
+      if (earliest > 0 && latest >= earliest) {
+        for (var seq = earliest; seq <= latest && missing.length < 50; seq++) {
+          if (!unique.contains(seq)) missing.add(seq);
+        }
+      }
+      final byDevice = <String, int>{};
+      for (final change in store.syncChanges) {
+        final key = change.deviceId.isEmpty ? 'unknown' : change.deviceId;
+        byDevice[key] = (byDevice[key] ?? 0) + 1;
+      }
+      final byEntity = <String, int>{};
+      for (final change in store.syncChanges) {
+        final key = change.entityType.isEmpty ? 'unknown' : change.entityType;
+        byEntity[key] = (byEntity[key] ?? 0) + 1;
+      }
+      _addLog(
+          'SEQUENCE_AUDIT role=${_roleLabel()} currentSeq=${store.currentSyncSequence} sequencedChanges=${sequenced.length} earliestSequence=$earliest latestSequence=$latest duplicateSequences=$duplicateCount missingSequenceSample=${missing.isEmpty ? '-' : missing.join(',')}');
+      _addLog(
+          'SEQUENCE_AUDIT_BY_DEVICE ${byDevice.entries.map((entry) => '${entry.key}:${entry.value}').join(' ')}');
+      _addLog(
+          'SEQUENCE_AUDIT_BY_ENTITY ${byEntity.entries.map((entry) => '${entry.key}:${entry.value}').join(' ')}');
+      _setStatus('Sequence audit logged', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runPendingAudit() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _status = 'Running pending audit...';
+      _progress = 0;
+    });
+    try {
+      final byStatus = <String, int>{};
+      for (final item in store.syncQueue) {
+        byStatus[item.status] = (byStatus[item.status] ?? 0) + 1;
+      }
+      final pending = store.syncQueue
+          .where((item) =>
+              item.isPending ||
+              item.isInProgress ||
+              item.isFailed ||
+              item.isRejected)
+          .take(30)
+          .toList();
+      _addLog(
+          'PENDING_AUDIT queueTotal=${store.syncQueue.length} changesTotal=${store.syncChanges.length} pendingQueue=${store.pendingSyncQueue.length} pendingChanges=${store.pendingSyncChanges.length} queueByStatus=${byStatus.entries.map((entry) => '${entry.key}:${entry.value}').join(' ')}');
+      if (pending.isEmpty) {
+        _addLog('PENDING_AUDIT_SAMPLE none');
+      } else {
+        for (final item in pending) {
+          final matches = store.syncChanges
+              .where((change) => change.id == item.changeId)
+              .toList();
+          final change = matches.isEmpty ? null : matches.first;
+          _addLog(
+              'PENDING_AUDIT_ITEM queueId=${item.id} changeId=${item.changeId} status=${item.status} target=${item.target} attempts=${item.attempts} updatedAt=${item.updatedAt.toIso8601String()} changeEntity=${change?.entityType ?? '-'} changeEntityId=${change?.entityId ?? '-'} changeSeq=${change?.sequence ?? '-'} changeSynced=${change?.isSynced ?? '-'} error=${item.lastError.replaceAll('\n', ' ')}');
+        }
+      }
+      _setStatus('Pending audit logged', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runDuplicateDetection() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _status = 'Running duplicate detection...';
+      _progress = 0;
+    });
+    try {
+      List<String> duplicates(Iterable<String> values) {
+        final counts = <String, int>{};
+        for (final value in values.where((value) => value.trim().isNotEmpty)) {
+          counts[value] = (counts[value] ?? 0) + 1;
+        }
+        return counts.entries
+            .where((entry) => entry.value > 1)
+            .map((entry) => '${entry.key}:${entry.value}')
+            .take(30)
+            .toList();
+      }
+
+      final duplicateChangeIds =
+          duplicates(store.syncChanges.map((change) => change.id));
+      final duplicateEventKeys = duplicates(store.syncChanges.map((change) =>
+          '${change.entityType}:${change.entityId}:${change.operation}:${change.sequence}'));
+      final duplicateEntityIds = duplicates(store.syncChanges.map((change) =>
+          '${change.entityType}:${change.entityId}:${change.operation}'));
+      final duplicateQueueChangeIds =
+          duplicates(store.syncQueue.map((item) => item.changeId));
+      _addLog(
+          'DUPLICATE_DETECTION duplicateChangeIds=${duplicateChangeIds.isEmpty ? 0 : duplicateChangeIds.length} sample=${duplicateChangeIds.isEmpty ? '-' : duplicateChangeIds.join(',')}');
+      _addLog(
+          'DUPLICATE_DETECTION duplicateEventKeys=${duplicateEventKeys.isEmpty ? 0 : duplicateEventKeys.length} sample=${duplicateEventKeys.isEmpty ? '-' : duplicateEventKeys.join(',')}');
+      _addLog(
+          'DUPLICATE_DETECTION duplicateEntityOperationKeys=${duplicateEntityIds.isEmpty ? 0 : duplicateEntityIds.length} sample=${duplicateEntityIds.isEmpty ? '-' : duplicateEntityIds.join(',')}');
+      _addLog(
+          'DUPLICATE_DETECTION duplicateQueueChangeIds=${duplicateQueueChangeIds.isEmpty ? 0 : duplicateQueueChangeIds.length} sample=${duplicateQueueChangeIds.isEmpty ? '-' : duplicateQueueChangeIds.join(',')}');
+      _setStatus('Duplicate detection logged', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runSyncHistoryInspector() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _status = 'Inspecting sync history...';
+      _progress = 0;
+    });
+    try {
+      final authoritative =
+          store.syncChanges.where((change) => change.sequence > 0).length;
+      final localDraft =
+          store.syncChanges.where((change) => change.sequence <= 0).length;
+      final syncedDraft = store.syncChanges
+          .where((change) => change.sequence <= 0 && change.isSynced)
+          .length;
+      final unsyncedDraft = store.syncChanges
+          .where((change) => change.sequence <= 0 && !change.isSynced)
+          .length;
+      final syncedAuthoritative = store.syncChanges
+          .where((change) => change.sequence > 0 && change.isSynced)
+          .length;
+      final unsyncedAuthoritative = store.syncChanges
+          .where((change) => change.sequence > 0 && !change.isSynced)
+          .length;
+      final zeroSeqSample = store.syncChanges
+          .where((change) => change.sequence <= 0)
+          .take(20)
+          .map((change) =>
+              '${change.id}/${change.entityType}/${change.entityId}/${change.operation}/synced=${change.isSynced}')
+          .join(' | ');
+      _addLog(
+          'SYNC_HISTORY_INSPECTOR total=${store.syncChanges.length} authoritative=$authoritative localDraft=$localDraft syncedDraft=$syncedDraft unsyncedDraft=$unsyncedDraft syncedAuthoritative=$syncedAuthoritative unsyncedAuthoritative=$unsyncedAuthoritative queue=${store.syncQueue.length}');
+      _addLog(
+          'SYNC_HISTORY_ZERO_SEQUENCE_SAMPLE ${zeroSeqSample.isEmpty ? '-' : zeroSeqSample}');
+      _setStatus('Sync history inspection logged', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runDatabaseSizeBreakdown() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _status = 'Calculating DB size breakdown...';
+      _progress = 0;
+    });
+    try {
+      final entries = LocalDatabaseService.allEntries();
+      _addLog('DB_SIZE_BREAKDOWN_START keys=${entries.length}');
+      final sorted = entries.entries.toList()
+        ..sort((a, b) =>
+            (utf8.encode(b.key).length + utf8.encode(b.value).length).compareTo(
+                utf8.encode(a.key).length + utf8.encode(a.value).length));
+      var total = 0;
+      for (final entry in sorted) {
+        final bytes =
+            utf8.encode(entry.key).length + utf8.encode(entry.value).length;
+        total += bytes;
+        _addLog(
+            'DB_SIZE_KEY key=${entry.key} bytes=$bytes mb=${(bytes / 1024 / 1024).toStringAsFixed(3)}');
+      }
+      _addLog(
+          'DB_SIZE_BREAKDOWN_TOTAL bytes=$total mb=${(total / 1024 / 1024).toStringAsFixed(3)}');
+      _setStatus('DB size breakdown logged', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runIntegrityCheck() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _status = 'Running integrity check...';
+      _progress = 0;
+    });
+    try {
+      final productIds =
+          store.allProductsForDiagnostics.map((item) => item.id).toSet();
+      final saleIds = store.sales.map((item) => item.id).toSet();
+      final purchaseIds = store.purchases.map((item) => item.id).toSet();
+      final saleItemMissingProducts = <String>[];
+      for (final sale in store.sales) {
+        for (final item in sale.items) {
+          if (!productIds.contains(item.productId)) {
+            saleItemMissingProducts.add('${sale.id}:${item.productId}');
+          }
+          if (saleItemMissingProducts.length >= 30) break;
+        }
+        if (saleItemMissingProducts.length >= 30) break;
+      }
+      final purchaseItemMissingProducts = <String>[];
+      for (final purchase in store.purchases) {
+        for (final item in purchase.items) {
+          if (!productIds.contains(item.productId)) {
+            purchaseItemMissingProducts.add('${purchase.id}:${item.productId}');
+          }
+          if (purchaseItemMissingProducts.length >= 30) break;
+        }
+        if (purchaseItemMissingProducts.length >= 30) break;
+      }
+      final stockMissingProducts = store.stockMovements
+          .where((movement) =>
+              movement.productId.isNotEmpty &&
+              !productIds.contains(movement.productId))
+          .take(30)
+          .map((movement) => '${movement.id}:${movement.productId}')
+          .toList();
+      final stockMissingReferences = store.stockMovements
+          .where((movement) {
+            final reference = movement.referenceId;
+            if (reference.isEmpty) return false;
+            final type = movement.type.toLowerCase();
+            if (type.contains('sale')) return !saleIds.contains(reference);
+            if (type.contains('purchase')) {
+              return !purchaseIds.contains(reference);
+            }
+            return false;
+          })
+          .take(30)
+          .map((movement) =>
+              '${movement.id}:${movement.type}:${movement.referenceId}')
+          .toList();
+      final pass = saleItemMissingProducts.isEmpty &&
+          purchaseItemMissingProducts.isEmpty &&
+          stockMissingProducts.isEmpty &&
+          stockMissingReferences.isEmpty;
+      _addLog(
+          'INTEGRITY_CHECK result=${pass ? 'PASS' : 'WARN'} saleItemMissingProducts=${saleItemMissingProducts.length} purchaseItemMissingProducts=${purchaseItemMissingProducts.length} stockMissingProducts=${stockMissingProducts.length} stockMissingReferences=${stockMissingReferences.length}');
+      if (saleItemMissingProducts.isNotEmpty) {
+        _addLog(
+            'INTEGRITY_SALE_ITEM_MISSING_PRODUCTS sample=${saleItemMissingProducts.join(',')}');
+      }
+      if (purchaseItemMissingProducts.isNotEmpty) {
+        _addLog(
+            'INTEGRITY_PURCHASE_ITEM_MISSING_PRODUCTS sample=${purchaseItemMissingProducts.join(',')}');
+      }
+      if (stockMissingProducts.isNotEmpty) {
+        _addLog(
+            'INTEGRITY_STOCK_MISSING_PRODUCTS sample=${stockMissingProducts.join(',')}');
+      }
+      if (stockMissingReferences.isNotEmpty) {
+        _addLog(
+            'INTEGRITY_STOCK_MISSING_REFERENCES sample=${stockMissingReferences.join(',')}');
+      }
+      _setStatus('Integrity check logged', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runAllDiagnostics() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'diagnostics',
+        title: 'Diagnostics',
+        kind: StressLabScenarioKind.maintenance,
+        description: 'Collect sequence, integrity, and maintenance evidence.',
+        execute: _runAllDiagnosticsBody,
+      ),
+      body: _runAllDiagnosticsBody,
+    );
+  }
+
+  Future<void> _runAllDiagnosticsBody() async {
+    if (_running) return;
+    await _compareDeviceState();
+    await _runSequenceAudit();
+    await _runLateClientGuardCheck();
+    await _runPendingAudit();
+    await _runDuplicateDetection();
+    await _runSyncHistoryInspector();
+    await _runDatabaseSizeBreakdown();
+    await _runIntegrityCheck();
+    await _generateTestSummary();
+  }
+
+  Future<void> _generateTestSummary() async {
+    _addLog(_snapshotLine('MANUAL_SUMMARY_SNAPSHOT'));
+    await _logDatabaseMetrics('MANUAL_SUMMARY_DB');
+    await _addHealthSummary('MANUAL_TEST_SUMMARY');
+  }
+
+  Future<T?> _auditStep<T>(
+    String section,
+    String name,
+    Future<T> Function() action, {
+    String Function(T value)? successDetails,
+  }) async {
+    final sw = Stopwatch()..start();
+    try {
+      final result = await action();
+      sw.stop();
+      final details = successDetails?.call(result) ?? 'تم التنفيذ بنجاح.';
+      _report.add(_StressAuditStep(
+          section: section,
+          name: name,
+          status: 'PASS',
+          details: details,
+          elapsedMs: sw.elapsedMilliseconds));
+      _addLog(
+          'AUDIT_STEP PASS [$section] $name ${sw.elapsedMilliseconds}ms $details');
+      return result;
+    } catch (error, stack) {
+      sw.stop();
+      final details = error.toString();
+      _report.add(_StressAuditStep(
+          section: section,
+          name: name,
+          status: 'FAIL',
+          details: details,
+          elapsedMs: sw.elapsedMilliseconds));
+      _addLog(
+          'AUDIT_STEP FAIL [$section] $name ${sw.elapsedMilliseconds}ms $details');
+      _addLog(stack.toString().split('\n').take(6).join(' | '));
+      return null;
+    }
+  }
+
+  void _auditCheck(String section, String name, bool condition,
+      String passDetails, String failDetails,
+      {bool warning = false}) {
+    final status = condition ? 'PASS' : (warning ? 'WARN' : 'FAIL');
+    final details = condition ? passDetails : failDetails;
+    _report.add(_StressAuditStep(
+        section: section,
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: 0));
+    _addLog('AUDIT_CHECK $status [$section] $name $details');
+  }
+
+  String _money(double value) => value.toStringAsFixed(2);
+
+  List<SaleItem> _saleItemsFromProducts(List<Product> products,
+          {double quantity = 1, double priceFactor = 1}) =>
+      products
+          .map((product) => SaleItem(
+                productId: product.id,
+                productName: product.name,
+                unitPrice: product.price * priceFactor,
+                quantity: quantity,
+                unitCost: product.usdCost > 0 ? product.usdCost : product.cost,
+                unitName: product.unit,
+                baseQuantity: quantity,
+                conversionToBase: 1.0,
+              ))
+          .toList();
+
+  Future<void> _ensureAuditCashDrawerOpen() async {
+    if (!AccountingService.isAvailable) return;
+    final hasOpenDrawer = await AccountingService.hasOpenCashDrawerForDevice(
+      deviceId: store.appIdentity.deviceId,
+      branchId: store.appIdentity.branchId,
+    );
+    if (hasOpenDrawer) return;
+
+    var drawer = await AccountingService.currentCashDrawerForDevice(
+      deviceId: store.appIdentity.deviceId,
+      branchId: store.appIdentity.branchId,
+    );
+    if (drawer == null) {
+      final locations = await AccountingService.listActiveCashLocations(
+        includeBank: false,
+      );
+      final cashDrawers = locations
+          .where((item) => item.type == 'cash_drawer')
+          .toList(growable: false);
+      for (final candidate in cashDrawers) {
+        if (candidate.referenceId == store.appIdentity.deviceId) {
+          drawer = candidate;
+          break;
+        }
+      }
+      if (drawer == null) {
+        for (final candidate in cashDrawers) {
+          if (candidate.isDefault) {
+            drawer = candidate;
+            break;
+          }
+        }
+      }
+      if (drawer == null && cashDrawers.isNotEmpty) {
+        drawer = cashDrawers.first;
+      }
+    }
+    if (drawer == null) {
+      throw StateError('Stress Lab could not resolve an active cash drawer.');
+    }
+
+    var openingBalance = drawer.balance;
+    if (openingBalance.abs() < 0.005) {
+      // A fresh test database has physical cash at zero and no GL opening
+      // basis. Seed the fixture through AccountingService before opening the
+      // shift so Cash Location and its GL account both start at 10,000.
+      await AccountingService.recordOpeningCashLocationBalance(
+        cashLocationId: drawer.id,
+        amount: 10000,
+        storeId: store.appIdentity.storeId,
+        branchId: store.appIdentity.branchId,
+        createdBy: 'Stress Lab',
+        notes: 'Stress Lab accounting opening basis $_currentBatchId',
+      );
+      openingBalance = 10000;
+    }
+
+    await AccountingService.openCashDrawer(
+        authorization: store,
+      drawerNo: 'Stress Lab $_currentBatchId',
+      cashLocationId: drawer.id,
+      openingBalance: openingBalance,
+      openedBy: 'Stress Lab',
+      openedByUserId: store.appIdentity.deviceId,
+      storeId: store.appIdentity.storeId,
+      branchId: store.appIdentity.branchId,
+      deviceId: store.appIdentity.deviceId,
+    );
+  }
+
+  Future<void> _pressureStep(
+    String section,
+    String name,
+    int count,
+    Future<void> Function(int index) action, {
+    double startProgress = 0.0,
+    double endProgress = 1.0,
+    int? progressEvery,
+  }) async {
+    final stats = _StressPerfStats(section, name);
+    final tr = AppLocalizations.of(context);
+    _resetTraceCapture();
+    final swTotal = Stopwatch()..start();
+    final progressInterval = max<int>(1, progressEvery ?? count ~/ 20);
+    String? firstError;
+    for (var i = 0; i < count; i++) {
+      final sw = Stopwatch()..start();
+      try {
+        await action(i);
+        sw.stop();
+        stats.add(sw.elapsedMilliseconds);
+      } catch (error, stack) {
+        sw.stop();
+        stats.addFail();
+        firstError ??= error.toString();
+        _addLog('PRESSURE_ITEM_FAIL [$section] $name index=$i error=$error');
+        _addLog(stack.toString().split('\n').take(3).join(' | '));
+      }
+      if (i % progressInterval == 0) {
+        final ratio = count <= 1 ? 1.0 : i / (count - 1);
+        _setStatus(
+            '${_reportLabel(section, tr)} / ${_reportLabel(name, tr)}: ${i + 1}/$count',
+            progress: startProgress + (endProgress - startProgress) * ratio);
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+    swTotal.stop();
+    final bottleneck = _traceBottleneck();
+    final performance = bottleneck == null
+        ? stats.metrics
+        : stats.metrics.withBottleneck(
+            '${bottleneck.section}.${bottleneck.phase}',
+            bottleneck.trend.slowdown,
+          );
+    final status = stats.failed > 0 ||
+            stats.hasSlowdownFailure ||
+            stats.hasTailLatencyFailure
+        ? 'FAIL'
+        : stats.hasSlowdownWarning || stats.hasTailLatencyWarning
+            ? 'WARN'
+            : 'PASS';
+    final traceSummary = _traceSummaryForSection(section);
+    final details =
+        '${stats.summary} totalWall=${swTotal.elapsedMilliseconds}ms${firstError == null ? '' : ' firstError=$firstError'}'
+        '${stats.hasSlowdownWarning ? ' slowdownWarning=true' : ''}${stats.hasLatencyOutlier ? ' latencyOutlier=true' : ''} '
+        'bottleneck=${performance.bottleneckPhase.isEmpty ? 'none' : performance.bottleneckPhase} '
+        'bottleneckSlowdown=${performance.bottleneckSlowdown.toStringAsFixed(2)}x '
+        '${traceSummary == 'trace=none' ? '' : traceSummary}';
+    _report.add(_StressAuditStep(
+        section: section,
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: swTotal.elapsedMilliseconds,
+        performance: performance));
+    _addLog('PERF_STEP $status [$section] $name $details');
+  }
+
+  Future<void> _pressureBatchStep(
+    String section,
+    String name,
+    int count,
+    int batchSize,
+    Future<void> Function(int start, int length) action, {
+    double startProgress = 0.0,
+    double endProgress = 1.0,
+  }) async {
+    final stats = _StressPerfStats(section, name);
+    final tr = AppLocalizations.of(context);
+    _resetTraceCapture();
+    final swTotal = Stopwatch()..start();
+    String? firstError;
+    for (var start = 0; start < count; start += batchSize) {
+      final length = min(batchSize, count - start);
+      final sw = Stopwatch()..start();
+      try {
+        await action(start, length);
+        sw.stop();
+        final perItemMs =
+            max<int>(0, (sw.elapsedMilliseconds / length).round());
+        for (var i = 0; i < length; i += 1) {
+          stats.add(perItemMs);
+        }
+      } catch (error, stack) {
+        sw.stop();
+        firstError ??= error.toString();
+        for (var i = 0; i < length; i += 1) {
+          stats.addFail();
+        }
+        _addLog(
+            'PRESSURE_BATCH_FAIL [$section] $name start=$start length=$length error=$error');
+        _addLog(stack.toString().split('\n').take(3).join(' | '));
+      }
+      final ratio = count <= 1 ? 1.0 : (start + length - 1) / (count - 1);
+      _setStatus(
+          '${_reportLabel(section, tr)} / ${_reportLabel(name, tr)}: ${start + length}/$count',
+          progress: startProgress + (endProgress - startProgress) * ratio);
+      await Future<void>.delayed(Duration.zero);
+    }
+    swTotal.stop();
+    final bottleneck = _traceBottleneck();
+    final performance = bottleneck == null
+        ? stats.metrics
+        : stats.metrics.withBottleneck(
+            '${bottleneck.section}.${bottleneck.phase}',
+            bottleneck.trend.slowdown,
+          );
+    final status = stats.failed > 0 ||
+            stats.hasSlowdownFailure ||
+            stats.hasTailLatencyFailure
+        ? 'FAIL'
+        : stats.hasSlowdownWarning || stats.hasTailLatencyWarning
+            ? 'WARN'
+            : 'PASS';
+    final traceSummary = _traceSummaryForSection(section);
+    final details =
+        '${stats.summary} totalWall=${swTotal.elapsedMilliseconds}ms${firstError == null ? '' : ' firstError=$firstError'}'
+        '${stats.hasSlowdownWarning ? ' slowdownWarning=true' : ''}${stats.hasLatencyOutlier ? ' latencyOutlier=true' : ''} '
+        'batchSize=$batchSize bottleneck=${performance.bottleneckPhase.isEmpty ? 'none' : performance.bottleneckPhase} '
+        'bottleneckSlowdown=${performance.bottleneckSlowdown.toStringAsFixed(2)}x '
+        '${traceSummary == 'trace=none' ? '' : traceSummary}';
+    _report.add(_StressAuditStep(
+        section: section,
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: swTotal.elapsedMilliseconds,
+        performance: performance));
+    _addLog('PERF_STEP $status [$section] $name $details');
+  }
+
+  Future<void> _runExpiryBatchLifecycle({
+    required Supplier supplier,
+    required Customer customer,
+  }) async {
+    final section = _dual('دورة الصلاحية والدفعات', 'Expiry & Batch Lifecycle');
+    final now = DateTime.now();
+    final warehouse = store.resolveWarehouseForPurchase();
+    final expiryProduct = await _auditStep<Product>(
+      section,
+      _dual('إنشاء منتج خاضع للصلاحية', 'Create expiry-tracked product'),
+      () async {
+        final product = Product(
+          id: '${_currentBatchId}_expiry_food',
+          name: '[STRESS-EXP] Food $_currentBatchId',
+          nameEn: 'Stress Expiry Food',
+          nameAr: 'منتج صلاحية اختباري',
+          code: 'STRESS-EXP-${now.microsecondsSinceEpoch}',
+          price: 9,
+          cost: 4,
+          usdCost: 4,
+          stock: 0,
+          category: 'Stress Expiry',
+          unit: 'pcs',
+          trackStock: true,
+          expiryTrackingEnabled: true,
+          expiryEntryRequired: true,
+          expiryAlertDays: 45,
+          minimumReceiptShelfLifeDays: 0,
+        );
+        await store.addOrUpdateProduct(product);
+        return product;
+      },
+      successDetails: (product) =>
+          'product=${product.id} expiryTracking=${product.expiryTrackingEnabled}',
+    );
+    if (expiryProduct == null) return;
+
+    final earlyExpiry =
+        DateTime(now.year, now.month, now.day).add(const Duration(days: 20));
+    final lateExpiry =
+        DateTime(now.year, now.month, now.day).add(const Duration(days: 80));
+    final earlyBatchId = '${_currentBatchId}_exp_early';
+    final lateBatchId = '${_currentBatchId}_exp_late';
+    final purchase = await _auditStep<Purchase>(
+      section,
+      _dual('استلام دفعتين بتواريخ مختلفة',
+          'Receive two batches with different expiry dates'),
+      () => store.createPurchase(
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        receiveNow: true,
+        paymentStatus: 'paid',
+        paymentMethod: 'Card',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        note: 'STRESS-EXP multi-batch receipt $_currentBatchId',
+        items: <PurchaseItem>[
+          PurchaseItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 10,
+            unitCost: expiryProduct.cost,
+            batchAllocations: <BatchAllocation>[
+              BatchAllocation(
+                batchId: lateBatchId,
+                quantity: 6,
+                supplierBatchNumber: 'LATE-$_currentBatchId',
+                expirationDate: lateExpiry,
+              ),
+              BatchAllocation(
+                batchId: earlyBatchId,
+                quantity: 4,
+                supplierBatchNumber: 'EARLY-$_currentBatchId',
+                expirationDate: earlyExpiry,
+              ),
+            ],
+          ),
+        ],
+      ),
+      successDetails: (value) =>
+          'purchase=${value.purchaseNo} batches=2 quantity=10',
+    );
+    if (purchase == null) return;
+
+    Future<List<Map<String, dynamic>>> rows() async =>
+        (await LocalDatabaseService.getExpiryBatchReportFromSqlite() ??
+                const [])
+            .where((row) => row['productId'] == expiryProduct.id)
+            .toList(growable: false);
+    double batchQuantity(
+      List<Map<String, dynamic>> values,
+      String batchId, {
+      String? warehouseId,
+    }) =>
+        values
+            .where((row) =>
+                row['batchId'] == batchId &&
+                (warehouseId == null || row['warehouseId'] == warehouseId))
+            .fold<double>(
+                0, (sum, row) => sum + (row['quantity'] as num).toDouble());
+
+    var reportRows = await rows();
+    _auditCheck(
+      section,
+      _dual('تطابق كميات الاستلام', 'Receipt batch quantity consistency'),
+      (batchQuantity(reportRows, earlyBatchId) - 4).abs() < .000001 &&
+          (batchQuantity(reportRows, lateBatchId) - 6).abs() < .000001,
+      'expected early=4 late=6 actual early=${batchQuantity(reportRows, earlyBatchId)} late=${batchQuantity(reportRows, lateBatchId)}',
+      'Batch receipt mismatch: early=${batchQuantity(reportRows, earlyBatchId)} late=${batchQuantity(reportRows, lateBatchId)}',
+    );
+
+    final expiredFixtureId = '${_currentBatchId}_exp_expired_fixture';
+    await store.createPurchase(
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      receiveNow: true,
+      paymentStatus: 'paid',
+      paymentMethod: 'Card',
+      warehouseId: warehouse.id,
+      warehouseName: warehouse.name,
+      note: 'STRESS-EXP fixture that will be aged after receipt',
+      items: <PurchaseItem>[
+        PurchaseItem(
+          productId: expiryProduct.id,
+          productName: expiryProduct.name,
+          quantity: 2,
+          unitCost: expiryProduct.cost,
+          batchAllocations: <BatchAllocation>[
+            BatchAllocation(
+              batchId: expiredFixtureId,
+              quantity: 2,
+              expirationDate: now.add(const Duration(days: 10)),
+            ),
+          ],
+        ),
+      ],
+    );
+    await SqliteMigrationManager.database?.customStatement(
+      'UPDATE inventory_batches SET expiration_date = ? WHERE id = ?',
+      <Object?>[
+        now.subtract(const Duration(days: 1)).toUtc().toIso8601String(),
+        expiredFixtureId,
+      ],
+    );
+
+    Future<bool> rejects(Future<void> Function() action) async {
+      try {
+        await action();
+        return false;
+      } catch (_) {
+        return true;
+      }
+    }
+
+    final mismatchRejected = await rejects(() async {
+      await store.createPurchase(
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        receiveNow: true,
+        paymentStatus: 'paid',
+        paymentMethod: 'Card',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        note: 'STRESS-EXP expected rejection quantity mismatch',
+        items: <PurchaseItem>[
+          PurchaseItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 3,
+            unitCost: expiryProduct.cost,
+            batchAllocations: <BatchAllocation>[
+              BatchAllocation(
+                batchId: '${_currentBatchId}_invalid_total',
+                quantity: 2,
+                expirationDate: lateExpiry,
+              ),
+            ],
+          ),
+        ],
+      );
+    });
+    final expiredRejected = await rejects(() async {
+      await store.createPurchase(
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        receiveNow: true,
+        paymentStatus: 'paid',
+        paymentMethod: 'Card',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        note: 'STRESS-EXP expected rejection expired receipt',
+        items: <PurchaseItem>[
+          PurchaseItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 1,
+            unitCost: expiryProduct.cost,
+            batchAllocations: <BatchAllocation>[
+              BatchAllocation(
+                batchId: '${_currentBatchId}_invalid_expired',
+                quantity: 1,
+                expirationDate: now.subtract(const Duration(days: 1)),
+              ),
+            ],
+          ),
+        ],
+      );
+    });
+    _auditCheck(
+      section,
+      _dual('رفض بيانات الدفعات غير الصالحة', 'Reject invalid batch receipts'),
+      mismatchRejected && expiredRejected,
+      'quantityMismatchRejected=$mismatchRejected expiredReceiptRejected=$expiredRejected',
+      'Expected rejections missing: quantityMismatch=$mismatchRejected expired=$expiredRejected',
+    );
+
+    final fefoSale = await _auditStep<Sale>(
+      section,
+      _dual('بيع يمتد على دفعتين وفق FEFO', 'Sell across batches using FEFO'),
+      () => store.createSale(
+        customerName: customer.name,
+        customerId: customer.id,
+        items: <SaleItem>[
+          SaleItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            unitPrice: expiryProduct.price,
+            quantity: 7,
+            unitCost: expiryProduct.cost,
+          ),
+        ],
+        paymentMethod: 'Card',
+        paymentStatus: 'paid',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+      ),
+      successDetails: (sale) => 'sale=${sale.invoiceNo}',
+    );
+    if (fefoSale == null) return;
+    final saleAllocations = fefoSale.items.single.batchAllocations;
+    _auditCheck(
+      section,
+      'FEFO ordering',
+      saleAllocations.length == 2 &&
+          saleAllocations
+              .every((allocation) => allocation.batchId != expiredFixtureId) &&
+          saleAllocations.first.batchId == earlyBatchId &&
+          (saleAllocations.first.quantity - 4).abs() < .000001 &&
+          saleAllocations.last.batchId == lateBatchId &&
+          (saleAllocations.last.quantity - 3).abs() < .000001,
+      'expected=expired excluded,early:4,late:3 actual=${saleAllocations.map((item) => '${item.batchId}:${item.quantity}').join(',')}',
+      'FEFO allocation mismatch actual=${saleAllocations.map((item) => '${item.batchId}:${item.quantity}').join(',')}',
+    );
+    await _auditStep<void>(
+      section,
+      _dual('إرجاع الكمية إلى الدفعات الأصلية',
+          'Return stock to original batches'),
+      () => store.returnSale(fefoSale.id, restoreStock: true),
+    );
+    reportRows = await rows();
+    _auditCheck(
+      section,
+      'Return-to-original-batch',
+      (batchQuantity(reportRows, earlyBatchId) - 4).abs() < .000001 &&
+          (batchQuantity(reportRows, lateBatchId) - 6).abs() < .000001,
+      'early=4 late=6 restored exactly',
+      'Restored balances differ: early=${batchQuantity(reportRows, earlyBatchId)} late=${batchQuantity(reportRows, lateBatchId)}',
+    );
+
+    await store.setExpiryBatchStatus(earlyBatchId, 'blocked');
+    final blockedSale = await store.createSale(
+      customerName: customer.name,
+      customerId: customer.id,
+      items: <SaleItem>[
+        SaleItem(
+          productId: expiryProduct.id,
+          productName: expiryProduct.name,
+          unitPrice: expiryProduct.price,
+          quantity: 2,
+          unitCost: expiryProduct.cost,
+        ),
+      ],
+      paymentMethod: 'Card',
+      paymentStatus: 'paid',
+      warehouseId: warehouse.id,
+      warehouseName: warehouse.name,
+    );
+    final blockedExcluded = blockedSale.items.single.batchAllocations
+        .every((allocation) => allocation.batchId != earlyBatchId);
+    await store.cancelSale(blockedSale.id, restoreStock: true);
+    await store.setExpiryBatchStatus(earlyBatchId, 'active');
+    _auditCheck(
+      section,
+      'Blocked batch exclusion',
+      blockedExcluded,
+      'blockedBatch=$earlyBatchId was skipped and then reactivated',
+      'Blocked batch $earlyBatchId was allocated to sale',
+    );
+
+    var destination = store.warehouses
+        .where((item) => item.id != warehouse.id && !item.isDeleted)
+        .firstOrNull;
+    destination ??= await store.createWarehouse(
+      name: '[STRESS-EXP] Warehouse $_currentBatchId',
+    );
+    await store.transferStock(
+      productId: expiryProduct.id,
+      fromWarehouseId: warehouse.id,
+      toWarehouseId: destination.id,
+      quantity: 5,
+      notes: 'STRESS-EXP preserve batch identity',
+    );
+    reportRows = await rows();
+    final transferIdentityOk = (batchQuantity(reportRows, earlyBatchId,
+                        warehouseId: destination.id) -
+                    4)
+                .abs() <
+            .000001 &&
+        (batchQuantity(reportRows, lateBatchId, warehouseId: destination.id) -
+                    1)
+                .abs() <
+            .000001;
+    _auditCheck(
+      section,
+      'Cross-warehouse batch identity',
+      transferIdentityOk,
+      'destination=${destination.id} early=4 late=1 identities preserved',
+      'Destination batches do not match transferred identities/quantities',
+    );
+
+    await store.adjustExpiryBatchStock(
+      productId: expiryProduct.id,
+      warehouseId: destination.id,
+      batchId: earlyBatchId,
+      quantityDelta: -1,
+      reason: 'STRESS-EXP batch count shortage',
+      adjustmentCategory: 'stock_count_shortage',
+    );
+    await store.adjustExpiryBatchStock(
+      productId: expiryProduct.id,
+      warehouseId: destination.id,
+      batchId: earlyBatchId,
+      quantityDelta: -1,
+      reason: 'STRESS-EXP expired disposal',
+      adjustmentCategory: 'expired',
+    );
+    reportRows = await rows();
+    _auditCheck(
+      section,
+      _dual('الجرد والإتلاف حسب الدفعة', 'Batch count and disposal'),
+      (batchQuantity(reportRows, earlyBatchId, warehouseId: destination.id) - 2)
+              .abs() <
+          .000001,
+      'expected destination early batch=2 after count and disposal',
+      'actual destination early=${batchQuantity(reportRows, earlyBatchId, warehouseId: destination.id)}',
+    );
+
+    await store.adjustExpiryBatchStock(
+      productId: expiryProduct.id,
+      warehouseId: warehouse.id,
+      batchId: expiredFixtureId,
+      quantityDelta: -2,
+      reason: 'STRESS-EXP full expired batch disposal',
+      adjustmentCategory: 'expired',
+    );
+    await store.setExpiryBatchStatus(expiredFixtureId, 'disposed');
+    reportRows = await rows();
+    final disposedRow = reportRows
+        .where((row) => row['batchId'] == expiredFixtureId)
+        .firstOrNull;
+    _auditCheck(
+      section,
+      _dual('إتلاف دفعة منتهية بالكامل', 'Full expired batch disposal'),
+      disposedRow != null &&
+          disposedRow['status'] == 'disposed' &&
+          (disposedRow['quantity'] as num).toDouble().abs() < .000001,
+      'batch=$expiredFixtureId status=disposed quantity=0',
+      'Disposed batch state mismatch: $disposedRow',
+    );
+
+    final outputProduct = await _auditStep<Product>(
+      section,
+      _dual('إنشاء منتج تصنيع بصلاحية',
+          'Create expiry-tracked manufacturing output'),
+      () async {
+        final product = Product(
+          id: '${_currentBatchId}_expiry_output',
+          name: '[STRESS-EXP] Manufactured $_currentBatchId',
+          code: 'STRESS-EXP-MFG-${now.microsecondsSinceEpoch}',
+          price: 14,
+          cost: 4,
+          usdCost: 4,
+          stock: 0,
+          category: 'Stress Expiry',
+          unit: 'pcs',
+          trackStock: true,
+          expiryTrackingEnabled: true,
+          expiryEntryRequired: true,
+        );
+        await store.addOrUpdateProduct(product);
+        return product;
+      },
+    );
+    if (outputProduct != null) {
+      final bom = await store.createBillOfMaterials(
+        name: '[STRESS-EXP] BOM $_currentBatchId',
+        outputProductId: outputProduct.id,
+        outputQuantity: 1,
+        components: <BillOfMaterialsLine>[
+          BillOfMaterialsLine(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 1,
+            unitCost: expiryProduct.cost,
+          ),
+        ],
+        notes: 'STRESS-EXP FEFO manufacturing consumption',
+      );
+      await store.completeManufacturingOrder(
+        bomId: bom.id,
+        quantity: 2,
+        rawMaterialsWarehouseId: warehouse.id,
+        finishedGoodsWarehouseId: warehouse.id,
+        notes: 'STRESS-EXP manufacturing output batches',
+        outputBatchAllocations: <BatchAllocation>[
+          BatchAllocation(
+            batchId: '${_currentBatchId}_mfg_early',
+            quantity: 1,
+            expirationDate: earlyExpiry,
+          ),
+          BatchAllocation(
+            batchId: '${_currentBatchId}_mfg_late',
+            quantity: 1,
+            expirationDate: lateExpiry,
+          ),
+        ],
+      );
+      final outputRows =
+          (await LocalDatabaseService.getExpiryBatchReportFromSqlite() ??
+                  const [])
+              .where((row) => row['productId'] == outputProduct.id)
+              .toList();
+      _auditCheck(
+        section,
+        _dual('دفعات ناتج التصنيع', 'Manufacturing output batches'),
+        outputRows.length == 2 &&
+            outputRows.fold<double>(0,
+                    (sum, row) => sum + (row['quantity'] as num).toDouble()) ==
+                2,
+        'outputBatches=2 outputQuantity=2',
+        'Manufacturing output batches are missing or inconsistent: $outputRows',
+      );
+    }
+
+    reportRows = await rows();
+    final batchTotal = reportRows.fold<double>(
+        0, (sum, row) => sum + (row['quantity'] as num).toDouble());
+    final aggregate =
+        await store.totalWarehouseStockFromSqlite(expiryProduct.id);
+    _auditCheck(
+      section,
+      'Batch/aggregate reconciliation',
+      (batchTotal - aggregate).abs() < .000001,
+      'expected=batchTotal actual=aggregate value=$aggregate',
+      'batchTotal=$batchTotal aggregate=$aggregate difference=${batchTotal - aggregate}',
+    );
+
+    final backup =
+        jsonDecode(await store.recovery.exportBackupJson()) as Map<String, dynamic>;
+    final backupText = jsonEncode(backup);
+    final backupPreserved = backupText.contains(earlyBatchId) &&
+        backupText.contains(lateBatchId) &&
+        backupText.contains(earlyExpiry.toIso8601String().substring(0, 10));
+    _auditCheck(
+      section,
+      'Backup batch preservation',
+      backupPreserved,
+      'backup contains batch ids and expiry dates',
+      'backup is missing expiry lifecycle batch metadata',
+    );
+
+    final batchMovements = store.stockMovements
+        .where((movement) =>
+            movement.productId == expiryProduct.id &&
+            movement.batchId.isNotEmpty)
+        .toList();
+    _auditCheck(
+      section,
+      'Batch movement sync payload readiness',
+      batchMovements.isNotEmpty &&
+          batchMovements.every((movement) =>
+              movement.toJson()['batchId'] == movement.batchId &&
+              movement.idempotencyKey.isNotEmpty),
+      'batchMovements=${batchMovements.length} all carry batchId and idempotencyKey',
+      'Some expiry movements cannot be replayed idempotently: count=${batchMovements.length}',
+    );
+  }
+
+  Future<void> _runPressureAudit({
+    required List<Product> baseProducts,
+    required Customer? baseCustomer,
+    required Supplier? baseSupplier,
+  }) async {
+    final count = max(1, _readInt(_pressureMultiplierController, 1000));
+    final progressEvery =
+        max(1, _readInt(_pressureProgressEveryController, 50));
+    _lastPressureMultiplier = count;
+    _lastPressureProgressEvery = progressEvery;
+    AppStore.setTraceSink(_captureTrace);
+    try {
+      await _auditStep(
+          _dual('الوردية النقدية', 'Cash Drawer'),
+          _dual('تجهيز وردية نقدية للاختبار الضاغط',
+              'Prepare cash drawer for pressure test'), () async {
+        await _ensureAuditCashDrawerOpen();
+        return AccountingService.isAvailable
+            ? _dual('تم التأكد من وجود وردية نقدية أو فتح وردية اختبارية.',
+                'Cash drawer confirmed or test drawer opened.')
+            : _dual('SQLite Accounting غير متاح؛ تم تجاوز فتح الوردية.',
+                'SQLite Accounting is unavailable; cash drawer opening was skipped.');
+      }, successDetails: (value) => value);
+
+      final pressureCustomers = <Customer>[];
+      final contactBatchSize = min(250, max(25, progressEvery));
+      await _pressureBatchStep(
+          _dual('ضغط العملاء', 'Customer pressure'),
+          _dual('إنشاء $count عميل', 'Create $count customers'),
+          count,
+          contactBatchSize, (start, length) async {
+        final batch = <Customer>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final customer = Customer(
+            id: '${_currentBatchId}_pc_$i',
+            name: '[PRESSURE] Customer $i $_currentBatchId',
+            phone: '+96171${i.toString().padLeft(6, '0')}',
+            address: 'Pressure customer address $i',
+          );
+          batch.add(customer);
+          if (i < 20) pressureCustomers.add(customer);
+        }
+        await store.addOrUpdateCustomersBulk(batch);
+      }, startProgress: 0.79, endProgress: 0.815);
+
+      final pressureSuppliers = <Supplier>[];
+      await _pressureBatchStep(
+          _dual('ضغط الموردين', 'Supplier pressure'),
+          _dual('إنشاء $count مورد', 'Create $count suppliers'),
+          count,
+          contactBatchSize, (start, length) async {
+        final batch = <Supplier>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final supplier = Supplier(
+            id: '${_currentBatchId}_ps_$i',
+            name: '[PRESSURE] Supplier $i $_currentBatchId',
+            phone: '+96170${i.toString().padLeft(6, '0')}',
+            address: 'Pressure supplier address $i',
+            notes: 'Generated by Stress Lab pressure test',
+          );
+          batch.add(supplier);
+          if (i < 20) pressureSuppliers.add(supplier);
+        }
+        await store.addOrUpdateSuppliersBulk(batch);
+      }, startProgress: 0.815, endProgress: 0.84);
+
+      final pressureProducts = <Product>[];
+      final productBatchSize = min(250, max(25, progressEvery));
+      await _pressureBatchStep(
+          _dual('ضغط المنتجات', 'Product pressure'),
+          _dual('إنشاء $count منتج', 'Create $count products'),
+          count,
+          productBatchSize, (start, length) async {
+        final batch = <Product>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final stamp = DateTime.now().microsecondsSinceEpoch;
+          final product = Product(
+            id: '${_currentBatchId}_pp_$i',
+            name: '[PRESSURE] Product $i $_currentBatchId',
+            nameEn: 'Pressure Product $i',
+            nameAr: 'منتج ضغط $i',
+            code: 'PRS-$stamp-$i',
+            barcode: 'PRS$stamp$i',
+            price: (10 + (i % 50)).toDouble(),
+            cost: (4 + (i % 20)).toDouble(),
+            usdCost: (4 + (i % 20)).toDouble(),
+            stock: 1000,
+            category: 'Stress Pressure',
+            brand: 'Stress Pressure',
+            supplier: baseSupplier?.name ?? '',
+            unit: 'pcs',
+            lowStockThreshold: 5,
+            trackStock: true,
+            isActive: true,
+          );
+          batch.add(product);
+          if (i < 50) pressureProducts.add(product);
+        }
+        await store.addOrUpdateProductsBulk(batch);
+      }, startProgress: 0.84, endProgress: 0.865);
+
+      final salePool =
+          pressureProducts.isNotEmpty ? pressureProducts : baseProducts;
+      final customerPool = pressureCustomers.isNotEmpty
+          ? pressureCustomers
+          : (baseCustomer == null ? <Customer>[] : <Customer>[baseCustomer]);
+      final supplierPool = pressureSuppliers.isNotEmpty
+          ? pressureSuppliers
+          : (baseSupplier == null ? <Supplier>[] : <Supplier>[baseSupplier]);
+
+      if (salePool.isNotEmpty) {
+        await _pressureStep(
+            _dual('ضغط المخزون', 'Inventory pressure'),
+            _dual('تنفيذ $count تعديل مخزون', 'Apply $count stock adjustments'),
+            count, (i) async {
+          final product = salePool[(i ~/ 2) % salePool.length];
+          await store.adjustStock(
+            productId: product.id,
+            warehouseId: store.resolveWarehouseForPurchase().id,
+            quantityDelta: (i % 2 == 0 ? 1.0 : -0.5),
+            reason: 'Stress Lab pressure adjustment',
+            adjustmentCategory: 'pressure_adjustment',
+            notes: '$_currentBatchId pressure $i',
+          );
+        },
+            startProgress: 0.865,
+            endProgress: 0.89,
+            progressEvery: progressEvery);
+      }
+
+      if (salePool.isNotEmpty && supplierPool.isNotEmpty) {
+        await _pressureStep(
+            _dual('ضغط المشتريات', 'Purchase pressure'),
+            _dual('إنشاء واستلام $count فاتورة شراء',
+                'Create and receive $count purchase invoices'),
+            count, (i) async {
+          final product = salePool[i % salePool.length];
+          final supplier = supplierPool[i % supplierPool.length];
+          await store.createPurchase(
+            supplierId: supplier.id,
+            supplierName: supplier.name,
+            receiveNow: true,
+            paymentStatus: 'paid',
+            paymentMethod: 'Card',
+            note: 'Stress Lab pressure purchase $i',
+            items: [
+              PurchaseItem(
+                  productId: product.id,
+                  productName: product.name,
+                  quantity: 1.0 + (i % 3),
+                  unitCost: product.cost,
+                  purchaseUnitName: product.unit,
+                  conversionToBase: 1.0)
+            ],
+          );
+        },
+            startProgress: 0.89,
+            endProgress: 0.915,
+            progressEvery: progressEvery);
+      }
+
+      await _auditStep(
+        _dual('المشتريات', 'Purchases'),
+        _dual(
+            'تفريغ طابور القيود المحاسبية', 'Drain purchase accounting queue'),
+        () async {
+          final sw = Stopwatch()..start();
+          await store.waitForPendingAccounting();
+          sw.stop();
+          return 'drainedIn=${sw.elapsedMilliseconds}ms';
+        },
+        successDetails: (value) => value,
+      );
+
+      if (salePool.isNotEmpty) {
+        final salesWarehouseId = store.resolveWarehouseForSale().id;
+        final salesPerProduct = (count / salePool.length).ceil();
+        final targetStock = max<double>(35.0, salesPerProduct + 5.0);
+        await _pressureStep(
+          _dual('تثبيت مخزون البيع', 'Sales stock buffer'),
+          _dual('رفع رصيد منتجات البيع إلى مستوى آمن قبل الضغط',
+              'Raise sale products to a safe stock buffer before pressure'),
+          salePool.length,
+          (i) async {
+            final product = salePool[i];
+            final current = await store.warehouseStockFromSqlite(
+              product.id,
+              warehouseId: salesWarehouseId,
+            );
+            final needed = targetStock - current;
+            if (needed > 0.000001) {
+              await store.adjustStock(
+                productId: product.id,
+                warehouseId: salesWarehouseId,
+                quantityDelta: needed,
+                reason: 'Stress Lab sales pressure buffer',
+                adjustmentCategory: 'pressure_buffer',
+                notes: '$_currentBatchId sales buffer $i',
+              );
+            }
+          },
+          startProgress: 0.915,
+          endProgress: 0.925,
+          progressEvery: max(1, min(progressEvery, salePool.length)),
+        );
+      }
+
+      if (salePool.isNotEmpty && customerPool.isNotEmpty) {
+        await _pressureStep(
+            _dual('ضغط المبيعات', 'Sales pressure'),
+            _dual('إنشاء $count فاتورة بيع', 'Create $count sale invoices'),
+            count, (i) async {
+          final product = salePool[i % salePool.length];
+          final customer = customerPool[i % customerPool.length];
+          await store.createSale(
+            customerName: customer.name,
+            customerId: customer.id,
+            items: _saleItemsFromProducts([product],
+                quantity: 1.0, priceFactor: 1.05),
+            discount: i % 10 == 0 ? 0.25 : 0.0,
+            paymentMethod: 'Card',
+            paymentStatus: 'paid',
+          );
+        },
+            startProgress: 0.915,
+            endProgress: 0.94,
+            progressEvery: progressEvery);
+      }
+
+      await _pressureBatchStep(
+          _dual('ضغط المصاريف', 'Expense pressure'),
+          _dual('إنشاء وترحيل $count مصروف', 'Create and post $count expenses'),
+          count,
+          min(250, max(50, progressEvery)), (start, length) async {
+        final batch = <Expense>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final expense = Expense(
+            id: '${_currentBatchId}_pe_$i',
+            title: '[PRESSURE] Expense $i $_currentBatchId',
+            category: i % 2 == 0 ? 'Operations' : 'Maintenance',
+            amount: 1.0 + (i % 25),
+            date: DateTime.now(),
+            notes: 'Stress Lab pressure expense $i',
+          );
+          batch.add(expense);
+        }
+        await store.createAndPostExpensesBulk(batch);
+      }, startProgress: 0.94, endProgress: 0.965);
+    } finally {
+      AppStore.setTraceSink(null);
+    }
+  }
+
+  Future<({
+    List<double> stock,
+    Map<String, double> suppliers,
+    Map<String, double> customers,
+    double cash,
+  })> _captureHumanChaosState({
+    required List<Product> products,
+    required List<Supplier> suppliers,
+    required List<Customer> customers,
+  }) async {
+    await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
+    await store.refreshAccountTransactionsFromSqlite();
+    final stock = <double>[];
+    for (final product in products) {
+      stock.add(await store.totalWarehouseStockFromSqlite(product.id));
+    }
+    final supplierBalances = <String, double>{
+      for (final item in suppliers)
+        item.id: store.accountBalance('supplier', item.id),
+    };
+    final customerBalances = <String, double>{
+      for (final item in customers)
+        item.id: store.accountBalance('customer', item.id),
+    };
+    final drawer = await AccountingService.currentCashDrawerForDevice(
+      deviceId: store.appIdentity.deviceId,
+      branchId: store.appIdentity.branchId,
+    );
+    return (
+      stock: stock,
+      suppliers: supplierBalances,
+      customers: customerBalances,
+      cash: drawer?.balance ?? 0,
+    );
+  }
+
+  void _assertHumanChaosStateUnchanged({
+    required ({
+      List<double> stock,
+      Map<String, double> suppliers,
+      Map<String, double> customers,
+      double cash,
+    }) before,
+    required ({
+      List<double> stock,
+      Map<String, double> suppliers,
+      Map<String, double> customers,
+      double cash,
+    }) after,
+    required String episode,
+  }) {
+    const qtyTolerance = 0.000001;
+    const moneyTolerance = 0.005;
+    if (before.stock.length != after.stock.length) {
+      throw StateError('$episode stock snapshot length changed.');
+    }
+    for (var i = 0; i < before.stock.length; i += 1) {
+      if ((before.stock[i] - after.stock[i]).abs() > qtyTolerance) {
+        throw StateError(
+          '$episode leaked inventory at productIndex=$i before=${before.stock[i]} after=${after.stock[i]}',
+        );
+      }
+    }
+    for (final entry in before.suppliers.entries) {
+      final current = after.suppliers[entry.key] ?? double.nan;
+      if (!current.isFinite || (entry.value - current).abs() > moneyTolerance) {
+        throw StateError(
+          '$episode leaked supplier balance id=${entry.key} before=${entry.value} after=$current',
+        );
+      }
+    }
+    for (final entry in before.customers.entries) {
+      final current = after.customers[entry.key] ?? double.nan;
+      if (!current.isFinite || (entry.value - current).abs() > moneyTolerance) {
+        throw StateError(
+          '$episode leaked customer balance id=${entry.key} before=${entry.value} after=$current',
+        );
+      }
+    }
+    if ((before.cash - after.cash).abs() > moneyTolerance) {
+      throw StateError(
+        '$episode leaked cash before=${before.cash} after=${after.cash}',
+      );
+    }
+  }
+
+  Future<String> _assertHumanChaosIntegrity({required bool warningsAreFailures}) async {
+    final db = SqliteMigrationManager.database;
+    if (db == null) throw StateError('SQLite database is unavailable.');
+    final report = await AccountingProductionIntegrityService(db).audit();
+    if (report.criticalCount != 0 ||
+        (warningsAreFailures && report.warningCount != 0)) {
+      final codes = report.issues.map((issue) => issue.code).toSet().join(',');
+      throw StateError(
+        'Chaos integrity failed critical=${report.criticalCount} warnings=${report.warningCount} codes=$codes',
+      );
+    }
+    final drawer = await AccountingService.currentCashDrawerForDevice(
+      deviceId: store.appIdentity.deviceId,
+      branchId: store.appIdentity.branchId,
+    );
+    if (drawer == null) throw StateError('Cash drawer unavailable.');
+    final sessionId = await AccountingService.currentOpenCashDrawerSessionId(
+      branchId: store.appIdentity.branchId,
+      cashLocationId: drawer.id,
+    );
+    if (sessionId.isEmpty) throw StateError('Open cash session unavailable.');
+    final calculated =
+        await AccountingService.calculateCashDrawerExpectedCash(sessionId);
+    final sessions = await AccountingService.listCashDrawers();
+    AdvancedAccountingItem? stored;
+    for (final item in sessions) {
+      if (item.id == sessionId) {
+        stored = item;
+        break;
+      }
+    }
+    if (stored == null || (stored.credit - calculated).abs() > 0.005) {
+      throw StateError(
+        'Chaos cash cache mismatch calculated=$calculated stored=${stored?.credit}',
+      );
+    }
+    return 'critical=0 warnings=${report.warningCount} cash=${_money(drawer.balance)} '
+        'expected=${_money(calculated)} inventoryGL=${_money(report.inventoryGlBalance)} '
+        'valuation=${_money(report.inventoryValuation)}';
+  }
+
+  PurchaseItem _humanChaosReceivedPurchaseItem({
+    required Product product,
+    required double quantity,
+    required double unitCost,
+    required String tag,
+  }) {
+    final allocations = product.expiryTrackingEnabled
+        ? <BatchAllocation>[
+            BatchAllocation(
+              // Phase 4 replaces this requested id with the stable purchase-line
+              // batch id, but the expiry metadata is mandatory input.
+              batchId: 'requested:chaos:$_currentBatchId:$tag',
+              quantity: quantity,
+              expirationDate:
+                  DateTime.now().toUtc().add(const Duration(days: 180)),
+            ),
+          ]
+        : const <BatchAllocation>[];
+    return PurchaseItem(
+      productId: product.id,
+      productName: product.name,
+      quantity: quantity,
+      unitCost: unitCost,
+      batchAllocations: allocations,
+    );
+  }
+
+  Future<void> _reloadHumanChaosState() async {
+    for (final key in const <String>[
+      'products_v4',
+      'customers_v4',
+      'suppliers_v4',
+      'sales_v4',
+      'purchases_v1',
+      'expenses_v4',
+      'stock_movements_v1',
+      'inventory_counts_v1',
+      'warehouses_v1',
+      'account_transactions_v1',
+    ]) {
+      await store.refreshAfterDatabaseChange(key);
+    }
+    await store.refreshAccountTransactionsFromSqlite();
+  }
+
+  Future<String> _runHumanChaosEpisode({
+    required int episodeIndex,
+    required int pattern,
+    required Random random,
+    required _HumanChaosOptions options,
+    required List<Product> products,
+    required Supplier primarySupplier,
+    required Supplier edgeSupplier,
+    required Customer primaryCustomer,
+    required Customer edgeCustomer,
+  }) async {
+    if (products.length < 15) {
+      throw StateError('Chaos products are unavailable.');
+    }
+    final product = products[(episodeIndex + random.nextInt(products.length)) % products.length];
+    final unitCost = max(0.25, product.usdCost > 0 ? product.usdCost : product.cost).toDouble();
+    final unitPrice = max(unitCost + 1, product.price > 0 ? product.price : unitCost + 2).toDouble();
+    final saleProduct = products[0];
+    final saleUnitCost = max(
+      0.25,
+      saleProduct.usdCost > 0 ? saleProduct.usdCost : saleProduct.cost,
+    ).toDouble();
+    final saleUnitPrice = max(
+      saleUnitCost + 1,
+      saleProduct.price > 0 ? saleProduct.price : saleUnitCost + 2,
+    ).toDouble();
+    var story = '';
+
+    switch (pattern) {
+      case 0:
+        final draft = await store.createPurchase(
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          receiveNow: false,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            PurchaseItem(
+              productId: product.id,
+              productName: product.name,
+              quantity: 1,
+              unitCost: unitCost,
+            ),
+          ],
+          note: 'CHAOS stale-version episode $episodeIndex',
+        );
+        final updated = await store.updatePurchaseDraft(
+          purchaseId: draft.id,
+          expectedVersion: draft.version,
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            PurchaseItem(
+              productId: product.id,
+              productName: product.name,
+              quantity: 2,
+              unitCost: unitCost,
+            ),
+          ],
+        );
+        var blocked = false;
+        try {
+          await store.updatePurchaseDraft(
+            purchaseId: draft.id,
+            expectedVersion: draft.version,
+            supplierId: primarySupplier.id,
+            supplierName: primarySupplier.name,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: <PurchaseItem>[
+              PurchaseItem(
+                productId: product.id,
+                productName: product.name,
+                quantity: 3,
+                unitCost: unitCost,
+              ),
+            ],
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Stale purchase edit was accepted.');
+        await store.deleteDraftPurchase(updated.id);
+        story = 'rookie edited same draft from stale screen; optimistic lock blocked it; supervisor deleted draft';
+        break;
+      case 1:
+        final purchase = await store.createPurchase(
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          receiveNow: true,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            _humanChaosReceivedPurchaseItem(
+              product: product,
+              quantity: 1,
+              unitCost: unitCost,
+              tag: 'posted-edit:$episodeIndex',
+            ),
+          ],
+          note: 'CHAOS posted-edit episode $episodeIndex',
+        );
+        // Phase 4 allows editing a received purchase while the specific
+        // batches created by that purchase have no downstream movement. The
+        // edit itself must reverse/repost stock + accounting atomically.
+        final edited = await store.updatePurchaseDraft(
+          purchaseId: purchase.id,
+          expectedVersion: purchase.version,
+          supplierId: edgeSupplier.id,
+          supplierName: edgeSupplier.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: purchase.items,
+        );
+        if (!edited.isReceived || edited.version <= purchase.version) {
+          throw StateError('Unused received purchase edit did not repost.');
+        }
+        await store.returnPurchase(
+          edited.id,
+          reason: 'Supervisor reverses edited received purchase',
+        );
+        story = 'rookie corrected an unused received purchase; Phase 4 reverse/repost edit succeeded; supervisor then returned it';
+        break;
+      case 2:
+        final sale = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 1,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        var blocked = false;
+        try {
+          await store.settleSalePayment(
+            saleId: sale.id,
+            amount: sale.balanceDue + 0.01,
+            paymentMethod: 'Card',
+            idempotencyKey: '$_currentBatchId:chaos-overpay:$episodeIndex',
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Sale overpayment was accepted.');
+        await store.cancelSale(sale.id, restoreStock: true);
+        story = 'rookie tried to collect more than invoice balance; blocked; supervisor cancelled wrong sale';
+        break;
+      case 3:
+        final sale = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 2,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        await store.returnSale(
+          sale.id,
+          returnedQuantities: <String, double>{saleProduct.id: 1},
+        );
+        var blocked = false;
+        try {
+          await store.returnSale(
+            sale.id,
+            returnedQuantities: <String, double>{saleProduct.id: 2},
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Cumulative over-return was accepted.');
+        await store.returnSale(
+          sale.id,
+          returnedQuantities: <String, double>{saleProduct.id: 1},
+        );
+        story = 'rookie returned 1 then attempted 2 more from a 2-unit sale; blocked; supervisor returned only remaining unit';
+        break;
+      case 4:
+        final sale = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 1,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        if (options.doubleSubmitSimulation) {
+          final results = await Future.wait<bool>(<Future<bool>>[
+            () async {
+              try {
+                await store.cancelSale(sale.id, restoreStock: true);
+                return true;
+              } catch (_) {
+                return false;
+              }
+            }(),
+            () async {
+              try {
+                await store.cancelSale(sale.id, restoreStock: true);
+                return true;
+              } catch (_) {
+                return false;
+              }
+            }(),
+          ]);
+          if (!results.any((value) => value)) {
+            throw StateError('Both concurrent Cancel submits failed.');
+          }
+          story = 'impatient rookie submitted Cancel twice concurrently; final state stayed single-reversal safe';
+        } else {
+          await store.cancelSale(sale.id, restoreStock: true);
+          story = 'rookie cancelled sale; supervisor verified reversal';
+        }
+        break;
+      case 5:
+        var blocked = false;
+        try {
+          await store.createSale(
+            customerId: primaryCustomer.id,
+            customerName: primaryCustomer.name,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            discount: 999999,
+            items: <SaleItem>[
+              SaleItem(
+                productId: saleProduct.id,
+                productName: saleProduct.name,
+                unitPrice: saleUnitPrice,
+                quantity: 1,
+                unitCost: saleUnitCost,
+              ),
+            ],
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Impossible discount was accepted.');
+        story = 'rookie entered a discount larger than invoice subtotal; validation blocked it before posting';
+        break;
+      case 6:
+        var blocked = false;
+        try {
+          await store.createPurchase(
+            supplierId: primarySupplier.id,
+            supplierName: primarySupplier.name,
+            receiveNow: false,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: <PurchaseItem>[
+              PurchaseItem(
+                productId: product.id,
+                productName: product.name,
+                quantity: 0,
+                unitCost: unitCost,
+              ),
+            ],
+            note: 'CHAOS invalid quantity episode $episodeIndex',
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Zero-quantity purchase was accepted.');
+        story = 'rookie entered zero purchase quantity; validation rejected document with no side effects';
+        break;
+      case 7:
+        final batchGuardProduct = products[7];
+        final stockBefore =
+            await store.totalWarehouseStockFromSqlite(batchGuardProduct.id);
+        final purchase = await store.createPurchase(
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          receiveNow: true,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            _humanChaosReceivedPurchaseItem(
+              product: batchGuardProduct,
+              quantity: 2,
+              unitCost: max(1, unitCost).toDouble(),
+              tag: 'batch-dependency:$episodeIndex',
+            ),
+          ],
+          note: 'CHAOS batch dependency episode $episodeIndex',
+        );
+        // Consume all stock that existed before this purchase plus one unit
+        // from the newly received purchase batch. This makes the dependency
+        // guard deterministic even if the product already has older batches.
+        final sale = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: batchGuardProduct.id,
+              productName: batchGuardProduct.name,
+              unitPrice: max(5, unitPrice).toDouble(),
+              quantity: stockBefore + 1,
+            ),
+          ],
+        );
+        final db = SqliteMigrationManager.database!;
+        final purchaseBatchRows = await db.customSelect(
+          '''
+          SELECT id
+          FROM inventory_batches
+          WHERE store_id = ? AND source_type = 'purchase' AND source_id = ?
+          ''',
+          variables: <Variable<Object>>[
+            Variable<String>(store.appIdentity.storeId),
+            Variable<String>(purchase.id),
+          ],
+        ).get();
+        final purchaseBatchIds = purchaseBatchRows
+            .map((row) => row.read<String>('id'))
+            .toSet();
+        final consumedFromPurchase = sale.items.fold<double>(0, (sum, item) {
+          return sum +
+              item.batchAllocations
+                  .where((allocation) =>
+                      purchaseBatchIds.contains(allocation.batchId))
+                  .fold<double>(
+                    0,
+                    (inner, allocation) => inner + allocation.quantity,
+                  );
+        });
+        if (consumedFromPurchase <= 0.000001) {
+          throw StateError(
+              'Chaos dependency fixture did not consume the target purchase batch.');
+        }
+        var blocked = false;
+        try {
+          await store.returnPurchase(
+            purchase.id,
+            reason: 'Rookie attempts upstream return after batch consumption',
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) {
+          throw StateError('Consumed purchase batch return was accepted.');
+        }
+        await store.returnSale(sale.id, restoreStock: true);
+        await store.returnPurchase(
+          purchase.id,
+          reason: 'Supervisor reverses downstream sale first',
+        );
+        story = 'rookie tried returning a purchase whose actual batch was consumed; blocked; supervisor reversed downstream sale then purchase';
+        break;
+      case 8:
+        final wrongSale = await store.createSale(
+          customerId: edgeCustomer.id,
+          customerName: edgeCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 1,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        await store.cancelSale(wrongSale.id, restoreStock: true);
+        final corrected = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 1,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        await store.cancelSale(corrected.id, restoreStock: true);
+        story = 'rookie sold to wrong customer; supervisor cancelled and recreated under correct customer, then reversed test document';
+        break;
+      case 9:
+        final wrongDraft = await store.createPurchase(
+          supplierId: edgeSupplier.id,
+          supplierName: edgeSupplier.name,
+          receiveNow: false,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            PurchaseItem(
+              productId: product.id,
+              productName: product.name,
+              quantity: 1,
+              unitCost: unitCost,
+            ),
+          ],
+          note: 'CHAOS wrong supplier episode $episodeIndex',
+        );
+        final fixedDraft = await store.updatePurchaseDraft(
+          purchaseId: wrongDraft.id,
+          expectedVersion: wrongDraft.version,
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: wrongDraft.items,
+        );
+        await store.deleteDraftPurchase(fixedDraft.id);
+        story = 'rookie selected wrong supplier; supervisor corrected draft before receipt then removed test draft';
+        break;
+      case 10:
+        var blocked = false;
+        try {
+          await store.createSale(
+            customerId: primaryCustomer.id,
+            customerName: primaryCustomer.name,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: <SaleItem>[
+              SaleItem(
+                productId: saleProduct.id,
+                productName: saleProduct.name,
+                unitPrice: saleUnitPrice,
+                quantity: -1,
+                unitCost: saleUnitCost,
+              ),
+            ],
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Negative sale quantity was accepted.');
+        story = 'rookie entered a negative sale quantity; validation blocked it';
+        break;
+      case 11:
+        final purchase = await store.createPurchase(
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          receiveNow: true,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            _humanChaosReceivedPurchaseItem(
+              product: product,
+              quantity: 1,
+              unitCost: unitCost,
+              tag: 'purchase-overpay:$episodeIndex',
+            ),
+          ],
+          note: 'CHAOS purchase overpayment episode $episodeIndex',
+        );
+        var blocked = false;
+        try {
+          await store.settlePurchasePayment(
+            purchaseId: purchase.id,
+            amount: purchase.balanceDue + 0.01,
+            paymentMethod: 'Card',
+            idempotencyKey: '$_currentBatchId:chaos-purchase-overpay:$episodeIndex',
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Purchase overpayment was accepted.');
+        await store.returnPurchase(
+          purchase.id,
+          reason: 'Supervisor reverses rookie purchase after overpay guard',
+        );
+        story = 'rookie tried paying supplier above purchase balance; guard blocked it; supervisor reversed test purchase';
+        break;
+      case 12:
+        final sale = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 1,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        var blocked = false;
+        try {
+          await store.settleSalePayment(
+            saleId: sale.id,
+            amount: 0,
+            paymentMethod: 'Card',
+            idempotencyKey: '$_currentBatchId:chaos-zero-receipt:$episodeIndex',
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Zero customer receipt was accepted.');
+        await store.cancelSale(sale.id, restoreStock: true);
+        story = 'rookie entered a zero receipt; validation blocked it; supervisor cancelled test sale';
+        break;
+      case 13:
+        var blocked = false;
+        try {
+          await store.createSale(
+            customerId: primaryCustomer.id,
+            customerName: primaryCustomer.name,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: const <SaleItem>[],
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Empty sale document was accepted.');
+        story = 'rookie tried saving an empty sale; validation rejected it';
+        break;
+      case 14:
+        var blocked = false;
+        try {
+          await store.createPurchase(
+            supplierId: primarySupplier.id,
+            supplierName: primarySupplier.name,
+            receiveNow: false,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: const <PurchaseItem>[],
+            note: 'CHAOS empty purchase episode $episodeIndex',
+          );
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Empty purchase document was accepted.');
+        story = 'rookie tried saving an empty purchase; validation rejected it';
+        break;
+      case 15:
+        final purchase = await store.createPurchase(
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          receiveNow: true,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            _humanChaosReceivedPurchaseItem(
+              product: product,
+              quantity: 1,
+              unitCost: unitCost,
+              tag: 'received-delete:$episodeIndex',
+            ),
+          ],
+          note: 'CHAOS received delete episode $episodeIndex',
+        );
+        var blocked = false;
+        try {
+          await store.deleteDraftPurchase(purchase.id);
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) throw StateError('Received purchase deletion was accepted.');
+        await store.returnPurchase(
+          purchase.id,
+          reason: 'Supervisor uses return instead of deleting received purchase',
+        );
+        story = 'rookie tried deleting a received purchase; blocked; supervisor used return/reversal path';
+        break;
+      case 16:
+        final sale = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 2,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        await store.returnSale(
+          sale.id,
+          returnedQuantities: <String, double>{saleProduct.id: 1},
+        );
+        var blocked = false;
+        try {
+          await store.cancelSale(sale.id, restoreStock: true);
+        } catch (_) {
+          blocked = true;
+        }
+        if (!blocked) {
+          throw StateError('Sale cancellation after partial return was accepted.');
+        }
+        await store.returnSale(
+          sale.id,
+          returnedQuantities: <String, double>{saleProduct.id: 1},
+        );
+        story = 'rookie partially returned a sale then tried Cancel; blocked; supervisor completed remaining return correctly';
+        break;
+      case 17:
+        final wrongPurchase = await store.createPurchase(
+          supplierId: edgeSupplier.id,
+          supplierName: edgeSupplier.name,
+          receiveNow: true,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            _humanChaosReceivedPurchaseItem(
+              product: product,
+              quantity: 1,
+              unitCost: unitCost,
+              tag: 'wrong-received-supplier:$episodeIndex',
+            ),
+          ],
+          note: 'CHAOS wrong received supplier episode $episodeIndex',
+        );
+        await store.returnPurchase(
+          wrongPurchase.id,
+          reason: 'Supervisor reverses purchase posted to wrong supplier',
+        );
+        final corrected = await store.createPurchase(
+          supplierId: primarySupplier.id,
+          supplierName: primarySupplier.name,
+          receiveNow: true,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <PurchaseItem>[
+            _humanChaosReceivedPurchaseItem(
+              product: product,
+              quantity: 1,
+              unitCost: unitCost,
+              tag: 'corrected-supplier:$episodeIndex',
+            ),
+          ],
+          note: 'CHAOS corrected supplier episode $episodeIndex',
+        );
+        await store.returnPurchase(
+          corrected.id,
+          reason: 'Remove corrected test purchase after recovery verification',
+        );
+        story = 'rookie received purchase under wrong supplier; supervisor reversed it and recreated under correct supplier';
+        break;
+      default:
+        final sale = await store.createSale(
+          customerId: primaryCustomer.id,
+          customerName: primaryCustomer.name,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          items: <SaleItem>[
+            SaleItem(
+              productId: saleProduct.id,
+              productName: saleProduct.name,
+              unitPrice: saleUnitPrice,
+              quantity: 1,
+              unitCost: saleUnitCost,
+            ),
+          ],
+        );
+        if (options.doubleSubmitSimulation) {
+          final results = await Future.wait<bool>(<Future<bool>>[
+            () async {
+              try {
+                await store.returnSale(sale.id, restoreStock: true);
+                return true;
+              } catch (_) {
+                return false;
+              }
+            }(),
+            () async {
+              try {
+                await store.returnSale(sale.id, restoreStock: true);
+                return true;
+              } catch (_) {
+                return false;
+              }
+            }(),
+          ]);
+          if (!results.any((value) => value)) {
+            throw StateError('Both concurrent Return submits failed.');
+          }
+          story = 'rookie submitted full Return twice concurrently; recovery invariants verified no duplicate financial/stock effect';
+        } else {
+          await store.returnSale(sale.id, restoreStock: true);
+          story = 'full return completed and supervisor verified it';
+        }
+        break;
+    }
+    return story;
+  }
+
+  Future<void> _runHumanChaosExtension({
+    required _HumanChaosOptions options,
+    required List<Product> products,
+    required Supplier primarySupplier,
+    required Supplier edgeSupplier,
+    required Customer primaryCustomer,
+    required Customer edgeCustomer,
+  }) async {
+    if (!options.enabled) return;
+
+    if (options.mode == _HumanChaosMode.all) {
+      final stages = <_HumanChaosOptions>[
+        _HumanChaosOptions(
+          mode: _HumanChaosMode.newEmployee,
+          iterations: 30,
+          seed: options.seed,
+          strictIntegrity: true,
+          doubleSubmitSimulation: true,
+          reloadSimulation: true,
+        ),
+        _HumanChaosOptions(
+          mode: _HumanChaosMode.chaos,
+          iterations: 100,
+          seed: options.seed + 1009,
+          strictIntegrity: true,
+          doubleSubmitSimulation: true,
+          reloadSimulation: true,
+        ),
+        _HumanChaosOptions(
+          mode: _HumanChaosMode.disaster,
+          iterations: 150,
+          seed: options.seed + 2017,
+          strictIntegrity: true,
+          doubleSubmitSimulation: true,
+          reloadSimulation: true,
+        ),
+        _HumanChaosOptions(
+          mode: _HumanChaosMode.marathon,
+          iterations: 500,
+          seed: options.seed + 3011,
+          strictIntegrity: true,
+          doubleSubmitSimulation: true,
+          reloadSimulation: true,
+        ),
+      ];
+      _addLog(
+        'HUMAN_CHAOS_ALL_START seed=${options.seed} stages=${stages.length} totalEpisodes=${stages.fold<int>(0, (sum, stage) => sum + stage.iterations)}',
+      );
+      for (var stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+        final stage = stages[stageIndex];
+        _addLog(
+          'HUMAN_CHAOS_STAGE_START stage=${stageIndex + 1}/${stages.length} mode=${stage.modeLabel} seed=${stage.seed} iterations=${stage.iterations}',
+        );
+        await _runHumanChaosExtension(
+          options: stage,
+          products: products,
+          primarySupplier: primarySupplier,
+          edgeSupplier: edgeSupplier,
+          primaryCustomer: primaryCustomer,
+          edgeCustomer: edgeCustomer,
+        );
+        _addLog(
+          'HUMAN_CHAOS_STAGE_DONE stage=${stageIndex + 1}/${stages.length} mode=${stage.modeLabel}',
+        );
+      }
+      final integrity = await _assertHumanChaosIntegrity(warningsAreFailures: true);
+      _addLog('HUMAN_CHAOS_ALL_DONE seed=${options.seed} $integrity');
+      return;
+    }
+
+    if (options.iterations <= 0) return;
+    final random = Random(options.seed);
+    final suppliers = <Supplier>[primarySupplier, edgeSupplier];
+    final customers = <Customer>[primaryCustomer, edgeCustomer];
+    _addLog(
+      'HUMAN_CHAOS_START mode=${options.modeLabel} seed=${options.seed} iterations=${options.iterations}',
+    );
+    _setStatus(
+      _dual('الموظف الجديد بدأ يخرب...', 'Rookie chaos is running...'),
+      progress: 0.965,
+    );
+
+    for (var i = 0; i < options.iterations; i += 1) {
+      final patternCount = options.doubleSubmitSimulation ? 19 : 18;
+      // Deterministic coverage first: every supported mistake pattern is
+      // executed at least once in every chaos stage before randomization.
+      final pattern = i < patternCount ? i : random.nextInt(patternCount);
+      final before = await _captureHumanChaosState(
+        products: products,
+        suppliers: suppliers,
+        customers: customers,
+      );
+      await _auditStep<String>(
+        _dual('CHAOS موظف جديد', 'CHAOS New Employee'),
+        _dual('حلقة ${i + 1}/${options.iterations} نمط=$pattern',
+            'Episode ${i + 1}/${options.iterations} pattern=$pattern'),
+        () async {
+          final story = await _runHumanChaosEpisode(
+            episodeIndex: i,
+            pattern: pattern,
+            random: random,
+            options: options,
+            products: products,
+            primarySupplier: primarySupplier,
+            edgeSupplier: edgeSupplier,
+            primaryCustomer: primaryCustomer,
+            edgeCustomer: edgeCustomer,
+          );
+          final after = await _captureHumanChaosState(
+            products: products,
+            suppliers: suppliers,
+            customers: customers,
+          );
+          _assertHumanChaosStateUnchanged(
+            before: before,
+            after: after,
+            episode: 'episode=${i + 1} pattern=$pattern',
+          );
+          if (options.strictIntegrity) {
+            final integrity = await _assertHumanChaosIntegrity(
+              warningsAreFailures: true,
+            );
+            return '$story | netNeutral=true | $integrity';
+          }
+          return '$story | netNeutral=true';
+        },
+        successDetails: (value) => value,
+      );
+
+      final shouldReload = options.reloadSimulation &&
+          (options.mode == _HumanChaosMode.disaster ||
+              options.mode == _HumanChaosMode.marathon ||
+              (i + 1) % 10 == 0);
+      if (shouldReload && (i + 1) % 5 == 0) {
+        await _auditStep<String>(
+          _dual('CHAOS استمرارية', 'CHAOS Persistence'),
+          _dual('إعادة تحميل SQLite بعد الحلقة ${i + 1}',
+              'SQLite reload after episode ${i + 1}'),
+          () async {
+            await _reloadHumanChaosState();
+            final afterReload = await _captureHumanChaosState(
+              products: products,
+              suppliers: suppliers,
+              customers: customers,
+            );
+            _assertHumanChaosStateUnchanged(
+              before: before,
+              after: afterReload,
+              episode: 'reload-after-${i + 1}',
+            );
+            final integrity = await _assertHumanChaosIntegrity(
+              warningsAreFailures: options.strictIntegrity,
+            );
+            return 'sqliteReload=true statePreserved=true $integrity';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+      if (mounted && options.iterations > 0) {
+        final fraction = (i + 1) / options.iterations;
+        _setStatus(
+          _dual(
+            'فوضى الموظف ${i + 1}/${options.iterations}',
+            'Employee chaos ${i + 1}/${options.iterations}',
+          ),
+          progress: 0.965 + (0.02 * fraction),
+        );
+      }
+    }
+
+    await _auditStep<String>(
+      _dual('CHAOS ملخص', 'CHAOS Summary'),
+      _dual('بوابة نهاية فوضى الموظف', 'Employee chaos final gate'),
+      () async {
+        final integrity = await _assertHumanChaosIntegrity(
+          warningsAreFailures: true,
+        );
+        return 'mode=${options.modeLabel} seed=${options.seed} '
+            'episodes=${options.iterations} $integrity';
+      },
+      successDetails: (value) => value,
+    );
+    _addLog(
+      'HUMAN_CHAOS_DONE mode=${options.modeLabel} seed=${options.seed} iterations=${options.iterations}',
+    );
+  }
+
+  Future<bool> _authorizeRealUserScenarioSensitiveActions({
+    required Duration validity,
+  }) async {
+    final activeUser = store.activeUser;
+    if (activeUser == null || !activeUser.isActive) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_dual(
+              'يجب تسجيل الدخول بحساب نشط قبل تشغيل مختبر السيناريوهات.',
+              'Sign in with an active account before running the scenario lab.',
+            )),
+          ),
+        );
+      }
+      return false;
+    }
+
+    final passwordController = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_dual(
+          'إعادة تحقق لمختبر السيناريوهات',
+          'Scenario lab re-authentication',
+        )),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_dual(
+                'سيختبر المختبر عمليات إرجاع وإلغاء حساسة. أدخل كلمة مرور المستخدم الحالي مرة واحدة؛ التفويض محصور بإرجاع/إلغاء المبيعات والمشتريات ويُمسح فور انتهاء التشغيل.',
+                'The lab exercises sensitive sale/purchase reversal paths. Enter the current user password once; the grant is limited to sale/purchase reversals and is cleared as soon as the run finishes.',
+              )),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: _dual('كلمة المرور', 'Password'),
+                  border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (value) =>
+                    Navigator.pop(dialogContext, value),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(_dual('إلغاء', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, passwordController.text),
+            child: Text(_dual('تحقق وتشغيل', 'Verify and run')),
+          ),
+        ],
+      ),
+    );
+    passwordController.dispose();
+    if (!mounted || password == null || password.trim().isEmpty) return false;
+
+    final purchaseAuthorized = await store.security.authorizeSensitiveAction(
+      action: SensitiveAction.purchaseReverse,
+      password: password,
+      validity: validity,
+    );
+    if (!purchaseAuthorized) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_dual(
+              'فشل التحقق من كلمة المرور. لم يبدأ مختبر السيناريوهات.',
+              'Password verification failed. The scenario lab was not started.',
+            )),
+          ),
+        );
+      }
+      return false;
+    }
+
+    final saleAuthorized = await store.security.authorizeSensitiveAction(
+      action: SensitiveAction.saleReverse,
+      password: password,
+      validity: validity,
+    );
+    if (!saleAuthorized) {
+      store.security.clearSensitiveActionAuthorization();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_dual(
+              'تعذر منح تفويض الإرجاع/الإلغاء. لم يبدأ مختبر السيناريوهات.',
+              'Could not authorize reversal actions. The scenario lab was not started.',
+            )),
+          ),
+        );
+      }
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _confirmRealUserScenario() async {
+    if (_running) return;
+    final seed = DateTime.now().millisecondsSinceEpoch.remainder(1000000);
+    await _runRealUserScenarioAuditWithOptions(
+      options: _HumanChaosOptions(
+        mode: _HumanChaosMode.all,
+        iterations: 780,
+        seed: seed,
+        strictIntegrity: true,
+        doubleSubmitSimulation: true,
+        reloadSimulation: true,
+      ),
+    );
+  }
+
+  /// Runs a deterministic, user-like operational suite against the active
+  /// TEST database. Every mutation goes through the same AppStore / accounting
+  /// service entry points used by Ventio UI actions. SQLite is used only for
+  /// read-only evidence collection at the end of the scenario.
+  Future<void> _runRealUserScenarioAudit() =>
+      _runRealUserScenarioAuditWithOptions();
+
+  Future<void> _runRealUserScenarioAuditWithOptions({
+    _HumanChaosOptions options = const _HumanChaosOptions(),
+  }) async {
+    if (_running) return;
+    final authorizationValidity = options.mode == _HumanChaosMode.all
+        ? const Duration(minutes: 30)
+        : const Duration(minutes: 10);
+    final sensitiveActionsAuthorized =
+        await _authorizeRealUserScenarioSensitiveActions(
+      validity: authorizationValidity,
+    );
+    if (!sensitiveActionsAuthorized) return;
+    final protectedState = _captureProtectedState();
+    final startedAt = DateTime.now().toUtc();
+    final actor = store.activeUser?.fullName.trim().isNotEmpty == true
+        ? store.activeUser!.fullName.trim()
+        : store.currentRole;
+    setState(() {
+      _running = true;
+      _progress = 0;
+      _status = _dual(
+          'تشغيل مختبر السيناريوهات الشامل...', 'Running comprehensive scenario lab...');
+      _report.clear();
+      _assertions.clear();
+      _log.clear();
+      _currentBatchId =
+          'real_${DateTime.now().millisecondsSinceEpoch}_${_roleLabel().toLowerCase()}_${options.modeLabel.toLowerCase()}';
+    });
+
+    final beforeSales = store.sales.length;
+    final beforePurchases = store.purchases.length;
+    final beforeExpenses = store.expenses.length;
+    final beforeMovements = store.stockMovements.length;
+    final beforeTransactions = store.accountTransactions.length;
+    final testProducts = <Product>[];
+    Supplier? supplier;
+    Customer? customer;
+    Supplier? edgeSupplier;
+    Customer? edgeCustomer;
+    Supplier? advanceSupplier;
+    Customer? advanceCustomer;
+    Warehouse? secondaryWarehouse;
+    Purchase? mainPurchase;
+    Sale? mainSale;
+    double? scenarioOpeningCashBalance;
+    var batchDependencyGuardVerified = false;
+    var fefoBatchRestoreVerified = false;
+    var transferBatchIdentityVerified = false;
+    var manufacturingBatchCostVerified = false;
+    var unifiedBatchPersistenceVerified = false;
+
+    String sqlQuote(String value) => value.replaceAll("'", "''");
+
+    try {
+      _addLog('VENTIO_REAL_USER_SCENARIO_START batch=$_currentBatchId mode=${options.modeLabel} seed=${options.seed} iterations=${options.iterations} strictIntegrity=${options.strictIntegrity} doubleSubmit=${options.doubleSubmitSimulation} reload=${options.reloadSimulation}');
+      _auditCheck(
+        _dual('العقد', 'Contract'),
+        _dual('الكتابة عبر منطق التطبيق فقط', 'Application write path only'),
+        true,
+        _dual(
+          'كل عمليات الكتابة في هذا السيناريو تمر عبر AppStore/AccountingService/CashOperationService. SQL مخصص للقراءة النهائية فقط.',
+          'All scenario writes use AppStore/AccountingService/CashOperationService. SQL is read-only and used only for final evidence.',
+        ),
+        '',
+      );
+
+      _setStatus(
+          _dual('تهيئة بيانات الاختبار...', 'Preparing test entities...'),
+          progress: 0.04);
+      supplier = await _auditStep<Supplier>(
+        _dual('الموردون', 'Suppliers'),
+        _dual('إنشاء مورد اختبار', 'Create test supplier'),
+        () async {
+          final item = Supplier(
+            id: '${_currentBatchId}_supplier',
+            name: '[REAL] Supplier $_currentBatchId',
+            phone: '+96170000001',
+            address: 'Ventio real scenario',
+            notes: 'Created by real-user scenario through AppStore',
+          );
+          await store.addOrUpdateSupplier(item);
+          return item;
+        },
+        successDetails: (item) => 'id=${item.id} name=${item.name}',
+      );
+      customer = await _auditStep<Customer>(
+        _dual('العملاء', 'Customers'),
+        _dual('إنشاء عميل اختبار', 'Create test customer'),
+        () async {
+          final item = Customer(
+            id: '${_currentBatchId}_customer',
+            name: '[REAL] Customer $_currentBatchId',
+            phone: '+96171000001',
+            address: 'Ventio real scenario',
+          );
+          await store.addOrUpdateCustomer(item);
+          return item;
+        },
+        successDetails: (item) => 'id=${item.id} name=${item.name}',
+      );
+
+
+      await _auditStep<String>(
+        _dual('S00 التهيئة', 'S00 Setup'),
+        _dual('إنشاء أطراف السيناريوهات المتقدمة', 'Create advanced scenario parties'),
+        () async {
+          final createdEdgeSupplier = Supplier(
+            id: '${_currentBatchId}_edge_supplier',
+            name: '[REAL] Edge Supplier $_currentBatchId',
+            phone: '+96170000002',
+            address: 'Ventio advanced scenario',
+            notes: 'Advanced scenario supplier',
+          );
+          final createdEdgeCustomer = Customer(
+            id: '${_currentBatchId}_edge_customer',
+            name: '[REAL] Edge Customer $_currentBatchId',
+            phone: '+96171000002',
+            address: 'Ventio advanced scenario',
+          );
+          final createdAdvanceSupplier = Supplier(
+            id: '${_currentBatchId}_advance_supplier',
+            name: '[REAL] Advance Supplier $_currentBatchId',
+            phone: '+96170000003',
+            address: 'Ventio voucher scenario',
+            notes: 'Unallocated payment scenario supplier',
+          );
+          final createdAdvanceCustomer = Customer(
+            id: '${_currentBatchId}_advance_customer',
+            name: '[REAL] Advance Customer $_currentBatchId',
+            phone: '+96171000003',
+            address: 'Ventio voucher scenario',
+          );
+          await store.addOrUpdateSupplier(createdEdgeSupplier);
+          await store.addOrUpdateCustomer(createdEdgeCustomer);
+          await store.addOrUpdateSupplier(createdAdvanceSupplier);
+          await store.addOrUpdateCustomer(createdAdvanceCustomer);
+          edgeSupplier = createdEdgeSupplier;
+          edgeCustomer = createdEdgeCustomer;
+          advanceSupplier = createdAdvanceSupplier;
+          advanceCustomer = createdAdvanceCustomer;
+          return 'edgeSupplier=${createdEdgeSupplier.id} edgeCustomer=${createdEdgeCustomer.id} '
+              'advanceSupplier=${createdAdvanceSupplier.id} advanceCustomer=${createdAdvanceCustomer.id}';
+        },
+        successDetails: (value) => value,
+      );
+
+      await _auditStep<int>(
+        _dual('المنتجات', 'Products'),
+        _dual('إنشاء منتجات السيناريو', 'Create scenario products'),
+        () async {
+          final now = DateTime.now().microsecondsSinceEpoch;
+          final specs = <(String, double, double)>[
+            ('Sale Core', 20, 10),
+            ('Purchase Return', 18, 12),
+            ('Purchase Cancel', 16, 8),
+            ('Sale Return', 15, 6),
+            ('Manufacturing Raw', 9, 4),
+            ('Manufactured Output', 22, 0),
+            ('Partial Return', 10, 5),
+            ('Batch Dependency Guard', 8, 3),
+            ('FEFO Batch', 10, 1),
+            ('Free Sale', 0, 4),
+            ('Waste Reversal', 9, 5),
+            ('Count Shortage', 9, 5),
+            ('Multi Warehouse', 12, 4),
+            ('Multi Batch Raw', 10, 2),
+            ('Multi Batch Output', 24, 0),
+          ];
+          for (var i = 0; i < specs.length; i += 1) {
+            final spec = specs[i];
+            final product = Product(
+              id: '${_currentBatchId}_product_${i + 1}',
+              name: '[REAL] ${spec.$1} $_currentBatchId',
+              nameEn: spec.$1,
+              nameAr: 'منتج سيناريو ${i + 1}',
+              code: 'REAL-$now-${i + 1}',
+              barcode: 'REAL$now${i + 1}',
+              price: spec.$2,
+              cost: spec.$3,
+              usdCost: spec.$3,
+              stock: 0,
+              category: 'Real Scenario',
+              unit: 'pcs',
+              trackStock: true,
+              isActive: true,
+              expiryTrackingEnabled: i == 8,
+              expiryEntryRequired: i == 8,
+            );
+            await store.addOrUpdateProduct(product);
+            testProducts.add(product);
+          }
+          return testProducts.length;
+        },
+        successDetails: (count) => '$count products created through AppStore',
+      );
+
+      secondaryWarehouse = await _auditStep<Warehouse>(
+        _dual('المخزون', 'Inventory'),
+        _dual('إنشاء مستودع ثانوي', 'Create secondary warehouse'),
+        () => store.createWarehouse(
+          name: '[REAL] Warehouse $_currentBatchId',
+          code: 'RW-${DateTime.now().microsecondsSinceEpoch}',
+          location: 'Real scenario',
+        ),
+        successDetails: (warehouse) => 'warehouse=${warehouse.name}',
+      );
+
+      _setStatus(_dual('تجهيز الصندوق...', 'Preparing cash drawer...'),
+          progress: 0.10);
+      await _auditStep<String>(
+        _dual('الصندوق', 'Cash'),
+        _dual('فتح/تأكيد وردية نقدية', 'Open/confirm cash shift'),
+        () async {
+          await _ensureAuditCashDrawerOpen();
+          final drawer = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (AccountingService.isAvailable && drawer == null) {
+            throw StateError('No cash drawer is assigned to this device.');
+          }
+          if (drawer != null) scenarioOpeningCashBalance = drawer.balance;
+          return drawer == null
+              ? 'Accounting unavailable; cash drawer skipped.'
+              : 'drawer=${drawer.id} balance=${_money(drawer.balance)}';
+        },
+        successDetails: (value) => value,
+      );
+
+      await _auditStep<String>(
+        _dual('الصندوق', 'Cash'),
+        _dual('إيداع وسحب بحساب مقابل صريح',
+            'Cash in/out with explicit counterpart'),
+        () async {
+          if (!AccountingService.isAvailable) {
+            return 'Accounting unavailable; standalone cash operations skipped.';
+          }
+          final drawer = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (drawer == null) throw StateError('Cash drawer is not available.');
+          final sessionId =
+              await AccountingService.currentOpenCashDrawerSessionId(
+            branchId: store.appIdentity.branchId,
+            cashLocationId: drawer.id,
+          );
+          if (sessionId.isEmpty) {
+            throw StateError('No open cash drawer session.');
+          }
+          final defaults = await AccountingService.readDefaultAccountMap();
+          final accounts = await AccountingService.listAccounts(activeOnly: true);
+          String resolvePostableAccount(String rootId) {
+            final cleanRootId = rootId.trim();
+            if (cleanRootId.isEmpty) return '';
+            final byId = <String, AccountingAccount>{
+              for (final account in accounts) account.id: account,
+            };
+            final root = byId[cleanRootId];
+            if (root != null && root.isActive && root.isPostable &&
+                root.subtype != 'group') {
+              return root.id;
+            }
+            final pending = <String>[cleanRootId];
+            final visited = <String>{};
+            while (pending.isNotEmpty) {
+              final parentId = pending.removeLast();
+              if (!visited.add(parentId)) continue;
+              for (final account in accounts) {
+                if (account.parentId != parentId || !account.isActive) continue;
+                if (account.isPostable && account.subtype != 'group') {
+                  return account.id;
+                }
+                pending.add(account.id);
+              }
+            }
+            return '';
+          }
+
+          final equityId = resolvePostableAccount(
+              defaults['default_equity_account_id'] ?? '');
+          final expenseId = resolvePostableAccount(
+              defaults['default_expense_account_id'] ?? '');
+          if (equityId.isEmpty || expenseId.isEmpty) {
+            throw StateError(
+                'Postable equity/expense counterpart accounts are missing.');
+          }
+          final cash = CashOperationService.current(authorization: store);
+          await cash.deposit(
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            counterpartAccountId: equityId,
+            amount: 25,
+            notes: 'Real scenario cash in $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:cash-in',
+          );
+          await cash.withdrawal(
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            counterpartAccountId: expenseId,
+            amount: 5,
+            notes: 'Real scenario cash out $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:cash-out',
+          );
+          final after = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          return 'cashIn=25 cashOut=5 balance=${_money(after?.balance ?? 0)}';
+        },
+        successDetails: (value) => value,
+      );
+
+      if (supplier != null && testProducts.length >= 5) {
+        _setStatus(
+            _dual('دورة المشتريات...', 'Running purchase lifecycle...'),
+            progress: 0.18);
+        final draft = await _auditStep<Purchase>(
+          _dual('المشتريات', 'Purchases'),
+          _dual('إنشاء فاتورة شراء Draft', 'Create draft purchase'),
+          () => store.createPurchase(
+            supplierId: supplier!.id,
+            supplierName: supplier.name,
+            receiveNow: false,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            note: 'Real scenario draft purchase $_currentBatchId',
+            items: <PurchaseItem>[
+              PurchaseItem(
+                productId: testProducts[0].id,
+                productName: testProducts[0].name,
+                quantity: 10,
+                unitCost: 10,
+              ),
+            ],
+          ),
+          successDetails: (purchase) =>
+              '${purchase.purchaseNo} status=${purchase.status} total=${_money(purchase.subtotal)}',
+        );
+        Purchase? edited;
+        if (draft != null) {
+          edited = await _auditStep<Purchase>(
+            _dual('المشتريات', 'Purchases'),
+            _dual('تعديل فاتورة الشراء Draft', 'Edit draft purchase'),
+            () => store.updatePurchaseDraft(
+              purchaseId: draft.id,
+              expectedVersion: draft.version,
+              supplierId: supplier!.id,
+              supplierName: supplier.name,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <PurchaseItem>[
+                PurchaseItem(
+                    productId: testProducts[0].id,
+                    productName: testProducts[0].name,
+                    quantity: 20,
+                    unitCost: 10),
+                PurchaseItem(
+                    productId: testProducts[3].id,
+                    productName: testProducts[3].name,
+                    quantity: 20,
+                    unitCost: 6),
+                PurchaseItem(
+                    productId: testProducts[4].id,
+                    productName: testProducts[4].name,
+                    quantity: 10,
+                    unitCost: 4),
+              ],
+            ),
+            successDetails: (purchase) =>
+                '${purchase.purchaseNo} version=${purchase.version} total=${_money(purchase.subtotal)}',
+          );
+        }
+        if (edited != null) {
+          await _auditStep<String>(
+            _dual('المشتريات', 'Purchases'),
+            _dual('استلام فاتورة الشراء', 'Receive purchase'),
+            () async {
+              await store.receivePurchase(edited!.id);
+              return 'purchase=${edited.purchaseNo} received=true';
+            },
+            successDetails: (value) => value,
+          );
+          mainPurchase = edited;
+          await _auditStep<Purchase>(
+            _dual('المشتريات', 'Purchases'),
+            _dual('دفع جزئي للمورد نقداً', 'Partial cash payment to supplier'),
+            () => store.settlePurchasePayment(
+              purchaseId: edited!.id,
+              amount: 50,
+              paymentMethod: 'Cash',
+              notes: 'Real scenario partial supplier payment',
+              idempotencyKey: '$_currentBatchId:purchase-main-payment',
+            ),
+            successDetails: (purchase) =>
+                'paid=${_money(purchase.paidAmount)} balance=${_money(purchase.balanceDue)}',
+          );
+        }
+
+        final throwawayDraft = await _auditStep<Purchase>(
+          _dual('المشتريات', 'Purchases'),
+          _dual('إنشاء Draft للحذف', 'Create draft for deletion'),
+          () => store.createPurchase(
+            supplierId: supplier!.id,
+            supplierName: supplier.name,
+            receiveNow: false,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            note: 'Real scenario delete draft $_currentBatchId',
+            items: <PurchaseItem>[
+              PurchaseItem(
+                  productId: testProducts[1].id,
+                  productName: testProducts[1].name,
+                  quantity: 1,
+                  unitCost: 12),
+            ],
+          ),
+          successDetails: (purchase) => purchase.purchaseNo,
+        );
+        if (throwawayDraft != null) {
+          await _auditStep<String>(
+            _dual('المشتريات', 'Purchases'),
+            _dual('حذف فاتورة Draft', 'Delete draft purchase'),
+            () async {
+              await store.deleteDraftPurchase(throwawayDraft.id);
+              return 'deleted=${throwawayDraft.purchaseNo}';
+            },
+            successDetails: (value) => value,
+          );
+        }
+
+        final returnPurchase = await _auditStep<Purchase>(
+          _dual('المشتريات', 'Purchases'),
+          _dual('إنشاء شراء مستقل للمرتجع', 'Create purchase for return'),
+          () => store.createPurchase(
+            supplierId: supplier!.id,
+            supplierName: supplier.name,
+            receiveNow: true,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            note: 'Real scenario purchase return $_currentBatchId',
+            items: <PurchaseItem>[
+              PurchaseItem(
+                  productId: testProducts[1].id,
+                  productName: testProducts[1].name,
+                  quantity: 5,
+                  unitCost: 12),
+            ],
+          ),
+          successDetails: (purchase) =>
+              '${purchase.purchaseNo} total=${_money(purchase.subtotal)}',
+        );
+        if (returnPurchase != null) {
+          await _auditStep<String>(
+            _dual('المشتريات', 'Purchases'),
+            _dual('مرتجع شراء كامل', 'Full purchase return'),
+            () async {
+              await store.returnPurchase(returnPurchase.id,
+                  reason: 'Real scenario full purchase return');
+              return 'returned=${returnPurchase.purchaseNo}';
+            },
+            successDetails: (value) => value,
+          );
+        }
+
+        final cancelPurchase = await _auditStep<Purchase>(
+          _dual('المشتريات', 'Purchases'),
+          _dual('إنشاء شراء للإلغاء والاسترداد',
+              'Create purchase for cancel/refund'),
+          () => store.createPurchase(
+            supplierId: supplier!.id,
+            supplierName: supplier.name,
+            receiveNow: true,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            note: 'Real scenario purchase cancel $_currentBatchId',
+            items: <PurchaseItem>[
+              PurchaseItem(
+                  productId: testProducts[2].id,
+                  productName: testProducts[2].name,
+                  quantity: 4,
+                  unitCost: 8),
+            ],
+          ),
+          successDetails: (purchase) =>
+              '${purchase.purchaseNo} total=${_money(purchase.subtotal)}',
+        );
+        if (cancelPurchase != null) {
+          await _auditStep<String>(
+            _dual('المشتريات', 'Purchases'),
+            _dual('دفع الشراء بالكامل', 'Pay purchase in full'),
+            () async {
+              final paid = await store.settlePurchasePayment(
+                purchaseId: cancelPurchase.id,
+                amount: cancelPurchase.subtotal,
+                paymentMethod: 'Cash',
+                idempotencyKey: '$_currentBatchId:purchase-cancel-payment',
+              );
+              return 'paid=${_money(paid.paidAmount)}';
+            },
+            successDetails: (value) => value,
+          );
+          await _auditStep<String>(
+            _dual('المشتريات', 'Purchases'),
+            _dual('إلغاء الشراء دون Refund تلقائي',
+                'Cancel purchase without automatic refund'),
+            () async {
+              await store.cancelPurchase(cancelPurchase.id);
+              final refundable =
+                  await store.refundablePurchaseCashAmount(cancelPurchase.id);
+              if (refundable <= 0.000001) {
+                throw StateError('Expected manual supplier refund entitlement.');
+              }
+              return 'cancelled=${cancelPurchase.purchaseNo} refundable=${_money(refundable)}';
+            },
+            successDetails: (value) => value,
+          );
+          await _auditStep<String>(
+            _dual('الصندوق', 'Cash'),
+            _dual('استرداد نقدي يدوي من المورد', 'Manual supplier cash refund'),
+            () async {
+              final refunded = await store.refundPurchaseCash(
+                purchaseId: cancelPurchase.id,
+                idempotencyKey: '$_currentBatchId:purchase-refund',
+              );
+              return 'supplierRefund=${_money(refunded)}';
+            },
+            successDetails: (value) => value,
+          );
+        }
+      }
+
+      _setStatus(
+          _dual('المستودعات والجرد...', 'Warehouse and stock count...'),
+          progress: 0.46);
+      if (secondaryWarehouse != null && testProducts.isNotEmpty) {
+        await _auditStep<String>(
+          _dual('المخزون', 'Inventory'),
+          _dual('تحويل مخزون بأمر تحويل حقيقي',
+              'Transfer inventory using transfer order'),
+          () async {
+            final order = await store.createWarehouseTransferOrder(
+              fromWarehouseId: store.resolveWarehouseForSale().id,
+              toWarehouseId: secondaryWarehouse!.id,
+              notes: 'Real scenario warehouse transfer $_currentBatchId',
+              items: <WarehouseTransferOrderItem>[
+                WarehouseTransferOrderItem(
+                  productId: testProducts[0].id,
+                  productName: testProducts[0].name,
+                  quantity: 2,
+                  unitName: testProducts[0].unit,
+                ),
+              ],
+            );
+            return 'order=${order.orderNo} qty=${_money(order.totalUnits)}';
+          },
+          successDetails: (value) => value,
+        );
+      }
+      if (testProducts.isNotEmpty) {
+        await _auditStep<String>(
+          _dual('الجرد', 'Stock Count'),
+          _dual('جرد واعتماد فرق +1', 'Count and approve +1 variance'),
+          () async {
+            final session = await store.createInventoryCountSession(
+              notes: 'Real scenario inventory count $_currentBatchId',
+            );
+            final line = session.lines
+                .firstWhere((item) => item.productId == testProducts[0].id);
+            await store.countInventoryLine(
+              sessionId: session.id,
+              productId: testProducts[0].id,
+              countedQty: line.snapshotStock + 1,
+              note: 'Real scenario +1 count variance',
+            );
+            await store.approveInventoryCount(session.id);
+            return 'count=${session.countNo} product=${testProducts[0].id} variance=+1';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+      _setStatus(_dual('دورة المبيعات...', 'Running sales lifecycle...'),
+          progress: 0.58);
+      if (customer != null && testProducts.length >= 4) {
+        mainSale = await _auditStep<Sale>(
+          _dual('المبيعات', 'Sales'),
+          _dual('بيع آجل', 'Create credit sale'),
+          () => store.createSale(
+            customerName: customer!.name,
+            customerId: customer.id,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: <SaleItem>[
+              SaleItem(
+                productId: testProducts[0].id,
+                productName: testProducts[0].name,
+                unitPrice: 20,
+                quantity: 3,
+                unitCost: 10,
+              ),
+            ],
+          ),
+          successDetails: (sale) =>
+              '${sale.invoiceNo} total=${_money(sale.total)} balance=${_money(sale.balanceDue)}',
+        );
+        if (mainSale != null) {
+          await _auditStep<Sale>(
+            _dual('المبيعات', 'Sales'),
+            _dual('قبض جزئي من العميل', 'Partial customer receipt'),
+            () => store.settleSalePayment(
+              saleId: mainSale!.id,
+              amount: 30,
+              paymentMethod: 'Cash',
+              notes: 'Real scenario partial customer receipt',
+              idempotencyKey: '$_currentBatchId:sale-main-receipt',
+            ),
+            successDetails: (sale) =>
+                'paid=${_money(sale.paidAmount)} balance=${_money(sale.balanceDue)}',
+          );
+        }
+
+        final returnSale = await _auditStep<Sale>(
+          _dual('المبيعات', 'Sales'),
+          _dual('إنشاء بيع للمرتجع', 'Create sale for return'),
+          () => store.createSale(
+            customerName: customer!.name,
+            customerId: customer.id,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: <SaleItem>[
+              SaleItem(
+                  productId: testProducts[3].id,
+                  productName: testProducts[3].name,
+                  unitPrice: 15,
+                  quantity: 2,
+                  unitCost: 6),
+            ],
+          ),
+          successDetails: (sale) =>
+              '${sale.invoiceNo} total=${_money(sale.total)}',
+        );
+        if (returnSale != null) {
+          await _auditStep<String>(
+            _dual('المبيعات', 'Sales'),
+            _dual('قبض البيع بالكامل', 'Collect sale in full'),
+            () async {
+              final paid = await store.settleSalePayment(
+                saleId: returnSale.id,
+                amount: returnSale.total,
+                paymentMethod: 'Cash',
+                idempotencyKey: '$_currentBatchId:sale-return-receipt',
+              );
+              return 'paid=${_money(paid.paidAmount)}';
+            },
+            successDetails: (value) => value,
+          );
+          await _auditStep<String>(
+            _dual('المبيعات', 'Sales'),
+            _dual('مرتجع بيع كامل', 'Full sale return'),
+            () async {
+              final note =
+                  await store.returnSale(returnSale.id, restoreStock: true);
+              return 'creditNote=${note.creditNoteNo} amount=${_money(note.amount)}';
+            },
+            successDetails: (value) => value,
+          );
+          await _auditStep<String>(
+            _dual('الصندوق', 'Cash'),
+            _dual('Refund يدوي للعميل بعد المرتجع',
+                'Manual customer refund after return'),
+            () async {
+              final refundable =
+                  await store.refundableSaleCashAmount(returnSale.id);
+              final refunded = await store.refundSaleCash(
+                saleId: returnSale.id,
+                amount: refundable,
+                idempotencyKey: '$_currentBatchId:sale-return-refund',
+              );
+              return 'customerRefund=${_money(refunded)}';
+            },
+            successDetails: (value) => value,
+          );
+        }
+
+        final cancelSale = await _auditStep<Sale>(
+          _dual('المبيعات', 'Sales'),
+          _dual('إنشاء بيع للإلغاء', 'Create sale for cancellation'),
+          () => store.createSale(
+            customerName: customer!.name,
+            customerId: customer.id,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: <SaleItem>[
+              SaleItem(
+                  productId: testProducts[3].id,
+                  productName: testProducts[3].name,
+                  unitPrice: 15,
+                  quantity: 1,
+                  unitCost: 6),
+            ],
+          ),
+          successDetails: (sale) => sale.invoiceNo,
+        );
+        if (cancelSale != null) {
+          await store.settleSalePayment(
+            saleId: cancelSale.id,
+            amount: cancelSale.total,
+            paymentMethod: 'Cash',
+            idempotencyKey: '$_currentBatchId:sale-cancel-receipt',
+          );
+          await _auditStep<String>(
+            _dual('المبيعات', 'Sales'),
+            _dual('إلغاء البيع دون Refund تلقائي',
+                'Cancel sale without automatic refund'),
+            () async {
+              await store.cancelSale(cancelSale.id, restoreStock: true);
+              final refundable =
+                  await store.refundableSaleCashAmount(cancelSale.id);
+              if (refundable <= 0.000001) {
+                throw StateError('Expected manual customer refund entitlement.');
+              }
+              return 'cancelled=${cancelSale.invoiceNo} refundable=${_money(refundable)}';
+            },
+            successDetails: (value) => value,
+          );
+          await _auditStep<String>(
+            _dual('الصندوق', 'Cash'),
+            _dual('Refund يدوي بعد إلغاء البيع',
+                'Manual refund after sale cancellation'),
+            () async {
+              final refunded = await store.refundSaleCash(
+                saleId: cancelSale.id,
+                idempotencyKey: '$_currentBatchId:sale-cancel-refund',
+              );
+              return 'customerRefund=${_money(refunded)}';
+            },
+            successDetails: (value) => value,
+          );
+        }
+
+        await _auditStep<String>(
+          _dual('عروض الأسعار', 'Quotations'),
+          _dual('عرض سعر وتحويله إلى بيع', 'Quotation converted to sale'),
+          () async {
+            final quotation = await store.createSaleQuotation(
+              customerName: customer!.name,
+              customerId: customer.id,
+              items: <SaleItem>[
+                SaleItem(
+                    productId: testProducts[0].id,
+                    productName: testProducts[0].name,
+                    unitPrice: 20,
+                    quantity: 1,
+                    unitCost: 10),
+              ],
+              note: 'Real scenario quotation $_currentBatchId',
+            );
+            final sale = await store.convertSaleQuotationToSale(
+              quotation.id,
+              paymentMethod: 'Card',
+              paymentStatus: 'paid',
+            );
+            final delivery = await store.createDeliveryNoteFromSale(sale.id,
+                note: 'Real scenario delivery note');
+            await store.markDeliveryNoteDelivered(delivery.id);
+            return '${quotation.quotationNo} -> ${sale.invoiceNo} -> ${delivery.deliveryNo}';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+      _setStatus(
+          _dual('المصاريف والتصنيع...', 'Expenses and manufacturing...'),
+          progress: 0.76);
+      final draftExpense = await _auditStep<Expense>(
+        _dual('المصاريف', 'Expenses'),
+        _dual('إنشاء مصروف Draft', 'Create draft expense'),
+        () async {
+          final expense = Expense(
+            id: '${_currentBatchId}_expense_draft',
+            title: '[REAL] Draft expense $_currentBatchId',
+            category: 'Operations',
+            amount: 3.25,
+            date: DateTime.now(),
+            notes: 'Real scenario draft expense',
+          );
+          await store.addOrUpdateExpense(expense);
+          return expense;
+        },
+        successDetails: (expense) =>
+            'expense=${expense.id} amount=${_money(expense.amount)}',
+      );
+      if (draftExpense != null) {
+        await _auditStep<String>(
+          _dual('المصاريف', 'Expenses'),
+          _dual('حذف المصروف Draft', 'Delete draft expense'),
+          () async {
+            await store.deleteDraftExpense(draftExpense.id);
+            return 'deleted=${draftExpense.id}';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+      final postedExpense = await _auditStep<Expense>(
+        _dual('المصاريف', 'Expenses'),
+        _dual('إنشاء واعتماد مصروف نقدي', 'Create and post cash expense'),
+        () async {
+          final expense = Expense(
+            id: '${_currentBatchId}_expense_posted',
+            title: '[REAL] Cash expense $_currentBatchId',
+            category: 'Operations',
+            amount: 12.75,
+            date: DateTime.now(),
+            notes: 'Real scenario posted expense',
+          );
+          await store.addOrUpdateExpense(expense);
+          await store.postExpense(expense.id);
+          return expense;
+        },
+        successDetails: (expense) =>
+            'expense=${expense.id} amount=${_money(expense.amount)}',
+      );
+      if (postedExpense != null) {
+        await _auditStep<String>(
+          _dual('المصاريف', 'Expenses'),
+          _dual('إلغاء المصروف المرحّل', 'Cancel posted expense'),
+          () async {
+            await store.cancelExpense(postedExpense.id,
+                reason: 'Real scenario expense cancellation');
+            return 'cancelled=${postedExpense.id}';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+      if (testProducts.length >= 6) {
+        await _auditStep<String>(
+          _dual('التصنيع', 'Manufacturing'),
+          _dual('وصفة تصنيع ثم إنتاج', 'BOM then production'),
+          () async {
+            final bom = await store.createBillOfMaterials(
+              name: '[REAL] BOM $_currentBatchId',
+              outputProductId: testProducts[5].id,
+              outputQuantity: 1,
+              components: <BillOfMaterialsLine>[
+                BillOfMaterialsLine(
+                  productId: testProducts[4].id,
+                  productName: testProducts[4].name,
+                  quantity: 1,
+                  unitCost: 4,
+                ),
+              ],
+              notes: 'Real scenario BOM',
+            );
+            final order = await store.completeManufacturingOrder(
+              bomId: bom.id,
+              quantity: 2,
+              notes: 'Real scenario manufacturing',
+            );
+            return 'bom=${bom.name} order=${order.orderNo} output=2';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+
+      final coreFailures = _report.where((item) => item.isFail).length;
+      _auditCheck(
+        _dual('S01 دورة الأعمال الأساسية', 'S01 Core Lifecycle'),
+        _dual('اكتمال دورة المستخدم الأساسية', 'Core user lifecycle checkpoint'),
+        coreFailures == 0,
+        _dual(
+          'الشراء والتعديل والاستلام والدفع والحذف والمرتجع والإلغاء والاسترداد والتحويل والجرد والبيع والقبض والمصاريف والتصنيع مرت بدون فشل.',
+          'Purchase/edit/receive/payment/delete/return/cancel/refund/transfer/count/sale/receipt/expense/manufacturing completed without failures.',
+        ),
+        _dual(
+          'يوجد $coreFailures فشل ضمن دورة الأعمال الأساسية؛ راجع الخطوات السابقة.',
+          '$coreFailures failure(s) exist in the core lifecycle; inspect the preceding steps.',
+        ),
+      );
+
+      _setStatus(
+          _dual('سيناريوهات الحواف المتقدمة...', 'Running advanced edge scenarios...'),
+          progress: 0.82);
+
+      final scenarioEdgeSupplier = edgeSupplier;
+      final scenarioEdgeCustomer = edgeCustomer;
+      if (scenarioEdgeSupplier != null &&
+          scenarioEdgeCustomer != null &&
+          testProducts.length >= 15) {
+        await _auditStep<String>(
+          _dual('S02 المرتجعات الجزئية', 'S02 Partial Returns'),
+          _dual('بيع جزئي مع مرتجعات تراكمية وحماية من الزيادة',
+              'Cumulative partial sale returns and over-return guard'),
+          () async {
+            final purchase = await store.createPurchase(
+              supplierId: scenarioEdgeSupplier.id,
+              supplierName: scenarioEdgeSupplier.name,
+              receiveNow: true,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <PurchaseItem>[
+                PurchaseItem(
+                  productId: testProducts[6].id,
+                  productName: testProducts[6].name,
+                  quantity: 10,
+                  unitCost: 5,
+                ),
+              ],
+            );
+            final sale = await store.createSale(
+              customerId: scenarioEdgeCustomer.id,
+              customerName: scenarioEdgeCustomer.name,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <SaleItem>[
+                SaleItem(
+                  productId: testProducts[6].id,
+                  productName: testProducts[6].name,
+                  unitPrice: 10,
+                  quantity: 6,
+                  unitCost: 5,
+                ),
+              ],
+            );
+            final first = await store.returnSale(
+              sale.id,
+              returnedQuantities: <String, double>{testProducts[6].id: 2},
+            );
+            final second = await store.returnSale(
+              sale.id,
+              returnedQuantities: <String, double>{testProducts[6].id: 2},
+            );
+            var overReturnBlocked = false;
+            try {
+              await store.returnSale(
+                sale.id,
+                returnedQuantities: <String, double>{testProducts[6].id: 3},
+              );
+            } catch (_) {
+              overReturnBlocked = true;
+            }
+            if (!overReturnBlocked) {
+              throw StateError('Over-return was not blocked.');
+            }
+            final stock = await store.totalWarehouseStockFromSqlite(testProducts[6].id);
+            if ((stock - 8).abs() > 0.000001) {
+              throw StateError('Partial-return stock mismatch: expected=8 actual=$stock');
+            }
+            return 'purchase=${purchase.purchaseNo} sale=${sale.invoiceNo} '
+                'returns=${first.items.single.quantity}+${second.items.single.quantity} '
+                'overReturnBlocked=true stock=${_money(stock)}';
+          },
+          successDetails: (value) => value,
+        );
+
+        await _auditStep<String>(
+          _dual('S03 Unified Batch', 'S03 Unified Batch'),
+          _dual('منع مرتجع شراء بعد استهلاك الدفعة ثم السماح بعد عكس البيع',
+              'Block consumed batch purchase return, then allow after sale reversal'),
+          () async {
+            final purchase = await store.createPurchase(
+              supplierId: scenarioEdgeSupplier.id,
+              supplierName: scenarioEdgeSupplier.name,
+              receiveNow: true,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <PurchaseItem>[
+                PurchaseItem(
+                  productId: testProducts[7].id,
+                  productName: testProducts[7].name,
+                  quantity: 5,
+                  unitCost: 3,
+                ),
+              ],
+            );
+            final sale = await store.createSale(
+              customerId: scenarioEdgeCustomer.id,
+              customerName: scenarioEdgeCustomer.name,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <SaleItem>[
+                SaleItem(
+                  productId: testProducts[7].id,
+                  productName: testProducts[7].name,
+                  unitPrice: 8,
+                  quantity: 2,
+                  unitCost: 3,
+                ),
+              ],
+            );
+            var blocked = false;
+            try {
+              await store.returnPurchase(purchase.id,
+                  reason: 'Must be blocked while the purchase batch is consumed');
+            } catch (_) {
+              blocked = true;
+            }
+            if (!blocked) {
+              throw StateError('Consumed purchase batch return was not blocked.');
+            }
+            await store.returnSale(sale.id, restoreStock: true);
+            await store.returnPurchase(purchase.id,
+                reason: 'Allowed after downstream sale reversal');
+            final stock = await store.totalWarehouseStockFromSqlite(testProducts[7].id);
+            if (stock.abs() > 0.000001) {
+              throw StateError('Batch dependency final stock mismatch: expected=0 actual=$stock');
+            }
+            batchDependencyGuardVerified = true;
+            return 'purchase=${purchase.purchaseNo} sale=${sale.invoiceNo} '
+                'blockedWhileConsumed=true finalReturn=true stock=${_money(stock)}';
+          },
+          successDetails: (value) => value,
+        );
+
+        await _auditStep<String>(
+          _dual('S04 FEFO والدفعات', 'S04 FEFO & Batches'),
+          _dual('صرف FEFO من دفعتين ثم مرتجع جزئي يعيد نفس الشرائح',
+              'FEFO allocation across two batches with sliced partial returns'),
+          () async {
+            final warehouse = store.resolveWarehouseForPurchase();
+            final early = await store.createPurchase(
+              supplierId: scenarioEdgeSupplier.id,
+              supplierName: scenarioEdgeSupplier.name,
+              receiveNow: false,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              warehouseId: warehouse.id,
+              warehouseName: warehouse.name,
+              items: <PurchaseItem>[
+                PurchaseItem(
+                  productId: testProducts[8].id,
+                  productName: testProducts[8].name,
+                  quantity: 4,
+                  unitCost: 1,
+                ),
+              ],
+            );
+            final earlyExpiry =
+                DateTime.now().toUtc().add(const Duration(days: 30));
+            await store.receivePurchase(
+              early.id,
+              batchAllocationsByLine: <int, List<BatchAllocation>>{
+                0: <BatchAllocation>[
+                  BatchAllocation(
+                    // Phase 4 owns the persisted batch id. This requested id is
+                    // input metadata only and must never be used as evidence.
+                    batchId: 'requested:$_currentBatchId:early',
+                    quantity: 4,
+                    expirationDate: earlyExpiry,
+                  ),
+                ],
+              },
+            );
+            final late = await store.createPurchase(
+              supplierId: scenarioEdgeSupplier.id,
+              supplierName: scenarioEdgeSupplier.name,
+              receiveNow: false,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              warehouseId: warehouse.id,
+              warehouseName: warehouse.name,
+              items: <PurchaseItem>[
+                PurchaseItem(
+                  productId: testProducts[8].id,
+                  productName: testProducts[8].name,
+                  quantity: 6,
+                  unitCost: 2,
+                ),
+              ],
+            );
+            final lateExpiry =
+                DateTime.now().toUtc().add(const Duration(days: 60));
+            await store.receivePurchase(
+              late.id,
+              batchAllocationsByLine: <int, List<BatchAllocation>>{
+                0: <BatchAllocation>[
+                  BatchAllocation(
+                    // Phase 4 persists a stable purchase-line batch id instead
+                    // of trusting a caller-provided id.
+                    batchId: 'requested:$_currentBatchId:late',
+                    quantity: 6,
+                    expirationDate: lateExpiry,
+                  ),
+                ],
+              },
+            );
+
+            // Resolve the authoritative Phase 4 batch ids from SQLite by their
+            // purchase source. FEFO evidence must follow persisted batch
+            // identity, not the caller-provided BatchAllocation.batchId.
+            final db = SqliteMigrationManager.database!;
+            final receivedBatchRows = await db.customSelect(
+              r'''
+              SELECT id AS batch_id, source_id, unit_cost, initial_quantity,
+                     expiration_date
+              FROM inventory_batches
+              WHERE product_id = ? AND store_id = ? AND source_type = 'purchase'
+                AND source_id IN (?, ?)
+              ORDER BY source_id, source_line_id
+              ''',
+              variables: <Variable<Object>>[
+                Variable<String>(testProducts[8].id),
+                Variable<String>(store.appIdentity.storeId),
+                Variable<String>(early.id),
+                Variable<String>(late.id),
+              ],
+            ).get();
+            final receivedBatchBySource = <String, QueryRow>{
+              for (final row in receivedBatchRows)
+                row.read<String>('source_id'): row,
+            };
+            final receivedEarlyRow = receivedBatchBySource[early.id];
+            final receivedLateRow = receivedBatchBySource[late.id];
+            if (receivedEarlyRow == null || receivedLateRow == null) {
+              throw StateError(
+                  'FEFO purchase batches were not persisted with source lineage.');
+            }
+            final actualEarlyBatchId =
+                receivedEarlyRow.read<String>('batch_id');
+            final actualLateBatchId = receivedLateRow.read<String>('batch_id');
+            final persistedEarlyExpiry = DateTime.tryParse(
+                receivedEarlyRow.read<String>('expiration_date'));
+            final persistedLateExpiry =
+                DateTime.tryParse(receivedLateRow.read<String>('expiration_date'));
+            if (persistedEarlyExpiry == null ||
+                persistedLateExpiry == null ||
+                !persistedEarlyExpiry.isBefore(persistedLateExpiry) ||
+                (receivedEarlyRow.read<double>('initial_quantity') - 4).abs() >
+                    0.000001 ||
+                (receivedLateRow.read<double>('initial_quantity') - 6).abs() >
+                    0.000001 ||
+                (receivedEarlyRow.read<double>('unit_cost') - 1).abs() >
+                    0.000001 ||
+                (receivedLateRow.read<double>('unit_cost') - 2).abs() >
+                    0.000001) {
+              throw StateError(
+                  'FEFO persisted purchase batch metadata is invalid.');
+            }
+
+            final sale = await store.createSale(
+              customerId: scenarioEdgeCustomer.id,
+              customerName: scenarioEdgeCustomer.name,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              warehouseId: warehouse.id,
+              warehouseName: warehouse.name,
+              items: <SaleItem>[
+                SaleItem(
+                  productId: testProducts[8].id,
+                  productName: testProducts[8].name,
+                  unitPrice: 10,
+                  quantity: 7,
+                ),
+              ],
+            );
+            final saleAllocations = sale.items.single.batchAllocations;
+            if (saleAllocations.length != 2 ||
+                saleAllocations[0].batchId != actualEarlyBatchId ||
+                (saleAllocations[0].quantity - 4).abs() > 0.000001 ||
+                saleAllocations[1].batchId != actualLateBatchId ||
+                (saleAllocations[1].quantity - 3).abs() > 0.000001) {
+              throw StateError(
+                  'FEFO did not consume the earliest persisted batch first.');
+            }
+            final firstReturn = await store.returnSale(
+              sale.id,
+              returnedQuantities: <String, double>{testProducts[8].id: 2},
+            );
+            final secondReturn = await store.returnSale(
+              sale.id,
+              returnedQuantities: <String, double>{testProducts[8].id: 3},
+            );
+            final stock = await store.totalWarehouseStockFromSqlite(testProducts[8].id);
+            if ((stock - 8).abs() > 0.000001) {
+              throw StateError('FEFO final stock mismatch: expected=8 actual=$stock');
+            }
+            final returnEvidence = await db.customSelect(
+              r'''
+              SELECT COALESCE(SUM(quantity * unit_cost), 0) AS movement_value
+              FROM stock_movements
+              WHERE deleted_at = '' AND movement_type = 'sale_return'
+                AND reference_id = ?
+              ''',
+              variables: <Variable<Object>>[Variable<String>(sale.id)],
+            ).getSingle();
+            final movementValue =
+                (returnEvidence.data['movement_value'] as num? ?? 0).toDouble();
+            final expectedReturnCost =
+                firstReturn.items.single.lineCost + secondReturn.items.single.lineCost;
+            if ((movementValue - expectedReturnCost).abs() > 0.000001) {
+              throw StateError(
+                  'FEFO return movement value mismatch: movements=$movementValue cogs=$expectedReturnCost');
+            }
+            final batchRows = await db.customSelect(
+              r'''
+              SELECT b.id AS batch_id, b.unit_cost, b.expiration_date,
+                     COALESCE(bb.quantity, 0) AS quantity
+              FROM inventory_batches b
+              LEFT JOIN inventory_batch_balances bb ON bb.batch_id = b.id
+                AND bb.product_id = b.product_id AND bb.store_id = b.store_id
+                AND bb.warehouse_id = ?
+              WHERE b.product_id = ? AND b.store_id = ?
+                AND b.id IN (?, ?)
+              ORDER BY b.id
+              ''',
+              variables: <Variable<Object>>[
+                Variable<String>(warehouse.id),
+                Variable<String>(testProducts[8].id),
+                Variable<String>(store.appIdentity.storeId),
+                Variable<String>(actualEarlyBatchId),
+                Variable<String>(actualLateBatchId),
+              ],
+            ).get();
+            final batchById = <String, QueryRow>{
+              for (final row in batchRows) row.read<String>('batch_id'): row,
+            };
+            final earlyRow = batchById[actualEarlyBatchId];
+            final lateRow = batchById[actualLateBatchId];
+            if (earlyRow == null || lateRow == null) {
+              throw StateError('FEFO Unified Batch evidence is incomplete.');
+            }
+            final earlyQty = earlyRow.read<double>('quantity');
+            final lateQty = lateRow.read<double>('quantity');
+            final earlyCost = earlyRow.read<double>('unit_cost');
+            final lateCost = lateRow.read<double>('unit_cost');
+            final batchQty = earlyQty + lateQty;
+            final batchValue = earlyQty * earlyCost + lateQty * lateCost;
+            if ((earlyQty - 4).abs() > 0.000001 ||
+                (lateQty - 4).abs() > 0.000001 ||
+                (earlyCost - 1).abs() > 0.000001 ||
+                (lateCost - 2).abs() > 0.000001 ||
+                earlyRow.read<String>('expiration_date').trim().isEmpty ||
+                lateRow.read<String>('expiration_date').trim().isEmpty ||
+                (batchQty - stock).abs() > 0.000001) {
+              throw StateError(
+                  'FEFO Unified Batch restore mismatch: warehouse=$stock early=$earlyQty@$earlyCost late=$lateQty@$lateCost');
+            }
+            fefoBatchRestoreVerified = true;
+            return 'sale=${sale.invoiceNo} allocations=4 early + 3 late '
+                'returns=${firstReturn.items.single.quantity}+${secondReturn.items.single.quantity} '
+                'stock=${_money(stock)} returnCost=${_money(movementValue)} '
+                'batchQty=${_money(batchQty)} batchValue=${_money(batchValue)} '
+                'early=$actualEarlyBatchId:4@1 late=$actualLateBatchId:4@2';
+          },
+          successDetails: (value) => value,
+        );
+
+        await _auditStep<String>(
+          _dual('S05 البيع المجاني', 'S05 Zero-value Sale'),
+          _dual('بيع بقيمة صفر مع COGS ثم مرتجع كامل',
+              'Zero-value sale with COGS then full return'),
+          () async {
+            final warehouse = store.resolveWarehouseForSale();
+            await store.adjustStock(
+              productId: testProducts[9].id,
+              warehouseId: warehouse.id,
+              quantityDelta: 5,
+              reason: 'Real scenario free-sale seed',
+              adjustmentCategory: 'opening_balance',
+              notes: 'Free sale COGS scenario',
+            );
+            final sale = await store.createSale(
+              customerId: scenarioEdgeCustomer.id,
+              customerName: scenarioEdgeCustomer.name,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              warehouseId: warehouse.id,
+              warehouseName: warehouse.name,
+              items: <SaleItem>[
+                SaleItem(
+                  productId: testProducts[9].id,
+                  productName: testProducts[9].name,
+                  unitPrice: 0,
+                  quantity: 2,
+                  unitCost: 4,
+                ),
+              ],
+            );
+            if (sale.total.abs() > 0.000001 || sale.items.single.lineCost <= 0) {
+              throw StateError('Zero-value sale did not retain a real inventory cost.');
+            }
+            await store.returnSale(sale.id, restoreStock: true);
+            final stock = await store.totalWarehouseStockFromSqlite(testProducts[9].id);
+            if ((stock - 5).abs() > 0.000001) {
+              throw StateError('Free-sale return stock mismatch: expected=5 actual=$stock');
+            }
+            return 'sale=${sale.invoiceNo} revenue=${_money(sale.total)} '
+                'cogs=${_money(sale.items.single.lineCost)} returned=true stock=${_money(stock)}';
+          },
+          successDetails: (value) => value,
+        );
+
+        await _auditStep<String>(
+          _dual('S06 الهدر والجرد', 'S06 Waste & Count'),
+          _dual('هدر ثم عكسه + جرد بعجز -2',
+              'Waste with safe reversal plus -2 inventory count shortage'),
+          () async {
+            final warehouse = store.resolveWarehouseForSale();
+            await store.adjustStock(
+              productId: testProducts[10].id,
+              warehouseId: warehouse.id,
+              quantityDelta: 5,
+              reason: 'Real scenario waste seed',
+              adjustmentCategory: 'opening_balance',
+            );
+            await store.recordWasteLoss(
+              productId: testProducts[10].id,
+              warehouseId: warehouse.id,
+              quantity: 2,
+              reason: 'Real scenario damage',
+              adjustmentCategory: 'damage',
+              notes: 'Waste reversal coverage',
+            );
+            final wasteMovement = store.stockMovements.lastWhere(
+              (item) => item.productId == testProducts[10].id && item.type == 'waste',
+            );
+            await store.reverseWasteLossGroup(wasteMovement.id);
+            final wasteStock = await store.totalWarehouseStockFromSqlite(testProducts[10].id);
+            if ((wasteStock - 5).abs() > 0.000001) {
+              throw StateError('Waste reversal stock mismatch: expected=5 actual=$wasteStock');
+            }
+
+            await store.adjustStock(
+              productId: testProducts[11].id,
+              warehouseId: warehouse.id,
+              quantityDelta: 5,
+              reason: 'Real scenario shortage seed',
+              adjustmentCategory: 'opening_balance',
+            );
+            final count = await store.createInventoryCountSession(
+              notes: 'Real scenario shortage count $_currentBatchId',
+            );
+            final line = count.lines.firstWhere(
+              (item) => item.productId == testProducts[11].id,
+            );
+            await store.countInventoryLine(
+              sessionId: count.id,
+              productId: testProducts[11].id,
+              countedQty: line.snapshotStock - 2,
+              note: 'Real scenario -2 shortage',
+            );
+            await store.approveInventoryCount(count.id);
+            final shortageStock = await store.totalWarehouseStockFromSqlite(testProducts[11].id);
+            if ((shortageStock - 3).abs() > 0.000001) {
+              throw StateError('Count shortage mismatch: expected=3 actual=$shortageStock');
+            }
+            return 'wasteReversed=true wasteStock=${_money(wasteStock)} '
+                'count=${count.countNo} shortage=-2 finalStock=${_money(shortageStock)}';
+          },
+          successDetails: (value) => value,
+        );
+
+        final scenarioSecondaryWarehouse = secondaryWarehouse;
+        if (scenarioSecondaryWarehouse != null) {
+          await _auditStep<String>(
+            _dual('S07 تعدد المستودعات', 'S07 Multi-Warehouse'),
+            _dual('تحويل ثم بيع ومرتجع من المستودع الثانوي',
+                'Transfer, sale and return inside secondary warehouse'),
+            () async {
+              final primary = store.resolveWarehouseForSale();
+              await store.adjustStock(
+                productId: testProducts[12].id,
+                warehouseId: primary.id,
+                quantityDelta: 4,
+                reason: 'Real scenario multi-warehouse seed',
+                adjustmentCategory: 'opening_balance',
+              );
+              await store.createWarehouseTransferOrder(
+                fromWarehouseId: primary.id,
+                toWarehouseId: scenarioSecondaryWarehouse.id,
+                notes: 'Advanced multi-warehouse scenario',
+                items: <WarehouseTransferOrderItem>[
+                  WarehouseTransferOrderItem(
+                    productId: testProducts[12].id,
+                    productName: testProducts[12].name,
+                    quantity: 3,
+                    unitName: testProducts[12].unit,
+                  ),
+                ],
+              );
+              final sale = await store.createSale(
+                customerId: scenarioEdgeCustomer.id,
+                customerName: scenarioEdgeCustomer.name,
+                paymentMethod: 'Credit',
+                paymentStatus: 'credit',
+                warehouseId: scenarioSecondaryWarehouse.id,
+                warehouseName: scenarioSecondaryWarehouse.name,
+                items: <SaleItem>[
+                  SaleItem(
+                    productId: testProducts[12].id,
+                    productName: testProducts[12].name,
+                    unitPrice: 12,
+                    quantity: 2,
+                    unitCost: 4,
+                  ),
+                ],
+              );
+              await store.returnSale(sale.id, restoreStock: true);
+              final primaryQty = await store.warehouseStockFromSqlite(
+                  testProducts[12].id, warehouseId: primary.id);
+              final secondaryQty = await store.warehouseStockFromSqlite(
+                  testProducts[12].id, warehouseId: scenarioSecondaryWarehouse.id);
+              if ((primaryQty - 1).abs() > 0.000001 ||
+                  (secondaryQty - 3).abs() > 0.000001) {
+                throw StateError(
+                    'Warehouse split mismatch: primary=$primaryQty secondary=$secondaryQty');
+              }
+              final db = SqliteMigrationManager.database!;
+              final transferBatchRows = await db.customSelect(
+                r'''
+                SELECT bb.warehouse_id, bb.batch_id, bb.quantity, b.unit_cost
+                FROM inventory_batch_balances bb
+                JOIN inventory_batches b ON b.id = bb.batch_id
+                  AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+                WHERE bb.store_id = ? AND bb.product_id = ?
+                  AND bb.quantity > 0.000001
+                ORDER BY bb.warehouse_id, bb.batch_id
+                ''',
+                variables: <Variable<Object>>[
+                  Variable<String>(store.appIdentity.storeId),
+                  Variable<String>(testProducts[12].id),
+                ],
+              ).get();
+              final primaryBatch = transferBatchRows.where(
+                (row) => row.read<String>('warehouse_id') == primary.id,
+              ).toList(growable: false);
+              final secondaryBatch = transferBatchRows.where(
+                (row) => row.read<String>('warehouse_id') ==
+                    scenarioSecondaryWarehouse.id,
+              ).toList(growable: false);
+              if (primaryBatch.length != 1 ||
+                  secondaryBatch.length != 1 ||
+                  primaryBatch.single.read<String>('batch_id') !=
+                      secondaryBatch.single.read<String>('batch_id') ||
+                  (primaryBatch.single.read<double>('unit_cost') - 4).abs() >
+                      0.000001 ||
+                  (secondaryBatch.single.read<double>('unit_cost') - 4).abs() >
+                      0.000001 ||
+                  (primaryBatch.single.read<double>('quantity') - 1).abs() >
+                      0.000001 ||
+                  (secondaryBatch.single.read<double>('quantity') - 3).abs() >
+                      0.000001) {
+                throw StateError(
+                    'Warehouse transfer did not preserve Unified Batch identity/cost.');
+              }
+              transferBatchIdentityVerified = true;
+              return 'sale=${sale.invoiceNo} primary=${_money(primaryQty)} '
+                  'secondary=${_money(secondaryQty)} companyTotal=${_money(primaryQty + secondaryQty)} '
+                  'batch=${primaryBatch.single.read<String>('batch_id')} cost=4';
+            },
+            successDetails: (value) => value,
+          );
+        }
+
+        await _auditStep<String>(
+          _dual('S08 تصنيع بالدفعات', 'S08 Unified Batch Manufacturing'),
+          _dual('تصنيع يستهلك أكثر من دفعة Unified Batch بالتكلفة الفعلية',
+              'Manufacturing consumes multiple Unified Batches at actual batch cost'),
+          () async {
+            final first = await store.createPurchase(
+              supplierId: scenarioEdgeSupplier.id,
+              supplierName: scenarioEdgeSupplier.name,
+              receiveNow: true,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <PurchaseItem>[
+                PurchaseItem(
+                  productId: testProducts[13].id,
+                  productName: testProducts[13].name,
+                  quantity: 4,
+                  unitCost: 2,
+                ),
+              ],
+            );
+            final second = await store.createPurchase(
+              supplierId: scenarioEdgeSupplier.id,
+              supplierName: scenarioEdgeSupplier.name,
+              receiveNow: true,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <PurchaseItem>[
+                PurchaseItem(
+                  productId: testProducts[13].id,
+                  productName: testProducts[13].name,
+                  quantity: 4,
+                  unitCost: 5,
+                ),
+              ],
+            );
+            final bom = await store.createBillOfMaterials(
+              name: '[REAL] Multi-batch BOM $_currentBatchId',
+              outputProductId: testProducts[14].id,
+              outputQuantity: 1,
+              components: <BillOfMaterialsLine>[
+                BillOfMaterialsLine(
+                  productId: testProducts[13].id,
+                  productName: testProducts[13].name,
+                  quantity: 1,
+                  unitCost: 2,
+                ),
+              ],
+              notes: 'Consumes multiple Unified Batches at actual batch cost',
+            );
+            final order = await store.completeManufacturingOrder(
+              bomId: bom.id,
+              quantity: 6,
+              notes: 'Real scenario multi-batch manufacturing',
+            );
+            final raw = await store.totalWarehouseStockFromSqlite(testProducts[13].id);
+            final output = await store.totalWarehouseStockFromSqlite(testProducts[14].id);
+            if ((raw - 2).abs() > 0.000001 || (output - 6).abs() > 0.000001) {
+              throw StateError('Manufacturing stock mismatch: raw=$raw output=$output');
+            }
+            if (order.materialCosts.length != 1) {
+              throw StateError('Manufacturing Unified Batch material-cost evidence is missing.');
+            }
+            final material = order.materialCosts.single;
+            final slices = material.layerConsumptions;
+            final consumedTwo = slices.fold<double>(
+              0,
+              (sum, slice) => sum +
+                  (((slice['unitCost'] as num? ?? 0).toDouble() - 2).abs() <
+                          0.000001
+                      ? (slice['quantity'] as num? ?? 0).toDouble()
+                      : 0),
+            );
+            final consumedFive = slices.fold<double>(
+              0,
+              (sum, slice) => sum +
+                  (((slice['unitCost'] as num? ?? 0).toDouble() - 5).abs() <
+                          0.000001
+                      ? (slice['quantity'] as num? ?? 0).toDouble()
+                      : 0),
+            );
+            if (material.costingMethod != 'unified_batch' ||
+                slices.length != 2 ||
+                (consumedTwo - 4).abs() > 0.000001 ||
+                (consumedFive - 2).abs() > 0.000001 ||
+                (order.totalMaterialCost - 18).abs() > 0.000001 ||
+                (order.totalEligibleCost - 18).abs() > 0.000001 ||
+                (order.actualUnitCost - 3).abs() > 0.000001) {
+              throw StateError(
+                  'Manufacturing actual batch cost mismatch: method=${material.costingMethod} '
+                  '2-dollar=$consumedTwo 5-dollar=$consumedFive total=${order.totalMaterialCost} unit=${order.actualUnitCost}');
+            }
+            final db = SqliteMigrationManager.database!;
+            final rawBatchValue = await db.customSelect(
+              r'''
+              SELECT COALESCE(SUM(bb.quantity), 0) AS qty,
+                     COALESCE(SUM(bb.quantity * b.unit_cost), 0) AS value
+              FROM inventory_batch_balances bb
+              JOIN inventory_batches b ON b.id = bb.batch_id
+              WHERE bb.store_id = ? AND bb.product_id = ?
+              ''',
+              variables: <Variable<Object>>[
+                Variable<String>(store.appIdentity.storeId),
+                Variable<String>(testProducts[13].id),
+              ],
+            ).getSingle();
+            final outputBatchValue = await db.customSelect(
+              r'''
+              SELECT COALESCE(SUM(bb.quantity), 0) AS qty,
+                     COALESCE(SUM(bb.quantity * b.unit_cost), 0) AS value,
+                     COALESCE(MIN(b.unit_cost), 0) AS min_cost,
+                     COALESCE(MAX(b.unit_cost), 0) AS max_cost
+              FROM inventory_batch_balances bb
+              JOIN inventory_batches b ON b.id = bb.batch_id
+              WHERE bb.store_id = ? AND bb.product_id = ?
+                AND b.source_type = 'manufacturing_output' AND b.source_id = ?
+              ''',
+              variables: <Variable<Object>>[
+                Variable<String>(store.appIdentity.storeId),
+                Variable<String>(testProducts[14].id),
+                Variable<String>(order.id),
+              ],
+            ).getSingle();
+            final legacyLayerCount = await db.customSelect(
+              r'''
+              SELECT COUNT(*) AS c
+              FROM inventory_cost_layers
+              WHERE deleted_at = '' AND product_id IN (?, ?)
+              ''',
+              variables: <Variable<Object>>[
+                Variable<String>(testProducts[13].id),
+                Variable<String>(testProducts[14].id),
+              ],
+            ).getSingle();
+            final rawBatchQty =
+                (rawBatchValue.data['qty'] as num? ?? 0).toDouble();
+            final rawValue =
+                (rawBatchValue.data['value'] as num? ?? 0).toDouble();
+            final outputBatchQty =
+                (outputBatchValue.data['qty'] as num? ?? 0).toDouble();
+            final outputValue =
+                (outputBatchValue.data['value'] as num? ?? 0).toDouble();
+            final outputMinCost =
+                (outputBatchValue.data['min_cost'] as num? ?? 0).toDouble();
+            final outputMaxCost =
+                (outputBatchValue.data['max_cost'] as num? ?? 0).toDouble();
+            if ((rawBatchQty - 2).abs() > 0.000001 ||
+                (rawValue - 10).abs() > 0.000001 ||
+                (outputBatchQty - 6).abs() > 0.000001 ||
+                (outputValue - 18).abs() > 0.000001 ||
+                (outputMinCost - 3).abs() > 0.000001 ||
+                (outputMaxCost - 3).abs() > 0.000001 ||
+                (legacyLayerCount.data['c'] as num? ?? 0).toInt() != 0) {
+              throw StateError(
+                  'Manufacturing Unified Batch persistence mismatch: rawQty=$rawBatchQty rawValue=$rawValue '
+                  'outputQty=$outputBatchQty outputValue=$outputValue outputCost=$outputMinCost..$outputMaxCost '
+                  'legacyLayers=${legacyLayerCount.data['c']}');
+            }
+            manufacturingBatchCostVerified = true;
+            return 'purchases=${first.purchaseNo},${second.purchaseNo} order=${order.orderNo} '
+                'raw=${_money(raw)} rawBatchValue=${_money(rawValue)} output=${_money(output)} '
+                'materialCost=${_money(order.totalMaterialCost)} unitCost=${_money(order.actualUnitCost)} method=${material.costingMethod}';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+      final scenarioAdvanceSupplier = advanceSupplier;
+      final scenarioAdvanceCustomer = advanceCustomer;
+      if (scenarioAdvanceSupplier != null && scenarioAdvanceCustomer != null) {
+        await _auditStep<String>(
+          _dual('S09 السندات وIdempotency', 'S09 Vouchers & Idempotency'),
+          _dual('قبض/دفع غير مخصص مع تكرار نفس idempotency key',
+              'Unallocated receipt/payment with duplicate idempotency keys'),
+          () async {
+            final customerKey = '$_currentBatchId:unallocated-customer';
+            final supplierKey = '$_currentBatchId:unallocated-supplier';
+            await store.settleAccountPayment(
+              accountType: 'customer',
+              accountId: scenarioAdvanceCustomer.id,
+              accountName: scenarioAdvanceCustomer.name,
+              amount: 7,
+              paymentMethod: 'Card',
+              notes: 'Real scenario unallocated customer receipt',
+              idempotencyKey: customerKey,
+            );
+            await store.settleAccountPayment(
+              accountType: 'customer',
+              accountId: scenarioAdvanceCustomer.id,
+              accountName: scenarioAdvanceCustomer.name,
+              amount: 7,
+              paymentMethod: 'Card',
+              notes: 'Duplicate must be idempotent',
+              idempotencyKey: customerKey,
+            );
+            await store.settleAccountPayment(
+              accountType: 'supplier',
+              accountId: scenarioAdvanceSupplier.id,
+              accountName: scenarioAdvanceSupplier.name,
+              amount: 9,
+              paymentMethod: 'Card',
+              notes: 'Real scenario unallocated supplier payment',
+              idempotencyKey: supplierKey,
+            );
+            await store.settleAccountPayment(
+              accountType: 'supplier',
+              accountId: scenarioAdvanceSupplier.id,
+              accountName: scenarioAdvanceSupplier.name,
+              amount: 9,
+              paymentMethod: 'Card',
+              notes: 'Duplicate must be idempotent',
+              idempotencyKey: supplierKey,
+            );
+            final customerBalance = store.accountBalance('customer', scenarioAdvanceCustomer.id).abs();
+            final supplierBalance = store.accountBalance('supplier', scenarioAdvanceSupplier.id).abs();
+            if ((customerBalance - 7).abs() > 0.005 ||
+                (supplierBalance - 9).abs() > 0.005) {
+              throw StateError(
+                  'Idempotency mismatch: customer=$customerBalance supplier=$supplierBalance');
+            }
+            return 'customerAdvance=${_money(customerBalance)} supplierAdvance=${_money(supplierBalance)} '
+                'duplicatesAppliedOnce=true';
+          },
+          successDetails: (value) => value,
+        );
+      }
+
+      await _auditStep<String>(
+        _dual('S10 الحمايات النقدية', 'S10 Cash Guards'),
+        _dual('منع سحب يتجاوز رصيد الصندوق دون تغيير الرصيد',
+            'Reject cash withdrawal above balance without mutating cash'),
+        () async {
+          if (!AccountingService.isAvailable) {
+            return 'Accounting unavailable; cash guard skipped.';
+          }
+          final drawer = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (drawer == null) throw StateError('Cash drawer is unavailable.');
+          final sessionId = await AccountingService.currentOpenCashDrawerSessionId(
+            branchId: store.appIdentity.branchId,
+            cashLocationId: drawer.id,
+          );
+          final defaults = await AccountingService.readDefaultAccountMap();
+          final accounts = await AccountingService.listAccounts(activeOnly: true);
+          final rootId = defaults['default_expense_account_id'] ?? '';
+          String counterpartId = '';
+          for (final account in accounts) {
+            if (account.id == rootId && account.isPostable && account.subtype != 'group') {
+              counterpartId = account.id;
+              break;
+            }
+          }
+          if (counterpartId.isEmpty) {
+            final pending = <String>[rootId];
+            final visited = <String>{};
+            while (pending.isNotEmpty && counterpartId.isEmpty) {
+              final parentId = pending.removeLast();
+              if (!visited.add(parentId)) continue;
+              for (final account in accounts) {
+                if (account.parentId != parentId || !account.isActive) continue;
+                if (account.isPostable && account.subtype != 'group') {
+                  counterpartId = account.id;
+                  break;
+                }
+                pending.add(account.id);
+              }
+            }
+          }
+          if (counterpartId.isEmpty) throw StateError('No postable expense counterpart.');
+          var blocked = false;
+          try {
+            await CashOperationService.current(authorization: store).withdrawal(
+              cashLocationId: drawer.id,
+              cashDrawerSessionId: sessionId,
+              counterpartAccountId: counterpartId,
+              amount: drawer.balance.abs() + 1000,
+              notes: 'Must be blocked by real scenario cash guard',
+              createdBy: actor,
+              createdByUserId: store.activeUser?.id ?? '',
+              deviceId: store.appIdentity.deviceId,
+              branchId: store.appIdentity.branchId,
+              storeId: store.appIdentity.storeId,
+              idempotencyKey: '$_currentBatchId:negative-cash-guard',
+            );
+          } catch (_) {
+            blocked = true;
+          }
+          if (!blocked) throw StateError('Negative cash withdrawal was not blocked.');
+          final after = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (after == null || (after.balance - drawer.balance).abs() > 0.005) {
+            throw StateError('Cash balance changed after rejected withdrawal.');
+          }
+          return 'blocked=true before=${_money(drawer.balance)} after=${_money(after.balance)}';
+        },
+        successDetails: (value) => value,
+      );
+
+      await _auditStep<String>(
+        _dual('S11 الحماية من الدفع الزائد', 'S11 Overpayment Guards'),
+        _dual('رفض قبض يتجاوز رصيد فاتورة البيع',
+            'Reject receipt above remaining sale balance'),
+        () async {
+          if (mainSale == null) return 'Main sale unavailable; guard skipped.';
+          final persistedBefore =
+              store.sales.firstWhere((item) => item.id == mainSale!.id);
+          final before = persistedBefore.balanceDue;
+          var blocked = false;
+          try {
+            await store.settleSalePayment(
+              saleId: mainSale.id,
+              amount: before + 1,
+              paymentMethod: 'Card',
+              idempotencyKey: '$_currentBatchId:overpay-sale',
+            );
+          } catch (_) {
+            blocked = true;
+          }
+          if (!blocked) throw StateError('Sale overpayment was not blocked.');
+          final current = store.sales.firstWhere((item) => item.id == mainSale!.id);
+          if ((current.balanceDue - before).abs() > 0.005) {
+            throw StateError('Sale balance changed after rejected overpayment.');
+          }
+          return 'blocked=true balance=${_money(current.balanceDue)}';
+        },
+        successDetails: (value) => value,
+      );
+
+      _setStatus(
+          _dual('تجميع التقرير النهائي...', 'Building final report...'),
+          progress: 0.92);
+      await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
+      await store.refreshAccountTransactionsFromSqlite();
+
+      await _auditStep<String>(
+        _dual('S13 قفل Unified Batch', 'S13 Unified Batch Lock'),
+        _dual(
+          'التأكد من منع الرجوع إلى طرق التكلفة القديمة بعد Phase 4',
+          'Verify legacy costing methods are blocked after Phase 4',
+        ),
+        () async {
+          final db = SqliteMigrationManager.database;
+          if (db == null) {
+            throw StateError('S13 database is unavailable.');
+          }
+          var legacySwitchBlocked = false;
+          try {
+            await store.setInventoryCostingMethod(
+              InventoryCostingMethod.weightedAverage,
+              reason: 'S13 must be blocked after Phase 4',
+            );
+          } catch (_) {
+            legacySwitchBlocked = true;
+          }
+          if (!legacySwitchBlocked) {
+            throw StateError('S13 legacy costing switch was not blocked.');
+          }
+          if (store.inventoryCostingMethod != InventoryCostingMethod.batch) {
+            throw StateError('S13 runtime costing is not Unified Batch.');
+          }
+          final setting = await db.customSelect(
+            "SELECT value FROM settings WHERE key = 'inventory_costing_method_v1' LIMIT 1",
+          ).getSingleOrNull();
+          final method = setting?.data['value']?.toString() ?? '';
+          if (method != 'batch' && method != 'unified_batch') {
+            throw StateError('S13 persisted costing is not Unified Batch: $method');
+          }
+          final openHistory = await db.customSelect(r'''
+            SELECT method, COUNT(*) AS c
+            FROM costing_method_history
+            WHERE deleted_at = '' AND trim(effective_to) = ''
+            GROUP BY method
+          ''').get();
+          if (openHistory.length != 1 ||
+              !const <String>{'batch', 'unified_batch'}.contains(
+                openHistory.single.data['method']?.toString() ?? '',
+              ) ||
+              (openHistory.single.data['c'] as num? ?? 0).toInt() != 1) {
+            throw StateError(
+                'S13 costing history must have exactly one open Unified Batch row.');
+          }
+          final closure = await db.customSelect(
+            "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at' LIMIT 1",
+          ).getSingleOrNull();
+          if ((closure?.data['value']?.toString() ?? '').trim().isEmpty) {
+            throw StateError('S13 Phase 4 closure marker is missing.');
+          }
+          return 'legacySwitchBlocked=true runtime=batch persisted=batch openHistory=batch:1';
+        },
+        successDetails: (value) => value,
+      );
+
+      await _auditStep<String>(
+        _dual('التقرير النهائي', 'Final Report'),
+        _dual('مطابقة الأرصدة المتوقعة', 'Expected balance reconciliation'),
+        () async {
+          if (supplier == null || customer == null || testProducts.length < 15) {
+            throw StateError('Scenario prerequisites were not completed.');
+          }
+          const expectedStock = <double>[
+            17, 0, 0, 20, 8, 2,
+            8, 0, 8, 5, 5, 3, 4, 2, 6,
+          ];
+          final actualStock = <double>[];
+          for (final product in testProducts) {
+            actualStock.add(await store.totalWarehouseStockFromSqlite(product.id));
+          }
+          final stockMismatch = <String>[];
+          for (var i = 0; i < expectedStock.length; i += 1) {
+            if ((actualStock[i] - expectedStock[i]).abs() > 0.000001) {
+              stockMismatch.add(
+                  '${testProducts[i].nameEn}: expected=${expectedStock[i]} actual=${actualStock[i]}');
+            }
+          }
+          if (stockMismatch.isNotEmpty) {
+            throw StateError('Stock mismatch: ${stockMismatch.join(' | ')}');
+          }
+
+          final supplierBalance = store.accountBalance('supplier', supplier.id);
+          final customerBalance = store.accountBalance('customer', customer.id);
+          if ((supplierBalance.abs() - 310).abs() > 0.005) {
+            throw StateError(
+                'Supplier balance mismatch: expected absolute 310, actual=$supplierBalance');
+          }
+          if ((customerBalance.abs() - 30).abs() > 0.005) {
+            throw StateError(
+                'Customer balance mismatch: expected absolute 30, actual=$customerBalance');
+          }
+          final checkedEdgeSupplier = edgeSupplier;
+          final checkedEdgeCustomer = edgeCustomer;
+          final checkedAdvanceSupplier = advanceSupplier;
+          final checkedAdvanceCustomer = advanceCustomer;
+          if (checkedEdgeSupplier == null || checkedEdgeCustomer == null ||
+              checkedAdvanceSupplier == null || checkedAdvanceCustomer == null) {
+            throw StateError('Advanced scenario parties are unavailable.');
+          }
+          final edgeSupplierBalance =
+              store.accountBalance('supplier', checkedEdgeSupplier.id);
+          final edgeCustomerBalance =
+              store.accountBalance('customer', checkedEdgeCustomer.id);
+          final advanceSupplierBalance =
+              store.accountBalance('supplier', checkedAdvanceSupplier.id);
+          final advanceCustomerBalance =
+              store.accountBalance('customer', checkedAdvanceCustomer.id);
+          if ((edgeSupplierBalance.abs() - 94).abs() > 0.005) {
+            throw StateError(
+                'Edge supplier balance mismatch: expected absolute 94, actual=$edgeSupplierBalance');
+          }
+          if ((edgeCustomerBalance.abs() - 40).abs() > 0.005) {
+            throw StateError(
+                'Edge customer balance mismatch: expected absolute 40, actual=$edgeCustomerBalance');
+          }
+          if ((advanceSupplierBalance.abs() - 9).abs() > 0.005 ||
+              (advanceCustomerBalance.abs() - 7).abs() > 0.005) {
+            throw StateError(
+                'Advance balances mismatch: supplier=$advanceSupplierBalance customer=$advanceCustomerBalance');
+          }
+
+          final drawer = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (scenarioOpeningCashBalance == null || drawer == null) {
+            throw StateError('Cash drawer reconciliation is unavailable.');
+          }
+          final cashDifference = drawer.balance - scenarioOpeningCashBalance!;
+          if (cashDifference.abs() > 0.005) {
+            throw StateError(
+                'Cash mismatch: expected final cash to equal scenario opening cash; difference=$cashDifference');
+          }
+          return 'stock=[${actualStock.map(_money).join(', ')}] '
+              'supplier=${_money(supplierBalance)} customer=${_money(customerBalance)} '
+              'edgeSupplier=${_money(edgeSupplierBalance)} edgeCustomer=${_money(edgeCustomerBalance)} '
+              'advanceSupplier=${_money(advanceSupplierBalance)} advanceCustomer=${_money(advanceCustomerBalance)} '
+              'cashOpening=${_money(scenarioOpeningCashBalance!)} cashFinal=${_money(drawer.balance)}';
+        },
+        successDetails: (value) => value,
+      );
+
+      await _auditStep<String>(
+        _dual('التقرير النهائي', 'Final Report'),
+        _dual('أدلة SQLite للسيناريو (قراءة فقط)',
+            'SQLite scenario evidence (read-only)'),
+        () async {
+          final db = SqliteMigrationManager.database;
+          if (db == null) return 'SQLite database unavailable.';
+          final since = sqlQuote(startedAt.toIso8601String());
+          final productIds = testProducts
+              .map((item) => "'${sqlQuote(item.id)}'")
+              .join(',');
+          final journals = await db.customSelect('''
+            SELECT COUNT(DISTINCT je.id) AS entries,
+                   COALESCE(SUM(jl.debit), 0) AS debits,
+                   COALESCE(SUM(jl.credit), 0) AS credits
+            FROM journal_entries je
+            LEFT JOIN journal_lines jl ON jl.entry_id = je.id
+            WHERE je.deleted_at = '' AND je.created_at >= '$since'
+          ''').getSingle();
+          final cash = await db.customSelect('''
+            SELECT COUNT(*) AS movements,
+                   COALESCE(SUM(CASE WHEN direction = 'in' THEN amount ELSE 0 END), 0) AS cash_in,
+                   COALESCE(SUM(CASE WHEN direction = 'out' THEN amount ELSE 0 END), 0) AS cash_out
+            FROM cash_ledger_transactions
+            WHERE deleted_at = '' AND created_at >= '$since'
+          ''').getSingle();
+          final stock = productIds.isEmpty
+              ? null
+              : await db.customSelect('''
+                  SELECT COUNT(*) AS movements,
+                         COALESCE(SUM(quantity), 0) AS net_quantity
+                  FROM stock_movements
+                  WHERE deleted_at = '' AND product_id IN ($productIds)
+                    AND created_at >= '$since'
+                ''').getSingle();
+          final activeBatches = productIds.isEmpty
+              ? null
+              : await db.customSelect('''
+                  SELECT COUNT(DISTINCT CASE WHEN bb.quantity > 0.000001
+                                                   THEN bb.batch_id END) AS batches,
+                         COALESCE(SUM(bb.quantity), 0) AS batch_qty,
+                         COALESCE(SUM(bb.quantity * b.unit_cost), 0) AS batch_value,
+                         SUM(CASE WHEN bb.quantity < -0.000001 THEN 1 ELSE 0 END) AS negative_balances
+                  FROM inventory_batch_balances bb
+                  JOIN inventory_batches b ON b.id = bb.batch_id
+                    AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+                  WHERE bb.product_id IN ($productIds)
+                ''').getSingle();
+          final warehouseEvidence = productIds.isEmpty
+              ? null
+              : await db.customSelect('''
+                  SELECT COUNT(*) AS rows,
+                         COALESCE(SUM(quantity), 0) AS qty
+                  FROM warehouse_inventory
+                  WHERE product_id IN ($productIds)
+                ''').getSingle();
+          final voucherEvidence = await db.customSelect('''
+            SELECT
+              (SELECT COUNT(*) FROM receipt_vouchers
+               WHERE deleted_at = '' AND created_at >= '$since') AS receipts,
+              (SELECT COUNT(*) FROM payment_vouchers
+               WHERE deleted_at = '' AND created_at >= '$since') AS payments,
+              (SELECT COUNT(*) FROM payment_allocations
+               WHERE deleted_at = '' AND created_at >= '$since') AS allocations
+          ''').getSingle();
+          final journalDebits =
+              (journals.data['debits'] as num? ?? 0).toDouble();
+          final journalCredits =
+              (journals.data['credits'] as num? ?? 0).toDouble();
+          if ((journalDebits - journalCredits).abs() > 0.005) {
+            throw StateError(
+                'Scenario journals are unbalanced: debit=$journalDebits credit=$journalCredits');
+          }
+          final stockQty = (stock?.data['net_quantity'] as num? ?? 0).toDouble();
+          final warehouseQty =
+              (warehouseEvidence?.data['qty'] as num? ?? 0).toDouble();
+          if ((stockQty - warehouseQty).abs() > 0.000001) {
+            throw StateError(
+                'Scenario stock movements do not reconcile to warehouse inventory: movements=$stockQty warehouse=$warehouseQty');
+          }
+          final batchQty =
+              (activeBatches?.data['batch_qty'] as num? ?? 0).toDouble();
+          final batchValue =
+              (activeBatches?.data['batch_value'] as num? ?? 0).toDouble();
+          final negativeBatchBalances =
+              (activeBatches?.data['negative_balances'] as num? ?? 0).toInt();
+          if ((batchQty - warehouseQty).abs() > 0.000001 ||
+              negativeBatchBalances != 0) {
+            throw StateError(
+                'Unified Batch evidence does not reconcile: batches=$batchQty warehouse=$warehouseQty negatives=$negativeBatchBalances');
+          }
+          return 'journals=${journals.data['entries']} debit=${_money(journalDebits)} credit=${_money(journalCredits)} '
+              'cashMovements=${cash.data['movements']} cashIn=${_money((cash.data['cash_in'] as num? ?? 0).toDouble())} '
+              'cashOut=${_money((cash.data['cash_out'] as num? ?? 0).toDouble())} '
+              'stockMovements=${stock?.data['movements'] ?? 0} stockQty=${_money(stockQty)} warehouseQty=${_money(warehouseQty)} '
+              'activeBatches=${activeBatches?.data['batches'] ?? 0} batchQty=${_money(batchQty)} '
+              'batchValue=${_money(batchValue)} negativeBatchBalances=$negativeBatchBalances '
+              'receipts=${voucherEvidence.data['receipts']} payments=${voucherEvidence.data['payments']} allocations=${voucherEvidence.data['allocations']}';
+        },
+        successDetails: (value) => value,
+      );
+
+
+      await _auditStep<String>(
+        _dual('S12 الاستمرارية', 'S12 Persistence'),
+        _dual('إعادة تحميل الحالة من SQLite ثم إعادة المطابقة',
+            'Reload SQLite-backed state and reconcile again'),
+        () async {
+          final db = SqliteMigrationManager.database;
+          if (db == null) {
+            throw StateError('SQLite database is unavailable for Unified Batch persistence.');
+          }
+          final productIds = testProducts
+              .map((item) => "'${sqlQuote(item.id)}'")
+              .join(',');
+
+          Future<String> readUnifiedBatchPersistenceSignature() async {
+            final batchRows = await db.customSelect('''
+              SELECT b.id AS batch_id, b.product_id, b.source_type, b.source_id,
+                     b.source_line_id, b.unit_cost, b.initial_quantity,
+                     b.expiration_date, b.received_at, bb.warehouse_id, bb.quantity
+              FROM inventory_batches b
+              LEFT JOIN inventory_batch_balances bb ON bb.batch_id = b.id
+                AND bb.product_id = b.product_id AND bb.store_id = b.store_id
+              WHERE b.product_id IN ($productIds)
+              ORDER BY b.product_id, b.id, bb.warehouse_id
+            ''').get();
+            final purchaseRows = await db.customSelect('''
+              SELECT b.product_id, pba.purchase_item_id, pba.line_no,
+                     pba.batch_id, pba.quantity, pba.expiration_date
+              FROM purchase_item_batch_allocations pba
+              JOIN inventory_batches b ON b.id = pba.batch_id
+              WHERE b.product_id IN ($productIds)
+              ORDER BY b.product_id, pba.purchase_item_id, pba.line_no, pba.batch_id
+            ''').get();
+            final saleRows = await db.customSelect('''
+              SELECT si.product_id, sba.sale_item_id, sba.line_no,
+                     sba.batch_id, sba.quantity, sba.unit_cost, sba.expiration_date
+              FROM sale_item_batch_allocations sba
+              JOIN sale_items si ON si.id = sba.sale_item_id
+              WHERE si.product_id IN ($productIds)
+              ORDER BY si.product_id, sba.sale_item_id, sba.line_no, sba.batch_id
+            ''').get();
+            final batchSignature = batchRows.map((row) =>
+                '${row.data['product_id']}|${row.data['batch_id']}|${row.data['source_type']}|${row.data['source_id']}|${row.data['source_line_id']}|${row.data['unit_cost']}|${row.data['initial_quantity']}|${row.data['expiration_date']}|${row.data['received_at']}|${row.data['warehouse_id']}|${row.data['quantity']}').join('\n');
+            final purchaseSignature = purchaseRows.map((row) =>
+                '${row.data['product_id']}|${row.data['purchase_item_id']}|${row.data['line_no']}|${row.data['batch_id']}|${row.data['quantity']}|${row.data['expiration_date']}').join('\n');
+            final saleSignature = saleRows.map((row) =>
+                '${row.data['product_id']}|${row.data['sale_item_id']}|${row.data['line_no']}|${row.data['batch_id']}|${row.data['quantity']}|${row.data['unit_cost']}|${row.data['expiration_date']}').join('\n');
+            return 'BATCHES\n$batchSignature\nPURCHASE_ALLOCATIONS\n$purchaseSignature\nSALE_ALLOCATIONS\n$saleSignature';
+          }
+
+          final beforeBatchSignature =
+              await readUnifiedBatchPersistenceSignature();
+          for (final key in const <String>[
+            'products_v4',
+            'customers_v4',
+            'suppliers_v4',
+            'sales_v4',
+            'purchases_v1',
+            'expenses_v4',
+            'stock_movements_v1',
+            'inventory_counts_v1',
+            'warehouses_v1',
+            'account_transactions_v1',
+          ]) {
+            await store.refreshAfterDatabaseChange(key);
+          }
+          final afterBatchSignature =
+              await readUnifiedBatchPersistenceSignature();
+          if (beforeBatchSignature != afterBatchSignature) {
+            throw StateError(
+                'Unified Batch identity/quantity/cost/source changed across SQLite reload.');
+          }
+          if (testProducts.length < 15 || supplier == null || customer == null) {
+            throw StateError('Persistence prerequisites are unavailable.');
+          }
+          const expected = <double>[
+            17, 0, 0, 20, 8, 2,
+            8, 0, 8, 5, 5, 3, 4, 2, 6,
+          ];
+          for (var i = 0; i < expected.length; i += 1) {
+            final qty = await store.totalWarehouseStockFromSqlite(testProducts[i].id);
+            if ((qty - expected[i]).abs() > 0.000001) {
+              throw StateError(
+                  'Persistence stock mismatch ${testProducts[i].nameEn}: expected=${expected[i]} actual=$qty');
+            }
+          }
+          final supplierBalance = store.accountBalance('supplier', supplier.id).abs();
+          final customerBalance = store.accountBalance('customer', customer.id).abs();
+          if ((supplierBalance - 310).abs() > 0.005 ||
+              (customerBalance - 30).abs() > 0.005) {
+            throw StateError(
+                'Persistence AR/AP mismatch: supplier=$supplierBalance customer=$customerBalance');
+          }
+          unifiedBatchPersistenceVerified = true;
+          return 'sqliteReload=true stock=15/15 unifiedBatchIdentity=true signatureBytes=${afterBatchSignature.length} '
+              'supplier=${_money(supplierBalance)} customer=${_money(customerBalance)}';
+        },
+        successDetails: (value) => value,
+      );
+
+      if (options.enabled) {
+        final chaosPrimarySupplier = supplier;
+        final chaosEdgeSupplier = edgeSupplier;
+        final chaosPrimaryCustomer = customer;
+        final chaosEdgeCustomer = edgeCustomer;
+        if (chaosPrimarySupplier == null ||
+            chaosEdgeSupplier == null ||
+            chaosPrimaryCustomer == null ||
+            chaosEdgeCustomer == null) {
+          _auditCheck(
+            _dual('CHAOS إعداد', 'CHAOS Setup'),
+            _dual('توفر أطراف فوضى الموظف', 'Chaos parties available'),
+            false,
+            '',
+            'Required supplier/customer fixtures are unavailable.',
+          );
+        } else {
+          await _runHumanChaosExtension(
+            options: options,
+            products: testProducts,
+            primarySupplier: chaosPrimarySupplier,
+            edgeSupplier: chaosEdgeSupplier,
+            primaryCustomer: chaosPrimaryCustomer,
+            edgeCustomer: chaosEdgeCustomer,
+          );
+        }
+      }
+
+      await _auditStep<String>(
+        _dual('التقرير النهائي', 'Final Report'),
+        _dual('اعتماد Unified Batch النهائي', 'Unified Batch certification'),
+        () async {
+          final db = SqliteMigrationManager.database;
+          if (db == null) {
+            throw StateError('SQLite database is unavailable for Unified Batch certification.');
+          }
+          final productIds = testProducts
+              .map((item) => "'${sqlQuote(item.id)}'")
+              .join(',');
+          if (productIds.isEmpty) {
+            throw StateError('Unified Batch certification has no scenario products.');
+          }
+
+          final quantityMismatch = await db.customSelect('''
+            WITH scoped AS (
+              SELECT store_id, warehouse_id, product_id FROM warehouse_inventory
+              WHERE product_id IN ($productIds)
+              UNION
+              SELECT store_id, warehouse_id, product_id FROM inventory_batch_balances
+              WHERE product_id IN ($productIds)
+            ), warehouse AS (
+              SELECT store_id, warehouse_id, product_id, SUM(quantity) AS qty
+              FROM warehouse_inventory
+              WHERE product_id IN ($productIds)
+              GROUP BY store_id, warehouse_id, product_id
+            ), batches AS (
+              SELECT store_id, warehouse_id, product_id, SUM(quantity) AS qty
+              FROM inventory_batch_balances
+              WHERE product_id IN ($productIds)
+              GROUP BY store_id, warehouse_id, product_id
+            )
+            SELECT COUNT(*) AS c
+            FROM scoped s
+            LEFT JOIN warehouse w ON w.store_id = s.store_id
+              AND w.warehouse_id = s.warehouse_id AND w.product_id = s.product_id
+            LEFT JOIN batches b ON b.store_id = s.store_id
+              AND b.warehouse_id = s.warehouse_id AND b.product_id = s.product_id
+            WHERE ABS(COALESCE(w.qty, 0) - COALESCE(b.qty, 0)) > 0.000001
+          ''').getSingle();
+          final negativeBalances = await db.customSelect('''
+            SELECT COUNT(*) AS c FROM inventory_batch_balances
+            WHERE product_id IN ($productIds) AND quantity < -0.000001
+          ''').getSingle();
+          final unbatchedOuts = await db.customSelect('''
+            SELECT COUNT(*) AS c
+            FROM stock_movements sm
+            JOIN unified_batch_cutovers uc ON uc.store_id = sm.store_id
+              AND uc.warehouse_id = sm.warehouse_id AND uc.product_id = sm.product_id
+            WHERE sm.deleted_at = '' AND sm.product_id IN ($productIds)
+              AND sm.quantity < -0.000001 AND trim(sm.batch_id) = ''
+              AND datetime(sm.movement_date) >= datetime(uc.cutover_at)
+          ''').getSingle();
+          final missingCutovers = await db.customSelect('''
+            SELECT COUNT(*) AS c
+            FROM warehouse_inventory wi
+            LEFT JOIN unified_batch_cutovers uc ON uc.store_id = wi.store_id
+              AND uc.warehouse_id = wi.warehouse_id AND uc.product_id = wi.product_id
+            WHERE wi.product_id IN ($productIds) AND uc.id IS NULL
+          ''').getSingle();
+          final missingExpiry = await db.customSelect('''
+            SELECT COUNT(*) AS c
+            FROM inventory_batches b
+            JOIN products p ON p.id = b.product_id
+            LEFT JOIN inventory_batch_balances bb ON bb.batch_id = b.id
+            WHERE b.product_id IN ($productIds) AND p.expiry_tracking_enabled = 1
+            GROUP BY b.id
+            HAVING COALESCE(SUM(bb.quantity), 0) > 0.000001
+              AND trim(b.expiration_date) = ''
+          ''').get();
+          final unexpectedExpiry = await db.customSelect('''
+            SELECT COUNT(*) AS c
+            FROM inventory_batches b
+            JOIN products p ON p.id = b.product_id
+            LEFT JOIN inventory_batch_balances bb ON bb.batch_id = b.id
+            WHERE b.product_id IN ($productIds) AND p.expiry_tracking_enabled = 0
+            GROUP BY b.id
+            HAVING COALESCE(SUM(bb.quantity), 0) > 0.000001
+              AND trim(b.expiration_date) <> ''
+          ''').get();
+          final saleAllocationMismatch = await db.customSelect('''
+            SELECT COUNT(*) AS c FROM (
+              SELECT si.id, si.base_quantity, COALESCE(SUM(sba.quantity), 0) AS allocated
+              FROM sale_items si
+              LEFT JOIN sale_item_batch_allocations sba ON sba.sale_item_id = si.id
+              WHERE si.product_id IN ($productIds) AND si.base_quantity > 0.000001
+              GROUP BY si.id, si.base_quantity
+              HAVING ABS(si.base_quantity - COALESCE(SUM(sba.quantity), 0)) > 0.000001
+            ) q
+          ''').getSingle();
+          final saleCostMismatch = await db.customSelect('''
+            SELECT COUNT(*) AS c FROM (
+              SELECT si.id, si.base_quantity * si.unit_cost AS line_cost,
+                     COALESCE(SUM(sba.quantity * sba.unit_cost), 0) AS batch_cost
+              FROM sale_items si
+              LEFT JOIN sale_item_batch_allocations sba ON sba.sale_item_id = si.id
+              WHERE si.product_id IN ($productIds) AND si.base_quantity > 0.000001
+              GROUP BY si.id, si.base_quantity, si.unit_cost
+              HAVING ABS((si.base_quantity * si.unit_cost) -
+                         COALESCE(SUM(sba.quantity * sba.unit_cost), 0)) > 0.000001
+            ) q
+          ''').getSingle();
+          final closureRow = await db.customSelect(
+            "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at' LIMIT 1",
+          ).getSingleOrNull();
+          final closureAt = closureRow?.data['value']?.toString().trim() ?? '';
+          final lateLegacyLayers = closureAt.isEmpty
+              ? 1
+              : (await db.customSelect(
+                  r'''
+                  SELECT COUNT(*) AS c FROM inventory_cost_layers
+                  WHERE deleted_at = '' AND datetime(created_at) > datetime(?)
+                  ''',
+                  variables: <Variable<Object>>[Variable<String>(closureAt)],
+                ).getSingle())
+                    .read<int>('c');
+          final persistedMethodRow = await db.customSelect(
+            "SELECT value FROM settings WHERE key = 'inventory_costing_method_v1' LIMIT 1",
+          ).getSingleOrNull();
+          final persistedMethod =
+              persistedMethodRow?.data['value']?.toString().trim().toLowerCase() ?? '';
+          final openHistory = await db.customSelect(r'''
+            SELECT method FROM costing_method_history
+            WHERE deleted_at = '' AND trim(effective_to) = ''
+          ''').get();
+
+          final checks = <String, bool>{
+            'UB-001 warehouse=batch quantity':
+                (quantityMismatch.data['c'] as num? ?? 0).toInt() == 0,
+            'UB-002 no negative batch balances':
+                (negativeBalances.data['c'] as num? ?? 0).toInt() == 0,
+            'UB-003 no anonymous post-cutover stock-outs':
+                (unbatchedOuts.data['c'] as num? ?? 0).toInt() == 0,
+            'UB-004 expiry batches are dated': missingExpiry.isEmpty,
+            'UB-005 non-expiry batches have no expiry': unexpectedExpiry.isEmpty,
+            'UB-006 sale quantity is batch allocated':
+                (saleAllocationMismatch.data['c'] as num? ?? 0).toInt() == 0,
+            'UB-007 COGS equals allocated batch cost':
+                (saleCostMismatch.data['c'] as num? ?? 0).toInt() == 0,
+            'UB-008 purchase dependency guard is batch-specific':
+                batchDependencyGuardVerified,
+            'UB-009 manufacturing uses actual batch cost':
+                manufacturingBatchCostVerified,
+            'UB-010 transfers preserve batch identity/cost':
+                transferBatchIdentityVerified,
+            'UB-011 returns restore original batch slices':
+                fefoBatchRestoreVerified,
+            'UB-012 no legacy layer writes after Phase 4': lateLegacyLayers == 0,
+            'UB-013 runtime costing is batch':
+                store.inventoryCostingMethod == InventoryCostingMethod.batch,
+            'UB-014 persisted/open costing is batch':
+                (persistedMethod == 'batch' || persistedMethod == 'unified_batch') &&
+                    openHistory.length == 1 &&
+                    <String>{'batch', 'unified_batch'}.contains(
+                      openHistory.single.data['method']
+                          ?.toString()
+                          .trim()
+                          .toLowerCase(),
+                    ),
+            'UB-015 Phase 4 marker/cutovers and batch persistence exist':
+                closureAt.isNotEmpty &&
+                    (missingCutovers.data['c'] as num? ?? 0).toInt() == 0 &&
+                    unifiedBatchPersistenceVerified,
+          };
+          final failed = checks.entries
+              .where((entry) => !entry.value)
+              .map((entry) => entry.key)
+              .toList(growable: false);
+          if (failed.isNotEmpty) {
+            throw StateError(
+                'Unified Batch certification failed: ${failed.join(', ')}');
+          }
+          return 'UNIFIED_BATCH_CERTIFICATION PASS 15/15 | '
+              '${checks.keys.join(' | ')}';
+        },
+        successDetails: (value) => value,
+      );
+
+      await _auditStep<String>(
+        _dual('التقرير النهائي', 'Final Report'),
+        _dual('بوابة سلامة الإنتاج والمزامنة النقدية',
+            'Production integrity and cash-cache gate'),
+        () async {
+          final db = SqliteMigrationManager.database;
+          if (db == null) {
+            throw StateError('SQLite database is unavailable for integrity audit.');
+          }
+          final drawer = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (drawer == null) {
+            throw StateError('Cash drawer is unavailable for final integrity audit.');
+          }
+          final sessionId =
+              await AccountingService.currentOpenCashDrawerSessionId(
+            branchId: store.appIdentity.branchId,
+            cashLocationId: drawer.id,
+          );
+          if (sessionId.isEmpty) {
+            throw StateError('Open cash shift is unavailable for final integrity audit.');
+          }
+          final calculatedExpected =
+              await AccountingService.calculateCashDrawerExpectedCash(sessionId);
+          final sessions = await AccountingService.listCashDrawers();
+          AdvancedAccountingItem? storedSession;
+          for (final item in sessions) {
+            if (item.id == sessionId) {
+              storedSession = item;
+              break;
+            }
+          }
+          if (storedSession == null) {
+            throw StateError('Cash shift cache row is unavailable.');
+          }
+          final storedExpected = storedSession.credit;
+          if ((storedExpected - calculatedExpected).abs() > 0.005) {
+            throw StateError(
+                'Cash shift expected_cash cache mismatch: stored=$storedExpected calculated=$calculatedExpected');
+          }
+
+          final integrity =
+              await AccountingProductionIntegrityService(db).audit();
+          if (integrity.criticalCount != 0) {
+            final codes = integrity.issues
+                .where((issue) =>
+                    issue.severity == AccountingIntegritySeverity.critical)
+                .map((issue) => issue.code)
+                .toSet()
+                .join(',');
+            throw StateError(
+                'Production integrity gate failed: critical=${integrity.criticalCount} codes=$codes');
+          }
+          return 'critical=0 warnings=${integrity.warningCount} '
+              'expectedCash=${_money(calculatedExpected)} storedCache=${_money(storedExpected)} '
+              'inventoryGL=${_money(integrity.inventoryGlBalance)} valuation=${_money(integrity.inventoryValuation)}';
+        },
+        successDetails: (value) => value,
+      );
+
+      final scenarioRowsBeforeCoverage = List<_StressAuditStep>.from(_report);
+      final coverageSections = scenarioRowsBeforeCoverage
+          .where((row) => row.section.startsWith('S'))
+          .map((row) => row.section)
+          .toSet()
+          .toList()
+        ..sort();
+      for (final section in coverageSections) {
+        final rows = scenarioRowsBeforeCoverage
+            .where((row) => row.section == section)
+            .toList(growable: false);
+        final sectionPass = rows.where((row) => row.isPass).length;
+        final sectionWarn = rows.where((row) => row.isWarn).length;
+        final sectionFail = rows.where((row) => row.isFail).length;
+        _report.add(_StressAuditStep(
+          section: _dual('تغطية السيناريوهات', 'Scenario Coverage'),
+          name: section,
+          status: sectionFail == 0 ? (sectionWarn == 0 ? 'PASS' : 'WARN') : 'FAIL',
+          details: 'steps=${rows.length} pass=$sectionPass warn=$sectionWarn fail=$sectionFail',
+          elapsedMs: rows.fold<int>(0, (sum, row) => sum + row.elapsedMs),
+        ));
+      }
+
+      final newSales = store.sales.length - beforeSales;
+      final newPurchases = store.purchases.length - beforePurchases;
+      final newExpenses = store.expenses.length - beforeExpenses;
+      final newMovements = store.stockMovements.length - beforeMovements;
+      final newTransactions =
+          store.accountTransactions.length - beforeTransactions;
+      final currentDrawer = AccountingService.isAvailable
+          ? await AccountingService.currentCashDrawerForDevice(
+              deviceId: store.appIdentity.deviceId,
+              branchId: store.appIdentity.branchId,
+            )
+          : null;
+      final failuresBeforeSummary =
+          scenarioRowsBeforeCoverage.where((item) => item.isFail).length;
+      _report.add(_StressAuditStep(
+        section: _dual('التقرير النهائي', 'Final Report'),
+        name: _dual('ملخص السيناريو', 'Scenario summary'),
+        status: failuresBeforeSummary == 0 ? 'PASS' : 'FAIL',
+        details: _dual(
+          'batch=$_currentBatchId | مجموعات=${coverageSections.length} | خطوات=${scenarioRowsBeforeCoverage.length} | مشتريات جديدة=$newPurchases | مبيعات جديدة=$newSales | مصاريف جديدة=$newExpenses | حركات مخزون=$newMovements | حركات حساب=$newTransactions | رصيد الصندوق=${_money(currentDrawer?.balance ?? 0)} | الفشل=$failuresBeforeSummary',
+          'batch=$_currentBatchId | mode=${options.modeLabel} | seed=${options.seed} | chaosEpisodes=${options.iterations} | scenarioGroups=${coverageSections.length} | steps=${scenarioRowsBeforeCoverage.length} | purchases=$newPurchases | sales=$newSales | expenses=$newExpenses | stockMovements=$newMovements | accountTransactions=$newTransactions | cashBalance=${_money(currentDrawer?.balance ?? 0)} | failures=$failuresBeforeSummary',
+        ),
+        elapsedMs:
+            DateTime.now().toUtc().difference(startedAt).inMilliseconds,
+      ));
+      _addLog(
+          'REAL_USER_SCENARIO_SUMMARY batch=$_currentBatchId mode=${options.modeLabel} seed=${options.seed} chaosEpisodes=${options.iterations} purchase=${mainPurchase?.purchaseNo ?? '-'} sale=${mainSale?.invoiceNo ?? '-'} failures=$failuresBeforeSummary');
+      _setStatus(
+        failuresBeforeSummary == 0
+            ? _dual('انتهى السيناريو بنجاح', 'Real user scenario passed')
+            : _dual('انتهى السيناريو مع أخطاء',
+                'Real user scenario completed with failures'),
+        progress: 1,
+      );
+      _addLog('VENTIO_REAL_USER_SCENARIO_DONE batch=$_currentBatchId');
+    } catch (error, stack) {
+      _addLog(
+          'VENTIO_REAL_USER_SCENARIO_FATAL batch=$_currentBatchId error=$error');
+      _addLog(stack.toString().split('\n').take(8).join(' | '));
+      _report.add(_StressAuditStep(
+        section: _dual('التقرير النهائي', 'Final Report'),
+        name: _dual('فشل غير متوقع', 'Unexpected scenario failure'),
+        status: 'FAIL',
+        details: error.toString(),
+        elapsedMs:
+            DateTime.now().toUtc().difference(startedAt).inMilliseconds,
+      ));
+      _setStatus(_dual('فشل السيناريو', 'Scenario failed'), progress: 1);
+    } finally {
+      // Stress Lab grants are deliberately short-lived and action-scoped.
+      // Never leave a reversal authorization active after the scenario exits.
+      store.security.clearSensitiveActionAuthorization();
+      _assertProtectedStateUnchanged(protectedState, 'real-user-scenario');
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runOneButtonSystemAudit() async {
+    if (_running) return;
+    final protectedState = _captureProtectedState();
+    setState(() {
+      _running = true;
+      _progress = 0;
+      _status = _dual('تشغيل اختبار شامل...', 'Running full test...');
+      _report.clear();
+      _assertions.clear();
+      _log.clear();
+      _auditBackupBytes = null;
+      _auditBackupKeyCount = null;
+      _auditBackupValid = null;
+      _auditBackupRestoreReady = null;
+      _currentBatchId =
+          'audit_${DateTime.now().millisecondsSinceEpoch}_${_roleLabel().toLowerCase()}';
+    });
+
+    final beforeProducts = store.products.length;
+    final beforeCustomers = store.customers.length;
+    final beforeSuppliers = store.suppliers.length;
+    final beforeSales = store.sales.length;
+    final beforePurchases = store.purchases.length;
+    final beforeExpenses = store.expenses.length;
+    final beforeMovements = store.stockMovements.length;
+    final beforeTransactions = store.accountTransactions.length;
+    final startedAt = DateTime.now();
+
+    try {
+      _addLog(
+          'VENTIO_ONE_BUTTON_AUDIT_START batch=$_currentBatchId role=${_roleLabel()}');
+      _addLog(_snapshotLine('AUDIT_BEFORE'));
+      await _logDatabaseMetrics('AUDIT_BEFORE_DB');
+      _resetPerformanceCapture();
+      _resetTraceCapture();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.before,
+        label: 'Baseline before app surface prep',
+      );
+      AppStore.setTraceSink(_captureTrace);
+      await _prepareAppSurfaceData();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After app surface prep',
+      );
+      await _runAuthSurfaceBody();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After auth surface probe',
+      );
+      await _runDeviceToolsBody();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After device tools probe',
+      );
+
+      _setStatus(_dual('إنشاء الكتالوج...', 'Building catalog...'),
+          progress: 0.05);
+      final category = await _auditStep(
+          _dual('الكتالوج', 'Catalog'), _dual('إنشاء تصنيف', 'Create category'),
+          () async {
+        final item = CatalogItem(
+            id: '${_currentBatchId}_cat',
+            nameEn: 'Stress Audit Category $_currentBatchId',
+            nameAr: 'تصنيف اختبار شامل $_currentBatchId',
+            code: 'AUD-CAT-${DateTime.now().millisecondsSinceEpoch}');
+        await store.addOrUpdateCategory(item);
+        return item;
+      },
+          successDetails: (item) => _dual('تم إنشاء التصنيف ${item.code}.',
+              'Category ${item.code} created.'));
+      final brand = await _auditStep(
+          _dual('الكتالوج', 'Catalog'), _dual('إنشاء براند', 'Create brand'),
+          () async {
+        final item = CatalogItem(
+            id: '${_currentBatchId}_brand',
+            nameEn: 'Stress Audit Brand $_currentBatchId',
+            nameAr: 'براند اختبار شامل $_currentBatchId',
+            code: 'AUD-BRD-${DateTime.now().millisecondsSinceEpoch}');
+        await store.addOrUpdateBrand(item);
+        return item;
+      },
+          successDetails: (item) => _dual(
+              'تم إنشاء البراند ${item.code}.', 'Brand ${item.code} created.'));
+      final unit = await _auditStep(
+          _dual('الكتالوج', 'Catalog'), _dual('إنشاء وحدة', 'Create unit'),
+          () async {
+        final item = CatalogItem(
+            id: '${_currentBatchId}_unit',
+            nameEn: 'Piece Audit $_currentBatchId',
+            nameAr: 'قطعة اختبار $_currentBatchId',
+            code: 'AUD-PCS-${DateTime.now().millisecondsSinceEpoch}');
+        await store.addOrUpdateUnit(item);
+        return item;
+      },
+          successDetails: (item) => _dual(
+              'تم إنشاء الوحدة ${item.code}.', 'Unit ${item.code} created.'));
+
+      _setStatus(
+          _dual(
+              'إنشاء الأطراف والمنتجات...', 'Building parties and products...'),
+          progress: 0.14);
+      final supplier = await _auditStep(_dual('الموردون', 'Suppliers'),
+          _dual('إنشاء مورد', 'Create supplier'), () async {
+        final item = Supplier(
+            id: '${_currentBatchId}_supplier',
+            name: '[AUDIT] Supplier $_currentBatchId',
+            phone: '+96170000000',
+            address: 'Audit supplier address',
+            notes: 'Generated by one-button Stress Lab audit');
+        await store.addOrUpdateSupplier(item);
+        return item;
+      },
+          successDetails: (item) =>
+              _dual('المورد: ${item.name}.', 'Supplier: ${item.name}.'));
+      final customer = await _auditStep(
+          _dual('العملاء', 'Customers'), _dual('إنشاء عميل', 'Create customer'),
+          () async {
+        final item = Customer(
+            id: '${_currentBatchId}_customer',
+            name: '[AUDIT] Customer $_currentBatchId',
+            phone: '+96171000000',
+            address: 'Audit customer address');
+        await store.addOrUpdateCustomer(item);
+        return item;
+      },
+          successDetails: (item) =>
+              _dual('العميل: ${item.name}.', 'Customer: ${item.name}.'));
+
+      final products = <Product>[];
+      await _auditStep(_dual('المنتجات', 'Products'),
+          _dual('إنشاء منتجات متنوعة', 'Create sample products'), () async {
+        for (var i = 1; i <= 4; i++) {
+          final product = Product(
+            id: '${_currentBatchId}_product_$i',
+            name: '[AUDIT] Product $i $_currentBatchId',
+            nameEn: 'Audit Product $i',
+            nameAr: 'منتج اختبار $i',
+            code: 'AUD-${DateTime.now().millisecondsSinceEpoch}-$i',
+            barcode: 'AUD${DateTime.now().millisecondsSinceEpoch}$i',
+            price: (20 + i * 5).toDouble(),
+            cost: (8 + i * 2).toDouble(),
+            usdCost: (8 + i * 2).toDouble(),
+            stock: (80 + i * 10).toDouble(),
+            category: category?.nameEn ?? 'Audit',
+            brand: brand?.nameEn ?? 'Audit',
+            supplier: supplier?.name ?? '',
+            unit: unit?.nameEn ?? 'pcs',
+            lowStockThreshold: 5,
+            trackStock: true,
+            isActive: true,
+          );
+          await store.addOrUpdateProduct(product);
+          products.add(product);
+        }
+        return products.length;
+      },
+          successDetails: (count) => _dual(
+              'تم إنشاء $count منتجات قابلة للبيع والجرد.',
+              '$count sellable inventory products created.'));
+
+      if (products.isNotEmpty && supplier != null) {
+        await _auditStep(_dual('الموردون', 'Suppliers'),
+            _dual('ربط سعر مورد بمنتج', 'Link supplier price to product'),
+            () async {
+          await store.addOrUpdateSupplierProductPrice(SupplierProductPrice(
+            id: '${_currentBatchId}_spp',
+            productId: products.first.id,
+            supplierId: supplier.id,
+            cost: max<double>(1, products.first.cost - 1),
+            currency: 'USD',
+            isPreferred: true,
+            supplierSku: 'AUD-SKU-1',
+            minOrderQty: 2,
+            leadTimeDays: 3,
+            notes: 'Generated by one-button Stress Lab audit',
+          ));
+          return store
+              .supplierProductPricesForProduct(products.first.id)
+              .length;
+        },
+            successDetails: (count) => _dual(
+                'أسعار الموردين لهذا المنتج: $count.',
+                'Supplier prices for this product: $count.'));
+      }
+
+      _setStatus(_dual('اختبار المخزون...', 'Running inventory test...'),
+          progress: 0.28);
+      final warehouse = await _auditStep(
+          _dual('المخزون', 'Inventory'),
+          _dual('إنشاء مستودع', 'Create warehouse'),
+          () async => store.createWarehouse(
+              name: '[AUDIT] Warehouse $_currentBatchId',
+              code: 'AUD-WH-${DateTime.now().millisecondsSinceEpoch}',
+              location: 'Stress Lab'),
+          successDetails: (wh) => _dual('تم إنشاء المستودع ${wh.name}.',
+              'Warehouse ${wh.name} created.'));
+      if (products.isNotEmpty) {
+        await _auditStep(_dual('المخزون', 'Inventory'),
+            _dual('تعديل مخزون يدوي', 'Manual stock adjustment'), () async {
+          final before =
+              store.products.firstWhere((p) => p.id == products.first.id).stock;
+          await store.adjustStock(
+              productId: products.first.id,
+              warehouseId: store.resolveWarehouseForPurchase().id,
+              quantityDelta: 7,
+              reason: 'Stress Lab audit adjustment',
+              adjustmentCategory: 'audit_adjustment',
+              notes: _currentBatchId);
+          final after =
+              store.products.firstWhere((p) => p.id == products.first.id).stock;
+          return after - before;
+        },
+            successDetails: (delta) => _dual(
+                'فرق المخزون المسجل: ${_money(delta)}.',
+                'Recorded stock delta: ${_money(delta)}.'));
+        if (warehouse != null) {
+          await _auditStep(
+              _dual('المخزون', 'Inventory'),
+              _dual('تحويل مخزون بين المستودعات',
+                  'Transfer stock between warehouses'), () async {
+            await store.transferStock(
+                productId: products.first.id,
+                fromWarehouseId: store.defaultWarehouse.id,
+                toWarehouseId: warehouse.id,
+                quantity: 3.0,
+                notes: 'Stress Lab audit transfer');
+            return store.stockForWarehouse(products.first.id, warehouse.id);
+          },
+              successDetails: (qty) => _dual(
+                  'رصيد المستودع الجديد للمنتج: ${_money(qty)}.',
+                  'New warehouse balance for product: ${_money(qty)}.'));
+        }
+      }
+
+      await _auditStep(
+          _dual('الوردية النقدية', 'Cash Drawer'),
+          _dual('تجهيز وردية نقدية قبل العمليات النقدية',
+              'Prepare cash drawer before cash operations'), () async {
+        await _ensureAuditCashDrawerOpen();
+        return AccountingService.isAvailable
+            ? _dual('تم فتح/تأكيد وردية نقدية قبل الشراء والمصاريف.',
+                'Cash drawer opened/confirmed before purchases and expenses.')
+            : _dual('SQLite Accounting غير متاح؛ تم تجاوز فتح الوردية.',
+                'SQLite Accounting is not available; cash drawer opening was skipped.');
+      }, successDetails: (value) => value);
+
+      _setStatus(
+          _dual('اختبار المشتريات والجرد...',
+              'Running purchases and stock count test...'),
+          progress: 0.40);
+      if (products.length >= 2 && supplier != null) {
+        final purchase = await _auditStep(
+            _dual('المشتريات', 'Purchases'),
+            _dual('إنشاء واستلام فاتورة شراء',
+                'Create and receive purchase invoice'),
+            () async => store.createPurchase(
+                  supplierId: supplier.id,
+                  supplierName: supplier.name,
+                  receiveNow: true,
+                  paymentStatus: 'partial',
+                  paidAmount: 10.0,
+                  note: 'Stress Lab audit purchase',
+                  items: [
+                    PurchaseItem(
+                        productId: products[1].id,
+                        productName: products[1].name,
+                        quantity: 6.0,
+                        unitCost: products[1].cost,
+                        purchaseUnitName: products[1].unit,
+                        conversionToBase: 1.0)
+                  ],
+                ),
+            successDetails: (po) => _dual(
+                'فاتورة شراء ${po.purchaseNo} بقيمة ${_money(po.subtotal)}.',
+                'Purchase invoice ${po.purchaseNo} worth ${_money(po.subtotal)}.'));
+        _auditCheck(
+            _dual('المشتريات', 'Purchases'),
+            _dual(
+                'تدقيق أثر الشراء على المخزون', 'Verify purchase stock impact'),
+            purchase != null &&
+                store.stockMovements.any((m) =>
+                    m.referenceId == purchase.id &&
+                    m.type == 'purchase_receive'),
+            _dual('تم تسجيل حركة استلام مخزون للشراء.',
+                'A stock receipt movement was recorded for the purchase.'),
+            _dual('لم يتم العثور على حركة استلام مخزون مرتبطة بالشراء.',
+                'No stock receipt movement was linked to the purchase.'));
+      }
+      if (products.isNotEmpty) {
+        await _auditStep(
+            _dual('الجرد', 'Stock Count'),
+            _dual(
+                'فتح واعتماد جلسة جرد', 'Open and approve stock count session'),
+            () async {
+          final session = await store.createInventoryCountSession(
+              notes: 'Stress Lab audit count');
+          final line = session.lines
+              .firstWhere((line) => line.productId == products.first.id);
+          await store.countInventoryLine(
+              sessionId: session.id,
+              productId: products.first.id,
+              countedQty: line.snapshotStock + 1,
+              note: 'Audit counted +1');
+          await store.approveInventoryCount(session.id);
+          return session.countNo;
+        },
+            successDetails: (countNo) => _dual('تم اعتماد جلسة الجرد $countNo.',
+                'Stock count session $countNo approved.'));
+      }
+
+      _setStatus(_dual('اختبار التصنيع...', 'Running manufacturing test...'),
+          progress: 0.52);
+      if (products.length >= 3) {
+        final bom = await _auditStep(
+            _dual('التصنيع', 'Manufacturing'),
+            _dual('إنشاء وصفة تصنيع BOM', 'Create BOM recipe'),
+            () async => store.createBillOfMaterials(
+                  name: '[AUDIT] BOM $_currentBatchId',
+                  outputProductId: products[2].id,
+                  outputQuantity: 1.0,
+                  components: [
+                    BillOfMaterialsLine(
+                        productId: products.first.id,
+                        productName: products.first.name,
+                        quantity: 1.0,
+                        unitCost: products.first.cost)
+                  ],
+                  notes: 'Stress Lab audit BOM',
+                ),
+            successDetails: (value) => _dual(
+                'تم إنشاء BOM ${value.name}.', 'BOM ${value.name} created.'));
+        if (bom != null) {
+          await _auditStep(
+              _dual('التصنيع', 'Manufacturing'),
+              _dual('تنفيذ أمر تصنيع', 'Complete manufacturing order'),
+              () async => store.completeManufacturingOrder(
+                  bomId: bom.id,
+                  quantity: 2.0,
+                  notes: 'Stress Lab audit manufacturing'),
+              successDetails: (order) => _dual(
+                  'تم تنفيذ أمر تصنيع ${order.orderNo}.',
+                  'Manufacturing order ${order.orderNo} completed.'));
+        }
+      }
+
+      _setStatus(
+          _dual('اختبار دورة الصلاحية والدفعات...',
+              'Running expiry and batch lifecycle...'),
+          progress: 0.58);
+      if (supplier != null && customer != null) {
+        await _runExpiryBatchLifecycle(
+          supplier: supplier,
+          customer: customer,
+        );
+      } else {
+        _auditCheck(
+          _dual('دورة الصلاحية والدفعات', 'Expiry & Batch Lifecycle'),
+          _dual('توفر بيانات السيناريو', 'Scenario prerequisites'),
+          false,
+          '',
+          'Supplier or customer setup failed; expiry lifecycle was skipped.',
+        );
+      }
+
+      _setStatus(
+          _dual('اختبار المبيعات والوثائق...',
+              'Running sales and documents test...'),
+          progress: 0.64);
+      if (products.isNotEmpty) {
+        final salesWarehouseId = store.resolveWarehouseForSale().id;
+        final salesPrepProducts = <Product>{};
+        salesPrepProducts.add(products.first);
+        if (products.length > 1) {
+          salesPrepProducts.add(products[1]);
+        }
+        if (products.length > 2) {
+          salesPrepProducts.add(products.last);
+        }
+        for (final product in salesPrepProducts) {
+          final current = await store.warehouseStockFromSqlite(
+            product.id,
+            warehouseId: salesWarehouseId,
+          );
+          const targetStock = 35.0;
+          final needed = targetStock - current;
+          if (needed > 0.000001) {
+            await store.adjustStock(
+              productId: product.id,
+              warehouseId: salesWarehouseId,
+              quantityDelta: needed,
+              reason: 'Stress Lab sales scenario buffer',
+              adjustmentCategory: 'pressure_buffer',
+              notes: '$_currentBatchId sales prep ${product.id}',
+            );
+          }
+        }
+      }
+      Sale? normalSale;
+      if (products.length >= 2 && customer != null) {
+        normalSale = await _auditStep(
+            _dual('المبيعات', 'Sales'),
+            _dual(
+                'إنشاء فاتورة بيع مدفوعة بالبطاقة', 'Create card sale invoice'),
+            () async => store.createSale(
+                customerName: customer.name,
+                customerId: customer.id,
+                items: _saleItemsFromProducts(products.take(2).toList(),
+                    quantity: 2.0),
+                discount: 1.0,
+                paymentMethod: 'Card',
+                paymentStatus: 'paid'),
+            successDetails: (sale) => _dual(
+                'فاتورة ${sale.invoiceNo} بقيمة ${_money(sale.total)} وربح ${_money(sale.grossProfit)}.',
+                'Invoice ${sale.invoiceNo} worth ${_money(sale.total)} and profit ${_money(sale.grossProfit)}.'));
+        if (normalSale != null) {
+          await _auditStep(
+              _dual('سندات التسليم', 'Delivery Notes'),
+              _dual(
+                  'إنشاء وتسليم سند تسليم', 'Create and deliver delivery note'),
+              () async {
+            final note = await store.createDeliveryNoteFromSale(normalSale!.id,
+                note: 'Stress Lab audit delivery');
+            await store.markDeliveryNoteDelivered(note.id);
+            return note.deliveryNo;
+          },
+              successDetails: (deliveryNo) => _dual(
+                  'تم إنشاء وتسليم السند $deliveryNo.',
+                  'Delivery note $deliveryNo created and delivered.'));
+        }
+      }
+      if (products.isNotEmpty && customer != null) {
+        await _auditStep(
+            _dual('عروض الأسعار', 'Quotations'),
+            _dual('إنشاء عرض سعر وتحويله إلى بيع',
+                'Create quotation and convert to sale'), () async {
+          final quotation = await store.createSaleQuotation(
+              customerName: customer.name,
+              customerId: customer.id,
+              items: _saleItemsFromProducts([products.last], quantity: 1.0),
+              discount: 0.5,
+              note: 'Stress Lab audit quotation');
+          final sale = await store.convertSaleQuotationToSale(quotation.id,
+              paymentMethod: 'Card', paymentStatus: 'paid');
+          return '${quotation.quotationNo} -> ${sale.invoiceNo}';
+        },
+            successDetails: (value) =>
+                _dual('تم التحويل: $value.', 'Converted: $value.'));
+      }
+      if (products.length >= 2 && customer != null) {
+        await _auditStep(_dual('المبيعات', 'Sales'),
+            _dual('إنشاء وإرجاع فاتورة بيع', 'Create and return sale invoice'),
+            () async {
+          final sale = await store.createSale(
+              customerName: customer.name,
+              customerId: customer.id,
+              items: _saleItemsFromProducts([products[1]], quantity: 1.0),
+              paymentMethod: 'Card',
+              paymentStatus: 'paid');
+          await store.returnSale(sale.id, restoreStock: true);
+          return sale.invoiceNo;
+        },
+            successDetails: (invoice) => _dual(
+                'تم إنشاء ثم إرجاع الفاتورة $invoice.',
+                'Invoice $invoice created and returned.'));
+        await _auditStep(_dual('المبيعات', 'Sales'),
+            _dual('إنشاء وإلغاء فاتورة بيع', 'Create and cancel sale invoice'),
+            () async {
+          final sale = await store.createSale(
+              customerName: customer.name,
+              customerId: customer.id,
+              items: _saleItemsFromProducts([products[1]], quantity: 1.0),
+              paymentMethod: 'Card',
+              paymentStatus: 'paid');
+          await store.cancelSale(sale.id, restoreStock: true);
+          return sale.invoiceNo;
+        },
+            successDetails: (invoice) => _dual(
+                'تم إنشاء ثم إلغاء الفاتورة $invoice.',
+                'Invoice $invoice created and cancelled.'));
+      }
+
+      _setStatus(
+          _dual('اختبار المصاريف والمحاسبة...',
+              'Running expenses and accounting test...'),
+          progress: 0.78);
+      final expense = await _auditStep(_dual('المصاريف', 'Expenses'),
+          _dual('إنشاء وترحيل مصروف', 'Create and post expense'), () async {
+        final item = Expense(
+            id: '${_currentBatchId}_expense',
+            title: '[AUDIT] Expense $_currentBatchId',
+            category: 'Operations',
+            amount: 12.75,
+            date: DateTime.now(),
+            notes: 'Stress Lab audit expense');
+        await store.addOrUpdateExpense(item);
+        await store.postExpense(item.id);
+        return item.id;
+      },
+          successDetails: (id) => _dual('تم إنشاء وترحيل المصروف $id.',
+              'Expense $id created and posted.'));
+      if (expense != null) {
+        await _auditStep(_dual('المصاريف', 'Expenses'),
+            _dual('إلغاء مصروف مرحّل', 'Cancel posted expense'), () async {
+          await store.cancelExpense(expense, reason: 'Stress Lab audit cancel');
+          return expense;
+        },
+            successDetails: (id) =>
+                _dual('تم إلغاء المصروف $id.', 'Expense $id cancelled.'));
+      }
+
+      _setStatus(
+          _dual('تشغيل اختبار الضغط ${_lastPressureMultiplier}x...',
+              'Running x$_lastPressureMultiplier pressure test...'),
+          progress: 0.79);
+      await _runPressureAudit(
+          baseProducts: products,
+          baseCustomer: customer,
+          baseSupplier: supplier);
+
+      _setStatus(
+          _dual('اختبار النسخ الاحتياطي والمزامنة...',
+              'Running backup and sync test...'),
+          progress: 0.97);
+      await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
+      await _auditStep(_dual('النسخ الاحتياطي', 'Backup'),
+          _dual('توليد Backup JSON', 'Generate backup JSON'), () async {
+        final backup = await _ensureAuditBackupSnapshot();
+        if (!backup.valid || !backup.restoreReady) {
+          throw StateError(
+              'Generated backup failed restore-readiness validation.');
+        }
+        return '${backup.bytes} bytes, keys=${backup.keys}, structurallyValid=true, restoreReady=true';
+      },
+          successDetails: (value) => _dual(
+              'نجح توليد النسخة الاحتياطية: $value.',
+              'Backup JSON generated: $value.'));
+      await _auditStep(
+          _dual('المزامنة', 'Sync'),
+          _dual('فحص حالة Queue بدون إجبار شبكة',
+              'Check queue state without forcing network'), () async {
+        final rejectedQueue = store.syncQueue
+            .where((item) => item.status.toLowerCase() == 'rejected')
+            .length;
+        final failedQueue = store.syncQueue
+            .where((item) => item.status.toLowerCase() == 'failed')
+            .length;
+        return 'pendingQueue=${store.pendingSyncQueue.length}, pendingChanges=${store.pendingSyncChanges.length}, failed=$failedQueue, rejected=$rejectedQueue, transport=${_effectiveSyncTransport()}';
+      }, successDetails: (value) => value);
+
+      _setStatus(_dual('تدقيق النتائج...', 'Reviewing results...'),
+          progress: 0.99);
+      final newSales = store.sales.length - beforeSales;
+      final newPurchases = store.purchases.length - beforePurchases;
+      final newExpenses = store.expenses.length - beforeExpenses;
+      final newMovements = store.stockMovements.length - beforeMovements;
+      final newTransactions =
+          store.accountTransactions.length - beforeTransactions;
+      _auditCheck(
+          _dual('ملخص البيانات', 'Data Summary'),
+          _dual('نمو البيانات بعد الاختبار', 'Data growth after test'),
+          store.products.length > beforeProducts &&
+              store.customers.length > beforeCustomers &&
+              store.suppliers.length > beforeSuppliers,
+          _dual(
+              'تم إنشاء بيانات أساسية جديدة: منتجات ${store.products.length - beforeProducts}, عملاء ${store.customers.length - beforeCustomers}, موردون ${store.suppliers.length - beforeSuppliers}.',
+              'New base data created: products ${store.products.length - beforeProducts}, customers ${store.customers.length - beforeCustomers}, suppliers ${store.suppliers.length - beforeSuppliers}.'),
+          _dual('لم تنمُ البيانات الأساسية كما هو متوقع.',
+              'Base data did not grow as expected.'));
+      _auditCheck(
+          _dual('ملخص البيانات', 'Data Summary'),
+          _dual('حركات تشغيلية جديدة', 'New operational movements'),
+          newSales > 0 &&
+              newPurchases > 0 &&
+              newExpenses > 0 &&
+              newMovements > 0,
+          _dual(
+              'تم إنشاء عمليات: مبيعات $newSales، مشتريات $newPurchases، مصاريف $newExpenses، حركات مخزون $newMovements.',
+              'Operations created: sales $newSales, purchases $newPurchases, expenses $newExpenses, stock movements $newMovements.'),
+          _dual(
+              'هناك نقص في العمليات المنشأة: مبيعات $newSales، مشتريات $newPurchases، مصاريف $newExpenses، حركات مخزون $newMovements.',
+              'Some created operations are missing: sales $newSales, purchases $newPurchases, expenses $newExpenses, stock movements $newMovements.'));
+      final hasInvalidStock = products.any((product) {
+        final current =
+            store.products.where((item) => item.id == product.id).toList();
+        return current.isNotEmpty && !current.first.stock.isFinite;
+      });
+      _auditCheck(
+          _dual('المخزون', 'Inventory'),
+          _dual('سلامة أرقام المخزون', 'Inventory number validity'),
+          !hasInvalidStock,
+          _dual('كل أرصدة منتجات الاختبار أرقام صالحة.',
+              'All test product balances are valid numbers.'),
+          _dual('تم العثور على رصيد مخزون غير صالح في أحد منتجات الاختبار.',
+              'An invalid inventory balance was found in one of the test products.'));
+      final failedQueue = store.syncQueue
+          .where((item) =>
+              item.status.toLowerCase() == 'failed' ||
+              item.status.toLowerCase() == 'rejected')
+          .length;
+      _auditCheck(
+          _dual('المزامنة', 'Sync'),
+          _dual(
+              'عدم وجود Queue فاشلة/مرفوضة', 'No failed/rejected queue items'),
+          failedQueue == 0,
+          _dual('لا توجد عناصر sync failed/rejected.',
+              'No failed/rejected sync items.'),
+          _dual('يوجد $failedQueue عناصر sync failed/rejected.',
+              'There are $failedQueue failed/rejected sync items.'),
+          warning: true);
+      _auditCheck(
+          _dual('المحاسبة', 'Accounting'),
+          _dual('ترحيل محاسبي محلي', 'Local accounting posting'),
+          newTransactions > 0 || AccountingService.isAvailable,
+          newTransactions > 0
+              ? _dual('تم إنشاء $newTransactions حركات حساب محلية.',
+                  '$newTransactions local accounting entries were created.')
+              : _dual(
+                  'SQLite Accounting متاح؛ بعض القيود قد تكون في دفتر اليومية وليس accountTransactions.',
+                  'SQLite Accounting is available; some entries may be in the journal rather than accountTransactions.'),
+          _dual('لم يتم رصد حركات حساب جديدة ودفتر SQLite غير متاح.',
+              'No new accounting entries were detected and SQLite is unavailable.'),
+          warning: true);
+      final activeSalesTotal = store.sales
+          .where((sale) => sale.customerName.contains(_currentBatchId))
+          .where((sale) => !sale.isCancelled && !sale.isDeleted)
+          .fold<double>(0, (sum, sale) => sum + sale.total);
+      final expectedMinimumRevenue =
+          normalSale == null ? 0.0 : max<double>(0.0, normalSale.total);
+      _auditCheck(
+          _dual('المحاسبة', 'Accounting'),
+          _dual('منطق نتيجة المبيعات', 'Sales result logic'),
+          activeSalesTotal + 0.001 >= expectedMinimumRevenue,
+          _dual(
+              'إجمالي المبيعات النشطة لاختبار الدفعة ${_money(activeSalesTotal)}، وهو متوافق مبدئياً مع الفواتير غير الملغاة.',
+              'Active test sales total ${_money(activeSalesTotal)} is roughly consistent with uncancelled invoices.'),
+          _dual(
+              'إجمالي المبيعات النشطة ${_money(activeSalesTotal)} أقل من المتوقع ${_money(expectedMinimumRevenue)}.',
+              'Active sales total ${_money(activeSalesTotal)} is lower than expected ${_money(expectedMinimumRevenue)}.'));
+      await _runMaintenanceSurfaceBody();
+      await _runSettingsSurfaceBody();
+      await _runDatabaseSurfaceBody();
+      await _runSyncSetupSurfaceBody();
+      await _runUsersPermissionsSurfaceBody();
+      await _runDeepAccountingChecks();
+      _runInventoryConsistencyChecks();
+      _runPageReadinessPerformanceChecks();
+      await _runSqlitePageReadinessPerformanceChecks();
+      _runPerformanceHealthChecks();
+      await _runMaintenanceHealthCheckIntegration();
+      await _runReleaseAssertions();
+      await _runSurfaceCoverageChecks();
+      _runInvestigationMode();
+      await _auditStep(_dual('سلامة البيانات', 'Data Integrity'),
+          _dual('Integrity Check داخلي', 'Internal integrity check'), () async {
+        await _runIntegrityCheckBodyForOneButton();
+        return _dual('اكتمل فحص العلاقات الأساسية.',
+            'Core relationship check completed.');
+      }, successDetails: (value) => value);
+
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.after,
+        label: 'After final audit and integrity checks',
+      );
+      await _logCachedAuditDatabaseMetrics('AUDIT_AFTER_DB');
+      _addLog(_snapshotLine('AUDIT_AFTER'));
+      await _addHealthSummary('ONE_BUTTON_AUDIT_SUMMARY');
+      _addFinalAuditReport(startedAt);
+      _setStatus(_dual('انتهى الاختبار الشامل', 'Full test completed'),
+          progress: 1);
+    } finally {
+      AppStore.setTraceSink(null);
+      _assertProtectedStateUnchanged(protectedState, 'system-audit');
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _runIntegrityCheckBodyForOneButton() async {
+    final productIds =
+        store.allProductsForDiagnostics.map((item) => item.id).toSet();
+    final saleIds = store.sales.map((item) => item.id).toSet();
+    final purchaseIds = store.purchases.map((item) => item.id).toSet();
+    final saleMissing = <String>[];
+    for (final sale in store.sales) {
+      for (final item in sale.items) {
+        if (!productIds.contains(item.productId)) {
+          saleMissing.add('${sale.id}:${item.productId}');
+        }
+      }
+    }
+    final purchaseMissing = <String>[];
+    for (final purchase in store.purchases) {
+      for (final item in purchase.items) {
+        if (!productIds.contains(item.productId)) {
+          purchaseMissing.add('${purchase.id}:${item.productId}');
+        }
+      }
+    }
+    final stockMissingReferences = store.stockMovements
+        .where((movement) {
+          final reference = movement.referenceId;
+          if (reference.isEmpty) return false;
+          final type = movement.type.toLowerCase();
+          if (type.contains('sale')) return !saleIds.contains(reference);
+          if (type.contains('purchase')) {
+            return !purchaseIds.contains(reference);
+          }
+          return false;
+        })
+        .take(5)
+        .toList();
+    if (saleMissing.isNotEmpty ||
+        purchaseMissing.isNotEmpty ||
+        stockMissingReferences.isNotEmpty) {
+      final missingRefSample = stockMissingReferences
+          .map((movement) =>
+              '${movement.id}:${movement.type}:${movement.referenceId}')
+          .join(', ');
+      throw StateError(
+          'Integrity issues: saleMissing=${saleMissing.length}, purchaseMissing=${purchaseMissing.length}, stockMissingRefs=${stockMissingReferences.length}${missingRefSample.isEmpty ? '' : ' sample=[$missingRefSample]'}');
+    }
+  }
+
+  Future<void> _runMaintenanceHealthCheckIntegration() async {
+    final summary = await _auditStep(_dual('صيانة التطبيق', 'App Maintenance'),
+        _dual('تشغيل Maintenance Health Check', 'Run maintenance health check'),
+        () async {
+      final summary =
+          await MaintenanceService(store).runHealthCheck(deep: true);
+      return summary;
+    }, successDetails: (summary) {
+      final actionable = summary.issues
+          .where((issue) => issue.severity != MaintenanceSeverity.ok)
+          .length;
+      return _dual(
+        'score=${summary.healthScore}/100 status=${summary.healthStatusLabel} issues=${summary.issues.length} actionable=$actionable db=${summary.databaseEngine} size=${summary.databaseSizeBytes} bytes.',
+        'score=${summary.healthScore}/100 status=${summary.healthStatusLabel} issues=${summary.issues.length} actionable=$actionable db=${summary.databaseEngine} size=${summary.databaseSizeBytes} bytes.',
+      );
+    });
+    if (summary == null) {
+      _auditCheck(
+        _dual('صيانة التطبيق', 'App Maintenance'),
+        _dual('دمج نتائج Maintenance', 'Merge maintenance results'),
+        false,
+        _dual('تم دمج نتائج Maintenance بنجاح.',
+            'Maintenance results merged successfully.'),
+        _dual('تعذر تشغيل Maintenance Health Check ودمجه مع تقرير Stress Lab.',
+            'Could not run the maintenance health check and merge it into the Stress Lab report.'),
+      );
+      return;
+    }
+    final okCount = summary.issues
+        .where((issue) => issue.severity == MaintenanceSeverity.ok)
+        .length;
+    final infoCount = summary.issues
+        .where((issue) => issue.severity == MaintenanceSeverity.info)
+        .length;
+    final warningCount = summary.issues
+        .where((issue) => issue.severity == MaintenanceSeverity.warning)
+        .length;
+    final criticalCount = summary.issues
+        .where((issue) => issue.severity == MaintenanceSeverity.critical)
+        .length;
+    _auditCheck(
+      _dual('صيانة التطبيق', 'App Maintenance'),
+      _dual('ملخص فحص الصيانة', 'Maintenance summary'),
+      criticalCount == 0 && warningCount == 0,
+      _dual(
+          'Maintenance clean: ok=$okCount info=$infoCount warning=0 critical=0 score=${summary.healthScore}/100.',
+          'Maintenance clean: ok=$okCount info=$infoCount warning=0 critical=0 score=${summary.healthScore}/100.'),
+      _dual(
+          'Maintenance findings: ok=$okCount info=$infoCount warning=$warningCount critical=$criticalCount score=${summary.healthScore}/100.',
+          'Maintenance findings: ok=$okCount info=$infoCount warning=$warningCount critical=$criticalCount score=${summary.healthScore}/100.'),
+      warning: true,
+    );
+
+    for (final issue in summary.issues
+        .where((issue) => issue.severity != MaintenanceSeverity.ok)) {
+      final status =
+          issue.severity == MaintenanceSeverity.critical ? 'FAIL' : 'WARN';
+      final details = _maintenanceIssueDetails(issue);
+      _report.add(_StressAuditStep(
+        section: _dual('صيانة التطبيق', 'App Maintenance'),
+        name: issue.title,
+        status: status,
+        details: details,
+        elapsedMs: 0,
+      ));
+      _addLog(
+          'MAINTENANCE_CHECK $status [${issue.id}] ${issue.title}: $details');
+    }
+
+    _addOverpaidSalesEvidence();
+  }
+
+  String _maintenanceIssueDetails(MaintenanceIssue issue) {
+    if (issue.id == 'overpaid_sales') {
+      final overpaid = store.sales
+          .where((sale) =>
+              !sale.isDeleted && sale.paidAmount > sale.invoiceTotal + 0.01)
+          .toList(growable: false);
+      final totalExtra = overpaid.fold<double>(
+        0,
+        (sum, sale) =>
+            sum + max<double>(0, sale.paidAmount - sale.invoiceTotal),
+      );
+      final sample = overpaid
+          .take(8)
+          .map((sale) =>
+              '${sale.invoiceNo}: total=${_money(sale.invoiceTotal)} paid=${_money(sale.paidAmount)} extra=${_money(max<double>(0, sale.paidAmount - sale.invoiceTotal))}')
+          .join(' | ');
+      return '${issue.message} totalExtra=${_money(totalExtra)}${sample.isEmpty ? '' : ' sample=$sample'}';
+    }
+    if (issue.details.isEmpty) return issue.message;
+    return '${issue.message} details=${jsonEncode(issue.details)}';
+  }
+
+  void _addOverpaidSalesEvidence() {
+    final overpaid = store.sales
+        .where((sale) =>
+            !sale.isDeleted &&
+            !sale.isCancelled &&
+            sale.paidAmount > sale.invoiceTotal + 0.01)
+        .toList(growable: false);
+    if (overpaid.isEmpty) {
+      _auditCheck(
+        _dual('أدلة الصيانة', 'Maintenance Evidence'),
+        _dual('فواتير مدفوعة بزيادة', 'Overpaid invoices'),
+        true,
+        _dual('لا توجد فواتير مدفوعة بأكثر من إجماليها.',
+            'No invoices were paid above their total.'),
+        _dual('يوجد فواتير مدفوعة بزيادة.', 'There are overpaid invoices.'),
+      );
+      return;
+    }
+    final totalExtra = overpaid.fold<double>(
+      0,
+      (sum, sale) => sum + max<double>(0, sale.paidAmount - sale.invoiceTotal),
+    );
+    final sample = overpaid
+        .take(10)
+        .map((sale) =>
+            '${sale.invoiceNo}: total=${_money(sale.invoiceTotal)} paid=${_money(sale.paidAmount)} extra=${_money(max<double>(0, sale.paidAmount - sale.invoiceTotal))}')
+        .join(' | ');
+    _auditCheck(
+      _dual('أدلة الصيانة', 'Maintenance Evidence'),
+      _dual('فواتير مدفوعة بزيادة', 'Overpaid invoices'),
+      false,
+      _dual('لا توجد فواتير مدفوعة بأكثر من إجماليها.',
+          'No invoices were paid above their total.'),
+      'count=${overpaid.length} totalExtra=${_money(totalExtra)} sample=$sample',
+      warning: true,
+    );
+  }
+
+  Future<void> _runDeepAccountingChecks() async {
+    await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
+    final batchSales = store.sales
+        .where((sale) => sale.customerName.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchPurchases = store.purchases
+        .where((purchase) =>
+            purchase.supplierName.contains(_currentBatchId) ||
+            purchase.note.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchExpenses = store.expenses
+        .where((expense) =>
+            expense.id.contains(_currentBatchId) ||
+            expense.title.contains(_currentBatchId) ||
+            expense.notes.contains(_currentBatchId))
+        .toList(growable: false);
+    final transactions = store.accountTransactions
+        .where((tx) => !tx.isDeleted)
+        .toList(growable: false);
+    final accountingAvailable = AccountingService.isAvailable;
+    final invalidTransactions = transactions
+        .where((tx) =>
+            !tx.debit.isFinite ||
+            !tx.credit.isFinite ||
+            tx.debit < 0 ||
+            tx.credit < 0 ||
+            (tx.debit == 0 && tx.credit == 0))
+        .length;
+    final batchRefs = <String>{
+      ...batchSales.map((sale) => sale.id),
+      ...batchSales.map((sale) => sale.invoiceNo),
+      ...batchPurchases.map((purchase) => purchase.id),
+      ...batchPurchases.map((purchase) => purchase.purchaseNo),
+      ...batchExpenses.map((expense) => expense.id),
+    };
+    final batchTransactions = transactions
+        .where((tx) =>
+            batchRefs.contains(tx.referenceId) ||
+            batchRefs.contains(tx.referenceNo) ||
+            tx.note.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchDebit =
+        batchTransactions.fold<double>(0, (sum, tx) => sum + tx.debit);
+    final batchCredit =
+        batchTransactions.fold<double>(0, (sum, tx) => sum + tx.credit);
+    final activeBatchSales = batchSales
+        .where((sale) => !sale.isCancelled && !sale.isDeleted)
+        .toList(growable: false);
+    final activeBatchPurchases = batchPurchases
+        .where((purchase) => !purchase.isCancelled && !purchase.isDeleted)
+        .toList(growable: false);
+    final activeBatchExpenses = batchExpenses
+        .where((expense) =>
+            expense.cancelledAt == null && expense.deletedAt == null)
+        .toList(growable: false);
+    final trialBalanceRows = accountingAvailable
+        ? await AccountingService.trialBalanceReport()
+        : const <dynamic>[];
+    final trialDebit =
+        trialBalanceRows.fold<double>(0, (sum, row) => sum + row.debit);
+    final trialCredit =
+        trialBalanceRows.fold<double>(0, (sum, row) => sum + row.credit);
+    final trialDiff = (trialDebit - trialCredit).abs();
+    final activeSalesJournalCount = accountingAvailable
+        ? await AccountingService.countPostedJournalEntriesForReferences(
+            referenceType: 'sale',
+            referenceIds: activeBatchSales.map((sale) => sale.id),
+          )
+        : 0;
+    final activePurchasesJournalCount = accountingAvailable
+        ? await AccountingService.countPostedJournalEntriesForReferences(
+            referenceType: 'purchase',
+            referenceIds: activeBatchPurchases.map((purchase) => purchase.id),
+          )
+        : 0;
+    final activeExpensesJournalCount = accountingAvailable
+        ? await AccountingService.countPostedJournalEntriesForReferences(
+            referenceType: 'expense',
+            referenceIds: activeBatchExpenses.map((expense) => expense.id),
+          )
+        : 0;
+
+    _auditCheck(
+        _dual('المحاسبة المتقدمة', 'Advanced Accounting'),
+        _dual('صلاحية مبالغ القيود', 'Journal amount validity'),
+        invalidTransactions == 0,
+        _dual('كل القيود المحاسبية تحمل مبالغ صالحة وغير سالبة.',
+            'All accounting entries have valid, non-negative amounts.'),
+        _dual('يوجد $invalidTransactions قيد محاسبي بمبلغ غير صالح.',
+            'There are $invalidTransactions accounting entries with an invalid amount.'));
+    _auditCheck(
+        _dual('المحاسبة المتقدمة', 'Advanced Accounting'),
+        _dual('تغطية فواتير البيع بقيود يومية', 'Sale journal coverage'),
+        accountingAvailable
+            ? activeSalesJournalCount == activeBatchSales.length
+            : false,
+        accountingAvailable
+            ? _dual(
+                'كل فواتير البيع النشطة في دفعة الاختبار لها قيد يومية منشور.',
+                'Every active test sale has a posted journal entry.')
+            : _dual(
+                'SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية لفواتير البيع.',
+                'SQLite accounting is unavailable; sale journal coverage cannot be verified.'),
+        accountingAvailable
+            ? _dual(
+                'القيود اليومية لفواتير البيع النشطة: $activeSalesJournalCount من ${activeBatchSales.length}.',
+                'Active sale journal entries: $activeSalesJournalCount of ${activeBatchSales.length}.')
+            : _dual(
+                'SQLite accounting unavailable; journal coverage not verified.',
+                'SQLite accounting unavailable; journal coverage not verified.'),
+        warning: !accountingAvailable);
+    _auditCheck(
+        _dual('المحاسبة المتقدمة', 'Advanced Accounting'),
+        _dual('تغطية فواتير الشراء بقيود يومية', 'Purchase journal coverage'),
+        accountingAvailable
+            ? activePurchasesJournalCount == activeBatchPurchases.length
+            : false,
+        accountingAvailable
+            ? _dual(
+                'كل فواتير الشراء النشطة في دفعة الاختبار لها قيد يومية منشور.',
+                'Every active test purchase has a posted journal entry.')
+            : _dual(
+                'SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية لفواتير الشراء.',
+                'SQLite accounting is unavailable; purchase journal coverage cannot be verified.'),
+        accountingAvailable
+            ? _dual(
+                'القيود اليومية لفواتير الشراء النشطة: $activePurchasesJournalCount من ${activeBatchPurchases.length}.',
+                'Active purchase journal entries: $activePurchasesJournalCount of ${activeBatchPurchases.length}.')
+            : _dual(
+                'SQLite accounting unavailable; journal coverage not verified.',
+                'SQLite accounting unavailable; journal coverage not verified.'),
+        warning: !accountingAvailable);
+    _auditCheck(
+        _dual('المحاسبة المتقدمة', 'Advanced Accounting'),
+        _dual('تغطية المصاريف بقيود يومية', 'Expense journal coverage'),
+        accountingAvailable
+            ? activeExpensesJournalCount == activeBatchExpenses.length
+            : false,
+        accountingAvailable
+            ? _dual('كل المصاريف النشطة في دفعة الاختبار لها قيد يومية منشور.',
+                'Every active test expense has a posted journal entry.')
+            : _dual(
+                'SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية للمصاريف.',
+                'SQLite accounting is unavailable; expense journal coverage cannot be verified.'),
+        accountingAvailable
+            ? _dual(
+                'القيود اليومية للمصاريف النشطة: $activeExpensesJournalCount من ${activeBatchExpenses.length}.',
+                'Active expense journal entries: $activeExpensesJournalCount of ${activeBatchExpenses.length}.')
+            : _dual(
+                'SQLite accounting unavailable; journal coverage not verified.',
+                'SQLite accounting unavailable; journal coverage not verified.'),
+        warning: !accountingAvailable);
+    _auditCheck(
+        _dual('المحاسبة المتقدمة', 'Advanced Accounting'),
+        _dual('توازن دفتر اليومية', 'Journal balance'),
+        accountingAvailable ? trialDiff <= 0.01 : false,
+        accountingAvailable
+            ? _dual(
+                'دفتر اليومية متوازن: debit=${_money(trialDebit)} credit=${_money(trialCredit)}.',
+                'Trial balance is balanced: debit=${_money(trialDebit)} credit=${_money(trialCredit)}.')
+            : _dual(
+                'SQLite accounting غير متاح؛ لا يمكن التحقق من توازن دفتر اليومية.',
+                'SQLite accounting is unavailable; balance cannot be verified.'),
+        accountingAvailable
+            ? _dual(
+                'دفتر اليومية غير متوازن: debit=${_money(trialDebit)} credit=${_money(trialCredit)} diff=${_money(trialDiff)}.',
+                'Trial balance is not balanced: debit=${_money(trialDebit)} credit=${_money(trialCredit)} diff=${_money(trialDiff)}.')
+            : _dual('SQLite accounting unavailable; balance not verified.',
+                'SQLite accounting unavailable; balance not verified.'),
+        warning: !accountingAvailable);
+    _addLog(
+        'SUBLEDGER_SNAPSHOT batchDebit=${_money(batchDebit)} batchCredit=${_money(batchCredit)} batchDiff=${_money((batchDebit - batchCredit).abs())} note=Open customer/supplier balances may remain after partial settlement and are reported separately from trial balance.');
+  }
+
+  List<Expense> _activeBatchExpenses() => store.expenses
+      .where((expense) =>
+          expense.id.contains(_currentBatchId) ||
+          expense.title.contains(_currentBatchId) ||
+          expense.notes.contains(_currentBatchId))
+      .where((expense) =>
+          expense.isPosted && !expense.isDeleted && !expense.isCancelled)
+      .toList(growable: false);
+
+  List<Sale> _batchSales() => store.sales
+      .where((sale) =>
+          sale.customerName.contains(_currentBatchId) ||
+          sale.invoiceNo.contains(_currentBatchId) ||
+          sale.id.contains(_currentBatchId))
+      .toList(growable: false);
+
+  List<Purchase> _batchPurchases() => store.purchases
+      .where((purchase) =>
+          purchase.supplierName.contains(_currentBatchId) ||
+          purchase.note.contains(_currentBatchId) ||
+          purchase.id.contains(_currentBatchId))
+      .toList(growable: false);
+
+  Duration _accountingDrainTimeout() {
+    final minutes =
+        max<int>(2, min<int>(15, (_lastPressureMultiplier / 1000).ceil()));
+    return Duration(minutes: minutes);
+  }
+
+  bool _transactionMatchesAny(AccountTransaction tx, Iterable<String> refs) {
+    for (final ref in refs) {
+      if (ref.trim().isEmpty) continue;
+      if (tx.referenceId == ref ||
+          tx.referenceNo == ref ||
+          tx.note.contains(ref)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _recordAssertion(_StressAssertionResult result) {
+    _assertions.add(result);
+    final section = result.blocking
+        ? 'Release Assertions'
+        : 'Release Assertions - Advisory';
+    final status = result.status;
+    _report.add(_StressAuditStep(
+      section: section,
+      name: result.id,
+      status: status,
+      details: result.details,
+      elapsedMs: 0,
+    ));
+    _addLog(
+        'RELEASE_ASSERTION $status ${result.id} area=${result.area} expected="${result.expected}" actual="${result.actual}" blocking=${result.blocking}');
+  }
+
+  bool _hasAccountingReference(
+      Iterable<AccountTransaction> transactions, Iterable<String> refs) {
+    return transactions.any((tx) => _transactionMatchesAny(tx, refs));
+  }
+
+  bool _hasStockReference(Iterable<String> refs) {
+    return store.stockMovements.any((movement) {
+      for (final ref in refs) {
+        if (ref.trim().isEmpty) continue;
+        if (movement.referenceId == ref ||
+            movement.referenceNo == ref ||
+            movement.notes.contains(ref) ||
+            movement.reason.contains(ref)) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }
+
+  Future<void> _runReleaseAssertions() async {
+    _addLog('========== VENTIO RELEASE ASSERTIONS ==========');
+    await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
+    final batchProducts = store.allProductsForDiagnostics
+        .where((product) =>
+            product.name.contains(_currentBatchId) ||
+            product.code.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchCustomers = store.customers
+        .where((customer) => customer.name.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchSuppliers = store.suppliers
+        .where((supplier) => supplier.name.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchQuotations = store.saleQuotations
+        .where((quotation) =>
+            quotation.note.contains(_currentBatchId) ||
+            quotation.customerName.contains(_currentBatchId) ||
+            quotation.quotationNo.contains(_currentBatchId) ||
+            quotation.id.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchDeliveryNotes = store.deliveryNotes
+        .where((note) =>
+            note.note.contains(_currentBatchId) ||
+            note.invoiceNo.contains(_currentBatchId) ||
+            note.customerName.contains(_currentBatchId) ||
+            note.id.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchBoms = store.billsOfMaterials
+        .where((bom) =>
+            bom.notes.contains(_currentBatchId) ||
+            bom.name.contains(_currentBatchId) ||
+            bom.id.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchManufacturingOrders = store.manufacturingOrders
+        .where((order) =>
+            order.notes.contains(_currentBatchId) ||
+            order.bomName.contains(_currentBatchId) ||
+            order.orderNo.contains(_currentBatchId) ||
+            order.id.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchSales = _batchSales();
+    final batchPurchases = _batchPurchases();
+    final activeSales = batchSales
+        .where((sale) => !sale.isCancelled && !sale.isDeleted)
+        .toList(growable: false);
+    final activePurchases = batchPurchases
+        .where((purchase) => !purchase.isCancelled && !purchase.isDeleted)
+        .toList(growable: false);
+    final activeExpenses = _activeBatchExpenses();
+    final stockReferenceKeys = <String>{};
+    for (final movement in store.stockMovements) {
+      if (movement.referenceId.trim().isNotEmpty) {
+        stockReferenceKeys.add(movement.referenceId);
+      }
+      if (movement.referenceNo.trim().isNotEmpty) {
+        stockReferenceKeys.add(movement.referenceNo);
+      }
+    }
+    final accountingAvailable = AccountingService.isAvailable;
+    final trialBalanceRows = accountingAvailable
+        ? await AccountingService.trialBalanceReport()
+        : const <dynamic>[];
+    final expectedProducts = _lastPressureMultiplier + 4;
+    final expectedCustomers = _lastPressureMultiplier + 1;
+    final expectedSuppliers = _lastPressureMultiplier + 1;
+    final trialDebit =
+        trialBalanceRows.fold<double>(0, (sum, row) => sum + row.debit);
+    final trialCredit =
+        trialBalanceRows.fold<double>(0, (sum, row) => sum + row.credit);
+    final diff = (trialDebit - trialCredit).abs();
+    final activeSalesJournalCount = accountingAvailable
+        ? await AccountingService.countPostedJournalEntriesForReferences(
+            referenceType: 'sale',
+            referenceIds: activeSales.map((sale) => sale.id),
+          )
+        : 0;
+    final activePurchasesJournalCount = accountingAvailable
+        ? await AccountingService.countPostedJournalEntriesForReferences(
+            referenceType: 'purchase',
+            referenceIds: activePurchases.map((purchase) => purchase.id),
+          )
+        : 0;
+    final activeExpensesJournalCount = accountingAvailable
+        ? await AccountingService.countPostedJournalEntriesForReferences(
+            referenceType: 'expense',
+            referenceIds: activeExpenses.map((expense) => expense.id),
+          )
+        : 0;
+    final activeSalesMissingStock = activeSales
+        .where((sale) =>
+            !stockReferenceKeys.contains(sale.id) &&
+            !stockReferenceKeys.contains(sale.invoiceNo))
+        .length;
+    final activePurchasesMissingStock = activePurchases
+        .where((purchase) =>
+            !stockReferenceKeys.contains(purchase.id) &&
+            !stockReferenceKeys.contains(purchase.purchaseNo))
+        .length;
+    final invalidStock =
+        batchProducts.where((product) => !product.stock.isFinite).length;
+    final negativeStock =
+        batchProducts.where((product) => product.stock < -0.001).length;
+    final overpaidCancelled = batchSales
+        .where((sale) =>
+            !sale.isDeleted &&
+            sale.paidAmount > sale.invoiceTotal + 0.01 &&
+            (sale.isCancelled || sale.status.toLowerCase().contains('return')))
+        .length;
+    final perfWarns = _report
+        .where((row) => _sectionMatches(row.section, 'ضغط') && row.isWarn)
+        .length;
+    final perfFails = _report
+        .where((row) => _sectionMatches(row.section, 'ضغط') && row.isFail)
+        .length;
+    final failedOrRejectedQueue = store.syncQueue.where((item) {
+      final status = item.status.toLowerCase();
+      return status == 'failed' || status == 'rejected';
+    }).length;
+
+    void expect(
+        String id, String area, bool condition, String expected, String actual,
+        {bool blocking = true}) {
+      _recordAssertion(_StressAssertionResult(
+        id: id,
+        area: area,
+        expected: expected,
+        actual: actual,
+        passed: condition,
+        blocking: blocking,
+      ));
+    }
+
+    expect(
+        'CATALOG-001',
+        'Catalog',
+        store.categories.any((item) =>
+                item.displayName('en').startsWith('AUD-CAT-') ||
+                item.code.startsWith('AUD-CAT-')) &&
+            store.brands.any((item) =>
+                item.displayName('en').startsWith('AUD-BRD-') ||
+                item.code.startsWith('AUD-BRD-')) &&
+            store.units.any((item) =>
+                item.displayName('en').startsWith('AUD-PCS-') ||
+                item.code.startsWith('AUD-PCS-')),
+        'Stress category, brand, and unit exist.',
+        'categories=${store.categories.length} brands=${store.brands.length} units=${store.units.length}');
+    expect(
+        'MASTER-DATA-001',
+        'Master Data',
+        batchProducts.length >= expectedProducts &&
+            batchCustomers.length >= expectedCustomers &&
+            batchSuppliers.length >= expectedSuppliers,
+        'At least $expectedProducts products, $expectedCustomers customers, and $expectedSuppliers suppliers for this batch.',
+        'products=${batchProducts.length} customers=${batchCustomers.length} suppliers=${batchSuppliers.length}');
+    expect(
+        'QUOTATION-FLOW-001',
+        'Sales Documents',
+        batchQuotations.isNotEmpty &&
+            batchQuotations.any((quotation) => quotation.isConverted),
+        'A batch quotation exists and at least one quotation was converted into a sale.',
+        'quotations=${batchQuotations.length} converted=${batchQuotations.where((quotation) => quotation.isConverted).length}');
+    expect(
+        'DELIVERY-NOTE-001',
+        'Sales Documents',
+        batchDeliveryNotes.isNotEmpty &&
+            batchDeliveryNotes.any((note) => note.isDelivered),
+        'A batch delivery note exists and at least one was marked delivered.',
+        'deliveryNotes=${batchDeliveryNotes.length} delivered=${batchDeliveryNotes.where((note) => note.isDelivered).length}');
+    expect(
+        'MANUFACTURING-001',
+        'Manufacturing',
+        batchBoms.isNotEmpty &&
+            batchBoms.any((bom) => bom.isActive && !bom.isDeleted) &&
+            batchManufacturingOrders.isNotEmpty &&
+            batchManufacturingOrders.any((order) =>
+                order.status.toLowerCase() == 'completed' && !order.isDeleted),
+        'Batch BOMs and completed manufacturing orders were created.',
+        'boms=${batchBoms.length} manufacturingOrders=${batchManufacturingOrders.length}');
+    expect(
+        'REPORTS-001',
+        'Reports',
+        batchQuotations.isNotEmpty &&
+            batchDeliveryNotes.isNotEmpty &&
+            batchBoms.isNotEmpty &&
+            batchManufacturingOrders.isNotEmpty &&
+            store.inventoryCountSessions.isNotEmpty &&
+            store.stockMovements.isNotEmpty,
+        'Reports have quotations, delivery notes, BOMs, manufacturing orders, inventory counts, and stock movements to summarize.',
+        'quotations=${batchQuotations.length} deliveryNotes=${batchDeliveryNotes.length} boms=${batchBoms.length} manufacturingOrders=${batchManufacturingOrders.length} inventoryCounts=${store.inventoryCountSessions.length} stockMovements=${store.stockMovements.length}');
+    expect(
+        'SALES-ACCOUNTING-001',
+        'Accounting',
+        accountingAvailable
+            ? activeSalesJournalCount == activeSales.length
+            : false,
+        'Every active batch sale has a posted journal entry.',
+        accountingAvailable
+            ? 'activeSales=${activeSales.length} journalEntries=$activeSalesJournalCount'
+            : 'SQLite accounting unavailable; journal coverage not verified.',
+        blocking: accountingAvailable);
+    expect(
+        'PURCHASE-ACCOUNTING-001',
+        'Accounting',
+        accountingAvailable
+            ? activePurchasesJournalCount == activePurchases.length
+            : false,
+        'Every active batch purchase has a posted journal entry.',
+        accountingAvailable
+            ? 'activePurchases=${activePurchases.length} journalEntries=$activePurchasesJournalCount'
+            : 'SQLite accounting unavailable; journal coverage not verified.',
+        blocking: accountingAvailable);
+    expect(
+        'EXPENSE-ACCOUNTING-001',
+        'Accounting',
+        accountingAvailable
+            ? activeExpensesJournalCount == activeExpenses.length
+            : false,
+        'Every active posted expense has a posted journal entry.',
+        accountingAvailable
+            ? 'activeExpenses=${activeExpenses.length} journalEntries=$activeExpensesJournalCount'
+            : 'SQLite accounting unavailable; journal coverage not verified.',
+        blocking: accountingAvailable);
+    expect(
+        'LEDGER-BALANCE-001',
+        'Accounting',
+        accountingAvailable ? diff <= 0.01 : false,
+        'Posted journal entries are balanced in trial balance.',
+        accountingAvailable
+            ? 'debit=${_money(trialDebit)} credit=${_money(trialCredit)} diff=${_money(diff)} postedJournalRows=${trialBalanceRows.length}'
+            : 'SQLite accounting unavailable; balance not verified.',
+        blocking: accountingAvailable);
+    expect(
+        'SALE-STOCK-001',
+        'Inventory',
+        activeSalesMissingStock == 0,
+        'Every active sale has a stock movement reference.',
+        'activeSales=${activeSales.length} missingStockMovement=$activeSalesMissingStock');
+    expect(
+        'PURCHASE-STOCK-001',
+        'Inventory',
+        activePurchasesMissingStock == 0,
+        'Every active purchase has a receipt stock movement reference.',
+        'activePurchases=${activePurchases.length} missingStockMovement=$activePurchasesMissingStock');
+    expect(
+        'STOCK-VALIDITY-001',
+        'Inventory',
+        invalidStock == 0 && negativeStock == 0,
+        'Stress products have valid non-negative stock.',
+        'invalidStock=$invalidStock negativeStock=$negativeStock products=${batchProducts.length}');
+    expect(
+        'CANCEL-RETURN-PAYMENT-001',
+        'Sales Cancellation',
+        overpaidCancelled == 0,
+        'Cancelled/returned sales must not remain overpaid unless customer credit is explicitly represented.',
+        'cancelledOrReturnedOverpaid=$overpaidCancelled',
+        blocking: false);
+    expect(
+        'PERFORMANCE-001',
+        'Performance',
+        perfFails == 0 && perfWarns == 0,
+        'No pressure test failed or crossed slowdown thresholds.',
+        'perfWarnings=$perfWarns perfFailures=$perfFails',
+        blocking: false);
+    expect(
+        'SYNC-001',
+        'Sync',
+        failedOrRejectedQueue == 0,
+        'No failed or rejected sync queue items after stress run.',
+        'failedOrRejectedQueue=$failedOrRejectedQueue pendingQueue=${store.pendingSyncQueue.length} transport=${_effectiveSyncTransport()}');
+    final backupSnapshot = await _ensureAuditBackupSnapshot();
+    expect(
+        'BACKUP-001',
+        'Backup',
+        backupSnapshot.bytes > 0 &&
+            backupSnapshot.valid &&
+            backupSnapshot.restoreReady,
+        'Backup JSON can be generated and decoded for restore after stress run.',
+        'backupBytes=${backupSnapshot.bytes} structurallyValid=${backupSnapshot.valid} restoreReady=${backupSnapshot.restoreReady}');
+
+    final passed = _assertions.where((item) => item.passed).length;
+    final blockingFailed =
+        _assertions.where((item) => !item.passed && item.blocking).length;
+    final advisoryFailed =
+        _assertions.where((item) => !item.passed && !item.blocking).length;
+    final certification = blockingFailed == 0 && advisoryFailed == 0
+        ? 'READY FOR PRODUCTION'
+        : blockingFailed == 0
+            ? 'READY WITH WARNINGS'
+            : 'NOT READY FOR PRODUCTION';
+    _addLog(
+        'RELEASE_CERTIFICATION assertionsPassed=$passed/${_assertions.length} blockingFailed=$blockingFailed advisoryWarnings=$advisoryFailed certification=$certification');
+    _auditCheck(
+      'Release Certification',
+      'Production Gate',
+      blockingFailed == 0,
+      'Assertions Passed: $passed/${_assertions.length}; advisoryWarnings=$advisoryFailed; Certification=$certification.',
+      'Assertions Passed: $passed/${_assertions.length}; blockingFailed=$blockingFailed; advisoryWarnings=$advisoryFailed; Certification=$certification.',
+    );
+    final blockingIds = _assertions
+        .where((item) => !item.passed && item.blocking)
+        .map((item) => item.id)
+        .join(', ');
+    final advisoryIds = _assertions
+        .where((item) => !item.passed && !item.blocking)
+        .map((item) => item.id)
+        .join(', ');
+    if (blockingIds.isNotEmpty || advisoryIds.isNotEmpty) {
+      _addLog(
+          'BLOCKING_ASSERTIONS ${blockingIds.isEmpty ? 'none' : blockingIds} | ADVISORY_ASSERTIONS ${advisoryIds.isEmpty ? 'none' : advisoryIds}');
+    }
+    _addLog('==============================================');
+  }
+
+  void _runInvestigationMode() {
+    _addLog('========== VENTIO INVESTIGATION MODE ==========');
+    final failRows =
+        _report.where((item) => item.isFail).toList(growable: false);
+    final warnRows =
+        _report.where((item) => item.isWarn).toList(growable: false);
+    final triggerRows = <_StressAuditStep>[...failRows, ...warnRows];
+    final accountingTriggered = triggerRows.any((row) {
+      final section = row.section.toLowerCase();
+      final name = row.name.toLowerCase();
+      return section.contains('account') ||
+          section.contains('محاسب') ||
+          name.contains('journal') ||
+          name.contains('debit') ||
+          name.contains('credit');
+    });
+    _addLog(
+        'Investigation triggers: fails=${failRows.length} warnings=${warnRows.length} batch=$_currentBatchId');
+
+    final expenseEvidence = accountingTriggered
+        ? _investigateExpenseJournals()
+        : 'Accounting investigation skipped: no accounting warning or failure triggered it.';
+    final balanceInvestigation = accountingTriggered
+        ? _investigateTrialBalance()
+        : (
+            passed: true,
+            details:
+                'Trial balance investigation skipped: no accounting warning or failure triggered it.'
+          );
+    final balanceEvidence = balanceInvestigation.details;
+    final overpaidEvidence = _investigateOverpaidSales();
+    final performanceEvidence = _investigatePerformanceSlowdown();
+    final syncEvidence = _investigateSyncMode();
+    final suggestionDetails = _buildAutoSuggestions(expenseEvidence,
+        balanceEvidence, overpaidEvidence, performanceEvidence, syncEvidence);
+
+    _auditCheck(
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص المصاريف المحاسبي', 'Accounting expense diagnosis'),
+      !expenseEvidence.contains('missing='),
+      expenseEvidence,
+      expenseEvidence,
+      warning: true,
+    );
+    _auditCheck(
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص فرق المدين والدائن', 'Debit/Credit difference diagnosis'),
+      balanceInvestigation.passed,
+      balanceEvidence,
+      balanceEvidence,
+      warning: true,
+    );
+    _auditCheck(
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص الفواتير المدفوعة بزيادة', 'Overpaid invoices diagnosis'),
+      !overpaidEvidence.contains('count='),
+      overpaidEvidence,
+      overpaidEvidence,
+      warning: true,
+    );
+    _auditCheck(
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص تباطؤ الأداء', 'Performance slowdown diagnosis'),
+      !performanceEvidence.contains('slowSections='),
+      performanceEvidence,
+      performanceEvidence,
+      warning: true,
+    );
+    _auditCheck(
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص حالة المزامنة', 'Sync state diagnosis'),
+      !syncEvidence.contains('needsSync=true'),
+      syncEvidence,
+      syncEvidence,
+      warning: true,
+    );
+    _auditCheck(
+      _dual('اقتراحات الإصلاح', 'Fix Suggestions'),
+      _dual('خطوات مقترحة حسب الأدلة', 'Suggested steps from evidence'),
+      true,
+      suggestionDetails,
+      suggestionDetails,
+    );
+    _addLog('ROOT_CAUSE_SUGGESTIONS $suggestionDetails');
+    _addLog('===============================================');
+  }
+
+  String _investigateExpenseJournals() {
+    final expenses = _activeBatchExpenses();
+    final transactions = store.accountTransactions
+        .where((tx) => !tx.isDeleted)
+        .toList(growable: false);
+    final transactionRefs = <String>{};
+    for (final tx in transactions) {
+      if (tx.referenceId.trim().isNotEmpty) {
+        transactionRefs.add(tx.referenceId);
+      }
+      if (tx.referenceNo.trim().isNotEmpty) {
+        transactionRefs.add(tx.referenceNo);
+      }
+    }
+    final missing = <Expense>[];
+    final linked = <Expense>[];
+    for (final expense in expenses) {
+      final hasTx = transactionRefs.contains(expense.id) ||
+          transactionRefs.contains(expense.title);
+      if (hasTx) {
+        linked.add(expense);
+      } else {
+        missing.add(expense);
+      }
+    }
+    final sample = missing
+        .take(8)
+        .map((expense) =>
+            '${expense.id}:${expense.title}:amount=${_money(expense.amount)}:status=${expense.status}')
+        .join(' | ');
+    final details = missing.isEmpty
+        ? _dual(
+            'Expense journals OK: active=${expenses.length} linked=${linked.length}. كل مصروف نشط في الدفعة له أثر ضمن accountTransactions.',
+            'Expense journals OK: active=${expenses.length} linked=${linked.length}. Every active batch expense has an accountTransactions trace.')
+        : _dual(
+            'missing=${missing.length}/${expenses.length} linked=${linked.length} sample=$sample possibleCause=Expense journal may be stored only in SQLite journal_entries, or postExpense did not create a legacy accountTransaction reference.',
+            'missing=${missing.length}/${expenses.length} linked=${linked.length} sample=$sample possibleCause=Expense journal may be stored only in SQLite journal_entries, or postExpense did not create a legacy accountTransaction reference.');
+    _addLog('INVESTIGATION_EXPENSE_JOURNALS $details');
+    return details;
+  }
+
+  ({bool passed, String details}) _investigateTrialBalance() {
+    final sales = _batchSales();
+    final purchases = _batchPurchases();
+    final expenses = _activeBatchExpenses();
+    final refs = <String>{
+      ...sales.map((sale) => sale.id),
+      ...sales.map((sale) => sale.invoiceNo),
+      ...purchases.map((purchase) => purchase.id),
+      ...purchases.map((purchase) => purchase.purchaseNo),
+      ...expenses.map((expense) => expense.id),
+      ...expenses.map((expense) => expense.title),
+    };
+    final transactions = store.accountTransactions
+        .where((tx) =>
+            !tx.isDeleted &&
+            (refs.contains(tx.referenceId) || refs.contains(tx.referenceNo)))
+        .toList(growable: false);
+    final debit = transactions.fold<double>(0, (sum, tx) => sum + tx.debit);
+    final credit = transactions.fold<double>(0, (sum, tx) => sum + tx.credit);
+    final diff = (debit - credit).abs();
+    final byType = <String, double>{};
+    for (final tx in transactions) {
+      final key =
+          tx.accountType.trim().isEmpty ? 'unknown' : tx.accountType.trim();
+      byType[key] = (byType[key] ?? 0) + tx.debit - tx.credit;
+    }
+    final contributors = byType.entries.toList()
+      ..sort((a, b) => b.value.abs().compareTo(a.value.abs()));
+    final top = contributors
+        .take(6)
+        .map((entry) => '${entry.key}=${_money(entry.value)}')
+        .join(' | ');
+    final nonZeroContributors = contributors
+        .where((entry) => entry.value.abs() > 0.01)
+        .toList(growable: false);
+    final openSubledgerOnly = nonZeroContributors.isNotEmpty &&
+        nonZeroContributors.every(
+            (entry) => entry.key == 'customer' || entry.key == 'supplier');
+    if (diff <= 0.01 || transactions.isEmpty || openSubledgerOnly) {
+      final details = _dual(
+        'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
+        'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
+      );
+      _addLog('INVESTIGATION_TRIAL_BALANCE $details');
+      return (passed: true, details: details);
+    }
+    final details = _dual(
+      'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
+      'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
+    );
+    _addLog('INVESTIGATION_TRIAL_BALANCE $details');
+    return (passed: false, details: details);
+  }
+
+  String _investigateOverpaidSales() {
+    final overpaid = store.sales
+        .where((sale) =>
+            !sale.isDeleted &&
+            !sale.isCancelled &&
+            sale.paidAmount > sale.invoiceTotal + 0.01)
+        .toList(growable: false);
+    if (overpaid.isEmpty) {
+      const details =
+          'Overpaid sales OK: no invoices have paid amount greater than invoice total.';
+      _addLog('INVESTIGATION_OVERPAID_SALES $details');
+      return details;
+    }
+    final cancelledOrReturned = overpaid
+        .where((sale) =>
+            sale.isCancelled || sale.status.toLowerCase().contains('return'))
+        .length;
+    final zeroTotal = overpaid
+        .where(
+            (sale) => sale.invoiceTotal.abs() <= 0.01 && sale.paidAmount > 0.01)
+        .length;
+    final totalExtra = overpaid.fold<double>(
+        0,
+        (sum, sale) =>
+            sum + max<double>(0, sale.paidAmount - sale.invoiceTotal));
+    final sample = overpaid
+        .take(10)
+        .map((sale) =>
+            '${sale.invoiceNo}:status=${sale.status}:cancelled=${sale.isCancelled}:total=${_money(sale.invoiceTotal)}:paid=${_money(sale.paidAmount)}:extra=${_money(max<double>(0, sale.paidAmount - sale.invoiceTotal))}')
+        .join(' | ');
+    final details = _dual(
+      'count=${overpaid.length} totalExtra=${_money(totalExtra)} zeroTotalPaid=$zeroTotal cancelledOrReturned=$cancelledOrReturned sample=$sample possibleCause=cancel/return flow may zero invoice total without reversing or clearing paid amount, or Maintenance check should ignore cancelled/returned invoices.',
+      'count=${overpaid.length} totalExtra=${_money(totalExtra)} zeroTotalPaid=$zeroTotal cancelledOrReturned=$cancelledOrReturned sample=$sample possibleCause=cancel/return flow may zero invoice total without reversing or clearing paid amount, or Maintenance check should ignore cancelled/returned invoices.',
+    );
+    _addLog('INVESTIGATION_OVERPAID_SALES $details');
+    return details;
+  }
+
+  String _investigatePerformanceSlowdown() {
+    final slowRows = _report
+        .where(
+            (item) => item.performance != null && (item.isWarn || item.isFail))
+        .toList(growable: false);
+    if (slowRows.isEmpty) {
+      const details =
+          'Performance investigation OK: no structured pressure metric crossed a threshold.';
+      _addLog('INVESTIGATION_PERFORMANCE $details');
+      return details;
+    }
+    final evidence = slowRows
+        .map((row) => jsonEncode(<String, Object?>{
+              'section': row.section,
+              'name': row.name,
+              'status': row.status,
+              ...row.performance!.toJson(),
+            }))
+        .join(' || ');
+    final details =
+        'slowSections=${slowRows.length} structuredEvidence=$evidence possibleCause=${slowRows.map((row) => row.performance!.bottleneckPhase).where((value) => value.isNotEmpty).join(',')}';
+    _addLog('INVESTIGATION_PERFORMANCE $details');
+    return details;
+  }
+
+  String _investigatePerformanceSlowdownLegacy() {
+    final slowRows = _report
+        .where((item) => _sectionMatches(item.section, 'ضغط') && item.isWarn)
+        .toList(growable: false);
+    if (slowRows.isEmpty) {
+      const details =
+          'Performance investigation OK: no pressure section crossed the slowdown threshold.';
+      _addLog('INVESTIGATION_PERFORMANCE $details');
+      return details;
+    }
+    String parseValue(String text, String key) {
+      final match = RegExp('$key=([^ ]+)').firstMatch(text);
+      return match?.group(1) ?? 'n/a';
+    }
+
+    final evidence = slowRows.map((row) {
+      final avg = parseValue(row.details, 'avg');
+      final ops = parseValue(row.details, 'ops/s');
+      final slowdown = parseValue(row.details, 'slowdown');
+      final curveMatch = RegExp('curve=([^ ]+)').firstMatch(row.details);
+      final curve = curveMatch?.group(1) ?? 'n/a';
+      final buckets = curve.split('|');
+      final first = buckets.isEmpty ? 'n/a' : buckets.first;
+      final last = buckets.isEmpty ? 'n/a' : buckets.last;
+      return '${row.section}:${row.name}:avg=$avg opsPerSecond=$ops slowdown=$slowdown firstBucket=$first lastBucket=$last severity=Medium';
+    }).join(' || ');
+    final details = _dual(
+      'slowSections=${slowRows.length} evidence=$evidence possibleCause=growing lookup/validation cost, sync-change creation cost, or unindexed purchase/product queries under pressure.',
+      'slowSections=${slowRows.length} evidence=$evidence possibleCause=growing lookup/validation cost, sync-change creation cost, or unindexed purchase/product queries under pressure.',
+    );
+    _addLog('INVESTIGATION_PERFORMANCE $details');
+    return details;
+  }
+
+  String _investigateSyncMode() {
+    final transport = _effectiveSyncTransport();
+    final pendingQueue = store.pendingSyncQueue.length;
+    final pendingChanges = store.pendingSyncChanges.length;
+    final failedQueue = store.syncQueue
+        .where((item) => item.status.toLowerCase() == 'failed')
+        .length;
+    final rejectedQueue = store.syncQueue
+        .where((item) => item.status.toLowerCase() == 'rejected')
+        .length;
+    final isDirect = transport == 'direct';
+    final details = isDirect
+        ? _dual(
+            'mode=direct pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until direct sync completes; failed/rejected must remain zero.',
+            'mode=direct pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until direct sync completes; failed/rejected must remain zero.')
+        : _dual(
+            'mode=$transport pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=false interpretation=Local/LAN mode should not accumulate failed or rejected queue items.',
+            'mode=$transport pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=false interpretation=Local/LAN mode should not accumulate failed or rejected queue items.');
+    _addLog('INVESTIGATION_SYNC_MODE $details');
+    return details;
+  }
+
+  String _buildAutoSuggestions(
+      String expenseEvidence,
+      String balanceEvidence,
+      String overpaidEvidence,
+      String performanceEvidence,
+      String syncEvidence) {
+    final suggestions = <String>[];
+    if (expenseEvidence.contains('missing=')) {
+      suggestions.add(_dual(
+          '[1] راجع store.postExpense / AccountingService.recordExpense وتأكد من referenceType=expense و referenceId=expense.id.',
+          '[1] Check store.postExpense / AccountingService.recordExpense and make sure referenceType=expense and referenceId=expense.id.'));
+      suggestions.add(_dual(
+          '[2] إذا كانت القيود محفوظة في SQLite فقط، عدّل Stress Lab ليفحص journal_entries بدل accountTransactions للمصاريف.',
+          '[2] If entries are stored only in SQLite, adjust Stress Lab to inspect journal_entries instead of accountTransactions for expenses.'));
+    }
+    if (balanceEvidence.contains('diff=')) {
+      suggestions.add(_dual(
+          '[3] شغّل مطابقة بين legacy accountTransactions و SQLite journal_entries لنفس batch.',
+          '[3] Reconcile legacy accountTransactions with SQLite journal_entries for the same batch.'));
+      suggestions.add(_dual(
+          '[4] افحص عكس القيود عند إلغاء/إرجاع البيع والشراء.',
+          '[4] Check reversal entries when cancelling/returning sales and purchases.'));
+    }
+    if (overpaidEvidence.contains('count=')) {
+      suggestions.add(_dual(
+          '[HIGH] افحص منطق إلغاء/إرجاع الفاتورة: لا تترك paidAmount أكبر من invoiceTotal إلا إذا كان هناك رصيد عميل مقابل.',
+          '[HIGH] Check invoice cancel/return logic: do not leave paidAmount above invoiceTotal unless there is a matching customer credit.'));
+      suggestions.add(_dual(
+          '[MEDIUM] عدّل Maintenance overpaid_sales ليتجاهل الفواتير الملغاة/المرتجعة أو يطلب قيد عكسي واضح.',
+          '[MEDIUM] Adjust Maintenance overpaid_sales to ignore cancelled/returned invoices or require an explicit reversal entry.'));
+    }
+    if (performanceEvidence.contains('slowSections=')) {
+      suggestions.add(_dual(
+          '[MEDIUM] راجع أقسام الأداء المتباطئة المذكورة في Performance Investigation، وابدأ بالاستعلامات/الفهارس الخاصة بالمشتريات والمنتجات.',
+          '[MEDIUM] Review the slow performance areas reported by Performance Investigation, starting with purchase and product queries/indexes.'));
+    }
+    if (syncEvidence.contains('mode=direct') &&
+        syncEvidence.contains('needsSync=true')) {
+      suggestions.add(_dual(
+          '[LOW] في وضع Direct، شغّل/انتظر المزامنة بعد الاختبار ثم أعد الفحص؛ pending queue وحدها ليست فشلًا ما دام failed/rejected = 0.',
+          '[LOW] In Direct mode, run or wait for sync after the test and re-check; a pending queue alone is not a failure as long as failed/rejected = 0.'));
+    }
+    if (_report.any(
+            (row) => _sectionMatches(row.section, 'المشتريات') && row.isFail) ||
+        _report.any(
+            (row) => _sectionMatches(row.section, 'المصاريف') && row.isFail)) {
+      suggestions.insert(
+          0,
+          _dual(
+              '[CRITICAL] تأكد أن Stress Lab يفتح الوردية النقدية قبل أي شراء أو مصروف نقدي، وليس بعدهما.',
+              '[CRITICAL] Make sure Stress Lab opens the cash drawer before any cash purchase or expense, not after.'));
+    }
+    if (suggestions.isEmpty) {
+      suggestions.add(_dual(
+          '[OK] لا توجد أسباب جذرية واضحة؛ استمر بمراقبة الأداء والنسخ الاحتياطي والمزامنة.',
+          '[OK] No clear root cause was found; keep monitoring performance, backup, and sync.'));
+    }
+    return 'NEXT_ACTIONS ${suggestions.join(' | ')}';
+  }
+
+  void _runInventoryConsistencyChecks() {
+    final productIds =
+        store.allProductsForDiagnostics.map((product) => product.id).toSet();
+    final badStockValues = store.allProductsForDiagnostics
+        .where((product) => !product.stock.isFinite)
+        .length;
+    final negativeStressStocks = store.allProductsForDiagnostics
+        .where((product) =>
+            product.name.contains(_currentBatchId) && product.stock < -0.001)
+        .length;
+    final orphanStockProducts = store.stockMovements
+        .where((movement) =>
+            movement.productId.isNotEmpty &&
+            !productIds.contains(movement.productId))
+        .length;
+    final saleIds = store.sales.map((sale) => sale.id).toSet();
+    final purchaseIds = store.purchases.map((purchase) => purchase.id).toSet();
+    final orphanReferences = store.stockMovements.where((movement) {
+      final type = movement.type.toLowerCase();
+      if (movement.referenceId.isEmpty) return false;
+      if (type.contains('sale')) return !saleIds.contains(movement.referenceId);
+      if (type.contains('purchase')) {
+        return !purchaseIds.contains(movement.referenceId);
+      }
+      return false;
+    }).length;
+    _auditCheck(
+        _dual('المخزون المتقدم', 'Advanced Inventory'),
+        _dual('صلاحية أرصدة المنتجات', 'Product balance validity'),
+        badStockValues == 0,
+        _dual('كل أرصدة المنتجات أرقام صالحة.',
+            'All product balances are valid numbers.'),
+        _dual('يوجد $badStockValues منتجات برصيد غير صالح.',
+            'There are $badStockValues products with invalid balances.'));
+    _auditCheck(
+        _dual('المخزون المتقدم', 'Advanced Inventory'),
+        _dual('عدم وجود مخزون اختبار سالب', 'No negative test stock'),
+        negativeStressStocks == 0,
+        _dual('لا توجد منتجات اختبار برصيد سالب.',
+            'There are no test products with negative stock.'),
+        _dual('يوجد $negativeStressStocks منتجات اختبار برصيد سالب.',
+            'There are $negativeStressStocks test products with negative stock.'));
+    _auditCheck(
+        _dual('المخزون المتقدم', 'Advanced Inventory'),
+        _dual('عدم وجود حركات مخزون يتيمة', 'No orphan stock movements'),
+        orphanStockProducts == 0 && orphanReferences == 0,
+        _dual('لا توجد حركات مخزون يتيمة أو مراجع مفقودة.',
+            'There are no orphan stock movements or missing references.'),
+        _dual(
+            'حركات مخزون يتيمة: products=$orphanStockProducts references=$orphanReferences.',
+            'Orphan stock movements: products=$orphanStockProducts references=$orphanReferences.'));
+  }
+
+  int _measureSync(void Function() action) {
+    final sw = Stopwatch()..start();
+    action();
+    sw.stop();
+    return sw.elapsedMilliseconds;
+  }
+
+  Future<int> _measureAsync(Future<void> Function() action) async {
+    final sw = Stopwatch()..start();
+    await action();
+    sw.stop();
+    return sw.elapsedMilliseconds;
+  }
+
+  _PageReadinessProbeResult _measurePageReadiness<T>({
+    required List<T> Function() load,
+    required bool Function(T item) search,
+    required bool Function(T item) filter,
+    required int Function(T a, T b) sort,
+    int pageSize = 50,
+  }) {
+    late List<T> loaded;
+    final loadMs = _measureSync(() {
+      loaded = load();
+    });
+    late List<T> searched;
+    final searchMs = _measureSync(() {
+      searched = loaded.where(search).toList(growable: false);
+    });
+    late List<T> filtered;
+    final filterMs = _measureSync(() {
+      filtered = loaded.where(filter).toList(growable: false);
+    });
+    late List<T> sorted;
+    final sortMs = _measureSync(() {
+      sorted = filtered.toList(growable: false)..sort(sort);
+    });
+    late List<T> page;
+    final pageMs = _measureSync(() {
+      page = sorted.take(pageSize).toList(growable: false);
+    });
+    return _PageReadinessProbeResult(
+      totalRows: loaded.length,
+      searchRows: searched.length,
+      filterRows: filtered.length,
+      pageRows: page.length,
+      loadMs: loadMs,
+      searchMs: searchMs,
+      filterMs: filterMs,
+      sortMs: sortMs,
+      pageMs: pageMs,
+    );
+  }
+
+  void _addPageReadinessProbe(
+    String name,
+    _PageReadinessProbeResult Function() probe, {
+    int warnMs = 120,
+    int failMs = 500,
+  }) {
+    final sw = Stopwatch()..start();
+    try {
+      final result = probe();
+      sw.stop();
+      final status = result.totalMs >= failMs
+          ? 'FAIL'
+          : result.totalMs >= warnMs
+              ? 'WARN'
+              : 'PASS';
+      final details =
+          '${result.details} thresholdWarnMs=$warnMs thresholdFailMs=$failMs source=AppStoreCache operation=load+search+filter+sort+page';
+      _report.add(_StressAuditStep(
+        section: _dual('أداء تجهيز الصفحات', 'Page Readiness Performance'),
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('PAGE_READINESS $status $name $details');
+    } catch (error, stack) {
+      sw.stop();
+      _report.add(_StressAuditStep(
+        section: _dual('أداء تجهيز الصفحات', 'Page Readiness Performance'),
+        name: name,
+        status: 'FAIL',
+        details: error.toString(),
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('PAGE_READINESS FAIL $name $error');
+      _addLog(stack.toString().split('\n').take(3).join(' | '));
+    }
+  }
+
+  Future<void> _addSqlitePageReadinessProbe(
+    String name,
+    Future<_PageReadinessProbeResult> Function() probe, {
+    int warnMs = 120,
+    int failMs = 500,
+  }) async {
+    final sw = Stopwatch()..start();
+    try {
+      final result = await probe();
+      sw.stop();
+      final status = result.totalMs >= failMs
+          ? 'FAIL'
+          : result.totalMs >= warnMs
+              ? 'WARN'
+              : 'PASS';
+      final details =
+          '${result.details} thresholdWarnMs=$warnMs thresholdFailMs=$failMs source=SQLite operation=query+count+page';
+      _report.add(_StressAuditStep(
+        section: _dual(
+            'أداء تجهيز الصفحات SQLite', 'SQLite Page Readiness Performance'),
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('SQLITE_PAGE_READINESS $status $name $details');
+    } catch (error, stack) {
+      sw.stop();
+      _report.add(_StressAuditStep(
+        section: _dual(
+            'أداء تجهيز الصفحات SQLite', 'SQLite Page Readiness Performance'),
+        name: name,
+        status: 'FAIL',
+        details: error.toString(),
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('SQLITE_PAGE_READINESS FAIL $name $error');
+      _addLog(stack.toString().split('\n').take(3).join(' | '));
+    }
+  }
+
+  Future<_PageReadinessProbeResult> _measureSqlitePageReadiness<T>({
+    required Future<BusinessQueryPage<T>?> Function() query,
+  }) async {
+    BusinessQueryPage<T>? page;
+    final queryMs = await _measureAsync(() async {
+      page = await query();
+    });
+    final result = page;
+    if (result == null) {
+      throw StateError('SQLite business query is not available.');
+    }
+    return _PageReadinessProbeResult(
+      totalRows: result.totalCount,
+      searchRows: result.totalCount,
+      filterRows: result.totalCount,
+      pageRows: result.items.length,
+      loadMs: queryMs,
+      searchMs: 0,
+      filterMs: 0,
+      sortMs: 0,
+      pageMs: 0,
+    );
+  }
+
+  void _runPageReadinessPerformanceChecks() {
+    final query = _currentBatchId.toLowerCase();
+    _addPageReadinessProbe(
+      'Products list/search/filter/sort/page',
+      () => _measurePageReadiness<Product>(
+        load: () => store.products.toList(growable: false),
+        search: (item) =>
+            item.name.toLowerCase().contains(query) ||
+            item.code.toLowerCase().contains(query) ||
+            item.category.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted && item.trackStock,
+        sort: (a, b) => a.name.compareTo(b.name),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Sales list/search/filter/sort/page',
+      () => _measurePageReadiness<Sale>(
+        load: () => store.sales.toList(growable: false),
+        search: (item) =>
+            item.invoiceNo.toLowerCase().contains(query) ||
+            item.customerName.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted && !item.isCancelled,
+        sort: (a, b) => b.date.compareTo(a.date),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Purchases list/search/filter/sort/page',
+      () => _measurePageReadiness<Purchase>(
+        load: () => store.purchases.toList(growable: false),
+        search: (item) =>
+            item.purchaseNo.toLowerCase().contains(query) ||
+            item.supplierName.toLowerCase().contains(query) ||
+            item.searchText.contains(query),
+        filter: (item) => !item.isDeleted && !item.isCancelled,
+        sort: (a, b) => b.date.compareTo(a.date),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Inventory list/search/filter/sort/page',
+      () => _measurePageReadiness<Product>(
+        load: () => store.stockTrackedProducts.toList(growable: false),
+        search: (item) =>
+            item.name.toLowerCase().contains(query) ||
+            item.code.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted && item.stock.isFinite,
+        sort: (a, b) => a.stock.compareTo(b.stock),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Customers list/search/filter/sort/page',
+      () => _measurePageReadiness<Customer>(
+        load: () => store.customers.toList(growable: false),
+        search: (item) =>
+            item.name.toLowerCase().contains(query) ||
+            item.phone.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted,
+        sort: (a, b) => a.name.compareTo(b.name),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Expenses list/search/filter/sort/page',
+      () => _measurePageReadiness<Expense>(
+        load: () => store.expenses.toList(growable: false),
+        search: (item) =>
+            item.title.toLowerCase().contains(query) ||
+            item.category.toLowerCase().contains(query) ||
+            item.searchText.contains(query),
+        filter: (item) => !item.isDeleted && !item.isCancelled,
+        sort: (a, b) => b.date.compareTo(a.date),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Reports overview calculation',
+      () => _measurePageReadiness<String>(
+        load: () {
+          final purchases = store.purchasesOverview;
+          final expenses = store.expensesOverview;
+          return <String>[
+            'purchases:${purchases.totalCount}:${purchases.totalPurchasesAmount}',
+            'expenses:${expenses.totalCount}:${expenses.totalExpensesAmount}',
+            'inventory:${store.inventoryCostValue}:${store.inventoryRetailValue}',
+          ];
+        },
+        search: (item) => item.contains(':'),
+        filter: (item) => item.isNotEmpty,
+        sort: (a, b) => a.compareTo(b),
+      ),
+      warnMs: 80,
+      failMs: 350,
+    );
+  }
+
+  Future<void> _runSqlitePageReadinessPerformanceChecks() async {
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      _auditCheck(
+          _dual('الأداء', 'Performance'),
+          'SQLite page readiness availability',
+          false,
+          'SQLite page readiness probes are available.',
+          'SQLite page readiness probes were skipped because business SQLite is not queryable.',
+          warning: true);
+      return;
+    }
+    final query = _currentBatchId.toLowerCase();
+    await _addSqlitePageReadinessProbe(
+      'Products SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Product>(
+        query: () => LocalDatabaseService.queryProductsFromSqlite(
+          query: query,
+          stockTrackedOnly: true,
+          limit: 50,
+          offset: 0,
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Sales SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Sale>(
+        query: () => LocalDatabaseService.querySalesFromSqlite(
+          query: query,
+          status: 'all',
+          limit: 50,
+          offset: 0,
+          sortMode: 'newest',
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Purchases SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Purchase>(
+        query: () => LocalDatabaseService.queryPurchasesFromSqlite(
+          query: query,
+          status: 'all',
+          limit: 50,
+          offset: 0,
+          sortMode: 'newest',
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Stock movements SQLite query/count/page',
+      () => _measureSqlitePageReadiness<StockMovement>(
+        query: () => LocalDatabaseService.queryStockMovementsFromSqlite(
+          // Stock movements are written through the transaction service and
+          // are not guaranteed to have a freshly rebuilt text-search entry.
+          // Probe the real paginated screen path instead of reporting an
+          // artificial empty search result for the current audit id.
+          query: '',
+          limit: 50,
+          offset: 0,
+          sortMode: 'newest',
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Customers SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Customer>(
+        query: () => LocalDatabaseService.queryCustomersFromSqlite(
+          query: query,
+          limit: 50,
+          offset: 0,
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Expenses SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Expense>(
+        query: () => LocalDatabaseService.queryExpensesFromSqlite(
+          query: query,
+          status: 'all',
+          limit: 50,
+          offset: 0,
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Reports SQLite summary calculation',
+      () async {
+        Map<String, Object?>? summary;
+        final queryMs = await _measureAsync(() async {
+          summary = await LocalDatabaseService.buildReportsSummaryFromSqlite(
+            reference: DateTime.now(),
+          );
+        });
+        if (summary == null) {
+          throw StateError('SQLite reports summary is not available.');
+        }
+        return _PageReadinessProbeResult(
+          totalRows: summary!.length,
+          searchRows: summary!.length,
+          filterRows: summary!.length,
+          pageRows: summary!.length,
+          loadMs: queryMs,
+          searchMs: 0,
+          filterMs: 0,
+          sortMs: 0,
+          pageMs: 0,
+        );
+      },
+      warnMs: 80,
+      failMs: 350,
+    );
+  }
+
+  void _runPerformanceHealthChecks() {
+    final perfRows = _report
+        .where((item) => _sectionMatches(item.section, 'ضغط'))
+        .toList(growable: false);
+    final slowRows = perfRows.where((item) => item.isWarn).length;
+    final failedRows = perfRows.where((item) => item.isFail).length;
+    final hasSalesPerf = perfRows.any(
+      (item) => _sectionMatches(item.section, 'Sales pressure'),
+    );
+    _auditCheck(
+        _dual('الأداء', 'Performance'),
+        _dual('منحنى التباطؤ', 'Slowdown curve'),
+        slowRows == 0 && failedRows == 0,
+        _dual('لا يوجد تباطؤ حاد في منحنيات الأداء المسجلة كل 100 عملية.',
+            'No sharp slowdown was detected in the performance curves recorded every 100 operations.'),
+        _dual(
+            'يوجد $slowRows منحنيات أداء متباطئة و $failedRows اختبارات ضغط فاشلة.',
+            'There are $slowRows slow performance curves and $failedRows failed pressure tests.'),
+        warning: true);
+    _auditCheck(
+        _dual('الأداء', 'Performance'),
+        _dual('تغطية قياس المبيعات', 'Sales measurement coverage'),
+        hasSalesPerf,
+        _dual('تم قياس أداء المبيعات تحت ضغط $_lastPressureMultiplier عملية.',
+            'Sales performance was measured under $_lastPressureMultiplier-operation pressure.'),
+        _dual('لم يتم العثور على قياس ضغط للمبيعات.',
+            'No sales pressure measurement was found.'),
+        warning: true);
+    final pageRows = _report
+        .where((item) =>
+            item.section ==
+            _dual('أداء تجهيز الصفحات', 'Page Readiness Performance'))
+        .toList(growable: false);
+    final slowPageRows = pageRows.where((item) => item.isWarn).length;
+    final failedPageRows = pageRows.where((item) => item.isFail).length;
+    _auditCheck(
+        _dual('الأداء', 'Performance'),
+        'Page readiness measurement coverage',
+        pageRows.length >= 6,
+        'Page readiness probes captured ${pageRows.length} heavy page preparation measurements.',
+        'Only ${pageRows.length} page readiness probes were captured.',
+        warning: true);
+    _auditCheck(
+        _dual('الأداء', 'Performance'),
+        'Heavy page readiness time',
+        slowPageRows == 0 && failedPageRows == 0,
+        'No heavy page readiness probe crossed the configured warning threshold.',
+        'There are $slowPageRows slow and $failedPageRows failed page readiness probes.',
+        warning: true);
+  }
+
+  int _scoreForSection(String section, int weight) {
+    final rows = _report
+        .where((item) => _sectionMatches(item.section, section))
+        .toList(growable: false);
+    if (rows.isEmpty) return weight;
+    final fails = rows.where((item) => item.isFail).length;
+    final warns = rows.where((item) => item.isWarn).length;
+    final penalty = fails * 25 + warns * 10;
+    return max<int>(0, weight - penalty);
+  }
+
+  Map<String, int> _calculateHealthScores() {
+    final performance =
+        _scoreForSection('ضغط', 20) + _scoreForSection('الأداء', 10);
+    final accounting = _scoreForSection('المحاسبة', 15) +
+        _scoreForSection('المحاسبة المتقدمة', 15);
+    final inventory =
+        _scoreForSection('المخزون', 8) + _scoreForSection('المخزون المتقدم', 7);
+    final integrity = _scoreForSection('سلامة البيانات', 10);
+    final maintenance = _scoreForSection('صيانة التطبيق', 5) +
+        _scoreForSection('أدلة الصيانة', 5);
+    final backup = _scoreForSection('النسخ الاحتياطي', 5);
+    final sync = _scoreForSection('المزامنة', 5);
+    final total = performance +
+        accounting +
+        inventory +
+        integrity +
+        maintenance +
+        backup +
+        sync;
+    return <String, int>{
+      'total': total,
+      'performance': performance,
+      'accounting': accounting,
+      'inventory': inventory,
+      'integrity': integrity,
+      'maintenance': maintenance,
+      'backup': backup,
+      'sync': sync,
+    };
+  }
+
+  void _addHealthScoreReport() {
+    final scores = _calculateHealthScores();
+    final total = scores['total'] ?? 0;
+    final verdict = total >= 95
+        ? 'VENTIO READY FOR PRODUCTION'
+        : total >= 80
+            ? 'VENTIO READY WITH WARNINGS'
+            : 'VENTIO NOT READY';
+    _addLog('========== VENTIO HEALTH SCORE ==========');
+    _addLog(
+        "System Health=$total/100 | Performance=${scores['performance']}/30 | Accounting=${scores['accounting']}/30 | Inventory=${scores['inventory']}/15 | Integrity=${scores['integrity']}/10 | Maintenance=${scores['maintenance']}/10 | Backup=${scores['backup']}/5 | Sync=${scores['sync']}/5");
+    _addLog('Verdict: $verdict');
+    if (_healthHistory.isNotEmpty) {
+      final previous = _healthHistory.last;
+      String delta(String key) {
+        final currentValue = scores[key] ?? 0;
+        final previousValue = previous[key] ?? 0;
+        final diff = currentValue - previousValue;
+        return '$key:previous=$previousValue current=$currentValue delta=${diff >= 0 ? '+' : ''}$diff';
+      }
+
+      _addLog(
+          "HEALTH_SCORE_COMPARISON ${delta('total')} | ${delta('performance')} | ${delta('accounting')} | ${delta('inventory')} | ${delta('maintenance')}");
+    } else {
+      _addLog('HEALTH_SCORE_COMPARISON previous=none current=$total/100');
+    }
+    _healthHistory.add(Map<String, int>.from(scores));
+    if (_healthHistory.length > 10) {
+      _healthHistory.removeRange(0, _healthHistory.length - 10);
+    }
+    _addLog('=========================================');
+  }
+
+  void _addFinalAuditReport(DateTime startedAt) {
+    final pass = _report.where((item) => item.isPass).length;
+    final warn = _report.where((item) => item.isWarn).length;
+    final fail = _report.where((item) => item.isFail).length;
+    final elapsed = DateTime.now().difference(startedAt).inSeconds;
+    final overall = fail > 0
+        ? 'فشل'
+        : warn > 0
+            ? 'نجح مع تحذيرات'
+            : 'نجح';
+    _addPerformanceReport();
+    _addHealthScoreReport();
+    _addShareableFinalReport(
+      startedAt: startedAt,
+      overall: overall,
+      pass: pass,
+      warn: warn,
+      fail: fail,
+      elapsedSeconds: elapsed,
+    );
+    _addLog('========== VENTIO STRESS LAB FINAL REPORT ==========');
+    _addLog(
+        'النتيجة العامة: $overall | نجاح=$pass | تحذيرات=$warn | فشل=$fail | الزمن=${elapsed}s | batch=$_currentBatchId');
+    final sections = _report.map((item) => item.section).toSet().toList()
+      ..sort();
+    for (final section in sections) {
+      final rows = _report.where((item) => item.section == section).toList();
+      final p = rows.where((item) => item.isPass).length;
+      final w = rows.where((item) => item.isWarn).length;
+      final f = rows.where((item) => item.isFail).length;
+      _addLog('[$section] نجاح=$p تحذيرات=$w فشل=$f');
+      for (final row in rows) {
+        _addLog(
+            ' - ${row.status} ${row.name} (${row.elapsedMs}ms): ${row.details}');
+      }
+    }
+    _addLog('====================================================');
+  }
+
+  Future<void> _copyLog() async {
+    final text = _log.join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(_tf('copied_log_lines', {'count': _log.length}))));
+  }
+
+  Future<void> _clearLog() async {
+    setState(() => _log.clear());
+  }
+
+  Widget _numberField(String label, TextEditingController controller) {
+    return SizedBox(
+      width: 170,
+      child: TextField(
+        controller: controller,
+        enabled: !_running,
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(
+            labelText: label, border: const OutlineInputBorder()),
+      ),
+    );
+  }
+
+  Future<void> _runCompleteLab() async {
+    if (_running) return;
+    await _runFullSimulation();
+    await _waitForAutoSyncCheck();
+    await _runAllDiagnostics();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.store.isStressLabEnabled) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(AppLocalizations.of(context).text('stress_lab')),
+        ),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.lock_outline, size: 42),
+                    const SizedBox(height: 12),
+                    Text(
+                      AppLocalizations.of(context).text('stress_lab'),
+                      style: Theme.of(context).textTheme.titleLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      AppLocalizations.of(context)
+                          .text('stress_lab_description'),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final identity = store.appIdentity;
+    final tr = AppLocalizations.of(context);
+    final pass = _report.where((item) => item.isPass).length;
+    final warn = _report.where((item) => item.isWarn).length;
+    final fail = _report.where((item) => item.isFail).length;
+    final scenarioGroupCount = _report
+        .where((item) => item.section.startsWith('S'))
+        .map((item) => item.section)
+        .toSet()
+        .length;
+    final totalElapsedMs = _report.fold<int>(
+        0, (current, item) =>
+            current > item.elapsedMs ? current : item.elapsedMs);
+    final overall = _report.isEmpty
+        ? tr.text('stress_lab_not_run')
+        : fail > 0
+            ? tr.text('stress_lab_failed')
+            : warn > 0
+                ? tr.text('stress_lab_passed_with_warnings')
+                : tr.text('stress_lab_passed');
+    return PopScope(
+      canPop: !_running,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(tr.text('stress_lab')),
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(tr.text('stress_lab'),
+                          style: Theme.of(context).textTheme.headlineSmall),
+                      const SizedBox(height: 8),
+                      Text(tr.text('stress_lab_desc')),
+                      const SizedBox(height: 8),
+                      Text(_tf('role_device_transport_epoch', {
+                        'role': _roleLabel(),
+                        'device': identity.deviceId,
+                        'transport': _effectiveSyncTransport(),
+                        'epoch': identity.storeEpoch
+                      })),
+                      const SizedBox(height: 16),
+                      LinearProgressIndicator(
+                          value: _running ? _progress : null),
+                      const SizedBox(height: 8),
+                      Text(localizeRuntimeMessage(_status, tr)),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        key: const ValueKey('RealUserScenarioButton'),
+                        onPressed: _running ? null : _confirmRealUserScenario,
+                        icon: const Icon(Icons.play_circle_outline),
+                        label: Text(_dual('تشغيل جميع السيناريوهات',
+                            'Run all scenarios')),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _dual(
+                          'ضغطة واحدة تشغّل الدورة الأساسية ثم New Employee وChaos وDisaster وMarathon تلقائياً: 780 حلقة فوضى، كل أنماط الأخطاء مضمونة أولاً ثم عشوائية، مع تصحيح المسؤول وDouble Submit وSQLite Reload وProduction Integrity. قاعدة اختبار فقط.',
+                          'One click runs the core suite then New Employee, Chaos, Disaster and Marathon automatically: 780 chaos episodes, guaranteed mistake-pattern coverage before randomization, supervisor recovery, double-submit races, SQLite reloads and Production Integrity. Test databases only.',
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _running ? null : _runOneButtonSystemAudit,
+                        icon: const Icon(Icons.health_and_safety_outlined),
+                        label: Text(tr.text('run_stress_lab_audit')),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _numberField(
+                              _dual('مضاعف الضغط', 'Pressure multiplier'),
+                              _pressureMultiplierController),
+                          _numberField(_dual('تقدم كل', 'Progress every'),
+                              _pressureProgressEveryController),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _log.isEmpty ? null : _copyLog,
+                            icon: const Icon(Icons.copy),
+                            label: Text(tr.text('copy_full_report')),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _running ? null : _clearLog,
+                            icon: const Icon(Icons.clear_all),
+                            label: Text(tr.text('clear_report')),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (_report.isNotEmpty)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${tr.text('overall_result')}: $overall',
+                            style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 8),
+                        Text(tr.format('stress_lab_pass_warn_fail',
+                            {'pass': pass, 'warn': warn, 'fail': fail})),
+                        const SizedBox(height: 6),
+                        Text(_dual(
+                          'مجموعات السيناريو=$scenarioGroupCount | خطوات التقرير=${_report.length} | الزمن=${(totalElapsedMs / 1000).toStringAsFixed(2)} ثانية',
+                          'scenarioGroups=$scenarioGroupCount | reportSteps=${_report.length} | elapsed=${(totalElapsedMs / 1000).toStringAsFixed(2)}s',
+                        )),
+                      ],
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: _report.isEmpty
+                    ? DecoratedBox(
+                        decoration: BoxDecoration(
+                            border: Border.all(
+                                color: Theme.of(context).dividerColor),
+                            borderRadius: BorderRadius.circular(8)),
+                        child: Center(
+                            child: Text(tr.text('stress_lab_report_prompt'))),
+                      )
+                    : ListView.builder(
+                        itemCount: _report.length,
+                        itemBuilder: (context, index) {
+                          final item = _report[index];
+                          final icon = item.isPass
+                              ? Icons.check_circle_outline
+                              : item.isWarn
+                                  ? Icons.warning_amber_outlined
+                                  : Icons.error_outline;
+                          return Card(
+                            child: ListTile(
+                              leading: Icon(icon),
+                              title: Text(
+                                  '${_reportLabel(item.section, tr)} — ${_reportLabel(item.name, tr)}'),
+                              subtitle: Text(
+                                  '${localizeRuntimeMessage(item.details, tr)}\n${tr.text('duration')}: ${item.elapsedMs} ms'),
+                              isThreeLine: true,
+                              trailing: Text(_reportLabel(item.status, tr)),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

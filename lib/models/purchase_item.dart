@@ -1,0 +1,87 @@
+import 'inventory_batch.dart';
+
+class PurchaseItem {
+  const PurchaseItem({
+    this.lineId = '',
+    required this.productId,
+    required this.productName,
+    required this.quantity,
+    required this.unitCost,
+    this.purchaseUnitId = 'base',
+    this.purchaseUnitName = '',
+    this.conversionToBase = 1,
+    this.originalUnitCost,
+    this.unitCostCurrency = 'USD',
+    this.exchangeRateAtEntry = 0,
+    this.batchAllocations = const <BatchAllocation>[],
+  });
+
+  final String lineId;
+  final String productId;
+  final String productName;
+
+  /// Quantity entered in the selected purchase unit. Supports decimals for measurable products.
+  final double quantity;
+
+  /// USD reference unit cost for the selected purchase unit.
+  final double unitCost;
+  final String purchaseUnitId;
+  final String purchaseUnitName;
+
+  /// How many base inventory units are contained in one selected purchase unit.
+  final double conversionToBase;
+  final double? originalUnitCost;
+  final String unitCostCurrency;
+  final double exchangeRateAtEntry;
+  final List<BatchAllocation> batchAllocations;
+
+  double get baseQuantity => quantity * conversionToBase;
+  double get unitCostPerBase =>
+      conversionToBase <= 0 ? unitCost : unitCost / conversionToBase;
+  double get lineTotal => quantity * unitCost;
+
+  Map<String, dynamic> toJson() => {
+        'lineId': lineId,
+        'productId': productId,
+        'productName': productName,
+        'quantity': quantity,
+        'unitCost': unitCost,
+        'purchaseUnitId': purchaseUnitId,
+        'purchaseUnitName': purchaseUnitName,
+        'conversionToBase': conversionToBase,
+        'baseQuantity': baseQuantity,
+        'unitCostPerBase': unitCostPerBase,
+        'originalUnitCost': originalUnitCost ?? unitCost,
+        'unitCostCurrency': unitCostCurrency,
+        'exchangeRateAtEntry': exchangeRateAtEntry,
+        'batchAllocations':
+            batchAllocations.map((item) => item.toJson()).toList(),
+      };
+
+  factory PurchaseItem.fromJson(Map<String, dynamic> json) {
+    final rawCurrency =
+        (json['unitCostCurrency'] as String? ?? 'USD').toUpperCase();
+    final currency = rawCurrency == 'LBP' ? 'LBP' : 'USD';
+    final unitCost = (json['unitCost'] as num? ?? 0).toDouble();
+    return PurchaseItem(
+      lineId: json['lineId']?.toString() ?? json['id']?.toString() ?? '',
+      productId: json['productId']?.toString() ?? '',
+      productName: json['productName']?.toString() ?? '',
+      quantity: (json['quantity'] as num? ?? 0).toDouble(),
+      unitCost: unitCost,
+      purchaseUnitId: json['purchaseUnitId']?.toString() ?? 'base',
+      purchaseUnitName: json['purchaseUnitName']?.toString() ?? '',
+      conversionToBase: (json['conversionToBase'] as num? ?? 1).toDouble(),
+      originalUnitCost:
+          (json['originalUnitCost'] as num?)?.toDouble() ?? unitCost,
+      unitCostCurrency: currency,
+      exchangeRateAtEntry:
+          (json['exchangeRateAtEntry'] as num? ?? 0).toDouble(),
+      batchAllocations: (json['batchAllocations'] as List<dynamic>? ??
+              const <dynamic>[])
+          .map((item) =>
+              BatchAllocation.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList(),
+    );
+  }
+}

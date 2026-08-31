@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "coverageMinimumPercent": 35.0,
+  "coverageTargetPercent": 75.0,
+  "coverageExcludes": [
+    "lib/app.dart",
+    "lib/widgets/**",
+    "lib/features/**/*_page.dart",
+    "lib/features/**/*_page_*.dart",
+    "lib/features/**/*_widgets.dart",
+    "lib/features/dev_tools/stress_lab_page.dart",
+    "lib/features/maintenance/diagnostics_page.dart",
+    "lib/features/settings/settings_page_backup.dart",
+    "lib/core/services/*_io.dart",
+    "lib/core/services/*_stub.dart",
+    "lib/core/storage/sqlite/sqlite_database_connection_io.dart",
+    "lib/core/services/google_drive_browser_auth_io.dart"
+  ],
+  "testConcurrency": 1,
+  "criticalDisabledTests": [
+    "integration_test/navigation_flow_test.dart.disabled",
+    "integration_test/performance_flow_test.dart.disabled"
+  ]
+}

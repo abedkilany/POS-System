@@ -1,0 +1,1542 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+import '../../core/localization/app_localizations.dart';
+import '../../core/app_brand.dart';
+import '../../core/services/account_auth_service.dart';
+import '../../core/services/direct_control_plane_service.dart';
+import '../../core/services/sync_diagnostics_log.dart';
+import '../../core/services/page_timing_scope.dart';
+import '../../core/services/startup_timing_service.dart';
+import '../../core/services/windows_release_catalog.dart';
+import '../../core/utils/responsive.dart';
+import '../../core/sync_unified/sync_unified.dart';
+import '../../data/app_store.dart';
+import '../../models/app_identity.dart';
+import '../settings/sync_setup_page.dart';
+import '../account/store_account_dashboard_page.dart';
+import '../admin/admin_subscribers_page.dart';
+
+class LoginGatePage extends StatefulWidget {
+  const LoginGatePage({
+    super.key,
+    required this.store,
+    required this.child,
+    required this.onLocaleChanged,
+  });
+
+  final AppStore store;
+  final Widget child;
+  final ValueChanged<Locale> onLocaleChanged;
+
+  @override
+  State<LoginGatePage> createState() => _LoginGatePageState();
+}
+
+class _LoginGatePageState extends State<LoginGatePage> {
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController =
+      TextEditingController();
+  final TextEditingController _storeNameController = TextEditingController();
+  AccountAuthCache? _authCache;
+
+  bool _savingSetup = false;
+  bool _loggingIn = false;
+  bool _rememberLogin = false;
+  bool _showRegister = false;
+  bool _showPassword = false;
+  bool _checkingSuspension = false;
+  bool _firstBuildMarked = false;
+  bool _firstReadyMarked = false;
+  String _onlineSessionPassword = '';
+  late final VoidCallback _storeListener;
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    StartupTimingService.markPageEntered(
+      'LoginGatePage',
+      pageLabel: 'Login gate',
+    );
+    _storeListener = _handleStoreChanged;
+    widget.store.addListener(_storeListener);
+    _authCache = AccountAuthCache.load();
+    _rememberLogin = widget.store.rememberLogin;
+  }
+
+  @override
+  void didUpdateWidget(covariant LoginGatePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_storeListener);
+      widget.store.addListener(_storeListener);
+    }
+  }
+
+  @override
+  void dispose() {
+    StartupTimingService.markPageExited(
+      'LoginGatePage',
+      pageLabel: 'Login gate',
+    );
+    widget.store.removeListener(_storeListener);
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    _storeNameController.dispose();
+    super.dispose();
+  }
+
+  String _normalizeLoginPart(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  bool _isValidLoginPart(String value) {
+    return RegExp(r'^[a-z0-9][a-z0-9_-]{2,31}$').hasMatch(value);
+  }
+
+  void _showAuthMessage(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _setAuthCache(AccountAuthCache? cache) {
+    if (!mounted) return;
+    setState(() => _authCache = cache);
+  }
+
+  Future<void> _persistRecoveredStoreAuthCache({
+    required String storeId,
+    required String branchId,
+  }) async {
+    final cache = _authCache;
+    if (cache == null) return;
+    final updatedCache = cache.copyWith(
+      mode: 'login',
+      storeId: storeId.trim().toUpperCase(),
+      branchId: branchId.trim().toUpperCase(),
+      lastVerifiedAt: DateTime.now(),
+    );
+    await AccountAuthCache.save(updatedCache);
+    _setAuthCache(updatedCache);
+  }
+
+  String _recoveryUsernameFromCache(AccountAuthCache cache) {
+    final cachedUsername = cache.username.trim().toLowerCase();
+    if (cachedUsername.isNotEmpty) return cachedUsername;
+    final loginName = cache.loginName.trim().toLowerCase();
+    if (loginName.contains('@')) {
+      return loginName.split('@').first.trim();
+    }
+    return 'admin';
+  }
+
+  String _recoveryUsernameFromResult(
+    DirectStoreRecoveryResult result,
+    AccountAuthCache cache,
+  ) {
+    final resultUsername = result.username.trim().toLowerCase();
+    if (resultUsername.isNotEmpty) return resultUsername;
+    final resultLoginName = result.loginName.trim().toLowerCase();
+    if (resultLoginName.contains('@')) {
+      return resultLoginName.split('@').first.trim();
+    }
+    return _recoveryUsernameFromCache(cache);
+  }
+
+  Future<void> _checkSuspensionStatus() async {
+    if (!widget.store.appIdentity.isClient) return;
+    final tr = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _checkingSuspension = true);
+    try {
+      final result =
+          await UnifiedSyncFactory.activeEngine(widget.store).syncNow();
+      if (!mounted) return;
+      if (result.ok && !widget.store.isSuspendedByHost) {
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('client_resume_detected'))));
+        setState(() {});
+      } else {
+        messenger.showSnackBar(SnackBar(
+            content: Text(result.message.isEmpty
+                ? tr.text('client_still_suspended')
+                : localizeRuntimeMessage(result.message, tr))));
+      }
+    } catch (error) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => _checkingSuspension = false);
+    }
+  }
+
+  Future<void> _recoverStoreIdentity(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final cache = _authCache ?? AccountAuthCache.load();
+    final direct = VpsControlPlaneSettings.load();
+    final previousIdentity = widget.store.appIdentity;
+    final storeId = (cache?.storeId.trim().isNotEmpty == true
+            ? cache!.storeId
+            : widget.store.appIdentity.storeId)
+        .trim()
+        .toUpperCase();
+    final branchId = (cache?.branchId.trim().isNotEmpty == true
+            ? cache!.branchId
+            : widget.store.appIdentity.branchId)
+        .trim()
+        .toUpperCase();
+    SyncDiagnosticsLog.add(
+      '[RECOVER_IDENTITY] press '
+      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
+      'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
+      'hasCache=${cache != null} '
+      'accountToken=${cache?.accountToken.trim().isNotEmpty == true} '
+      'storeId=$storeId branchId=$branchId',
+    );
+
+    if (cache == null || cache.accountToken.trim().isEmpty) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=missing_online_session',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('online_account_session_required'))),
+      );
+      return;
+    }
+    if (widget.store.hasLocalAdminUser) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=local_store_data_exists',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(tr.text('local_store_identity_recovery_locked'))),
+      );
+      return;
+    }
+    if (_onlineSessionPassword.trim().length < 6) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=missing_online_password',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                tr.text('sign_in_online_before_recovering_store_identity'))),
+      );
+      return;
+    }
+    if (!storeId.startsWith('ST-')) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=invalid_store_id storeId=$storeId',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('store_id_not_found_for_account'))),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('recover_store_identity')),
+        content: ResponsiveDialogBox(
+          maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.text('recover_store_identity_desc')),
+              const SizedBox(height: 12),
+              Text('${tr.text('store_id_label')}: $storeId'),
+              if (branchId.isNotEmpty)
+                Text('${tr.text('branch_id_label')}: $branchId'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('recover')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] start storeId=$storeId branchId=$branchId',
+      );
+      final recoverySettings = direct.copyWith(
+        enabled: true,
+        apiBaseUrl: direct.apiBaseUrl.trim().isNotEmpty
+            ? direct.apiBaseUrl.trim()
+            : VpsControlPlaneSettings.bundledApiBaseUrl,
+        clearLastPullCursor: true,
+      );
+      await recoverySettings.save();
+      final recoveryClient = http.Client();
+      late final DirectStoreRecoveryResult result;
+      try {
+        result = await DirectControlPlaneService(
+          widget.store,
+          client: recoveryClient,
+        ).recoverExistingStoreIdentityFromDirect(
+          recoverySettings,
+          storeId: storeId,
+          branchId: branchId,
+        );
+      } finally {
+        recoveryClient.close();
+      }
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] result ok=${result.ok} '
+        'storeId=${result.identity?.storeId ?? storeId} '
+        'branchId=${result.identity?.branchId ?? branchId} '
+        'loginName=${result.loginName} '
+        'storeSlug=${result.storeSlug} '
+        'directSyncEnabled=${result.directSyncEnabled} '
+        'deviceLimit=${result.deviceLimit?.allowed ?? -1}',
+      );
+      if (result.ok) {
+        final recoveryCache = _authCache ?? AccountAuthCache.load();
+        final recoveryUsername = recoveryCache == null
+            ? ''
+            : _recoveryUsernameFromResult(result, recoveryCache);
+        if (recoveryCache != null && recoveryUsername.isNotEmpty) {
+          await widget.store.recoverOnlineStoreOwnerIdentity(
+            storeId: result.identity?.storeId ?? storeId,
+            branchId: result.identity?.branchId ?? branchId,
+            storeName: result.storeName.trim().isNotEmpty
+                ? result.storeName
+                : recoveryCache.storeName.trim().isNotEmpty
+                    ? recoveryCache.storeName
+                    : widget.store.storeProfile.name,
+            username: recoveryUsername,
+            password: _onlineSessionPassword,
+            hostDeviceId:
+                result.identity?.hostDeviceId.trim().isNotEmpty == true
+                    ? result.identity!.hostDeviceId
+                    : widget.store.deviceId,
+            deviceToken: result.identity?.deviceToken ?? '',
+            controlPlaneTenantId: result.identity?.controlPlaneTenantId ?? '',
+            deviceRole: DeviceRole.host,
+            syncMode: previousIdentity.syncMode,
+          );
+          final updatedCache = recoveryCache.copyWith(
+            mode: 'login',
+            storeId: result.identity?.storeId ?? storeId,
+            branchId: result.identity?.branchId ?? branchId,
+            username: recoveryUsername,
+            storeSlug: result.storeSlug.trim().isNotEmpty
+                ? result.storeSlug
+                : recoveryCache.storeSlug,
+            storeName: result.storeName.trim().isNotEmpty
+                ? result.storeName
+                : recoveryCache.storeName,
+            loginName: result.loginName.trim().isNotEmpty
+                ? result.loginName
+                : recoveryCache.loginName,
+            // Keep the cached entitlement unchanged here. Store recovery may
+            // rebuild the identity, but the subscription gate must still be
+            // decided by the live plan check, not by the recovery response.
+            directSyncEnabled: recoveryCache.directSyncEnabled,
+            devicesLimit:
+                result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
+            lastVerifiedAt: DateTime.now(),
+          );
+          await AccountAuthCache.save(updatedCache);
+          _setAuthCache(updatedCache);
+        } else {
+          await _persistRecoveredStoreAuthCache(
+            storeId: result.identity?.storeId ?? storeId,
+            branchId: result.identity?.branchId ?? branchId,
+          );
+        }
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
+        );
+        setState(() {});
+      }
+    } catch (error) {
+      SyncDiagnosticsLog.add('[RECOVER_IDENTITY] error=$error');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _recoverStoreData(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final cache = _authCache ?? AccountAuthCache.load();
+    final direct = VpsControlPlaneSettings.load();
+    SyncDiagnosticsLog.add(
+      '[RECOVER_DATA] press '
+      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
+      'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
+      'hasCache=${cache != null} '
+      'accountToken=${cache?.accountToken.trim().isNotEmpty == true}',
+    );
+
+    if (cache == null || cache.accountToken.trim().isEmpty) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] blocked reason=missing_online_session',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('online_account_session_required'))),
+      );
+      return;
+    }
+    if (widget.store.appIdentity.hostDeviceId.trim().isEmpty) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] blocked reason=missing_store_identity',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('recover_store_identity_first'))),
+      );
+      return;
+    }
+    SyncDiagnosticsLog.add(
+      '[RECOVER_DATA] refresh_session start storeId=${cache.storeId} branchId=${cache.branchId}',
+    );
+    var latestCache = cache;
+    final sessionResult = await AccountAuthService()
+        .refreshSession(accountToken: cache.accountToken.trim());
+    if (sessionResult.ok) {
+      latestCache = await AccountAuthService.cacheOnlineResult(sessionResult,
+          mode: cache.mode.isEmpty ? 'login' : cache.mode);
+      _setAuthCache(latestCache);
+    }
+    SyncDiagnosticsLog.add(
+      '[RECOVER_DATA] refresh_session result ok=${sessionResult.ok} '
+      'storeId=${sessionResult.storeId} branchId=${sessionResult.branchId} '
+      'directSyncEnabled=${sessionResult.directSyncEnabled}',
+    );
+    if (!context.mounted) return;
+    final storeId = (sessionResult.storeId.trim().isNotEmpty
+            ? sessionResult.storeId
+            : latestCache.storeId.trim().isNotEmpty
+                ? latestCache.storeId
+                : widget.store.appIdentity.storeId)
+        .trim()
+        .toUpperCase();
+    final branchId = (sessionResult.branchId.trim().isNotEmpty
+            ? sessionResult.branchId
+            : latestCache.branchId.trim().isNotEmpty
+                ? latestCache.branchId
+                : widget.store.appIdentity.branchId)
+        .trim()
+        .toUpperCase();
+    if (!storeId.startsWith('ST-')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('store_id_not_found_for_account'))),
+      );
+      return;
+    }
+    // The live subscription response is authoritative. A stale local cache
+    // must not keep Direct enabled after Admin disables it.
+    final directAllowed = sessionResult.ok && sessionResult.directSyncEnabled;
+    if (!directAllowed) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] blocked reason=direct_sync_not_enabled storeId=$storeId branchId=$branchId',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(tr.text('subscription_not_enrolled_direct_sync'))),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('recover_store_data')),
+        content: ResponsiveDialogBox(
+          maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.text('recover_store_data_desc')),
+              const SizedBox(height: 12),
+              Text('${tr.text('store_id_label')}: $storeId'),
+              if (branchId.isNotEmpty)
+                Text('${tr.text('branch_id_label')}: $branchId'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('recover')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] start storeId=$storeId branchId=$branchId',
+      );
+      final recoverySettings = direct.copyWith(
+        enabled: true,
+        apiBaseUrl: direct.apiBaseUrl.trim().isNotEmpty
+            ? direct.apiBaseUrl.trim()
+            : VpsControlPlaneSettings.bundledApiBaseUrl,
+        clearLastPullCursor: true,
+      );
+      await recoverySettings.save();
+      final recoveryClient = http.Client();
+      late final DirectStoreRecoveryResult result;
+      try {
+        final recoveryService = DirectControlPlaneService(
+          widget.store,
+          client: recoveryClient,
+        );
+        final identityMismatch =
+            widget.store.appIdentity.storeId.trim().toUpperCase() != storeId;
+        // When business data already exists and only a test/probe identity is
+        // wrong, repair the identity without replacing local data by a remote
+        // snapshot. Full recovery remains available for an empty matching
+        // Store installation.
+        result = identityMismatch && widget.store.hasLocalStoreData
+            ? await recoveryService.recoverExistingStoreIdentityFromDirect(
+                recoverySettings,
+                storeId: storeId,
+                branchId: branchId,
+              )
+            : await recoveryService.recoverExistingStoreFromDirect(
+                recoverySettings,
+                storeId: storeId,
+                branchId: branchId,
+              );
+      } finally {
+        recoveryClient.close();
+      }
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] result ok=${result.ok} '
+        'storeId=${result.identity?.storeId ?? storeId} '
+        'branchId=${result.identity?.branchId ?? branchId} '
+        'storeName=${result.storeName} '
+        'pulled=${result.pulled} '
+        'loginName=${result.loginName} '
+        'storeSlug=${result.storeSlug} '
+        'directSyncEnabled=${result.directSyncEnabled} '
+        'deviceLimit=${result.deviceLimit?.allowed ?? -1}',
+      );
+      if (result.ok) {
+        await _persistRecoveredStoreAuthCache(
+          storeId: result.identity?.storeId ?? storeId,
+          branchId: result.identity?.branchId ?? branchId,
+        );
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
+        );
+        setState(() {});
+      }
+    } catch (error) {
+      SyncDiagnosticsLog.add('[RECOVER_DATA] error=$error');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _unlock() async {
+    final invalidLoginMessage =
+        AppLocalizations.of(context).text('invalid_login');
+    final messenger = ScaffoldMessenger.of(context);
+
+    setState(() => _loggingIn = true);
+    var localUsername = _usernameController.text.trim();
+
+    final typedUsername = _usernameController.text.trim();
+    final isOnlineLogin = typedUsername.contains('@');
+
+    if (isOnlineLogin) {
+      final onlineUsername = _normalizeLoginPart(typedUsername);
+      final parts = onlineUsername.split('@');
+      if (parts.length != 2 || parts.first.isEmpty || parts.last.isEmpty) {
+        setState(() => _loggingIn = false);
+        _showAuthMessage(
+            'Online login must be username@store, for example user@store.');
+        return;
+      }
+      try {
+        final onlineResult = await AccountAuthService().login(
+          username: onlineUsername,
+          password: _passwordController.text,
+        );
+        if (!mounted) return;
+        if (!onlineResult.ok) {
+          setState(() => _loggingIn = false);
+          messenger.showSnackBar(SnackBar(
+            content: Text(onlineResult.message.isEmpty
+                ? AppLocalizations.of(context).text('online_login_failed')
+                : onlineResult.message),
+          ));
+          return;
+        }
+        StartupTimingService.event(
+          'login_success',
+          category: 'auth',
+          details: 'mode=online',
+        );
+        _onlineSessionPassword = _passwordController.text;
+        final cached = await AccountAuthService.cacheOnlineResult(
+          onlineResult,
+          mode: 'login',
+        );
+        _setAuthCache(cached);
+        // An online login opens the account-management surface. It must not
+        // rewrite the local Store Owner, especially for platform_admin
+        // accounts such as user@ventio. Local credentials are synchronized
+        // only through an explicit password change on either side.
+        setState(() => _loggingIn = false);
+        return;
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _loggingIn = false);
+        messenger.showSnackBar(SnackBar(
+          content: Text(
+              '${AppLocalizations.of(context).text('online_login_failed')}: $error'),
+        ));
+        return;
+      }
+    }
+
+    final ok = await widget.store.login(
+      localUsername,
+      _passwordController.text,
+      remember: _rememberLogin,
+    );
+
+    if (!mounted) return;
+
+    setState(() => _loggingIn = false);
+
+    if (ok) {
+      StartupTimingService.event(
+        'login_success',
+        category: 'auth',
+        details: 'mode=local',
+      );
+      setState(() {});
+    } else {
+      _passwordController.clear();
+      messenger.showSnackBar(SnackBar(content: Text(invalidLoginMessage)));
+    }
+  }
+
+  Future<void> _openSupportPasswordReset() async {
+    final cache = _authCache ?? AccountAuthCache.load();
+    final suggestedLogin = _usernameController.text.trim().contains('@')
+        ? _usernameController.text.trim().toLowerCase()
+        : (cache?.loginName.trim().isNotEmpty == true
+            ? cache!.loginName.trim().toLowerCase()
+            : _usernameController.text.trim().toLowerCase());
+    final loginController = TextEditingController(text: suggestedLogin);
+    final codeController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmController = TextEditingController();
+    String? error;
+    final draft = await showDialog<_PasswordResetDraft>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title:
+              Text(AppLocalizations.of(context).text('password_reset_title')),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  AppLocalizations.of(context).text('password_reset_help'),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: loginController,
+                  decoration: InputDecoration(
+                    labelText:
+                        AppLocalizations.of(context).text('account_login_name'),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: codeController,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)
+                        .text('password_reset_code'),
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: newPasswordController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)
+                        .text('account_new_password'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: confirmController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)
+                        .text('account_confirm_new_password'),
+                  ),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(AppLocalizations.of(context).text('cancel')),
+            ),
+            FilledButton(
+              onPressed: () {
+                final loginName = loginController.text.trim().toLowerCase();
+                final password = newPasswordController.text;
+                if (!loginName.contains('@')) {
+                  setDialogState(() => error = AppLocalizations.of(context)
+                      .text('password_reset_login_required'));
+                  return;
+                }
+                if (codeController.text.trim().isEmpty || password.length < 6) {
+                  setDialogState(() => error = AppLocalizations.of(context)
+                      .text('password_reset_fields_required'));
+                  return;
+                }
+                if (password != confirmController.text) {
+                  setDialogState(() => error = AppLocalizations.of(context)
+                      .text('password_reset_passwords_do_not_match'));
+                  return;
+                }
+                Navigator.of(dialogContext).pop(_PasswordResetDraft(
+                  loginName: loginName,
+                  code: codeController.text.trim().toUpperCase(),
+                  password: password,
+                ));
+              },
+              child: Text(
+                  AppLocalizations.of(context).text('password_reset_submit')),
+            ),
+          ],
+        ),
+      ),
+    );
+    loginController.dispose();
+    codeController.dispose();
+    newPasswordController.dispose();
+    if (draft == null || !mounted) return;
+    setState(() => _loggingIn = true);
+    try {
+      final result = await AccountAuthService().confirmSupportPasswordReset(
+        loginName: draft.loginName,
+        resetCode: draft.code,
+        newPassword: draft.password,
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(result.message)));
+        return;
+      }
+      final localUsername = draft.loginName.split('@').first;
+      await widget.store.applySupportPasswordResetToLocalUser(
+        username: localUsername,
+        newPassword: draft.password,
+      );
+      if (!mounted) return;
+      _usernameController.text = localUsername;
+      _passwordController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                AppLocalizations.of(context).text('password_reset_success'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _loggingIn = false);
+    }
+  }
+
+  Future<void> _completeInitialSetup() async {
+    final password = _passwordController.text.trim();
+    final username = _normalizeLoginPart(_usernameController.text);
+    final storeName = _normalizeLoginPart(_storeNameController.text);
+
+    if (!_isValidLoginPart(username)) {
+      _showAuthMessage(
+          'Username must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
+      return;
+    }
+    if (username.contains('@')) {
+      _showAuthMessage(
+          'Register with username only. Online login will become username@store.');
+      return;
+    }
+    if (!_isValidLoginPart(storeName)) {
+      _showAuthMessage(
+          'Store name must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
+      return;
+    }
+    if (storeName == 'ventio') {
+      _showAuthMessage(
+          'ventio is reserved for platform accounts. Choose another store name.');
+      return;
+    }
+
+    if (password != _confirmPasswordController.text.trim()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                AppLocalizations.of(context).text('passwords_do_not_match'))),
+      );
+      return;
+    }
+
+    final tr = AppLocalizations.of(context);
+    setState(() => _savingSetup = true);
+
+    try {
+      final onlineResult = await AccountAuthService().register(
+        username: username,
+        password: password,
+        fullName: 'Administrator',
+        storeName: storeName,
+      );
+      if (!onlineResult.ok) {
+        throw StateError(onlineResult.message.isEmpty
+            ? tr.text('online_register_failed')
+            : onlineResult.message);
+      }
+      final cached = await AccountAuthService.cacheOnlineResult(
+        onlineResult,
+        mode: 'registered_local',
+      );
+      _setAuthCache(cached);
+      await widget.store.recoverOnlineStoreOwnerIdentity(
+        storeId: onlineResult.storeId,
+        branchId: onlineResult.branchId,
+        storeName:
+            onlineResult.storeName.isEmpty ? storeName : onlineResult.storeName,
+        username: username,
+        password: password,
+        // Registration provisions the local owner account, but the user must
+        // still sign in explicitly. Avoid publishing a short-lived session
+        // that would briefly reveal the dashboard before logout completes.
+        activateUser: false,
+      );
+
+      await widget.store.logout();
+      if (mounted) {
+        setState(() {
+          _showRegister = false;
+          _passwordController.clear();
+          _confirmPasswordController.clear();
+        });
+        final message = tr.format('trial_created_sign_in', {
+          'days': '14',
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingSetup = false);
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var size = bytes.toDouble();
+    var unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+    return '${size.toStringAsFixed(size >= 10 || unitIndex == 0 ? 0 : 1)} ${units[unitIndex]}';
+  }
+
+  String _formatDateTime(DateTime value) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
+  }
+
+  String _releaseSubtitle(AppLocalizations tr, WindowsReleaseItem item) {
+    final parts = <String>[];
+    if (item.version != null && item.version!.isNotEmpty) {
+      final build = item.build == null ? '' : ' build ${item.build}';
+      parts.add('${tr.text('version')}: ${item.version}$build');
+    }
+    final sizeBytes = item.sizeBytes;
+    if (sizeBytes != null && sizeBytes > 0) parts.add(_formatBytes(sizeBytes));
+    if (item.publishedAt != null) parts.add(_formatDateTime(item.publishedAt!));
+    return parts.isEmpty ? item.name : parts.join(' • ');
+  }
+
+  Future<void> _showWindowsInstallerReleases() async {
+    final tr = AppLocalizations.of(context);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('windows_installer_versions')),
+        content: const SizedBox(
+          width: 360,
+          child: Center(
+            heightFactor: 1.5,
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      ),
+    );
+
+    List<WindowsReleaseItem> releases;
+    Object? error;
+    try {
+      releases = await WindowsReleaseCatalogService().fetchReleases();
+    } catch (e) {
+      releases = const <WindowsReleaseItem>[];
+      error = e;
+    }
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('windows_installer_versions')),
+        content: SizedBox(
+          width: 520,
+          child: releases.isEmpty
+              ? Text(error == null
+                  ? tr.text('no_windows_installers_found')
+                  : tr.text('could_not_load_windows_installers'))
+              : ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 420),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: releases.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final item = releases[index];
+                      return ListTile(
+                        leading:
+                            const Icon(Icons.download_for_offline_outlined),
+                        title: Text(item.name),
+                        subtitle: Text(_releaseSubtitle(tr, item)),
+                        trailing: FilledButton.icon(
+                          onPressed: () {
+                            WindowsReleaseCatalogService().download(item);
+                          },
+                          icon: const Icon(Icons.download_outlined),
+                          label: Text(tr.text('download')),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(tr.text('close')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_firstBuildMarked) {
+      _firstBuildMarked = true;
+      StartupTimingService.markPageBuilt(
+        'LoginGatePage',
+        pageLabel: 'Login gate',
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _firstReadyMarked) return;
+        _firstReadyMarked = true;
+        StartupTimingService.markPageReady(
+          'LoginGatePage',
+          pageLabel: 'Login gate',
+        );
+      });
+    }
+    final authCache = _authCache;
+    final platformAdminUnlocked = authCache?.accountType == 'platform_admin';
+    final storeAccountUnlocked = authCache?.accountType == 'store_owner' &&
+        authCache?.mode == 'login' &&
+        (authCache?.storeSlug ?? '').trim().isNotEmpty &&
+        authCache?.storeSlug != 'ventio';
+    if (platformAdminUnlocked && authCache != null) {
+      return PageTimingScope(
+        key: const ValueKey('PlatformAdminDashboardPage'),
+        pageKey: 'PlatformAdminDashboardPage',
+        pageLabel: 'Platform admin dashboard',
+        child: PlatformAdminDashboardPage(
+          cache: authCache,
+          onLogout: () async {
+            await AccountAuthCache.clear();
+            if (mounted) setState(() => _authCache = null);
+          },
+        ),
+      );
+    }
+    if (storeAccountUnlocked && authCache != null) {
+      return PageTimingScope(
+        key: const ValueKey('StoreAccountDashboardPage'),
+        pageKey: 'StoreAccountDashboardPage',
+        pageLabel: 'Store account dashboard',
+        child: StoreAccountDashboardPage(
+          store: widget.store,
+          cache: authCache,
+          hasStoreIdentity:
+              widget.store.appIdentity.hostDeviceId.trim().isNotEmpty,
+          hasLocalStoreData: widget.store.hasLocalAdminUser,
+          canRecoverStoreData: authCache.directSyncEnabled,
+          onRecoverStoreIdentity: () => _recoverStoreIdentity(context),
+          onRecoverStoreData: () => _recoverStoreData(context),
+          onLogout: () async {
+            await AccountAuthCache.clear();
+            if (mounted) setState(() => _authCache = null);
+          },
+          onLocaleChanged: widget.onLocaleChanged,
+        ),
+      );
+    }
+    if (widget.store.activeUser != null) return widget.child;
+
+    if (_showRegister && !kIsWeb && !widget.store.hasLocalAdminUser) {
+      return _InitialAdminSetupCard(
+        storeNameController: _storeNameController,
+        usernameController: _usernameController,
+        passwordController: _passwordController,
+        confirmPasswordController: _confirmPasswordController,
+        saving: _savingSetup,
+        onSubmit: _completeInitialSetup,
+        onCancel:
+            _savingSetup ? null : () => setState(() => _showRegister = false),
+      );
+    }
+
+    final tr = AppLocalizations.of(context);
+
+    if (widget.store.isSuspendedByHost) {
+      final reason = widget.store.suspendedByHostReason.trim().isEmpty
+          ? tr.text('client_suspended_by_host_desc')
+          : widget.store.suspendedByHostReason;
+      return Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: VentioResponsive.pageInsets(context),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxWidth: VentioResponsive.clampToScreen(context, 460,
+                        min: 280, horizontalPadding: 32)),
+                child: Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: VentioResponsive.pageInsets(context),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircleAvatar(
+                            radius: 34,
+                            child: Icon(Icons.pause_circle_outline, size: 34)),
+                        const SizedBox(height: 16),
+                        Text(tr.text('client_suspended_by_host'),
+                            style: Theme.of(context).textTheme.headlineSmall,
+                            textAlign: TextAlign.center),
+                        const SizedBox(height: 8),
+                        Text(reason, textAlign: TextAlign.center),
+                        const SizedBox(height: 18),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _checkingSuspension
+                                ? null
+                                : _checkSuspensionStatus,
+                            icon: _checkingSuspension
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(Icons.refresh),
+                            label: Text(tr.text('check_resume_status')),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      bottomNavigationBar: kIsWeb
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Center(
+                  heightFactor: 1,
+                  child: TextButton.icon(
+                    onPressed: _showWindowsInstallerReleases,
+                    icon: const Icon(Icons.download_for_offline_outlined),
+                    label: Text(tr.text('windows_installer_versions')),
+                  ),
+                ),
+              ),
+            )
+          : null,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: VentioResponsive.pageInsets(context),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxWidth: VentioResponsive.clampToScreen(context, 420,
+                      min: 280, horizontalPadding: 32)),
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: VentioResponsive.pageInsets(context),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircleAvatar(
+                        radius: 32,
+                        child: Icon(Icons.lock_outline, size: 32),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        tr.text('ventio_login'),
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(tr.text('signin_hint'), textAlign: TextAlign.center),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: _usernameController,
+                        enabled: !_loggingIn,
+                        autofocus: true,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: tr.text('username'),
+                          helperText: tr.text('login_username_helper'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _passwordController,
+                        enabled: !_loggingIn,
+                        obscureText: !_showPassword,
+                        decoration: InputDecoration(
+                          labelText: tr.text('password'),
+                          suffixIcon: IconButton(
+                            tooltip: _showPassword
+                                ? tr.text('hide_password')
+                                : tr.text('show_password'),
+                            onPressed: _loggingIn
+                                ? null
+                                : () => setState(
+                                    () => _showPassword = !_showPassword),
+                            icon: Icon(_showPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                          ),
+                        ),
+                        onSubmitted: (_) {
+                          if (!_loggingIn) _unlock();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: _rememberLogin,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: Text(tr.text('remember_me')),
+                        subtitle: Text(tr.text('remember_me_desc')),
+                        onChanged: _loggingIn
+                            ? null
+                            : (value) =>
+                                setState(() => _rememberLogin = value ?? false),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _loggingIn ? null : _unlock,
+                          icon: _loggingIn
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.login),
+                          label: Text(tr.text('login')),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: TextButton(
+                          onPressed:
+                              _loggingIn ? null : _openSupportPasswordReset,
+                          child: Text(tr.text('forgot_password')),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (!widget.store.hasLocalAdminUser)
+                        Builder(
+                          builder: (context) {
+                            final canRegisterHere = !kIsWeb;
+                            final actions = <Widget>[
+                              if (canRegisterHere)
+                                OutlinedButton.icon(
+                                  onPressed: _loggingIn
+                                      ? null
+                                      : () =>
+                                          setState(() => _showRegister = true),
+                                  icon: const Icon(Icons.person_add_alt_1),
+                                  label: Text(tr.text('register')),
+                                ),
+                              OutlinedButton.icon(
+                                onPressed: _loggingIn
+                                    ? null
+                                    : () async {
+                                        await Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) => PageTimingScope(
+                                              key: const ValueKey(
+                                                  'SyncSetupPage'),
+                                              pageKey: 'SyncSetupPage',
+                                              pageLabel: 'Sync setup',
+                                              child: SyncSetupPage(
+                                                store: widget.store,
+                                                onDone: () async {
+                                                  if (Navigator.of(context)
+                                                      .canPop()) {
+                                                    Navigator.of(context).pop();
+                                                  }
+                                                },
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                        if (mounted) setState(() {});
+                                      },
+                                icon: const Icon(Icons.link),
+                                label: Text(tr.text('connect_to_store')),
+                              ),
+                            ];
+                            return Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: Wrap(
+                                spacing: 12,
+                                runSpacing: 10,
+                                children: actions,
+                              ),
+                            );
+                          },
+                        ),
+                      const SizedBox(height: 20),
+                      Text(
+                        tr.format('version_build', {
+                          'version': AppBrand.versionName,
+                          'build': AppBrand.buildNumber,
+                        }),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PasswordResetDraft {
+  const _PasswordResetDraft({
+    required this.loginName,
+    required this.code,
+    required this.password,
+  });
+
+  final String loginName;
+  final String code;
+  final String password;
+}
+
+class _InitialAdminSetupCard extends StatefulWidget {
+  const _InitialAdminSetupCard({
+    required this.usernameController,
+    required this.storeNameController,
+    required this.passwordController,
+    required this.confirmPasswordController,
+    required this.saving,
+    required this.onSubmit,
+    required this.onCancel,
+  });
+
+  final TextEditingController usernameController;
+  final TextEditingController storeNameController;
+  final TextEditingController passwordController;
+  final TextEditingController confirmPasswordController;
+  final bool saving;
+  final VoidCallback onSubmit;
+  final VoidCallback? onCancel;
+
+  @override
+  State<_InitialAdminSetupCard> createState() => _InitialAdminSetupCardState();
+}
+
+class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
+  bool _showPassword = false;
+  bool _showConfirmPassword = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: VentioResponsive.pageInsets(context),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxWidth: VentioResponsive.clampToScreen(context, 460,
+                      min: 280, horizontalPadding: 32)),
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: VentioResponsive.pageInsets(context),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircleAvatar(
+                        radius: 34,
+                        child: Icon(Icons.verified_user_outlined, size: 34),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        tr.text('welcome_to_ventio'),
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        tr.text('create_admin_desc'),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: widget.storeNameController,
+                        enabled: !widget.saving,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: tr.text('store_name'),
+                          helperText: tr.text('store_slug_helper'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: widget.usernameController,
+                        enabled: !widget.saving,
+                        autofocus: true,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: tr.text('new_username'),
+                          helperText: tr.text('username_online_helper'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: widget.passwordController,
+                        enabled: !widget.saving,
+                        obscureText: !_showPassword,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: tr.text('new_password'),
+                          suffixIcon: IconButton(
+                            tooltip: _showPassword
+                                ? tr.text('hide_password')
+                                : tr.text('show_password'),
+                            onPressed: widget.saving
+                                ? null
+                                : () => setState(
+                                    () => _showPassword = !_showPassword),
+                            icon: Icon(_showPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: widget.confirmPasswordController,
+                        enabled: !widget.saving,
+                        obscureText: !_showConfirmPassword,
+                        onSubmitted: (_) {
+                          if (!widget.saving) widget.onSubmit();
+                        },
+                        decoration: InputDecoration(
+                          labelText: tr.text('confirm_password'),
+                          suffixIcon: IconButton(
+                            tooltip: _showConfirmPassword
+                                ? tr.text('hide_password')
+                                : tr.text('show_password'),
+                            onPressed: widget.saving
+                                ? null
+                                : () => setState(() => _showConfirmPassword =
+                                    !_showConfirmPassword),
+                            icon: Icon(_showConfirmPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: widget.saving ? null : widget.onCancel,
+                              child: Text(tr.text('back_to_login')),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: widget.saving ? null : widget.onSubmit,
+                              icon: widget.saving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.check_circle_outline),
+                              label: Text(tr.text('register_admin')),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PlatformAdminDashboardPage extends StatelessWidget {
+  const PlatformAdminDashboardPage({
+    super.key,
+    required this.cache,
+    required this.onLogout,
+  });
+
+  final AccountAuthCache cache;
+  final Future<void> Function() onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Ventio - ${tr.text('subscribers')}'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Center(
+              child: Text(
+                cache.loginName.isEmpty
+                    ? tr.text('platform_admin')
+                    : cache.loginName,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: tr.text('logout'),
+            onPressed: onLogout,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+      body: const PageTimingScope(
+        pageKey: 'AdminSubscribersPage',
+        pageLabel: 'Admin subscribers',
+        child: AdminSubscribersPage(),
+      ),
+    );
+  }
+}

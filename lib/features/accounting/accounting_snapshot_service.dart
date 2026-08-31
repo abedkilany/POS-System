@@ -1,0 +1,244 @@
+import 'dart:convert';
+import 'dart:async';
+
+import '../../core/services/local_database_service.dart';
+import '../../core/services/cash_ledger_service.dart';
+import '../../core/services/accounting_service.dart';
+import '../../core/services/startup_timing_service.dart';
+import '../../data/app_store.dart';
+
+class AccountingSnapshotService {
+  const AccountingSnapshotService();
+
+  static const String _cacheKeyPrefix = 'accounting_metrics_summary_v3';
+  static final Map<String, Future<Map<String, Object?>>> _summaryFutures =
+      <String, Future<Map<String, Object?>>>{};
+  static final Map<String, Map<String, Object?>> _summaryCache =
+      <String, Map<String, Object?>>{};
+
+  String _cacheKey(AppStore store, DateTime reference) =>
+      '$_cacheKeyPrefix:${store.appIdentity.storeId}:${store.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
+
+  String _sqliteCacheKey(AppStore store, DateTime reference) =>
+      '$_cacheKeyPrefix:${store.appIdentity.storeId}:${store.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
+
+  Map<String, Object?>? peekMetrics(AppStore store, {DateTime? now}) {
+    final reference = (now ?? DateTime.now()).toLocal();
+    final memoryCached = _summaryCache[_cacheKey(store, reference)];
+    if (memoryCached != null) return memoryCached;
+    final sqliteCached = _loadCachedMetrics(store, reference);
+    if (sqliteCached != null) {
+      _summaryCache[_cacheKey(store, reference)] = sqliteCached;
+    }
+    return sqliteCached;
+  }
+
+  Future<Map<String, Object?>> metricsFor(
+    AppStore store, {
+    DateTime? now,
+  }) {
+    final reference = (now ?? DateTime.now()).toLocal();
+    final key = _cacheKey(store, reference);
+    final cached = _summaryCache[key];
+    if (cached != null) return Future.value(cached);
+    final existing = _summaryFutures[key];
+    if (existing != null) return existing;
+    final future = _computeAndCacheMetrics(store, reference);
+    _summaryFutures[key] = future;
+    future.whenComplete(() {
+      if (_summaryFutures[key] == future) {
+        _summaryFutures.remove(key);
+      }
+    });
+    return future;
+  }
+
+  Future<void> prewarm(AppStore store, {DateTime? now}) async {
+    await metricsFor(store, now: now);
+  }
+
+  Future<Map<String, Object?>> _computeAndCacheMetrics(
+    AppStore store,
+    DateTime reference,
+  ) async {
+    final memoryCached = _summaryCache[_cacheKey(store, reference)];
+    if (memoryCached != null) return memoryCached;
+
+    final sqliteCached = _loadCachedMetrics(store, reference);
+    if (sqliteCached != null) {
+      _summaryCache[_cacheKey(store, reference)] = sqliteCached;
+      return sqliteCached;
+    }
+
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      try {
+        final sqliteMetrics = await StartupTimingService.measure(
+          'accounting.snapshot_sql_metrics',
+          () => LocalDatabaseService.buildAccountingMetricsFromSqlite(
+            reference: reference,
+          ),
+          category: 'accounting',
+        );
+        if (sqliteMetrics != null) {
+          final enriched = await _enrichFinancialMetrics(sqliteMetrics, reference);
+          _summaryCache[_cacheKey(store, reference)] = enriched;
+          unawaited(_saveCachedMetrics(store, reference, enriched));
+          return enriched;
+        }
+      } catch (_) {
+        // Keep accounting DB-first; the in-memory store is only a safety net
+        // when typed SQL is unavailable or fails.
+      }
+    }
+    final computed = await StartupTimingService.measure(
+      'accounting.snapshot_store_metrics',
+      () async {
+        final summary = _computeSnapshotFromStore(store, reference);
+        try {
+          final start = DateTime(reference.year, reference.month, reference.day);
+          final end = start.add(const Duration(days: 1))
+              .subtract(const Duration(microseconds: 1));
+          final cashSummary = await CashLedgerService.current().summary(
+            from: start,
+            to: end,
+          );
+          summary['todayCashIn'] = cashSummary.cashIn;
+          summary['todayCashOut'] = cashSummary.cashOut;
+        } catch (_) {
+          // Cash metrics stay zero when Cash Ledger is unavailable; do not
+          // fall back to customer/supplier subledger movements.
+        }
+        return summary;
+      },
+      category: 'accounting',
+    );
+    final enriched = await _enrichFinancialMetrics(computed, reference);
+    _summaryCache[_cacheKey(store, reference)] = enriched;
+    return enriched;
+  }
+
+  Future<Map<String, Object?>> _enrichFinancialMetrics(
+    Map<String, Object?> base,
+    DateTime reference,
+  ) async {
+    final result = <String, Object?>{...base};
+    final monthStart = DateTime(reference.year, reference.month, 1);
+    final monthEnd = DateTime(reference.year, reference.month + 1, 1)
+        .subtract(const Duration(microseconds: 1));
+    try {
+      final income = await AccountingService.incomeStatementReport(
+        from: monthStart,
+        to: monthEnd,
+      );
+      result['monthNetSales'] = income.netSales;
+      result['monthGrossProfit'] = income.grossProfit;
+      result['monthExpenses'] = income.expenses;
+      result['monthNetProfit'] = income.netProfit;
+    } catch (_) {
+      result.putIfAbsent('monthNetSales', () => 0.0);
+      result.putIfAbsent('monthGrossProfit', () => 0.0);
+      result.putIfAbsent('monthExpenses', () => 0.0);
+      result.putIfAbsent('monthNetProfit', () => 0.0);
+    }
+    try {
+      final balances = await AccountingService.listCashBalancesReport();
+      var cashBalance = 0.0;
+      var bankBalance = 0.0;
+      for (final item in balances) {
+        if (item.type.trim().toLowerCase() == 'bank') {
+          bankBalance += item.balance;
+        } else {
+          cashBalance += item.balance;
+        }
+      }
+      result['cashBalance'] = cashBalance;
+      result['bankBalance'] = bankBalance;
+    } catch (_) {
+      result.putIfAbsent('cashBalance', () => 0.0);
+      result.putIfAbsent('bankBalance', () => 0.0);
+    }
+    return result;
+  }
+
+  Map<String, Object?>? _loadCachedMetrics(AppStore store, DateTime reference) {
+    final cached =
+        LocalDatabaseService.getString(_sqliteCacheKey(store, reference));
+    if (cached == null || cached.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(cached);
+      if (decoded is! Map) return null;
+      return <String, Object?>{
+        for (final entry in decoded.entries)
+          entry.key.toString():
+              entry.value is num ? entry.value : entry.value?.toString(),
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveCachedMetrics(
+    AppStore store,
+    DateTime reference,
+    Map<String, Object?> metrics,
+  ) async {
+    try {
+      await LocalDatabaseService.setString(
+        _sqliteCacheKey(store, reference),
+        jsonEncode(metrics),
+      );
+    } catch (_) {
+      // Cache persistence is best-effort only.
+    }
+  }
+}
+
+Map<String, Object?> _computeSnapshotFromStore(
+  AppStore store,
+  DateTime reference,
+) {
+  final transactions = store.accountTransactions;
+
+  final accountBalances = <String, double>{};
+  var customerReceivables = 0.0;
+  var customerCredits = 0.0;
+  var supplierPayables = 0.0;
+  var supplierAdvances = 0.0;
+
+  for (final txn in transactions) {
+    if (txn.isDeleted) continue;
+    final type = txn.accountType.trim().toLowerCase();
+    final accountId = txn.accountId.trim();
+    if (accountId.isEmpty) continue;
+    if (type != 'customer' && type != 'supplier') continue;
+
+    final key = '$type|$accountId';
+    accountBalances[key] = (accountBalances[key] ?? 0) + txn.signedAmount;
+  }
+
+  for (final entry in accountBalances.entries) {
+    if (entry.key.startsWith('customer|')) {
+      if (entry.value > 0) {
+        customerReceivables += entry.value;
+      } else if (entry.value < 0) {
+        customerCredits += entry.value.abs();
+      }
+      continue;
+    }
+    if (entry.value < 0) {
+      supplierPayables += entry.value.abs();
+    } else if (entry.value > 0) {
+      supplierAdvances += entry.value;
+    }
+  }
+
+  return <String, Object?>{
+    'reference': reference.toIso8601String(),
+    'customerReceivables': customerReceivables,
+    'customerCredits': customerCredits,
+    'supplierPayables': supplierPayables,
+    'supplierAdvances': supplierAdvances,
+    'todayCashIn': 0.0,
+    'todayCashOut': 0.0,
+  };
+}

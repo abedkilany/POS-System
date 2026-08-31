@@ -1,0 +1,42 @@
+PASS  traceability service exists
+PASS  batch trace API exists
+PASS  trace is bounded
+PASS  trace reads batch warehouse balances
+PASS  trace reads batch movement history
+PASS  manufacturing upstream lineage exists
+PASS  Unified Batch keeps FEFO allocation
+PASS  Unified Batch keeps oldest-received allocation for non-expiry
+PASS  warehouse transfer preserves original batch id
+PASS  manufacturing consumes actual batch costs
+PASS  manufacturing output source is used
+PASS  transfer transaction invariant exists
+PASS  transfer quantity conservation exists
+PASS  transfer value conservation exists
+PASS  transfer requires two warehouses
+PASS  manufacturing transaction invariant exists
+PASS  manufacturing material cost is conserved
+PASS  manufacturing output value is conserved
+PASS  manufacturing waste equation is enforced
+PASS  manufacturing output batches reconcile
+PASS  global warehouse/batch reconciliation exists
+PASS  expiry contract audit exists
+PASS  expiry policy toggle is guarded while stock exists
+PASS  post-cutover missing batch audit exists
+PASS  manufacturing integrity audit exists
+PASS  public trace entry point exists
+PASS  public integrity entry point exists
+PASS  single transfer enforces traceability before commit
+PASS  manufacturing enforces traceability before commit
+PASS  schema bumped to 31
+PASS  trace indexes exist
+PASS  deferred executable scenario covers FEFO raw batch
+PASS  deferred executable scenario traces finished to raw
+PASS  deferred executable scenario requires healthy audit
+PASS  documentation records derived-authority design
+PASS  backup carries stock movement trace history
+PASS  backup carries batch identity and warehouse balances
+PASS  backup carries manufacturing lineage source
+PASS  restore reconstructs batch traceability inputs
+PASS  sync applies stock movements, inventory batches and manufacturing orders
+
+RESULT: 40/40 checks passed

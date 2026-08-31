@@ -1,0 +1,176 @@
+import crypto from 'crypto';
+import {
+  sql,
+  sendError,
+  createAuthSession,
+  enforceRateLimit,
+  requestIp,
+} from '../_db.js';
+
+function normalizePart(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function parseLoginName(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const parts = raw.split('@');
+  if (parts.length !== 2) return null;
+  const username = normalizePart(parts[0]);
+  const namespaceSlug = normalizePart(parts[1]);
+  if (!username || !namespaceSlug) return null;
+  return { username, namespaceSlug };
+}
+
+
+function verifyPassword(password, encoded) {
+  const parts = String(encoded || '').split('$');
+  if (parts.length !== 4 || parts[0] !== 'pbkdf2_sha256') return false;
+  const iterations = Number(parts[1]);
+  const salt = parts[2];
+  const expected = parts[3];
+  const actual = crypto.pbkdf2Sync(String(password), salt, iterations, 32, 'sha256').toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+}
+
+async function ensureTables() {
+  await sql`
+    create table if not exists app_accounts (
+      id text primary key,
+      username text not null,
+      namespace_slug text not null default '',
+      password_hash text not null,
+      full_name text not null default '',
+      account_type text not null default 'store_owner',
+      status text not null default 'active',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `;
+  await sql`
+    create table if not exists app_stores (
+      id text primary key,
+      owner_account_id text not null references app_accounts(id) on delete cascade,
+      branch_id text not null default 'BR-MAIN',
+      slug text,
+      name text not null default 'My Store',
+      status text not null default 'active',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `;
+  await sql`
+    create table if not exists app_subscriptions (
+      id text primary key,
+      store_id text not null references app_stores(id) on delete cascade,
+      plan text not null default 'trial',
+      status text not null default 'trial',
+      trial_ends_at timestamptz,
+      devices_limit integer not null default 2,
+      direct_sync_enabled boolean not null default false,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `;
+  await sql`alter table app_subscriptions add column if not exists direct_sync_enabled boolean not null default false`;
+
+  await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
+  await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
+  await sql`alter table app_stores add column if not exists slug text`;
+  await sql`alter table app_stores add column if not exists branch_id text not null default 'BR-MAIN'`;
+  await sql`
+    update app_stores
+    set slug = lower(regexp_replace(coalesce(nullif(name, ''), id), '[^a-zA-Z0-9_-]+', '', 'g'))
+    where slug is null or trim(slug) = ''
+  `;
+  await sql`update app_stores set slug = id where slug is null or trim(slug) = ''`;
+  await sql`
+    update app_accounts a
+    set namespace_slug = s.slug
+    from app_stores s
+    where s.owner_account_id = a.id
+      and (a.namespace_slug is null or trim(a.namespace_slug) = '')
+  `;
+  await sql`alter table app_stores alter column slug set not null`;
+  await sql`alter table app_accounts alter column namespace_slug set not null`;
+  await sql`alter table app_accounts drop constraint if exists app_accounts_username_key`;
+  await sql`create unique index if not exists app_stores_slug_key on app_stores (slug)`;
+  await sql`create unique index if not exists app_accounts_username_namespace_key on app_accounts (username, namespace_slug)`;
+}
+
+export default async function handler(req, res) {
+  try {
+    await ensureTables();
+    if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
+
+    const body = req.body || {};
+    const parsed = parseLoginName(body.username || body.loginName || body.login_name);
+    const password = String(body.password || '');
+    await enforceRateLimit({
+      key: `login:ip:${requestIp(req)}`,
+      limit: 30,
+      windowSeconds: 15 * 60,
+      message: 'Too many login attempts from this network. Try again later.',
+    });
+    await enforceRateLimit({
+      key: `login:identity:${requestIp(req)}:${parsed?.username || 'invalid'}@${parsed?.namespaceSlug || 'invalid'}`,
+      limit: 8,
+      windowSeconds: 15 * 60,
+      message: 'Too many login attempts for this account. Try again later.',
+    });
+    if (!parsed || !password) {
+      return res.status(400).json({ ok: false, error: 'Online login must be username@store and password.' });
+    }
+
+    const rows = await sql`
+      select a.id as account_id, a.username, a.namespace_slug, a.password_hash,
+             a.status as account_status, a.account_type,
+             s.id as store_id, s.branch_id, s.slug as store_slug, s.name as store_name,
+             sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit, sub.direct_sync_enabled
+      from app_accounts a
+      left join app_stores s on s.owner_account_id = a.id and s.slug = a.namespace_slug
+      left join app_subscriptions sub on sub.store_id = s.id
+      where a.username = ${parsed.username}
+        and a.namespace_slug = ${parsed.namespaceSlug}
+      order by s.created_at asc
+      limit 1
+    `;
+    if (!rows.length) return res.status(401).json({ ok: false, error: 'Invalid username or password.' });
+    const row = rows[0];
+    if (row.account_status !== 'active') return res.status(403).json({ ok: false, error: 'Account is not active.' });
+    if (!verifyPassword(password, row.password_hash)) return res.status(401).json({ ok: false, error: 'Invalid username or password.' });
+
+    const isPlatformNamespace = String(row.namespace_slug || '') === 'ventio';
+    const tokens = await createAuthSession({
+      accountId: row.account_id,
+      username: row.username,
+      namespace: row.namespace_slug,
+      storeId: row.store_id || '',
+      branchId: row.branch_id || '',
+      accountType: isPlatformNamespace ? 'platform_admin' : (row.account_type || 'store_owner'),
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: 'Online account verified.',
+      accountId: row.account_id,
+      storeId: row.store_id || '',
+      branchId: row.branch_id || '',
+      username: row.username,
+      storeSlug: row.store_slug || row.namespace_slug || '',
+      storeName: row.store_name || '',
+      loginName: `${row.username}@${row.namespace_slug}`,
+      accountType: isPlatformNamespace
+        ? 'platform_admin'
+        : (row.account_type || 'store_owner'),
+      subscriptionStatus: row.subscription_status || '',
+      trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : null,
+      devicesLimit: row.devices_limit == null ? null : Number(row.devices_limit),
+      adminToken: tokens.adminToken,
+      accountToken: tokens.accountToken,
+      refreshToken: tokens.refreshToken,
+      directSyncEnabled: row.direct_sync_enabled === true,
+    });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}

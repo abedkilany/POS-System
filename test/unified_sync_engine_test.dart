@@ -1,0 +1,245 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ventio/core/sync_unified/sync_contracts.dart';
+import 'package:ventio/core/sync_unified/sync_transport_adapter.dart';
+import 'package:ventio/core/sync_unified/unified_sync_engine.dart';
+
+class _FakeTransport implements SyncTransportAdapter {
+  _FakeTransport({
+    required this.pullResult,
+    required this.rebuildResult,
+  });
+
+  final UnifiedSyncResult pullResult;
+  final UnifiedSyncResult rebuildResult;
+
+  int pushCalls = 0;
+  int pullCalls = 0;
+  int rebuildCalls = 0;
+  int compactCalls = 0;
+  int waitCalls = 0;
+  int stopCalls = 0;
+  int freshSnapshotCalls = 0;
+
+  final UnifiedCursorEnvelope _pushCursor = UnifiedCursorEnvelope(
+    value: 'push-cursor',
+    generatedAt: DateTime.utc(2026, 1, 1, 12),
+    source: 'device',
+  );
+
+  @override
+  UnifiedSyncTransportKind get kind => UnifiedSyncTransportKind.direct;
+
+  @override
+  String get label => 'Direct';
+
+  @override
+  String get deviceId => 'DV-TEST';
+
+  @override
+  String get deviceToken => 'token';
+
+  @override
+  Future<UnifiedSyncResult> testConnection() async =>
+      const UnifiedSyncResult(ok: true, message: 'ok');
+
+  @override
+  Future<UnifiedHostStatus> getHostStatus() async => const UnifiedHostStatus(
+        controlPlaneReachable: false,
+        hostReachable: false,
+        message: 'ok',
+      );
+
+  @override
+  Future<UnifiedSyncResult> registerCurrentHost(
+          {String transport = ''}) async =>
+      const UnifiedSyncResult(ok: true, message: 'ok');
+
+  @override
+  Future<UnifiedSyncResult> createInitialHostSnapshot({
+    DateTime? minSnapshotUpdatedAt,
+    void Function(double value, String label)? onProgress,
+  }) async =>
+      const UnifiedSyncResult(ok: true, message: 'ok');
+
+  @override
+  Future<UnifiedPairingCodeResult> createPairingCode(
+          {int ttlMinutes = 5}) async =>
+      const UnifiedPairingCodeResult(ok: true, message: 'ok');
+
+  @override
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code,
+          {void Function(double value, String label)? onProgress}) async =>
+      const UnifiedPairingClaimResult(ok: true, message: 'ok');
+
+  @override
+  Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
+    pushCalls += 1;
+    return UnifiedSyncResult(
+      ok: true,
+      message: 'push ok',
+      pushed: 1,
+      cursor: _pushCursor,
+    );
+  }
+
+  @override
+  Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
+    pullCalls += 1;
+    return pullResult;
+  }
+
+  @override
+  Future<UnifiedSyncResult> rebuildFromHostSnapshot({
+    void Function(double value, String label)? onProgress,
+  }) async {
+    rebuildCalls += 1;
+    return rebuildResult;
+  }
+
+  @override
+  Future<void> compactAfterSuccessfulSync() async {
+    compactCalls += 1;
+  }
+
+  @override
+  Future<bool> waitForRealtimeSignal() async {
+    waitCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<void> stopHostIfSupported() async {
+    stopCalls += 1;
+  }
+
+  @override
+  Future<void> requestFreshHostSnapshotIfSupported({
+    DateTime? requestedAt,
+  }) async {
+    freshSnapshotCalls += 1;
+  }
+
+  @override
+  Future<UnifiedSyncResult> syncNow({
+    void Function(double value, String label)? onProgress,
+  }) async {
+    final pushed = await pushPending(UnifiedSyncPushRequest(
+      deviceId: deviceId,
+      deviceToken: deviceToken,
+    ));
+    if (!pushed.ok) return pushed;
+    final pulled = await pullChanges(UnifiedSyncPullRequest(
+      deviceId: deviceId,
+      deviceToken: deviceToken,
+    ));
+    if (pulled.ok) {
+      await compactAfterSuccessfulSync();
+      return pulled;
+    }
+    if (pulled.error.code != UnifiedSyncErrorCode.snapshotUnavailable) {
+      return pulled;
+    }
+    final rebuilt = await rebuildFromHostSnapshot(onProgress: onProgress);
+    if (rebuilt.ok) await compactAfterSuccessfulSync();
+    return rebuilt;
+  }
+}
+
+UnifiedSyncResult _networkFailurePull() => UnifiedSyncResult(
+      ok: false,
+      message: 'Direct pull failed: Host Offline. SocketException: offline',
+      error: const UnifiedSyncError(
+        code: UnifiedSyncErrorCode.networkUnavailable,
+        userMessage:
+            'Direct pull failed: Host Offline. SocketException: offline',
+        debugMessage:
+            'Direct pull failed: Host Offline. SocketException: offline',
+      ),
+      cursor: UnifiedCursorEnvelope(
+        value: 'pull-cursor',
+        generatedAt: DateTime.utc(2026, 1, 1, 12),
+        source: 'device',
+      ),
+    );
+
+UnifiedSyncResult _snapshotFailurePull() => UnifiedSyncResult(
+      ok: false,
+      message: 'Direct pull failed: Host snapshot is unavailable.',
+      error: const UnifiedSyncError(
+        code: UnifiedSyncErrorCode.snapshotUnavailable,
+        userMessage: 'Direct pull failed: Host snapshot is unavailable.',
+        debugMessage: 'Direct pull failed: Host snapshot is unavailable.',
+      ),
+      cursor: UnifiedCursorEnvelope(
+        value: 'pull-cursor',
+        generatedAt: DateTime.utc(2026, 1, 1, 12),
+        source: 'device',
+      ),
+    );
+
+void main() {
+  group('UnifiedSyncEngine', () {
+    test('does not rebuild when pull fails because the Host is offline',
+        () async {
+      final transport = _FakeTransport(
+        pullResult: _networkFailurePull(),
+        rebuildResult: const UnifiedSyncResult(
+          ok: true,
+          message: 'rebuild should not have been called',
+        ),
+      );
+
+      final engine = UnifiedSyncEngine(transport);
+      final result = await engine.syncNow();
+
+      expect(result.ok, isFalse);
+      expect(result.message, contains('Host Offline'));
+      expect(transport.pushCalls, 1);
+      expect(transport.pullCalls, 1);
+      expect(transport.rebuildCalls, 0);
+      expect(transport.compactCalls, 0);
+    });
+
+    test('still rebuilds when the pull reports a missing snapshot', () async {
+      final transport = _FakeTransport(
+        pullResult: _snapshotFailurePull(),
+        rebuildResult: const UnifiedSyncResult(
+          ok: true,
+          message: 'rebuild ok',
+          restoredSnapshot: true,
+          pulled: 1,
+        ),
+      );
+
+      final engine = UnifiedSyncEngine(transport);
+      final result = await engine.syncNow();
+
+      expect(result.ok, isTrue);
+      expect(result.restoredSnapshot, isTrue);
+      expect(transport.pushCalls, 1);
+      expect(transport.pullCalls, 1);
+      expect(transport.rebuildCalls, 1);
+      expect(transport.compactCalls, 1);
+    });
+
+    test('forwards transport lifecycle helpers through the unified engine',
+        () async {
+      final transport = _FakeTransport(
+        pullResult: const UnifiedSyncResult(ok: true, message: 'pull ok'),
+        rebuildResult: const UnifiedSyncResult(ok: true, message: 'rebuild ok'),
+      );
+
+      final engine = UnifiedSyncEngine(transport);
+      final changed = await engine.waitForRealtimeSignal();
+      await engine.stopHostIfSupported();
+      await engine.requestFreshHostSnapshotIfSupported(
+        requestedAt: DateTime.utc(2026, 1, 2),
+      );
+
+      expect(changed, isTrue);
+      expect(transport.waitCalls, 1);
+      expect(transport.stopCalls, 1);
+      expect(transport.freshSnapshotCalls, 1);
+    });
+  });
+}

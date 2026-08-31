@@ -1,0 +1,4443 @@
+import 'dart:convert';
+
+import 'package:drift/drift.dart';
+
+import '../../accounting/accounting_account_role.dart';
+import '../../security/audit_integrity.dart';
+import 'sqlite_database_connection.dart';
+
+/// Drift-backed SQLite foundation for Ventio.
+///
+/// Phase 3 keeps SQLite as the authoritative local store. legacy JSON storage is retained only
+/// as a one-time safety backup source for devices upgrading from older builds.
+/// The tables below track migration progress, sync state, and the app key/value
+/// data that previously lived in legacy JSON storage.
+class VentioDriftDatabase extends GeneratedDatabase {
+  VentioDriftDatabase([QueryExecutor? executor])
+      : super(executor ?? openVentioSqliteConnection());
+
+  @override
+  int get schemaVersion => 31;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (migrator) => _applyFoundationSchema(),
+        onUpgrade: (migrator, from, to) => _applyFoundationSchema(),
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON;');
+          await customStatement('PRAGMA journal_mode = WAL;');
+          // Phase 7 production durability: financial/stock commits must be
+          // durable across abrupt process or power loss, not merely atomic
+          // while the process remains alive. WAL + FULL is intentionally
+          // stricter than the previous NORMAL setting.
+          await customStatement('PRAGMA synchronous = FULL;');
+          await customStatement('PRAGMA busy_timeout = 5000;');
+        },
+      );
+
+  @override
+  Iterable<TableInfo<Table, Object?>> get allTables =>
+      const <TableInfo<Table, Object?>>[];
+
+  @override
+  List<DatabaseSchemaEntity> get allSchemaEntities =>
+      const <DatabaseSchemaEntity>[];
+
+  Future<void> initializeFoundation() async {
+    await _applyFoundationSchema();
+  }
+
+  Future<void> _applyFoundationSchema() async {
+    // Connection PRAGMAs are applied in beforeOpen. Keeping them out of this
+    // idempotent schema routine is essential because backup restore invokes it
+    // from an existing transaction, where SQLite forbids changing journal or
+    // synchronous safety levels.
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS migration_meta (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await _metaValue('sqlite_foundation_version');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS migration_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        phase INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        legacy_backup_json TEXT,
+        message TEXT NOT NULL DEFAULT ''
+      );
+    ''');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS migration_errors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT,
+        phase INTEGER NOT NULL,
+        error TEXT NOT NULL,
+        stack_trace TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES migration_runs(id)
+      );
+    ''');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS local_key_values (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_local_key_values_updated_at ON local_key_values(updated_at);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_settings_updated_at ON settings(updated_at);');
+
+    for (final tableName in <String>[
+      'products',
+      'customers',
+      'suppliers',
+      'sales',
+      'sale_quotations',
+      'delivery_notes',
+      'bill_of_materials',
+      'manufacturing_orders',
+      'inventory_counts',
+      'supplier_product_prices',
+      'price_lists',
+      'product_prices',
+      'product_price_overrides',
+      'product_costs',
+      'costing_method_history',
+      'inventory_cost_layers',
+      'expenses',
+      'purchases',
+      'warehouses',
+      'stock_movements',
+      'warehouse_transfer_orders',
+      'account_transactions',
+      'catalog_categories',
+      'catalog_brands',
+      'catalog_units',
+      'user_roles',
+      'app_users',
+    ]) {
+      await _createBusinessEntityTable(tableName);
+    }
+    await _ensureWarehouseInventoryTable();
+    await _ensureWarehouseTransferOrderColumns();
+    await _ensureStockOperationsTable();
+    await _ensureInventoryMigrationAdjustmentsTable();
+    await _ensureInventoryReconciliationsTable();
+    await _ensurePerformanceSupportTables();
+    await _ensureOperationalBusinessColumns();
+    await _ensureInventoryBatchTables();
+    await _ensureSimpleBusinessColumns();
+    await _ensureComplexBusinessColumns();
+    await _ensureBusinessQueryIndexes();
+    await _ensureIdentityBusinessColumns();
+    await _ensureLastModifiedByDeviceIdColumns();
+
+    await _createAccountingFoundation();
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS sync_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        is_synced INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        synced_at TEXT NOT NULL DEFAULT '',
+        store_epoch INTEGER NOT NULL DEFAULT 1,
+        sequence INTEGER NOT NULL DEFAULT 0
+      );
+    ''');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sync_events_sequence ON sync_events(sequence, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sync_events_entity ON sync_events(entity_type, entity_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sync_events_synced ON sync_events(is_synced, sequence);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS pending_sync_changes (
+        id TEXT PRIMARY KEY NOT NULL,
+        event_id TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        store_epoch INTEGER NOT NULL DEFAULT 1,
+        sequence INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (event_id) REFERENCES sync_events(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_pending_sync_changes_event ON pending_sync_changes(event_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_pending_sync_changes_sequence ON pending_sync_changes(sequence, created_at);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS sync_queue (
+        id TEXT PRIMARY KEY NOT NULL,
+        change_id TEXT NOT NULL,
+        target TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        next_retry_at TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status, next_retry_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sync_queue_change ON sync_queue(change_id);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS sync_conflicts (
+        id TEXT PRIMARY KEY NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        local_event_id TEXT NOT NULL DEFAULT '',
+        remote_event_id TEXT NOT NULL DEFAULT '',
+        reason TEXT NOT NULL DEFAULT '',
+        resolution TEXT NOT NULL DEFAULT '',
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT ''
+      );
+    ''');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sync_conflicts_entity ON sync_conflicts(entity_type, entity_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sync_conflicts_resolution ON sync_conflicts(resolution, created_at);');
+
+    await _normalizeProductCostRows();
+
+    await customInsert(
+      'INSERT OR REPLACE INTO migration_meta (key, value, updated_at) VALUES (?, ?, ?)',
+      variables: <Variable<Object>>[
+        const Variable<String>('sqlite_foundation_version'),
+        const Variable<String>('13'),
+        Variable<String>(DateTime.now().toUtc().toIso8601String()),
+      ],
+    );
+  }
+
+  Future<void> _sealLegacyAuditRows() async {
+    final pending = await customSelect(
+      "SELECT COUNT(*) AS row_count FROM audit_logs WHERE record_hash = ''",
+    ).getSingle();
+    final count = pending.read<int>('row_count');
+    if (count == 0) return;
+
+    final triggerRows = await customSelect(
+      "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_audit_logs_no_update', 'trg_audit_logs_no_delete')",
+    ).get();
+    if (triggerRows.isNotEmpty) {
+      throw StateError(
+        'Audit integrity failure: an append-only audit row is missing its integrity hash.',
+      );
+    }
+
+    final rows = await customSelect(
+      'SELECT * FROM audit_logs ORDER BY rowid ASC',
+    ).get();
+    var previousHash = '';
+    for (final row in rows) {
+      final data = row.data;
+      final existingHash = data['record_hash']?.toString() ?? '';
+      if (existingHash.isNotEmpty) {
+        final expected = computeAuditRecordHashFromRow(
+          data,
+          previousHash: previousHash,
+        );
+        if (existingHash != expected ||
+            (data['previous_hash']?.toString() ?? '') != previousHash) {
+          throw StateError(
+            'Audit integrity failure while sealing legacy rows.',
+          );
+        }
+        previousHash = existingHash;
+        continue;
+      }
+      final recordHash = computeAuditRecordHashFromRow(
+        data,
+        previousHash: previousHash,
+      );
+      await customUpdate(
+        'UPDATE audit_logs SET previous_hash = ?, record_hash = ?, hash_version = 1 WHERE id = ?',
+        variables: <Variable<Object>>[
+          Variable<String>(previousHash),
+          Variable<String>(recordHash),
+          Variable<String>(data['id']?.toString() ?? ''),
+        ],
+      );
+      previousHash = recordHash;
+    }
+  }
+
+  Future<void> _ensureColumn(
+      String tableName, String columnName, String definition) async {
+    final rows = await customSelect('PRAGMA table_info($tableName);').get();
+    final exists =
+        rows.any((row) => row.data['name']?.toString() == columnName);
+    if (!exists) {
+      await customStatement(
+          'ALTER TABLE $tableName ADD COLUMN $columnName $definition;');
+    }
+  }
+
+  Future<bool> _tableHasColumn(String tableName, String columnName) async {
+    final rows = await customSelect('PRAGMA table_info($tableName);').get();
+    return rows.any((row) => row.data['name']?.toString() == columnName);
+  }
+
+  Future<List<String>> _tableColumns(String tableName) async {
+    final rows = await customSelect('PRAGMA table_info($tableName);').get();
+    return rows
+        .map((row) => row.data['name']?.toString() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Map<String, dynamic>? _decodePayloadJson(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _migratePayloadJsonRows(
+    String tableName,
+    Map<String, Object?> Function(
+      Map<String, dynamic> payload,
+      Map<String, Object?> row,
+    ) buildUpdates,
+  ) async {
+    if (!await _tableHasColumn(tableName, 'payload_json')) return;
+    final rows = await customSelect('''
+      SELECT *
+      FROM $tableName
+      WHERE payload_json <> ''
+    ''').get();
+    if (rows.isEmpty) return;
+
+    await transaction(() async {
+      for (final row in rows) {
+        final payload = _decodePayloadJson(row.read<String>('payload_json'));
+        if (payload == null) continue;
+        final updates =
+            buildUpdates(payload, Map<String, Object?>.from(row.data));
+        if (updates.isEmpty) continue;
+        await _updateRowColumns(tableName, row.read<String>('id'), updates);
+      }
+    });
+  }
+
+  Future<void> _updateRowColumns(
+    String tableName,
+    String id,
+    Map<String, Object?> updates,
+  ) async {
+    final entries = updates.entries.toList(growable: false);
+    if (entries.isEmpty) return;
+    final assignments = entries.map((entry) => '${entry.key} = ?').join(', ');
+    await customUpdate(
+      'UPDATE $tableName SET $assignments WHERE id = ?;',
+      variables: <Variable<Object>>[
+        for (final entry in entries) Variable<Object>(_sqlValue(entry.value)),
+        Variable<String>(id),
+      ],
+    );
+  }
+
+  Object? _sqlValue(Object? value) {
+    if (value is bool) return value ? 1 : 0;
+    if (value is DateTime) return value.toUtc().toIso8601String();
+    if (value is Map || value is List) return jsonEncode(value);
+    return value;
+  }
+
+  String? _stringOrNull(Object? value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    if (text.isEmpty || text == 'null') return null;
+    return text;
+  }
+
+  String _stringValue(Object? value, {String fallback = ''}) {
+    return _stringOrNull(value) ?? fallback;
+  }
+
+  double? _doubleOrNull(Object? value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    final text = value.toString().trim();
+    if (text.isEmpty || text == 'null') return null;
+    return double.tryParse(text);
+  }
+
+  double _doubleValue(Object? value, {double fallback = 0}) {
+    return _doubleOrNull(value) ?? fallback;
+  }
+
+  int? _intOrNull(Object? value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    final text = value.toString().trim();
+    if (text.isEmpty || text == 'null') return null;
+    return int.tryParse(text);
+  }
+
+  int _intValue(Object? value, {int fallback = 0}) {
+    return _intOrNull(value) ?? fallback;
+  }
+
+  bool? _boolTrueOrNull(Object? value) {
+    if (value == null) return null;
+    if (value is bool) return value ? true : null;
+    if (value is num) return value != 0 ? true : null;
+    final text = value.toString().trim().toLowerCase();
+    if (text.isEmpty || text == 'null') return null;
+    if (text == 'true' || text == '1') return true;
+    return null;
+  }
+
+  String _jsonStringValue(Object? value, {String fallback = '[]'}) {
+    if (value == null) return fallback;
+    if (value is String) {
+      final text = value.trim();
+      if (text.isEmpty || text == 'null') return fallback;
+      return text;
+    }
+    return jsonEncode(value);
+  }
+
+  Future<void> rebuildBusinessTablesWithoutPayloadJson() async {
+    final tablesToRebuild = <String>[
+      'products',
+      'customers',
+      'suppliers',
+      'sales',
+      'sale_quotations',
+      'delivery_notes',
+      'bill_of_materials',
+      'manufacturing_orders',
+      'inventory_counts',
+      'supplier_product_prices',
+      'price_lists',
+      'product_prices',
+      'product_price_overrides',
+      'product_costs',
+      'costing_method_history',
+      'inventory_cost_layers',
+      'expenses',
+      'purchases',
+      'warehouses',
+      'stock_movements',
+      'warehouse_transfer_orders',
+      'account_transactions',
+      'catalog_categories',
+      'catalog_brands',
+      'catalog_units',
+      'user_roles',
+      'app_users',
+    ];
+
+    final pending = <String>[];
+    for (final table in tablesToRebuild) {
+      if (await _tableHasColumn(table, 'payload_json')) {
+        pending.add(table);
+      }
+    }
+    if (pending.isEmpty) return;
+
+    await customStatement('PRAGMA foreign_keys = OFF;');
+    try {
+      final legacyTables = <String, String>{};
+      for (final table in pending) {
+        final legacyTable = '${table}__legacy_payload_json';
+        await customStatement('ALTER TABLE $table RENAME TO $legacyTable;');
+        legacyTables[table] = legacyTable;
+      }
+
+      for (final table in pending) {
+        await _createBusinessEntityTable(table);
+      }
+      await _ensureOperationalBusinessColumns();
+      await _ensureSimpleBusinessColumns();
+      await _ensureComplexBusinessColumns();
+      await _ensureIdentityBusinessColumns();
+      await _ensureLastModifiedByDeviceIdColumns();
+
+      for (final table in pending) {
+        final legacyTable = legacyTables[table]!;
+        final sourceColumns = await _tableColumns(legacyTable);
+        final targetColumns = await _tableColumns(table);
+        final copyColumns = sourceColumns
+            .where((column) =>
+                column.isNotEmpty &&
+                column != 'payload_json' &&
+                targetColumns.contains(column))
+            .toList(growable: false);
+        if (copyColumns.isNotEmpty) {
+          final joinedColumns = copyColumns.join(', ');
+          await customStatement('''
+            INSERT INTO $table ($joinedColumns)
+            SELECT $joinedColumns
+            FROM $legacyTable;
+          ''');
+        }
+        await customStatement('DROP TABLE $legacyTable;');
+      }
+      await _normalizeProductCostRows();
+    } finally {
+      await customStatement('PRAGMA foreign_keys = ON;');
+    }
+  }
+
+  Future<void> _ensureOperationalBusinessColumns() async {
+    await _ensureStockMovementColumns();
+    await _ensureAccountTransactionColumns();
+    await _backfillOperationalBusinessColumnsIfNeeded();
+  }
+
+  Future<void> _ensureSimpleBusinessColumns() async {
+    await _ensureCustomerColumns();
+    await _ensureSupplierColumns();
+    await _ensureExpenseColumns();
+    await _ensureWarehouseColumns();
+    await _ensureWarehouseInventoryColumns();
+    await _ensureStockOperationsColumns();
+    await _ensureCatalogColumns('catalog_categories');
+    await _ensureCatalogColumns('catalog_brands');
+    await _ensureCatalogColumns('catalog_units');
+    await _ensurePriceListColumns();
+    await _ensureProductPriceColumns();
+    await _ensureProductPriceOverrideColumns();
+    await _ensureProductCostColumns();
+    await _ensureCostingMethodHistoryColumns();
+    await _ensureInventoryCostLayerColumns();
+    await _ensureSupplierProductPriceColumns();
+    await _backfillSimpleBusinessColumnsIfNeeded();
+  }
+
+  Future<void> _normalizeProductCostRows() async {
+    // ProductCost is one current snapshot per product. Retain the newest active
+    // legacy row and make future writes enforce that invariant.
+    await transaction(() async {
+      await customStatement(r'''
+        DELETE FROM product_costs
+        WHERE deleted_at = ''
+          AND trim(product_id) <> ''
+          AND id IN (
+            SELECT id FROM (
+              SELECT id,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY product_id
+                       ORDER BY updated_at DESC, id DESC
+                     ) AS rn
+              FROM product_costs
+              WHERE deleted_at = '' AND trim(product_id) <> ''
+            ) ranked
+            WHERE rn > 1
+          );
+      ''');
+      await customStatement(r'''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_product_costs_product_active
+        ON product_costs(product_id)
+        WHERE deleted_at = '' AND trim(product_id) <> '';
+      ''');
+    });
+  }
+
+  Future<void> _ensureComplexBusinessColumns() async {
+    await _ensureProductColumns();
+    await _ensureProductUnitTables();
+    await _ensureSaleColumns();
+    await _ensureSaleItemTables();
+    await _ensureSaleQuotationColumns();
+    await _ensureSaleQuotationItemTables();
+    await _ensureDeliveryNoteColumns();
+    await _ensureDeliveryNoteItemTables();
+    await _ensurePurchaseColumns();
+    await _ensurePurchaseItemTable();
+    await _ensureInventoryCountColumns();
+    await _ensureInventoryCountLineTable();
+    await _ensureBillOfMaterialsColumns();
+    await _ensureBillOfMaterialsLineTable();
+    await _ensureManufacturingOrderColumns();
+  }
+
+  Future<void> _ensureIdentityBusinessColumns() async {
+    await _ensureRoleColumns();
+    await _ensureUserColumns();
+  }
+
+  Future<void> _ensurePerformanceSupportTables() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS daily_metrics (
+        metric_date TEXT PRIMARY KEY NOT NULL,
+        sales_total REAL NOT NULL DEFAULT 0,
+        sales_profit REAL NOT NULL DEFAULT 0,
+        sales_count INTEGER NOT NULL DEFAULT 0,
+        purchases_total REAL NOT NULL DEFAULT 0,
+        expenses_total REAL NOT NULL DEFAULT 0,
+        stock_in REAL NOT NULL DEFAULT 0,
+        stock_out REAL NOT NULL DEFAULT 0,
+        cash_in REAL NOT NULL DEFAULT 0,
+        cash_out REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_daily_metrics_date ON daily_metrics(metric_date);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS search_index (
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        search_text TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (entity_type, entity_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_search_index_type_text ON search_index(entity_type, search_text);');
+
+    try {
+      await customStatement(r'''
+        CREATE VIRTUAL TABLE IF NOT EXISTS search_index_fts
+        USING fts5(entity_type UNINDEXED, entity_id UNINDEXED, search_text);
+      ''');
+    } catch (_) {
+      // Some SQLite builds may omit FTS5; search_index remains the fallback.
+    }
+  }
+
+  Future<void> _ensureLastModifiedByDeviceIdColumns() async {
+    for (final table in <String>{
+      'products',
+      'customers',
+      'suppliers',
+      'sales',
+      'sale_quotations',
+      'delivery_notes',
+      'bill_of_materials',
+      'manufacturing_orders',
+      'expenses',
+      'purchases',
+      'warehouses',
+      'inventory_counts',
+      'supplier_product_prices',
+      'price_lists',
+      'product_prices',
+      'product_price_overrides',
+      'product_costs',
+      'costing_method_history',
+      'inventory_cost_layers',
+      'catalog_categories',
+      'catalog_brands',
+      'catalog_units',
+    }) {
+      await _ensureColumn(
+        table,
+        'last_modified_by_device_id',
+        "TEXT NOT NULL DEFAULT ''",
+      );
+    }
+  }
+
+  /// Permanently removes the retired `products.stock` persistence column.
+  ///
+  /// Call this only after legacy inventory has been migrated into
+  /// `warehouse_inventory`. Runtime inventory reads/writes never depend on this
+  /// column anymore; this migration only removes obsolete storage.
+  Future<void> dropLegacyProductStockColumn() async {
+    if (!await _tableHasColumn('products', 'stock')) return;
+    await customStatement(
+      'DROP INDEX IF EXISTS idx_products_deleted_track_stock_stock_name;',
+    );
+    await customStatement('ALTER TABLE products DROP COLUMN stock;');
+  }
+
+  Future<void> _ensureProductColumns() async {
+    await _ensureColumn('products', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'code', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'name_en', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'name_ar', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'price', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('products', 'cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('products', 'original_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'cost_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn('products', 'usd_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'cost_exchange_rate_at_entry', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'original_price', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'original_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn('products', 'usd_price', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'exchange_rate_at_entry', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'category', "TEXT NOT NULL DEFAULT 'General'");
+    await _ensureColumn('products', 'barcode', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'brand', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'supplier', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'description', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('products', 'unit', "TEXT NOT NULL DEFAULT 'pcs'");
+    await _ensureColumn(
+        'products', 'quantity_type', "TEXT NOT NULL DEFAULT 'countable'");
+    await _ensureColumn(
+        'products', 'low_stock_threshold', 'INTEGER NOT NULL DEFAULT 5');
+    await _ensureColumn(
+        'products', 'track_stock', 'INTEGER NOT NULL DEFAULT 1');
+    await _ensureColumn('products', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+    await _ensureColumn('products', 'image_path', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'products', 'tax_profile_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'products', 'expiry_tracking_enabled', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'expiry_entry_required', 'INTEGER NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'products', 'expiry_alert_days', 'INTEGER NOT NULL DEFAULT 30');
+    await _ensureColumn(
+        'products', 'default_shelf_life_days', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn('products', 'minimum_receipt_shelf_life_days',
+        'INTEGER NOT NULL DEFAULT 0');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);');
+  }
+
+  Future<void> _ensureProductUnitTables() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS product_sale_units (
+        id TEXT PRIMARY KEY NOT NULL,
+        product_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        unit_id TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '',
+        conversion_to_base REAL NOT NULL DEFAULT 1,
+        price REAL NOT NULL DEFAULT 0,
+        original_price REAL NOT NULL DEFAULT 0,
+        original_currency TEXT NOT NULL DEFAULT 'USD',
+        barcode TEXT NOT NULL DEFAULT '',
+        is_default INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+        CHECK (is_default IN (0, 1))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_sale_units_product_line ON product_sale_units(product_id, line_no);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS product_purchase_units (
+        id TEXT PRIMARY KEY NOT NULL,
+        product_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        unit_id TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '',
+        conversion_to_base REAL NOT NULL DEFAULT 1,
+        price REAL NOT NULL DEFAULT 0,
+        original_price REAL NOT NULL DEFAULT 0,
+        original_currency TEXT NOT NULL DEFAULT 'USD',
+        barcode TEXT NOT NULL DEFAULT '',
+        is_default INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+        CHECK (is_default IN (0, 1))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_purchase_units_product_line ON product_purchase_units(product_id, line_no);');
+  }
+
+  Future<void> _ensureSaleColumns() async {
+    await _ensureColumn('sales', 'invoice_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('sales', 'customer_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('sales', 'customer_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('sales', 'document_date', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('sales', 'status', "TEXT NOT NULL DEFAULT 'Paid'");
+    await _ensureColumn('sales', 'discount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'original_discount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'discount_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'sales', 'discount_exchange_rate_at_entry', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'payment_method', "TEXT NOT NULL DEFAULT 'Cash'");
+    await _ensureColumn(
+        'sales', 'payment_status', "TEXT NOT NULL DEFAULT 'paid'");
+    await _ensureColumn(
+        'sales', 'invoice_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'sales', 'payment_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'sales', 'exchange_rate_at_payment', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'base_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'sales', 'exchange_rate_at_invoice', 'REAL NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'sales', 'transaction_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('sales', 'base_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('sales', 'paid_base_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'exchange_difference_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('sales', 'paid_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'cash_received_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'paid_amount_in_payment_currency', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('sales', 'cash_received_amount_in_payment_currency',
+        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('sales', 'note', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sales', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn(
+        'sales', 'warehouse_name', "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
+        'sales', 'posted_snapshot_json', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id, document_date);');
+  }
+
+  Future<void> _ensureSaleItemTables() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS sale_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        sale_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        product_id TEXT NOT NULL DEFAULT '',
+        product_name TEXT NOT NULL DEFAULT '',
+        unit_price REAL NOT NULL DEFAULT 0,
+        quantity REAL NOT NULL DEFAULT 0,
+        unit_name TEXT NOT NULL DEFAULT '',
+        base_quantity REAL NOT NULL DEFAULT 0,
+        conversion_to_base REAL NOT NULL DEFAULT 1,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        costing_method_at_sale TEXT NOT NULL DEFAULT 'weighted_average',
+        cost_currency TEXT NOT NULL DEFAULT 'USD',
+        cost_exchange_rate REAL NOT NULL DEFAULT 1,
+        FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_line ON sale_items(sale_id, line_no);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS sale_item_cost_layer_consumptions (
+        id TEXT PRIMARY KEY NOT NULL,
+        sale_item_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        layer_id TEXT NOT NULL DEFAULT '',
+        quantity REAL NOT NULL DEFAULT 0,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        currency_code TEXT NOT NULL DEFAULT 'USD',
+        FOREIGN KEY (sale_item_id) REFERENCES sale_items(id) ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_item_consumptions_item_line ON sale_item_cost_layer_consumptions(sale_item_id, line_no);');
+  }
+
+  Future<void> _ensureSaleQuotationColumns() async {
+    await _ensureColumn(
+        'sale_quotations', 'quotation_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sale_quotations', 'customer_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sale_quotations', 'customer_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sale_quotations', 'document_date', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sale_quotations', 'valid_until', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sale_quotations', 'status', "TEXT NOT NULL DEFAULT 'Draft'");
+    await _ensureColumn(
+        'sale_quotations', 'discount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sale_quotations', 'invoice_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn('sale_quotations', 'note', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sale_quotations', 'converted_sale_id', "TEXT NOT NULL DEFAULT ''");
+  }
+
+  Future<void> _ensureSaleQuotationItemTables() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS sale_quotation_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        sale_quotation_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        product_id TEXT NOT NULL DEFAULT '',
+        product_name TEXT NOT NULL DEFAULT '',
+        unit_price REAL NOT NULL DEFAULT 0,
+        quantity REAL NOT NULL DEFAULT 0,
+        unit_name TEXT NOT NULL DEFAULT '',
+        base_quantity REAL NOT NULL DEFAULT 0,
+        conversion_to_base REAL NOT NULL DEFAULT 1,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        costing_method_at_sale TEXT NOT NULL DEFAULT 'weighted_average',
+        cost_currency TEXT NOT NULL DEFAULT 'USD',
+        cost_exchange_rate REAL NOT NULL DEFAULT 1,
+        FOREIGN KEY (sale_quotation_id) REFERENCES sale_quotations(id) ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_quotation_items_quote_line ON sale_quotation_items(sale_quotation_id, line_no);');
+  }
+
+  Future<void> _ensureDeliveryNoteColumns() async {
+    await _ensureColumn(
+        'delivery_notes', 'delivery_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'sale_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'invoice_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'customer_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'customer_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'document_date', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'status', "TEXT NOT NULL DEFAULT 'Draft'");
+    await _ensureColumn('delivery_notes', 'note', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'delivered_at', "TEXT NOT NULL DEFAULT ''");
+  }
+
+  Future<void> _ensureDeliveryNoteItemTables() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS delivery_note_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        delivery_note_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        product_id TEXT NOT NULL DEFAULT '',
+        product_name TEXT NOT NULL DEFAULT '',
+        unit_price REAL NOT NULL DEFAULT 0,
+        quantity REAL NOT NULL DEFAULT 0,
+        unit_name TEXT NOT NULL DEFAULT '',
+        base_quantity REAL NOT NULL DEFAULT 0,
+        conversion_to_base REAL NOT NULL DEFAULT 1,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        costing_method_at_sale TEXT NOT NULL DEFAULT 'weighted_average',
+        cost_currency TEXT NOT NULL DEFAULT 'USD',
+        cost_exchange_rate REAL NOT NULL DEFAULT 1,
+        FOREIGN KEY (delivery_note_id) REFERENCES delivery_notes(id) ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_delivery_note_items_note_line ON delivery_note_items(delivery_note_id, line_no);');
+  }
+
+  Future<void> _ensurePurchaseColumns() async {
+    await _ensureColumn('purchases', 'purchase_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('purchases', 'supplier_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'supplier_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'document_date', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('purchases', 'status', "TEXT NOT NULL DEFAULT 'Draft'");
+    await _ensureColumn('purchases', 'note', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'payment_status', "TEXT NOT NULL DEFAULT 'paid'");
+    await _ensureColumn(
+        'purchases', 'payment_method', "TEXT NOT NULL DEFAULT 'Cash'");
+    await _ensureColumn('purchases', 'paid_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'purchases', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('purchases', 'warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
+        'purchases', 'cancel_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'cancelled_by_device_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'reversal_applied', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'purchases', 'cancelled_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'posted_snapshot_json', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(document_date);');
+  }
+
+  Future<void> _ensurePurchaseItemTable() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS purchase_items (
+        id TEXT PRIMARY KEY NOT NULL,
+        purchase_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        product_id TEXT NOT NULL DEFAULT '',
+        product_name TEXT NOT NULL DEFAULT '',
+        quantity REAL NOT NULL DEFAULT 0,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        purchase_unit_id TEXT NOT NULL DEFAULT 'base',
+        purchase_unit_name TEXT NOT NULL DEFAULT '',
+        conversion_to_base REAL NOT NULL DEFAULT 1,
+        original_unit_cost REAL NOT NULL DEFAULT 0,
+        unit_cost_currency TEXT NOT NULL DEFAULT 'USD',
+        exchange_rate_at_entry REAL NOT NULL DEFAULT 0,
+        requested_supplier_batch_number TEXT NOT NULL DEFAULT '',
+        requested_manufacturing_date TEXT NOT NULL DEFAULT '',
+        requested_expiration_date TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE
+      );
+    ''');
+    await _ensureColumn('purchase_items', 'requested_supplier_batch_number',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('purchase_items', 'requested_manufacturing_date',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('purchase_items', 'requested_expiration_date',
+        "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_line ON purchase_items(purchase_id, line_no);');
+  }
+
+  Future<void> _ensureInventoryCountColumns() async {
+    await _ensureColumn(
+        'inventory_counts', 'count_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'created_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('inventory_counts', 'warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
+        'inventory_counts', 'status', "TEXT NOT NULL DEFAULT 'open'");
+    await _ensureColumn(
+        'inventory_counts', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'approved_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'approved_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'journal_entry_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('inventory_counts', 'reversal_journal_entry_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+  }
+
+  Future<void> _ensureInventoryCountLineTable() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS inventory_count_lines (
+        id TEXT PRIMARY KEY NOT NULL,
+        inventory_count_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        product_id TEXT NOT NULL DEFAULT '',
+        product_name TEXT NOT NULL DEFAULT '',
+        product_code TEXT NOT NULL DEFAULT '',
+        snapshot_stock REAL NOT NULL DEFAULT 0,
+        counted_qty REAL,
+        counted_at TEXT NOT NULL DEFAULT '',
+        counted_by TEXT NOT NULL DEFAULT '',
+        note TEXT NOT NULL DEFAULT '',
+        system_qty_at_approval REAL,
+        difference_qty REAL,
+        unit_cost REAL,
+        difference_value REAL,
+        stock_movement_id TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (inventory_count_id) REFERENCES inventory_counts(id) ON DELETE CASCADE
+      );
+    ''');
+    await _ensureColumn(
+        'inventory_count_lines', 'system_qty_at_approval', 'REAL');
+    await _ensureColumn('inventory_count_lines', 'difference_qty', 'REAL');
+    await _ensureColumn('inventory_count_lines', 'unit_cost', 'REAL');
+    await _ensureColumn('inventory_count_lines', 'difference_value', 'REAL');
+    await _ensureColumn('inventory_count_lines', 'stock_movement_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_count_lines_count_line ON inventory_count_lines(inventory_count_id, line_no);');
+  }
+
+  Future<void> _ensureBillOfMaterialsColumns() async {
+    await _ensureColumn(
+        'bill_of_materials', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'output_product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'output_product_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'output_quantity', 'REAL NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'bill_of_materials', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  Future<void> _ensureBillOfMaterialsLineTable() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS bill_of_materials_lines (
+        id TEXT PRIMARY KEY NOT NULL,
+        bill_of_material_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        product_id TEXT NOT NULL DEFAULT '',
+        product_name TEXT NOT NULL DEFAULT '',
+        quantity REAL NOT NULL DEFAULT 0,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        FOREIGN KEY (bill_of_material_id) REFERENCES bill_of_materials(id) ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_bom_lines_bom_line ON bill_of_materials_lines(bill_of_material_id, line_no);');
+  }
+
+  Future<void> _ensureManufacturingOrderColumns() async {
+    await _ensureColumn(
+        'manufacturing_orders', 'order_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'bom_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'bom_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('manufacturing_orders', 'output_product_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('manufacturing_orders', 'output_product_name',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'quantity', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('manufacturing_orders', 'raw_materials_warehouse_id',
+        "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('manufacturing_orders', 'raw_materials_warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn('manufacturing_orders', 'finished_goods_warehouse_id',
+        "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('manufacturing_orders', 'finished_goods_warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
+        'manufacturing_orders', 'status', "TEXT NOT NULL DEFAULT 'completed'");
+    await _ensureColumn(
+        'manufacturing_orders', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'document_date', "TEXT NOT NULL DEFAULT ''");
+    // Phase 5 accounting snapshots. These nullable/defaulted columns make the
+    // migration safe for legacy completed orders while keeping manufacturing
+    // detail inside the already synced/backed-up manufacturing entity.
+    await _ensureColumn('manufacturing_orders', 'actual_output_quantity',
+        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('manufacturing_orders', 'total_material_cost',
+        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'manufacturing_orders', 'total_waste_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('manufacturing_orders', 'total_eligible_cost',
+        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'manufacturing_orders', 'actual_unit_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('manufacturing_orders', 'material_costs_json',
+        "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn('manufacturing_orders', 'waste_lines_json',
+        "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn(
+        'manufacturing_orders', 'journal_entry_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('manufacturing_orders', 'reversal_journal_entry_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'completed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'completed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_manufacturing_orders_status_date ON manufacturing_orders(status, document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_manufacturing_orders_output ON manufacturing_orders(output_product_id, status);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_manufacturing_orders_journal ON manufacturing_orders(journal_entry_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_manufacturing_orders_reversal_journal ON manufacturing_orders(reversal_journal_entry_id);');
+  }
+
+  Future<void> _ensureStockMovementColumns() async {
+    await _ensureColumn(
+        'stock_movements', 'product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'product_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'movement_type', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'quantity', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'stock_movements', 'movement_date', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'reference_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'reference_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'adjustment_category', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('stock_movements', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'evidence_ref', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('stock_movements', 'warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
+        'stock_movements', 'movement_group_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'document_line_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'source_movement_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('stock_movements', 'reversal_of_movement_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'idempotency_key', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'unit_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('stock_movements', 'last_modified_by_device_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'reviewed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'reviewed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'review_note', "TEXT NOT NULL DEFAULT ''");
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_product_date ON stock_movements(product_id, movement_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_product ON stock_movements(product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_type_date ON stock_movements(movement_type, movement_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_warehouse_date ON stock_movements(warehouse_id, movement_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_group_id ON stock_movements(movement_group_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_document_line_id ON stock_movements(document_line_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_source_movement_id ON stock_movements(source_movement_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_reversal_of_movement_id ON stock_movements(reversal_of_movement_id);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_movements_idempotency_key ON stock_movements(idempotency_key) WHERE trim(idempotency_key) <> '';");
+  }
+
+  Future<void> _ensureBusinessQueryIndexes() async {
+    // Older installs may carry a products table that predates the
+    // track_stock column. Re-assert the column here so any product indexes that
+    // depend on it cannot abort startup.
+    await _ensureProductColumns();
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_active_stock_name ON products(is_active, track_stock, name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_category_name ON products(category, name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_code ON products(code);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_deleted_track_lower_name_updated ON products(deleted_at, track_stock, lower(name), updated_at, id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_lower_code ON products(lower(code));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_lower_barcode ON products(lower(barcode));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_lower_name ON products(lower(name));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_customers_deleted_name ON customers(deleted_at, name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_status_date ON sales(status, document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_date_updated ON sales(document_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_deleted_status_date ON sales(deleted_at, lower(status), document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_deleted_date_updated_id ON sales(deleted_at, document_date DESC, updated_at DESC, id DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_invoice_no ON sales(invoice_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_customer_name ON sales(customer_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_lower_invoice_no ON sales(lower(invoice_no));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_lower_customer_name ON sales(lower(customer_name));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_product_name ON sale_items(product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_product_name ON sale_items(sale_id, product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_lower_product_unit ON sale_items(sale_id, lower(product_name), lower(unit_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_sale_units_product_lower_name_barcode ON product_sale_units(product_id, lower(name), lower(barcode));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_purchase_units_product_lower_name_barcode ON product_purchase_units(product_id, lower(name), lower(barcode));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_status_date ON purchases(status, document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_supplier_date ON purchases(supplier_id, document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_date_updated ON purchases(document_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_purchase_no ON purchases(purchase_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_supplier_name ON purchases(supplier_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_deleted_date_updated ON purchases(deleted_at, document_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_deleted_status_date ON purchases(deleted_at, lower(status), document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_lower_purchase_no ON purchases(lower(purchase_no));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_lower_supplier_name ON purchases(lower(supplier_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_lower_status ON purchases(lower(status));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_product_name ON purchase_items(product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_product_id ON purchase_items(product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_product_name ON purchase_items(purchase_id, lower(product_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_cost_qty ON purchase_items(purchase_id, unit_cost, quantity);');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_status_date ON expenses(expense_status, expense_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_category_date ON expenses(category, expense_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_title ON expenses(title);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_deleted_date_updated_id ON expenses(deleted_at, expense_date DESC, updated_at DESC, id ASC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_deleted_status_date_updated ON expenses(deleted_at, lower(expense_status), expense_date DESC, updated_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_deleted_status_amount ON expenses(deleted_at, lower(expense_status), amount);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_lower_title ON expenses(lower(title));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_lower_category ON expenses(lower(category));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_lower_status ON expenses(lower(expense_status));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_date_updated ON stock_movements(movement_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_deleted_date_updated_id ON stock_movements(deleted_at, movement_date DESC, updated_at DESC, id ASC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_deleted_type_date_updated ON stock_movements(deleted_at, movement_type, movement_date DESC, updated_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_reference_no ON stock_movements(reference_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_product_name ON stock_movements(product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_product_name ON stock_movements(lower(product_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_reference_no ON stock_movements(lower(reference_no));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_type ON stock_movements(lower(movement_type));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_warehouse_name ON stock_movements(lower(warehouse_name));');
+  }
+
+  Future<void> _ensureAccountTransactionColumns() async {
+    // Product query indexes below depend on track_stock. Some legacy installs
+    // reach this stage before the product column backfill has run, so make the
+    // column available here as well.
+    await _ensureProductColumns();
+
+    await _ensureColumn(
+        'account_transactions', 'account_type', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'account_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'account_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'transaction_date', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'transaction_type', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'reference_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'reference_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'debit', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'account_transactions', 'credit', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'account_transactions', 'currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'account_transactions', 'payment_method', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'account_transactions', 'note', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('account_transactions', 'last_modified_by_device_id',
+        "TEXT NOT NULL DEFAULT ''");
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_account_date ON account_transactions(account_type, account_id, transaction_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_lower_account ON account_transactions(lower(account_type), account_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_deleted_date ON account_transactions(deleted_at, transaction_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_deleted_lower_account_id ON account_transactions(deleted_at, lower(account_type), account_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_reference ON account_transactions(reference_id, reference_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_type_date ON account_transactions(transaction_type, transaction_date);');
+  }
+
+  Future<void> _ensureCustomerColumns() async {
+    await _ensureColumn('customers', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('customers', 'phone', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('customers', 'address', "TEXT NOT NULL DEFAULT ''");
+  }
+
+  Future<void> _ensureSupplierColumns() async {
+    await _ensureColumn('suppliers', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('suppliers', 'name_en', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('suppliers', 'name_ar', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('suppliers', 'phone', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('suppliers', 'address', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('suppliers', 'notes', "TEXT NOT NULL DEFAULT ''");
+  }
+
+  Future<void> _ensureExpenseColumns() async {
+    await _ensureColumn('expenses', 'title', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('expenses', 'category', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('expenses', 'amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('expenses', 'original_amount', 'REAL');
+    await _ensureColumn(
+        'expenses', 'original_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'expenses', 'exchange_rate_at_entry', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('expenses', 'expense_date', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('expenses', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'expenses', 'expense_status', "TEXT NOT NULL DEFAULT 'Draft'");
+    await _ensureColumn(
+        'expenses', 'cancel_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'expenses', 'cancelled_by_device_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('expenses', 'cancelled_at', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);');
+  }
+
+  Future<void> _ensureWarehouseColumns() async {
+    await _ensureColumn('warehouses', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouses', 'code', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouses', 'location', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'warehouses', 'is_default', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'warehouses', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  Future<void> _ensureWarehouseInventoryTable() async {
+    await _ensureWarehouseInventoryColumns();
+  }
+
+  Future<void> _ensureWarehouseInventoryColumns() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS warehouse_inventory (
+        id TEXT PRIMARY KEY NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        warehouse_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity REAL NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        UNIQUE(store_id, warehouse_id, product_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_store_warehouse_product ON warehouse_inventory(store_id, warehouse_id, product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_store_product_quantity ON warehouse_inventory(store_id, product_id, quantity);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_product ON warehouse_inventory(product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_warehouse ON warehouse_inventory(warehouse_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_updated_at ON warehouse_inventory(updated_at);');
+  }
+
+  Future<void> _ensureInventoryBatchTables() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_batches (
+        id TEXT PRIMARY KEY NOT NULL,
+        product_id TEXT NOT NULL,
+        product_name TEXT NOT NULL DEFAULT '',
+        supplier_batch_number TEXT NOT NULL DEFAULT '',
+        manufacturing_date TEXT NOT NULL DEFAULT '',
+        expiration_date TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        source_type TEXT NOT NULL DEFAULT '',
+        source_id TEXT NOT NULL DEFAULT '',
+        source_line_id TEXT NOT NULL DEFAULT '',
+        unit_cost REAL NOT NULL DEFAULT 0,
+        initial_quantity REAL NOT NULL DEFAULT 0,
+        cost_currency TEXT NOT NULL DEFAULT 'USD',
+        exchange_rate REAL NOT NULL DEFAULT 1,
+        received_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        CHECK (status IN ('active', 'blocked', 'depleted', 'disposed')),
+        CHECK (unit_cost >= 0),
+        CHECK (initial_quantity >= 0),
+        CHECK (exchange_rate > 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_product_expiry ON inventory_batches(product_id, expiration_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_store_status_expiry ON inventory_batches(store_id, status, expiration_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_supplier_number ON inventory_batches(supplier_batch_number);');
+    await _ensureColumn(
+        'inventory_batches', 'source_line_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_batches', 'unit_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'inventory_batches', 'initial_quantity', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'inventory_batches', 'cost_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'inventory_batches', 'exchange_rate', 'REAL NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'inventory_batches', 'received_at', "TEXT NOT NULL DEFAULT ''");
+    await customStatement('''
+      UPDATE inventory_batches
+      SET received_at = created_at
+      WHERE trim(received_at) = '';
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_source_line ON inventory_batches(source_type, source_id, source_line_id);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_batches_source_line ON inventory_batches(store_id, source_type, source_id, source_line_id) WHERE trim(source_line_id) <> ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_received_at ON inventory_batches(product_id, received_at, id);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS unified_batch_cutovers (
+        id TEXT PRIMARY KEY NOT NULL,
+        store_id TEXT NOT NULL,
+        warehouse_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        cutover_at TEXT NOT NULL,
+        opening_batch_id TEXT NOT NULL DEFAULT '',
+        opening_quantity REAL NOT NULL DEFAULT 0,
+        opening_unit_cost REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        UNIQUE(store_id, warehouse_id, product_id),
+        CHECK (opening_quantity >= 0),
+        CHECK (opening_unit_cost >= 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_unified_batch_cutovers_product ON unified_batch_cutovers(store_id, warehouse_id, product_id);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_batch_balances (
+        id TEXT PRIMARY KEY NOT NULL,
+        batch_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        warehouse_id TEXT NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        quantity REAL NOT NULL DEFAULT 0,
+        reserved_quantity REAL NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id),
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        UNIQUE(store_id, warehouse_id, product_id, batch_id),
+        CHECK (quantity >= 0),
+        CHECK (reserved_quantity >= 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_batch_balances_fefo ON inventory_batch_balances(store_id, warehouse_id, product_id, quantity);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_batch_balances_batch ON inventory_batch_balances(batch_id);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS purchase_item_batch_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        purchase_item_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        batch_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        supplier_batch_number TEXT NOT NULL DEFAULT '',
+        manufacturing_date TEXT NOT NULL DEFAULT '',
+        expiration_date TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (purchase_item_id) REFERENCES purchase_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id),
+        CHECK (quantity > 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_batch_allocations_item ON purchase_item_batch_allocations(purchase_item_id, line_no);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS sale_item_batch_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        sale_item_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        batch_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        expiration_date TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (sale_item_id) REFERENCES sale_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id),
+        CHECK (quantity > 0)
+      );
+    ''');
+    await _ensureColumn(
+        'sale_item_batch_allocations', 'unit_cost', 'REAL NOT NULL DEFAULT 0');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_batch_allocations_item ON sale_item_batch_allocations(sale_item_id, line_no);');
+
+    await _ensureColumn(
+        'stock_movements', 'batch_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_cost_layers', 'batch_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_batch_date ON stock_movements(batch_id, movement_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_reference_type_batch ON stock_movements(store_id, reference_id, movement_type, batch_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_source_trace ON inventory_batches(store_id, source_type, source_id, id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_cost_layers_batch ON inventory_cost_layers(batch_id);');
+  }
+
+  Future<void> _ensureStockOperationsTable() async {
+    await _ensureStockOperationsColumns();
+  }
+
+  Future<void> _ensureStockOperationsColumns() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS stock_operations (
+        id TEXT PRIMARY KEY NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        operation_type TEXT NOT NULL,
+        document_type TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        movement_group_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT '',
+        completed_at TEXT NOT NULL DEFAULT '',
+        failure_reason TEXT NOT NULL DEFAULT '',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        device_id TEXT NOT NULL DEFAULT '',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        UNIQUE(store_id, idempotency_key)
+      );
+    ''');
+    await _ensureColumn(
+        'stock_operations', 'started_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_operations', 'updated_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_operations', 'failure_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_operations', 'attempt_count', 'INTEGER NOT NULL DEFAULT 0');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_operations_document ON stock_operations(store_id, document_type, document_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_operations_group ON stock_operations(movement_group_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_operations_status ON stock_operations(status, created_at);');
+  }
+
+  Future<void> _ensureInventoryReconciliationsTable() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_reconciliations (
+        id TEXT PRIMARY KEY NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        warehouse_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        legacy_product_stock REAL NOT NULL DEFAULT 0,
+        ledger_balance REAL NOT NULL DEFAULT 0,
+        warehouse_balance REAL NOT NULL DEFAULT 0,
+        difference REAL NOT NULL DEFAULT 0,
+        classification TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT '',
+        resolution_note TEXT NOT NULL DEFAULT '',
+        UNIQUE(store_id, warehouse_id, product_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_reconciliations_store_status ON inventory_reconciliations(store_id, status, classification);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_reconciliations_product ON inventory_reconciliations(product_id);');
+  }
+
+  Future<void> _ensureInventoryMigrationAdjustmentsTable() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_migration_adjustments (
+        id TEXT PRIMARY KEY NOT NULL,
+        migration_batch_id TEXT NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        warehouse_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        legacy_product_stock REAL NOT NULL DEFAULT 0,
+        ledger_balance REAL NOT NULL DEFAULT 0,
+        applied_delta REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        UNIQUE(migration_batch_id, store_id, warehouse_id, product_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_migration_adjustments_batch ON inventory_migration_adjustments(migration_batch_id, store_id, warehouse_id, product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_migration_adjustments_store ON inventory_migration_adjustments(store_id, product_id);');
+  }
+
+  Future<void> _ensureCatalogColumns(String tableName) async {
+    await _ensureColumn(tableName, 'name_en', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(tableName, 'name_ar', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(tableName, 'code', "TEXT NOT NULL DEFAULT ''");
+  }
+
+  Future<void> _ensurePriceListColumns() async {
+    await _ensureColumn('price_lists', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('price_lists', 'code', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'price_lists', 'is_default', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'price_lists', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  Future<void> _ensureProductPriceColumns() async {
+    await _ensureColumn(
+        'product_prices', 'product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_prices', 'price_list_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_prices', 'unit_id', "TEXT NOT NULL DEFAULT 'base'");
+    await _ensureColumn(
+        'product_prices', 'base_currency_code', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'product_prices', 'base_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'product_prices', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  Future<void> _ensureProductPriceOverrideColumns() async {
+    await _ensureColumn('product_price_overrides', 'product_price_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('product_price_overrides', 'currency_code',
+        "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'product_price_overrides', 'amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'product_price_overrides', 'mode', "TEXT NOT NULL DEFAULT 'fixed'");
+    await _ensureColumn(
+        'product_price_overrides', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  Future<void> _ensureProductCostColumns() async {
+    await _ensureColumn(
+        'product_costs', 'product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_costs', 'average_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'product_costs', 'last_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'product_costs', 'currency_code', "TEXT NOT NULL DEFAULT 'USD'");
+  }
+
+  Future<void> _ensureCostingMethodHistoryColumns() async {
+    await _ensureColumn('costing_method_history', 'method',
+        "TEXT NOT NULL DEFAULT 'weighted_average'");
+    await _ensureColumn(
+        'costing_method_history', 'effective_from', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'costing_method_history', 'effective_to', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'costing_method_history', 'reason', "TEXT NOT NULL DEFAULT ''");
+  }
+
+  Future<void> _ensureInventoryCostLayerColumns() async {
+    await _ensureColumn(
+        'inventory_cost_layers', 'product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_cost_layers', 'product_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('inventory_cost_layers', 'quantity_received',
+        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('inventory_cost_layers', 'quantity_remaining',
+        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'inventory_cost_layers', 'unit_cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('inventory_cost_layers', 'currency_code',
+        "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'inventory_cost_layers', 'exchange_rate', 'REAL NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'inventory_cost_layers', 'purchase_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('inventory_cost_layers', 'purchase_item_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('inventory_cost_layers', 'source_type',
+        "TEXT NOT NULL DEFAULT 'purchase'");
+    await _ensureColumn(
+        'inventory_cost_layers', 'source_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_cost_layers', 'is_closed', 'INTEGER NOT NULL DEFAULT 0');
+  }
+
+  Future<void> _ensureSupplierProductPriceColumns() async {
+    await _ensureColumn(
+        'supplier_product_prices', 'product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'supplier_product_prices', 'supplier_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'supplier_product_prices', 'cost', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'supplier_product_prices', 'currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn('supplier_product_prices', 'is_preferred',
+        'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'supplier_product_prices', 'supplier_sku', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('supplier_product_prices', 'min_order_qty', 'REAL');
+    await _ensureColumn('supplier_product_prices', 'lead_time_days', 'INTEGER');
+    await _ensureColumn(
+        'supplier_product_prices', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('supplier_product_prices', 'price_history_json',
+        "TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  Future<void> _ensureRoleColumns() async {
+    await _ensureColumn('user_roles', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'user_roles', 'permissions_json', "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn(
+        'user_roles', 'is_system', 'INTEGER NOT NULL DEFAULT 0');
+    await _migratePayloadJsonRows('user_roles', (payload, row) {
+      return <String, Object?>{
+        'name': _stringOrNull(payload['name']) ?? _stringValue(row['name']),
+        'permissions_json': _jsonStringValue(
+          payload['permissions'],
+          fallback: _stringValue(row['permissions_json'], fallback: '[]'),
+        ),
+        'is_system': _boolTrueOrNull(payload['isSystem']) == true
+            ? 1
+            : _intValue(row['is_system'], fallback: 0),
+      };
+    });
+  }
+
+  Future<void> _ensureUserColumns() async {
+    await _ensureColumn('app_users', 'full_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('app_users', 'username', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'app_users', 'password_hash', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('app_users', 'role_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'app_users', 'extra_permissions_json', "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn(
+        'app_users', 'denied_permissions_json', "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn('app_users', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+    await _ensureColumn('app_users', 'is_system', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'app_users', 'last_login_at', "TEXT NOT NULL DEFAULT ''");
+    await _migratePayloadJsonRows('app_users', (payload, row) {
+      return <String, Object?>{
+        'full_name': _stringOrNull(payload['fullName']) ??
+            _stringValue(row['full_name']),
+        'username':
+            _stringOrNull(payload['username']) ?? _stringValue(row['username']),
+        'password_hash': _stringOrNull(payload['passwordHash']) ??
+            _stringValue(row['password_hash']),
+        'role_id':
+            _stringOrNull(payload['roleId']) ?? _stringValue(row['role_id']),
+        'extra_permissions_json': _jsonStringValue(
+          payload['extraPermissions'],
+          fallback: _stringValue(row['extra_permissions_json'], fallback: '[]'),
+        ),
+        'denied_permissions_json': _jsonStringValue(
+          payload['deniedPermissions'],
+          fallback:
+              _stringValue(row['denied_permissions_json'], fallback: '[]'),
+        ),
+        'is_active': _boolTrueOrNull(payload['isActive']) == true
+            ? 1
+            : _intValue(row['is_active'], fallback: 1),
+        'is_system': _boolTrueOrNull(payload['isSystem']) == true
+            ? 1
+            : _intValue(row['is_system'], fallback: 0),
+        'last_login_at': _stringOrNull(payload['lastLoginAt']) ??
+            _stringValue(row['last_login_at']),
+      };
+    });
+  }
+
+  Future<void> _backfillOperationalBusinessColumnsIfNeeded() async {
+    final done =
+        await _metaValue('sqlite_operational_columns_v1_backfilled') == 'true';
+    if (done) return;
+    await _migratePayloadJsonRows('stock_movements', (payload, row) {
+      if (_stringValue(row['product_id']).isNotEmpty &&
+          _stringValue(row['movement_date']).isNotEmpty &&
+          _stringValue(row['movement_type']).isNotEmpty) {
+        return const <String, Object?>{};
+      }
+      return <String, Object?>{
+        'product_id': _stringOrNull(payload['productId']) ??
+            _stringValue(row['product_id']),
+        'product_name': _stringOrNull(payload['productName']) ??
+            _stringValue(row['product_name']),
+        'movement_type': _stringOrNull(payload['type']) ??
+            _stringValue(row['movement_type']),
+        'quantity':
+            _doubleOrNull(payload['quantity']) ?? _doubleValue(row['quantity']),
+        'movement_date': _stringOrNull(payload['date']) ??
+            _stringOrNull(payload['createdAt']) ??
+            _stringValue(row['movement_date'],
+                fallback: _stringValue(row['created_at'])),
+        'reference_id': _stringOrNull(payload['referenceId']) ??
+            _stringOrNull(payload['saleId']) ??
+            _stringOrNull(payload['purchaseId']) ??
+            _stringValue(row['reference_id']),
+        'reference_no': _stringOrNull(payload['referenceNo']) ??
+            _stringValue(row['reference_no']),
+        'reason':
+            _stringOrNull(payload['reason']) ?? _stringValue(row['reason']),
+        'adjustment_category': _stringOrNull(payload['adjustmentCategory']) ??
+            _stringOrNull(payload['category']) ??
+            _stringValue(row['adjustment_category']),
+        'notes': _stringOrNull(payload['notes']) ?? _stringValue(row['notes']),
+        'evidence_ref': _stringOrNull(payload['evidenceRef']) ??
+            _stringValue(row['evidence_ref']),
+        'warehouse_id': _stringOrNull(payload['warehouseId']) ??
+            _stringValue(row['warehouse_id'], fallback: 'main'),
+        'warehouse_name': _stringOrNull(payload['warehouseName']) ??
+            _stringValue(row['warehouse_name'], fallback: 'Main warehouse'),
+        'unit_cost': _doubleOrNull(payload['unitCost']) ??
+            _doubleValue(row['unit_cost']),
+        'last_modified_by_device_id': _stringOrNull(
+              payload['lastModifiedByDeviceId'],
+            ) ??
+            _stringOrNull(payload['deviceId']) ??
+            _stringValue(row['last_modified_by_device_id']),
+        'reviewed_at': _stringOrNull(payload['reviewedAt']) ??
+            _stringValue(row['reviewed_at']),
+        'reviewed_by': _stringOrNull(payload['reviewedBy']) ??
+            _stringValue(row['reviewed_by']),
+        'review_note': _stringOrNull(payload['reviewNote']) ??
+            _stringValue(row['review_note']),
+      };
+    });
+
+    await _migratePayloadJsonRows('account_transactions', (payload, row) {
+      if (_stringValue(row['account_id']).isNotEmpty &&
+          _stringValue(row['transaction_date']).isNotEmpty &&
+          _stringValue(row['transaction_type']).isNotEmpty) {
+        return const <String, Object?>{};
+      }
+      return <String, Object?>{
+        'account_type': _stringOrNull(payload['accountType']) ??
+            _stringValue(row['account_type']),
+        'account_id': _stringOrNull(payload['accountId']) ??
+            _stringValue(row['account_id']),
+        'account_name': _stringOrNull(payload['accountName']) ??
+            _stringValue(row['account_name']),
+        'transaction_date': _stringOrNull(payload['date']) ??
+            _stringOrNull(payload['createdAt']) ??
+            _stringValue(row['transaction_date'],
+                fallback: _stringValue(row['created_at'])),
+        'transaction_type': _stringOrNull(payload['type']) ??
+            _stringValue(row['transaction_type']),
+        'reference_id': _stringOrNull(payload['referenceId']) ??
+            _stringValue(row['reference_id']),
+        'reference_no': _stringOrNull(payload['referenceNo']) ??
+            _stringValue(row['reference_no']),
+        'debit': _doubleOrNull(payload['debit']) ?? _doubleValue(row['debit']),
+        'credit':
+            _doubleOrNull(payload['credit']) ?? _doubleValue(row['credit']),
+        'currency': _stringOrNull(payload['currency']) ??
+            _stringValue(row['currency'], fallback: 'USD'),
+        'payment_method': _stringOrNull(payload['paymentMethod']) ??
+            _stringValue(row['payment_method']),
+        'note': _stringOrNull(payload['note']) ?? _stringValue(row['note']),
+        'deleted_at': _stringOrNull(payload['deletedAt']) ??
+            _stringValue(row['deleted_at']),
+        'last_modified_by_device_id': _stringOrNull(
+              payload['lastModifiedByDeviceId'],
+            ) ??
+            _stringOrNull(payload['deviceId']) ??
+            _stringValue(row['last_modified_by_device_id']),
+      };
+    });
+
+    await _setMeta('sqlite_operational_columns_v1_backfilled', 'true');
+  }
+
+  Future<void> _backfillSimpleBusinessColumnsIfNeeded() async {
+    final done =
+        await _metaValue('sqlite_operational_columns_v2_backfilled') == 'true';
+    if (done) return;
+    await _migratePayloadJsonRows('customers', (payload, row) {
+      return <String, Object?>{
+        'name': _stringOrNull(payload['name']) ?? _stringValue(row['name']),
+        'phone': _stringOrNull(payload['phone']) ?? _stringValue(row['phone']),
+        'address':
+            _stringOrNull(payload['address']) ?? _stringValue(row['address']),
+      };
+    });
+
+    await _migratePayloadJsonRows('suppliers', (payload, row) {
+      return <String, Object?>{
+        'name': _stringOrNull(payload['name']) ?? _stringValue(row['name']),
+        'name_en':
+            _stringOrNull(payload['nameEn']) ?? _stringValue(row['name_en']),
+        'name_ar':
+            _stringOrNull(payload['nameAr']) ?? _stringValue(row['name_ar']),
+        'phone': _stringOrNull(payload['phone']) ?? _stringValue(row['phone']),
+        'address':
+            _stringOrNull(payload['address']) ?? _stringValue(row['address']),
+        'notes': _stringOrNull(payload['notes']) ?? _stringValue(row['notes']),
+      };
+    });
+
+    await _migratePayloadJsonRows('expenses', (payload, row) {
+      return <String, Object?>{
+        'title': _stringOrNull(payload['title']) ?? _stringValue(row['title']),
+        'category':
+            _stringOrNull(payload['category']) ?? _stringValue(row['category']),
+        'amount':
+            _doubleOrNull(payload['amount']) ?? _doubleValue(row['amount']),
+        'original_amount': _doubleOrNull(payload['originalAmount']) ??
+            _doubleOrNull(payload['amount']) ??
+            _doubleValue(row['original_amount']),
+        'original_currency': _stringOrNull(payload['originalCurrency']) ??
+            _stringValue(row['original_currency'], fallback: 'USD'),
+        'exchange_rate_at_entry':
+            _doubleOrNull(payload['exchangeRateAtEntry']) ??
+                _doubleValue(row['exchange_rate_at_entry']),
+        'expense_date': _stringOrNull(payload['date']) ??
+            _stringValue(row['expense_date'],
+                fallback: _stringValue(row['created_at'])),
+        'notes': _stringOrNull(payload['notes']) ?? _stringValue(row['notes']),
+        'expense_status': _stringOrNull(payload['status']) ??
+            _stringValue(row['expense_status']),
+        'cancel_reason': _stringOrNull(payload['cancelReason']) ??
+            _stringValue(row['cancel_reason']),
+        'cancelled_by_device_id':
+            _stringOrNull(payload['cancelledByDeviceId']) ??
+                _stringValue(row['cancelled_by_device_id']),
+        'cancelled_at': _stringOrNull(payload['cancelledAt']) ??
+            _stringValue(row['cancelled_at']),
+      };
+    });
+
+    await _migratePayloadJsonRows('warehouses', (payload, row) {
+      return <String, Object?>{
+        'name': _stringOrNull(payload['name']) ?? _stringValue(row['name']),
+        'code': _stringOrNull(payload['code']) ?? _stringValue(row['code']),
+        'location':
+            _stringOrNull(payload['location']) ?? _stringValue(row['location']),
+        'is_default': _boolTrueOrNull(payload['isDefault']) == true
+            ? 1
+            : _intValue(row['is_default'], fallback: 0),
+        'is_active': _boolTrueOrNull(payload['isActive']) == true
+            ? 1
+            : _intValue(row['is_active'], fallback: 1),
+      };
+    });
+
+    for (final table in <String>{
+      'catalog_categories',
+      'catalog_brands',
+      'catalog_units'
+    }) {
+      await _migratePayloadJsonRows(table, (payload, row) {
+        return <String, Object?>{
+          'name_en':
+              _stringOrNull(payload['nameEn']) ?? _stringValue(row['name_en']),
+          'name_ar':
+              _stringOrNull(payload['nameAr']) ?? _stringValue(row['name_ar']),
+          'code': _stringOrNull(payload['code']) ?? _stringValue(row['code']),
+        };
+      });
+    }
+
+    await _migratePayloadJsonRows('price_lists', (payload, row) {
+      return <String, Object?>{
+        'name': _stringOrNull(payload['name']) ?? _stringValue(row['name']),
+        'code': _stringOrNull(payload['code']) ?? _stringValue(row['code']),
+        'is_default': _boolTrueOrNull(payload['isDefault']) == true
+            ? 1
+            : _intValue(row['is_default'], fallback: 0),
+        'is_active': _boolTrueOrNull(payload['isActive']) == true
+            ? 1
+            : _intValue(row['is_active'], fallback: 1),
+      };
+    });
+
+    await _migratePayloadJsonRows('product_prices', (payload, row) {
+      return <String, Object?>{
+        'product_id': _stringOrNull(payload['productId']) ??
+            _stringValue(row['product_id']),
+        'price_list_id': _stringOrNull(payload['priceListId']) ??
+            _stringValue(row['price_list_id']),
+        'unit_id': _stringOrNull(payload['unitId']) ??
+            _stringValue(row['unit_id'], fallback: 'base'),
+        'base_currency_code': _stringOrNull(payload['baseCurrencyCode']) ??
+            _stringValue(row['base_currency_code'], fallback: 'USD'),
+        'base_amount': _doubleOrNull(payload['baseAmount']) ??
+            _doubleValue(row['base_amount']),
+        'is_active': _boolTrueOrNull(payload['isActive']) == true
+            ? 1
+            : _intValue(row['is_active'], fallback: 1),
+      };
+    });
+
+    await _migratePayloadJsonRows('product_price_overrides', (payload, row) {
+      return <String, Object?>{
+        'product_price_id': _stringOrNull(payload['productPriceId']) ??
+            _stringValue(row['product_price_id']),
+        'currency_code': _stringOrNull(payload['currencyCode']) ??
+            _stringValue(row['currency_code'], fallback: 'USD'),
+        'amount':
+            _doubleOrNull(payload['amount']) ?? _doubleValue(row['amount']),
+        'mode': _stringOrNull(payload['mode']) ??
+            _stringValue(row['mode'], fallback: 'fixed'),
+        'is_active': _boolTrueOrNull(payload['isActive']) == true
+            ? 1
+            : _intValue(row['is_active'], fallback: 1),
+      };
+    });
+
+    await _migratePayloadJsonRows('product_costs', (payload, row) {
+      return <String, Object?>{
+        'product_id': _stringOrNull(payload['productId']) ??
+            _stringValue(row['product_id']),
+        'average_cost': _doubleOrNull(payload['averageCost']) ??
+            _doubleValue(row['average_cost']),
+        'last_cost': _doubleOrNull(payload['lastCost']) ??
+            _doubleValue(row['last_cost']),
+        'currency_code': _stringOrNull(payload['currencyCode']) ??
+            _stringValue(row['currency_code'], fallback: 'USD'),
+      };
+    });
+
+    await _migratePayloadJsonRows('costing_method_history', (payload, row) {
+      return <String, Object?>{
+        'method': _stringOrNull(payload['method']) ??
+            _stringValue(row['method'], fallback: 'weighted_average'),
+        'effective_from': _stringOrNull(payload['effectiveFrom']) ??
+            _stringValue(row['effective_from']),
+        'effective_to': _stringOrNull(payload['effectiveTo']) ??
+            _stringValue(row['effective_to']),
+        'reason':
+            _stringOrNull(payload['reason']) ?? _stringValue(row['reason']),
+      };
+    });
+
+    await _migratePayloadJsonRows('inventory_cost_layers', (payload, row) {
+      return <String, Object?>{
+        'product_id': _stringOrNull(payload['productId']) ??
+            _stringValue(row['product_id']),
+        'product_name': _stringOrNull(payload['productName']) ??
+            _stringValue(row['product_name']),
+        'quantity_received': _doubleOrNull(payload['quantityReceived']) ??
+            _doubleValue(row['quantity_received']),
+        'quantity_remaining': _doubleOrNull(payload['quantityRemaining']) ??
+            _doubleValue(row['quantity_remaining']),
+        'unit_cost': _doubleOrNull(payload['unitCost']) ??
+            _doubleValue(row['unit_cost']),
+        'currency_code': _stringOrNull(payload['currencyCode']) ??
+            _stringValue(row['currency_code'], fallback: 'USD'),
+        'exchange_rate': _doubleOrNull(payload['exchangeRate']) ??
+            _doubleValue(row['exchange_rate'], fallback: 1),
+        'purchase_id': _stringOrNull(payload['purchaseId']) ??
+            _stringValue(row['purchase_id']),
+        'purchase_item_id': _stringOrNull(payload['purchaseItemId']) ??
+            _stringValue(row['purchase_item_id']),
+        'source_type': _stringOrNull(payload['sourceType']) ??
+            _stringValue(row['source_type'], fallback: 'purchase'),
+        'source_id': _stringOrNull(payload['sourceId']) ??
+            _stringValue(row['source_id']),
+        'is_closed': _boolTrueOrNull(payload['isClosed']) == true
+            ? 1
+            : _intValue(row['is_closed'], fallback: 0),
+      };
+    });
+
+    await _migratePayloadJsonRows('supplier_product_prices', (payload, row) {
+      return <String, Object?>{
+        'product_id': _stringOrNull(payload['productId']) ??
+            _stringValue(row['product_id']),
+        'supplier_id': _stringOrNull(payload['supplierId']) ??
+            _stringValue(row['supplier_id']),
+        'cost': _doubleOrNull(payload['cost']) ??
+            _doubleOrNull(payload['unitCost']) ??
+            _doubleValue(row['cost']),
+        'currency': _stringOrNull(payload['currency']) ??
+            _stringValue(row['currency'], fallback: 'USD'),
+        'is_preferred': _boolTrueOrNull(payload['isPreferred']) == true
+            ? 1
+            : _intValue(row['is_preferred'], fallback: 0),
+        'supplier_sku': _stringOrNull(payload['supplierSku']) ??
+            _stringOrNull(payload['supplierSKU']) ??
+            _stringOrNull(payload['supplierCode']) ??
+            _stringValue(row['supplier_sku']),
+        'min_order_qty': _doubleOrNull(payload['minOrderQty']) ??
+            _doubleOrNull(payload['minimumOrderQty']) ??
+            _doubleValue(row['min_order_qty']),
+        'lead_time_days': _intOrNull(payload['leadTimeDays']) ??
+            _intOrNull(payload['lead_time_days']) ??
+            _intValue(row['lead_time_days']),
+        'notes': _stringOrNull(payload['notes']) ?? _stringValue(row['notes']),
+        'price_history_json': _jsonStringValue(
+          payload['priceHistory'],
+          fallback: _stringValue(row['price_history_json'], fallback: '[]'),
+        ),
+      };
+    });
+
+    await _setMeta('sqlite_operational_columns_v2_backfilled', 'true');
+  }
+
+  Future<String?> _metaValue(String key) async {
+    final rows = await customSelect(
+      'SELECT value FROM migration_meta WHERE key = ?',
+      variables: <Variable<Object>>[Variable<String>(key)],
+    ).get();
+    return rows.isEmpty ? null : rows.first.read<String>('value');
+  }
+
+  Future<void> _setMeta(String key, String value) async {
+    await customInsert(
+      'INSERT OR REPLACE INTO migration_meta (key, value, updated_at) VALUES (?, ?, ?)',
+      variables: <Variable<Object>>[
+        Variable<String>(key),
+        Variable<String>(value),
+        Variable<String>(DateTime.now().toUtc().toIso8601String()),
+      ],
+    );
+  }
+
+  Future<void> _createAccountingFoundation() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS accounts (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        subtype TEXT NOT NULL DEFAULT '',
+        parent_id TEXT NOT NULL DEFAULT '',
+        normal_balance TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        is_system INTEGER NOT NULL DEFAULT 0,
+        is_postable INTEGER NOT NULL DEFAULT 1,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        description TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1,
+        CHECK (type IN ('asset', 'liability', 'equity', 'revenue', 'cost_of_sales', 'expense')),
+        CHECK (normal_balance IN ('debit', 'credit')),
+        CHECK (is_system IN (0, 1)),
+        CHECK (is_postable IN (0, 1)),
+        CHECK (is_active IN (0, 1))
+      );
+    ''');
+
+    await _addColumnIfMissing(
+        'accounts', 'is_postable', 'INTEGER NOT NULL DEFAULT 1');
+
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_code_active ON accounts(code) WHERE deleted_at = '';");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounts_postable ON accounts(is_postable, is_active);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounts_type ON accounts(type, subtype);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounts_parent ON accounts(parent_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounts_store_branch ON accounts(store_id, branch_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS journal_entries (
+        id TEXT PRIMARY KEY NOT NULL,
+        entry_no TEXT NOT NULL,
+        entry_date TEXT NOT NULL,
+        reference_type TEXT NOT NULL DEFAULT '',
+        reference_id TEXT NOT NULL DEFAULT '',
+        reference_no TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'posted',
+        source TEXT NOT NULL DEFAULT 'system',
+        created_by TEXT NOT NULL DEFAULT '',
+        posted_at TEXT NOT NULL DEFAULT '',
+        reversed_entry_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1,
+        CHECK (status IN ('draft', 'posted', 'void', 'reversed')),
+        CHECK (source IN ('system', 'manual', 'import', 'reversal'))
+      );
+    ''');
+
+    await _addColumnIfMissing(
+        'journal_entries', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _addColumnIfMissing(
+        'journal_entries', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _addColumnIfMissing(
+        'journal_entries', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _addColumnIfMissing(
+        'journal_entries', 'reversed_by_entry_id', "TEXT NOT NULL DEFAULT ''");
+
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_entries_entry_no_active ON journal_entries(entry_no) WHERE deleted_at = '';");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(entry_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounting_entries_date ON journal_entries(entry_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference_type, reference_id);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_entries_voucher_reference_active ON journal_entries(reference_type, reference_id) WHERE deleted_at = '' AND reference_type IN ('receipt_voucher', 'payment_voucher');");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_entries_status ON journal_entries(status, entry_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_entries_store_branch ON journal_entries(store_id, branch_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_entries_reversed_entry ON journal_entries(reversed_entry_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS journal_lines (
+        id TEXT PRIMARY KEY NOT NULL,
+        entry_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        account_id TEXT NOT NULL,
+        account_code TEXT NOT NULL DEFAULT '',
+        account_name TEXT NOT NULL DEFAULT '',
+        debit REAL NOT NULL DEFAULT 0,
+        credit REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        memo TEXT NOT NULL DEFAULT '',
+        party_type TEXT NOT NULL DEFAULT '',
+        party_id TEXT NOT NULL DEFAULT '',
+        party_name TEXT NOT NULL DEFAULT '',
+        cost_center_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+        FOREIGN KEY (account_id) REFERENCES accounts(id),
+        CHECK (debit >= 0),
+        CHECK (credit >= 0),
+        CHECK (NOT (debit > 0 AND credit > 0)),
+        CHECK (debit > 0 OR credit > 0)
+      );
+    ''');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id, line_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_lines_account_date_support ON journal_lines(account_id, entry_id);');
+    await _addColumnIfMissing(
+        'journal_lines', 'cost_center_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_lines_party ON journal_lines(party_type, party_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_lines_cost_center ON journal_lines(cost_center_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_journal_lines_store_branch ON journal_lines(store_id, branch_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS accounting_settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        account_id TEXT NOT NULL DEFAULT '',
+        value TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    // Phase 7: durable legacy-cash migration and reconciliation audit.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_phase7_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL DEFAULT '',
+        legacy_receipts_found INTEGER NOT NULL DEFAULT 0,
+        legacy_payments_found INTEGER NOT NULL DEFAULT 0,
+        vouchers_created INTEGER NOT NULL DEFAULT 0,
+        allocations_created INTEGER NOT NULL DEFAULT 0,
+        invoice_entries_created INTEGER NOT NULL DEFAULT 0,
+        voucher_entries_created INTEGER NOT NULL DEFAULT 0,
+        ledger_rows_created INTEGER NOT NULL DEFAULT 0,
+        payment_caches_rebuilt INTEGER NOT NULL DEFAULT 0,
+        issue_count INTEGER NOT NULL DEFAULT 0,
+        message TEXT NOT NULL DEFAULT ''
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_phase7_runs_started ON cash_phase7_runs(started_at DESC);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_phase7_issues (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'warning',
+        issue_type TEXT NOT NULL,
+        entity_type TEXT NOT NULL DEFAULT '',
+        entity_id TEXT NOT NULL DEFAULT '',
+        reference_no TEXT NOT NULL DEFAULT '',
+        details TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES cash_phase7_runs(id) ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_phase7_issues_run ON cash_phase7_issues(run_id, severity, issue_type);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS accounting_audit_log (
+        id TEXT PRIMARY KEY NOT NULL,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL DEFAULT '',
+        reference_type TEXT NOT NULL DEFAULT '',
+        reference_id TEXT NOT NULL DEFAULT '',
+        details TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT ''
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounting_audit_log_created ON accounting_audit_log(created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounting_audit_log_entity ON accounting_audit_log(entity_type, entity_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounting_audit_log_reference ON accounting_audit_log(reference_type, reference_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS app_logs (
+        id TEXT PRIMARY KEY NOT NULL,
+        created_at TEXT NOT NULL,
+        level TEXT NOT NULL,
+        area TEXT NOT NULL,
+        action TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        session_id TEXT NOT NULL DEFAULT '',
+        trace_id TEXT NOT NULL DEFAULT '',
+        device_platform TEXT NOT NULL DEFAULT '',
+        device_model TEXT NOT NULL DEFAULT '',
+        app_version TEXT NOT NULL DEFAULT '',
+        os_version TEXT NOT NULL DEFAULT '',
+        stack_trace TEXT NOT NULL DEFAULT '',
+        is_synced INTEGER NOT NULL DEFAULT 0,
+        synced_at TEXT NOT NULL DEFAULT '',
+        created_by_source TEXT NOT NULL DEFAULT 'app',
+        is_important INTEGER NOT NULL DEFAULT 0
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_app_logs_created_at ON app_logs(created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_app_logs_level ON app_logs(level, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_app_logs_area ON app_logs(area, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_app_logs_synced ON app_logs(is_synced, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_app_logs_user_store ON app_logs(user_id, store_id, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_app_logs_trace ON app_logs(trace_id);');
+    await _ensureColumn(
+        'app_logs', 'is_important', 'INTEGER NOT NULL DEFAULT 0');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY NOT NULL,
+        created_at TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        field_name TEXT NOT NULL DEFAULT '',
+        old_value TEXT NOT NULL DEFAULT '',
+        new_value TEXT NOT NULL DEFAULT '',
+        summary TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT '',
+        user_name TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        session_id TEXT NOT NULL DEFAULT '',
+        trace_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        source_module TEXT NOT NULL DEFAULT '',
+        is_important INTEGER NOT NULL DEFAULT 1,
+        previous_hash TEXT NOT NULL DEFAULT '',
+        record_hash TEXT NOT NULL DEFAULT '',
+        hash_version INTEGER NOT NULL DEFAULT 1
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_audit_logs_user_store ON audit_logs(user_id, store_id, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_audit_logs_branch ON audit_logs(branch_id, created_at);');
+    await _ensureColumn(
+        'audit_logs', 'previous_hash', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'audit_logs', 'record_hash', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'audit_logs', 'hash_version', 'INTEGER NOT NULL DEFAULT 1');
+    await _sealLegacyAuditRows();
+    await customStatement(r'''
+      CREATE TRIGGER IF NOT EXISTS trg_audit_logs_no_update
+      BEFORE UPDATE ON audit_logs
+      BEGIN
+        SELECT RAISE(ABORT, 'audit_logs are append-only');
+      END;
+    ''');
+    await customStatement(r'''
+      CREATE TRIGGER IF NOT EXISTS trg_audit_logs_no_delete
+      BEFORE DELETE ON audit_logs
+      BEGIN
+        SELECT RAISE(ABORT, 'audit_logs are append-only');
+      END;
+    ''');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS payment_accounts (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (type IN ('cash', 'bank', 'card', 'wallet', 'cheque', 'other')),
+        CHECK (is_default IN (0, 1)),
+        CHECK (is_active IN (0, 1))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_accounts_account ON payment_accounts(account_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_accounts_type ON payment_accounts(type, is_active);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_locations (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        parent_id TEXT NOT NULL DEFAULT '',
+        payment_account_id TEXT NOT NULL DEFAULT '',
+        is_default INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        allow_negative INTEGER NOT NULL DEFAULT 0,
+        current_balance REAL NOT NULL DEFAULT 0,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        CHECK (type IN ('main_vault', 'branch_vault', 'cash_drawer', 'bank', 'wallet', 'other')),
+        CHECK (is_default IN (0, 1)),
+        CHECK (is_active IN (0, 1)),
+        CHECK (allow_negative IN (0, 1))
+      );
+    ''');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_locations_code_active ON cash_locations(code) WHERE deleted_at = '';");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_locations_type ON cash_locations(type, is_active);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_locations_account ON cash_locations(account_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_locations_parent ON cash_locations(parent_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_locations_store_branch ON cash_locations(store_id, branch_id);');
+    await _ensureColumn(
+        'cash_locations', 'device_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_locations_device ON cash_locations(device_id, branch_id, type);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_transfers (
+        id TEXT PRIMARY KEY NOT NULL,
+        transfer_no TEXT NOT NULL,
+        transfer_date TEXT NOT NULL,
+        from_location_id TEXT NOT NULL,
+        to_location_id TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'posted',
+        journal_entry_id TEXT NOT NULL DEFAULT '',
+        reference_type TEXT NOT NULL DEFAULT 'cash_transfer',
+        reference_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        approved_by TEXT NOT NULL DEFAULT '',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (status IN ('draft', 'posted', 'void'))
+      );
+    ''');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_transfers_no_active ON cash_transfers(transfer_no) WHERE deleted_at = '';");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_transfers_date ON cash_transfers(transfer_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_transfers_locations ON cash_transfers(from_location_id, to_location_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_transfers_status ON cash_transfers(status, transfer_date);');
+    await _ensureColumn('cash_transfers', 'transfer_kind',
+        "TEXT NOT NULL DEFAULT 'vault_transfer'");
+    await _ensureColumn(
+        'cash_transfers', 'from_session_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'to_session_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'created_by_user_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'device_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'idempotency_key', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_transfers', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_transfers_idempotency ON cash_transfers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_drawer_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        drawer_no TEXT NOT NULL,
+        cash_location_id TEXT NOT NULL DEFAULT '',
+        opened_at TEXT NOT NULL,
+        closed_at TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open',
+        opening_balance REAL NOT NULL DEFAULT 0,
+        expected_cash REAL NOT NULL DEFAULT 0,
+        counted_cash REAL NOT NULL DEFAULT 0,
+        difference REAL NOT NULL DEFAULT 0,
+        notes TEXT NOT NULL DEFAULT '',
+        opened_by TEXT NOT NULL DEFAULT '',
+        opened_by_user_id TEXT NOT NULL DEFAULT '',
+        closed_by TEXT NOT NULL DEFAULT '',
+        closed_by_user_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        CHECK (status IN ('open', 'closed', 'void'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_status ON cash_drawer_sessions(status, opened_at);');
+    await _ensureColumn(
+        'cash_drawer_sessions', 'cash_location_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_drawer_sessions', 'opened_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_drawer_sessions', 'closed_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_drawer_sessions', 'updated_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_drawer_sessions', 'revision', 'INTEGER NOT NULL DEFAULT 1');
+    await customStatement(
+        "UPDATE cash_drawer_sessions SET updated_at = CASE WHEN closed_at <> '' THEN closed_at ELSE opened_at END WHERE updated_at = ''");
+    await customStatement(
+        "UPDATE cash_drawer_sessions SET revision = 2 WHERE status IN ('closed', 'void') AND revision < 2");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_location ON cash_drawer_sessions(cash_location_id, status);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_users ON cash_drawer_sessions(opened_by_user_id, closed_by_user_id);');
+
+    // Phase 1 cash ledger: immutable, append-oriented cash movement source.
+    // Existing sale/purchase/accounting flows are intentionally not switched to it yet.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_ledger_transactions (
+        id TEXT PRIMARY KEY NOT NULL,
+        type TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        cash_location_id TEXT NOT NULL,
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        reference_type TEXT NOT NULL DEFAULT '',
+        reference_id TEXT NOT NULL DEFAULT '',
+        reference_number TEXT NOT NULL DEFAULT '',
+        party_type TEXT NOT NULL DEFAULT '',
+        party_id TEXT NOT NULL DEFAULT '',
+        party_name TEXT NOT NULL DEFAULT '',
+        payment_method TEXT NOT NULL DEFAULT 'Cash',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        occurred_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        reversal_of_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (direction IN ('in', 'out')),
+        CHECK (amount >= 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_location_time ON cash_ledger_transactions(cash_location_id, occurred_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_session_time ON cash_ledger_transactions(cash_drawer_session_id, occurred_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_reference ON cash_ledger_transactions(reference_type, reference_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_party ON cash_ledger_transactions(party_type, party_id, occurred_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_ledger_store_branch_time ON cash_ledger_transactions(store_id, branch_id, occurred_at DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_ledger_idempotency ON cash_ledger_transactions(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+
+    // Phase 5 standalone cash operations. These rows bind the operational
+    // action to its journal entry and immutable Cash Ledger movement.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_operations (
+        id TEXT PRIMARY KEY NOT NULL,
+        operation_no TEXT NOT NULL,
+        operation_type TEXT NOT NULL,
+        operation_date TEXT NOT NULL,
+        cash_location_id TEXT NOT NULL,
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        journal_entry_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'posted',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (operation_type IN ('cash_deposit', 'cash_withdrawal', 'expense')),
+        CHECK (amount > 0)
+      );
+    ''');
+    await _ensureColumn(
+        'cash_operations', 'status', "TEXT NOT NULL DEFAULT 'posted'");
+    await _ensureColumn(
+        'cash_operations', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_operations', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_operations', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'cash_operations', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_operations_location_date ON cash_operations(cash_location_id, operation_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_operations_session_date ON cash_operations(cash_drawer_session_id, operation_date DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_operations_idempotency ON cash_operations(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+
+    // Phase 2 receipt/payment vouchers. These are independent financial events;
+    // invoice paid_amount remains a compatibility cache updated from allocations.
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS receipt_vouchers (
+        id TEXT PRIMARY KEY NOT NULL,
+        voucher_no TEXT NOT NULL,
+        customer_id TEXT NOT NULL,
+        customer_name TEXT NOT NULL DEFAULT '',
+        voucher_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        unallocated_amount REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        payment_method TEXT NOT NULL DEFAULT 'Cash',
+        cash_location_id TEXT NOT NULL DEFAULT '',
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'posted',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (amount > 0),
+        CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
+        CHECK (status IN ('posted', 'reversed', 'void'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_customer_date ON receipt_vouchers(customer_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_session_date ON receipt_vouchers(cash_drawer_session_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_store_branch_date ON receipt_vouchers(store_id, branch_id, voucher_date DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_receipt_vouchers_idempotency ON receipt_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+    await _ensureColumn(
+        'receipt_vouchers', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'receipt_vouchers', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'receipt_vouchers', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'receipt_vouchers', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS payment_vouchers (
+        id TEXT PRIMARY KEY NOT NULL,
+        voucher_no TEXT NOT NULL,
+        supplier_id TEXT NOT NULL,
+        supplier_name TEXT NOT NULL DEFAULT '',
+        voucher_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        unallocated_amount REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        payment_method TEXT NOT NULL DEFAULT 'Cash',
+        cash_location_id TEXT NOT NULL DEFAULT '',
+        cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'posted',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_by_user_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (amount > 0),
+        CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
+        CHECK (status IN ('posted', 'reversed', 'void'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_supplier_date ON payment_vouchers(supplier_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_session_date ON payment_vouchers(cash_drawer_session_id, voucher_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_store_branch_date ON payment_vouchers(store_id, branch_id, voucher_date DESC);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_vouchers_idempotency ON payment_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';");
+    await _ensureColumn(
+        'payment_vouchers', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'payment_vouchers', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'payment_vouchers', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'payment_vouchers', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS payment_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        voucher_type TEXT NOT NULL,
+        voucher_id TEXT NOT NULL,
+        reference_type TEXT NOT NULL,
+        reference_id TEXT NOT NULL,
+        reference_number TEXT NOT NULL DEFAULT '',
+        amount REAL NOT NULL,
+        reference_amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        reference_currency TEXT NOT NULL DEFAULT 'USD',
+        exchange_rate REAL NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'active',
+        allocation_kind TEXT NOT NULL DEFAULT 'allocation',
+        reversal_of_id TEXT NOT NULL DEFAULT '',
+        reversed_at TEXT NOT NULL DEFAULT '',
+        reversal_reason TEXT NOT NULL DEFAULT '',
+        reversed_by TEXT NOT NULL DEFAULT '',
+        reversed_by_user_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        CHECK (voucher_type IN ('receipt', 'payment')),
+        CHECK (reference_type IN ('sale', 'purchase')),
+        CHECK (amount > 0),
+        CHECK (reference_amount > 0),
+        CHECK (exchange_rate > 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_allocations_voucher ON payment_allocations(voucher_type, voucher_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_allocations_reference ON payment_allocations(reference_type, reference_id);');
+    await _ensureColumn(
+        'payment_allocations', 'status', "TEXT NOT NULL DEFAULT 'active'");
+    await _ensureColumn(
+        'payment_allocations', 'reversed_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'payment_allocations', 'reversal_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'payment_allocations', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_allocations', 'reversed_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('payment_allocations', 'allocation_kind',
+        "TEXT NOT NULL DEFAULT 'allocation'");
+    await _ensureColumn(
+        'payment_allocations', 'reversal_of_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'DROP INDEX IF EXISTS idx_payment_allocations_target_per_voucher;');
+    await customStatement(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_allocations_target_per_voucher_kind ON payment_allocations(voucher_type, voucher_id, reference_type, reference_id, allocation_kind, reversal_of_id) WHERE deleted_at = \'\';');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_payment_allocations_status ON payment_allocations(status, reference_type, reference_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_refund_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        refund_id TEXT NOT NULL,
+        voucher_type TEXT NOT NULL,
+        voucher_id TEXT NOT NULL,
+        allocation_kind TEXT NOT NULL,
+        allocation_id TEXT NOT NULL DEFAULT '',
+        reference_type TEXT NOT NULL DEFAULT '',
+        reference_id TEXT NOT NULL DEFAULT '',
+        amount REAL NOT NULL DEFAULT 0,
+        reference_amount REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT ''
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cash_refund_allocations_refund ON cash_refund_allocations(refund_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cheques (
+        id TEXT PRIMARY KEY NOT NULL,
+        cheque_no TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        party_type TEXT NOT NULL DEFAULT '',
+        party_id TEXT NOT NULL DEFAULT '',
+        party_name TEXT NOT NULL DEFAULT '',
+        bank_name TEXT NOT NULL DEFAULT '',
+        due_date TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        journal_entry_id TEXT NOT NULL DEFAULT '',
+        settlement_entry_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (direction IN ('received', 'issued')),
+        CHECK (status IN ('pending', 'cleared', 'bounced', 'void'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cheques_status_due ON cheques(status, due_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_cheques_party ON cheques(party_type, party_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS accounting_periods (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        closed_at TEXT NOT NULL DEFAULT '',
+        closed_by TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (status IN ('open', 'closed', 'locked'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounting_periods_dates ON accounting_periods(start_date, end_date, status);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cost_centers (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (is_active IN (0, 1))
+      );
+    ''');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_centers_code_active ON cost_centers(code) WHERE deleted_at = '';");
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS accounting_branches (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        CHECK (is_active IN (0, 1))
+      );
+    ''');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounting_branches_code_active ON accounting_branches(code) WHERE deleted_at = '';");
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS fixed_assets (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT '',
+        acquisition_date TEXT NOT NULL,
+        purchase_value REAL NOT NULL DEFAULT 0,
+        useful_life_months INTEGER NOT NULL DEFAULT 0,
+        asset_account_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (purchase_value >= 0),
+        CHECK (useful_life_months >= 0),
+        CHECK (status IN ('active', 'disposed', 'inactive'))
+      );
+    ''');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_assets_code_active ON fixed_assets(code) WHERE deleted_at = '';");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_fixed_assets_status ON fixed_assets(status, acquisition_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_fixed_assets_store_branch ON fixed_assets(store_id, branch_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS fixed_asset_depreciation (
+        id TEXT PRIMARY KEY NOT NULL,
+        asset_id TEXT NOT NULL,
+        period_key TEXT NOT NULL,
+        depreciation_date TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        accumulated_after REAL NOT NULL DEFAULT 0,
+        book_value_after REAL NOT NULL DEFAULT 0,
+        journal_entry_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        deleted_at TEXT NOT NULL DEFAULT '',
+        CHECK (amount >= 0)
+      );
+    ''');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_asset_depreciation_asset_period_active ON fixed_asset_depreciation(asset_id, period_key) WHERE deleted_at = '';");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_fixed_asset_depreciation_asset_date ON fixed_asset_depreciation(asset_id, depreciation_date);');
+
+    await _seedDefaultChartOfAccounts();
+    await _seedAdvancedAccountingDefaults();
+    await _migrateDefaultAccountingArabicLabels();
+  }
+
+  Future<void> _addColumnIfMissing(
+      String table, String column, String definition) async {
+    try {
+      await customStatement(
+          'ALTER TABLE $table ADD COLUMN $column $definition');
+    } catch (_) {
+      // Column already exists on upgraded local databases.
+    }
+  }
+
+  Future<void> _seedDefaultChartOfAccounts() async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    // [id, code, name, type, subtype, parentId, normalBalance, isPostable]
+    // Existing IDs/codes stay untouched so historic journal references remain
+    // valid on upgraded databases. New rows are added idempotently.
+    final accounts = <List<String>>[
+      ['acc_assets', '1000', 'الأصول', 'asset', 'group', '', 'debit', '0'],
+      [
+        'acc_cash',
+        '1100',
+        'النقدية',
+        'asset',
+        'cash',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_main_vault',
+        '1110',
+        'الخزنة الرئيسية',
+        'asset',
+        'cash_location',
+        'acc_cash',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_main_drawer',
+        '1120',
+        'درج النقد الرئيسي',
+        'asset',
+        'cash_location',
+        'acc_cash',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_bank',
+        '1200',
+        'البنوك',
+        'asset',
+        'bank',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_main_bank',
+        '1210',
+        'البنك الرئيسي',
+        'asset',
+        'bank_location',
+        'acc_bank',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_customers',
+        '1300',
+        'العملاء / الذمم المدينة',
+        'asset',
+        'receivable',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_notes_receivable',
+        '1310',
+        'أوراق القبض',
+        'asset',
+        'notes_receivable',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_doubtful_allowance',
+        '1320',
+        'مخصص الديون المشكوك فيها',
+        'asset',
+        'contra_receivable',
+        'acc_assets',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_inventory',
+        '1400',
+        'المخزون',
+        'asset',
+        'inventory',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_raw',
+        '1410',
+        'مخزون المواد الخام',
+        'asset',
+        'inventory_raw',
+        'acc_inventory',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_wip',
+        '1420',
+        'مخزون تحت التصنيع',
+        'asset',
+        'inventory_wip',
+        'acc_inventory',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_finished',
+        '1430',
+        'مخزون المنتجات التامة',
+        'asset',
+        'inventory_finished',
+        'acc_inventory',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_merchandise',
+        '1440',
+        'مخزون البضائع التجارية',
+        'asset',
+        'inventory_merchandise',
+        'acc_inventory',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_transit',
+        '1450',
+        'مخزون بالطريق',
+        'asset',
+        'inventory_transit',
+        'acc_inventory',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_vat_input',
+        '1500',
+        'ضريبة المدخلات / ضريبة قابلة للاسترداد',
+        'asset',
+        'tax_input',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_supplier_advances',
+        '1510',
+        'دفعات مقدمة للموردين',
+        'asset',
+        'supplier_advances',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_prepaid_expenses',
+        '1520',
+        'مصروفات مدفوعة مقدمًا',
+        'asset',
+        'prepaid_expenses',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_cash_transfer_transit',
+        '1530',
+        'تحويلات نقدية قيد التسوية',
+        'asset',
+        'cash_clearing',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_fixed_assets',
+        '1600',
+        'الأصول الثابتة',
+        'asset',
+        'fixed_assets',
+        'acc_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_fixed_equipment',
+        '1610',
+        'معدات وآلات',
+        'asset',
+        'fixed_equipment',
+        'acc_fixed_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_fixed_furniture',
+        '1620',
+        'أثاث وتجهيزات',
+        'asset',
+        'fixed_furniture',
+        'acc_fixed_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_fixed_computers',
+        '1630',
+        'أجهزة وحواسيب',
+        'asset',
+        'fixed_computers',
+        'acc_fixed_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_fixed_vehicles',
+        '1640',
+        'سيارات',
+        'asset',
+        'fixed_vehicles',
+        'acc_fixed_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_fixed_other',
+        '1650',
+        'أصول ثابتة أخرى',
+        'asset',
+        'fixed_other',
+        'acc_fixed_assets',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_accum_depreciation',
+        '1690',
+        'مجمع الإهلاك',
+        'asset',
+        'accumulated_depreciation',
+        'acc_assets',
+        'credit',
+        '1'
+      ],
+
+      [
+        'acc_liabilities',
+        '2000',
+        'الالتزامات',
+        'liability',
+        'group',
+        '',
+        'credit',
+        '0'
+      ],
+      [
+        'acc_suppliers',
+        '2100',
+        'الموردون / الذمم الدائنة',
+        'liability',
+        'payable',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_notes_payable',
+        '2110',
+        'أوراق الدفع',
+        'liability',
+        'notes_payable',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_customer_advances',
+        '2120',
+        'دفعات مقدمة من العملاء',
+        'liability',
+        'customer_advances',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_vat_output',
+        '2200',
+        'ضريبة المخرجات / ضريبة مستحقة',
+        'liability',
+        'tax_payable',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_accrued_expenses',
+        '2210',
+        'مصروفات مستحقة',
+        'liability',
+        'accrued_expenses',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_accrued_payroll',
+        '2220',
+        'رواتب مستحقة',
+        'liability',
+        'accrued_payroll',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_short_term_loans',
+        '2300',
+        'قروض قصيرة الأجل',
+        'liability',
+        'short_term_loans',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_long_term_loans',
+        '2400',
+        'قروض طويلة الأجل',
+        'liability',
+        'long_term_loans',
+        'acc_liabilities',
+        'credit',
+        '1'
+      ],
+
+      [
+        'acc_equity',
+        '3000',
+        'حقوق الملكية',
+        'equity',
+        'group',
+        '',
+        'credit',
+        '0'
+      ],
+      [
+        'acc_owner_capital',
+        '3100',
+        'رأس مال المالك',
+        'equity',
+        'capital',
+        'acc_equity',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_owner_current',
+        '3200',
+        'جاري المالك',
+        'equity',
+        'owner_current',
+        'acc_equity',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_owner_drawings',
+        '3210',
+        'مسحوبات المالك',
+        'equity',
+        'owner_drawings',
+        'acc_equity',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_retained_earnings',
+        '3300',
+        'أرباح محتجزة',
+        'equity',
+        'retained_earnings',
+        'acc_equity',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_current_year_pnl',
+        '3400',
+        'أرباح وخسائر السنة الحالية',
+        'equity',
+        'current_year_pnl',
+        'acc_equity',
+        'credit',
+        '1'
+      ],
+
+      [
+        'acc_revenue',
+        '4000',
+        'الإيرادات',
+        'revenue',
+        'group',
+        '',
+        'credit',
+        '0'
+      ],
+      [
+        'acc_sales',
+        '4100',
+        'إيرادات المبيعات',
+        'revenue',
+        'sales',
+        'acc_revenue',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_sales_returns',
+        '4110',
+        'مردودات المبيعات',
+        'revenue',
+        'sales_returns',
+        'acc_revenue',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_sales_discounts',
+        '4120',
+        'خصومات المبيعات',
+        'revenue',
+        'sales_discounts',
+        'acc_revenue',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_service_revenue',
+        '4200',
+        'إيرادات خدمات',
+        'revenue',
+        'service_revenue',
+        'acc_revenue',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_other_revenue',
+        '4300',
+        'إيرادات أخرى',
+        'revenue',
+        'other_revenue',
+        'acc_revenue',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_inventory_count_gain',
+        '4400',
+        'أرباح فروقات جرد المخزون',
+        'revenue',
+        'inventory_count_gain',
+        'acc_revenue',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_cash_over',
+        '4500',
+        'زيادة الصندوق',
+        'revenue',
+        'cash_over',
+        'acc_revenue',
+        'credit',
+        '1'
+      ],
+
+      [
+        'acc_cost_of_sales',
+        '5000',
+        'تكلفة المبيعات',
+        'cost_of_sales',
+        'group',
+        '',
+        'debit',
+        '0'
+      ],
+      [
+        'acc_cogs',
+        '5100',
+        'تكلفة البضاعة المباعة',
+        'cost_of_sales',
+        'cogs',
+        'acc_cost_of_sales',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_manufacturing_cost',
+        '5200',
+        'تكلفة التصنيع',
+        'cost_of_sales',
+        'manufacturing_cost',
+        'acc_cost_of_sales',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_manufacturing_cost_variance',
+        '5210',
+        'فروقات تكلفة التصنيع',
+        'cost_of_sales',
+        'manufacturing_cost_variance',
+        'acc_cost_of_sales',
+        'debit',
+        '1'
+      ],
+
+      [
+        'acc_expenses',
+        '6000',
+        'المصروفات',
+        'expense',
+        'group',
+        '',
+        'debit',
+        '0'
+      ],
+      [
+        'acc_general_expenses',
+        '6100',
+        'مصروفات عامة',
+        'expense',
+        'general',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_rent_expense',
+        '6110',
+        'إيجارات',
+        'expense',
+        'rent',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_electricity_expense',
+        '6120',
+        'كهرباء',
+        'expense',
+        'electricity',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_water_expense',
+        '6130',
+        'مياه',
+        'expense',
+        'water',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_telecom_expense',
+        '6140',
+        'هاتف وإنترنت',
+        'expense',
+        'telecom',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_payroll_expense',
+        '6150',
+        'رواتب وأجور',
+        'expense',
+        'payroll',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_transport_expense',
+        '6160',
+        'نقل ومحروقات',
+        'expense',
+        'transport',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_maintenance_expense',
+        '6170',
+        'صيانة',
+        'expense',
+        'maintenance',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_marketing_expense',
+        '6180',
+        'دعاية وتسويق',
+        'expense',
+        'marketing',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_office_expense',
+        '6190',
+        'قرطاسية ومصاريف مكتبية',
+        'expense',
+        'office',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_cash_over_short',
+        '6200',
+        'زيادة / عجز النقدية',
+        'expense',
+        'cash_reconciliation',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_cash_short',
+        '6210',
+        'عجز الصندوق',
+        'expense',
+        'cash_short',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_depreciation_expense',
+        '6300',
+        'مصروف الإهلاك',
+        'expense',
+        'depreciation',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_bank_fees',
+        '6400',
+        'رسوم وعمولات بنكية',
+        'expense',
+        'bank_fees',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_bad_debts',
+        '6500',
+        'ديون معدومة',
+        'expense',
+        'bad_debts',
+        'acc_expenses',
+        'debit',
+        '1'
+      ],
+
+      [
+        'acc_inventory_variances',
+        '7000',
+        'فروقات وخسائر المخزون',
+        'expense',
+        'group',
+        '',
+        'debit',
+        '0'
+      ],
+      [
+        'acc_inventory_count_loss',
+        '7100',
+        'خسائر فروقات جرد المخزون',
+        'expense',
+        'inventory_count_loss',
+        'acc_inventory_variances',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_manufacturing_waste',
+        '7200',
+        'هدر التصنيع',
+        'expense',
+        'manufacturing_waste',
+        'acc_inventory_variances',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_damage',
+        '7300',
+        'تلف المخزون',
+        'expense',
+        'inventory_damage',
+        'acc_inventory_variances',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_expiry',
+        '7310',
+        'انتهاء صلاحية',
+        'expense',
+        'inventory_expiry',
+        'acc_inventory_variances',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_inventory_weight_variance',
+        '7400',
+        'فروقات وزن المخزون',
+        'expense',
+        'inventory_weight_variance',
+        'acc_inventory_variances',
+        'debit',
+        '1'
+      ],
+
+      // Visual grouping only. Children retain their own accounting type so
+      // balance-sheet reporting classifies each clearing account correctly.
+      [
+        'acc_temporary',
+        '8000',
+        'الحسابات المؤقتة والتسويات',
+        'liability',
+        'group',
+        '',
+        'credit',
+        '0'
+      ],
+      [
+        'acc_suspense_unknown',
+        '8100',
+        'مبالغ معلقة مجهولة المصدر',
+        'liability',
+        'suspense_unknown',
+        'acc_temporary',
+        'credit',
+        '1'
+      ],
+      [
+        'acc_temporary_clearing',
+        '8200',
+        'حساب تسويات مؤقت',
+        'asset',
+        'temporary_clearing',
+        'acc_temporary',
+        'debit',
+        '1'
+      ],
+      [
+        'acc_cash_transfer_clearing',
+        '8300',
+        'تحويلات نقدية قيد التسوية',
+        'asset',
+        'cash_transfer_clearing',
+        'acc_temporary',
+        'debit',
+        '1'
+      ],
+    ];
+
+    for (final account in accounts) {
+      await customInsert(
+        r'''
+        INSERT OR IGNORE INTO accounts
+          (id, code, name, type, subtype, parent_id, normal_balance, currency,
+           is_system, is_postable, is_active, description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(account[0]),
+          Variable<String>(account[1]),
+          Variable<String>(account[2]),
+          Variable<String>(account[3]),
+          Variable<String>(account[4]),
+          Variable<String>(account[5]),
+          Variable<String>(account[6]),
+          const Variable<String>('USD'),
+          Variable<int>(int.tryParse(account[7]) ?? 1),
+          const Variable<String>('حساب افتراضي أساسي للمحاسبة'),
+          Variable<String>(now),
+          Variable<String>(now),
+        ],
+      );
+    }
+
+    // Existing system group rows predate is_postable, so explicitly migrate
+    // only true grouping accounts. Legacy control accounts stay postable in
+    // Phase 1 to avoid changing any current sale/purchase/inventory posting.
+    await customUpdate(
+      "UPDATE accounts SET is_postable = 0, updated_at = ? WHERE is_system = 1 AND subtype = 'group' AND deleted_at = ''",
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+
+    final settings = <List<String>>[
+      [
+        'default_cash_account_id',
+        'acc_cash',
+        'الحساب الافتراضي للمقبوضات والمدفوعات النقدية'
+      ],
+      [
+        'default_bank_account_id',
+        'acc_bank',
+        'الحساب الافتراضي لمقبوضات ومدفوعات البنك/البطاقة'
+      ],
+      [
+        'default_customers_account_id',
+        'acc_customers',
+        'حساب الرقابة الافتراضي للذمم المدينة'
+      ],
+      [
+        'default_suppliers_account_id',
+        'acc_suppliers',
+        'حساب الرقابة الافتراضي للذمم الدائنة'
+      ],
+      [
+        'default_inventory_account_id',
+        'acc_inventory',
+        'حساب أصل المخزون الافتراضي'
+      ],
+      [
+        'default_fixed_assets_account_id',
+        'acc_fixed_assets',
+        'حساب الأصول الثابتة الافتراضي'
+      ],
+      [
+        'default_accumulated_depreciation_account_id',
+        'acc_accum_depreciation',
+        'حساب مجمع الإهلاك الافتراضي'
+      ],
+      [
+        'default_depreciation_expense_account_id',
+        'acc_depreciation_expense',
+        'حساب مصروف الإهلاك الافتراضي'
+      ],
+      [
+        'default_sales_account_id',
+        'acc_sales',
+        'حساب إيرادات المبيعات الافتراضي'
+      ],
+      [
+        'default_cogs_account_id',
+        'acc_cogs',
+        'حساب تكلفة البضاعة المباعة الافتراضي'
+      ],
+      [
+        'default_expense_account_id',
+        'acc_general_expenses',
+        'حساب المصروفات التشغيلية الافتراضي'
+      ],
+      [
+        'default_equity_account_id',
+        'acc_owner_capital',
+        'حساب حقوق الملكية الافتراضي للأرصدة الافتتاحية'
+      ],
+      [
+        'default_cash_over_short_account_id',
+        'acc_cash_over_short',
+        'حساب زيادة/عجز النقدية الافتراضي'
+      ],
+      [
+        'default_sales_tax_account_id',
+        'acc_vat_output',
+        'حساب ضريبة القيمة المضافة لفواتير المبيعات'
+      ],
+      [
+        'default_purchase_tax_account_id',
+        'acc_vat_input',
+        'حساب ضريبة القيمة المضافة لفواتير المشتريات'
+      ],
+      [
+        'default_tax_payable_account_id',
+        'acc_vat_output',
+        'حساب صافي الضريبة المستحقة الافتراضي'
+      ],
+      [
+        'default_vat_rate_percent',
+        '',
+        'نسبة ضريبة القيمة المضافة الافتراضية للترحيل المحاسبي التلقائي'
+      ],
+      ['accounting_engine_version', '', 'إصدار بنية وبذور محرك المحاسبة'],
+    ];
+
+    for (final setting in settings) {
+      await customInsert(
+        r'''
+        INSERT OR IGNORE INTO accounting_settings
+          (key, account_id, value, description, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(setting[0]),
+          Variable<String>(setting[1]),
+          Variable<String>(setting[0] == 'accounting_engine_version'
+              ? '11'
+              : setting[0] == 'default_vat_rate_percent'
+                  ? '0'
+                  : ''),
+          Variable<String>(setting[2]),
+          Variable<String>(now),
+        ],
+      );
+    }
+
+    // Phase 2: seed semantic posting roles. Existing installations inherit
+    // the currently selected legacy default for one-to-one mappings so an
+    // upgrade never silently changes a live posting account. New roles use
+    // their dedicated Phase 1 account as the initial default.
+    for (final role in AccountingAccountRole.all) {
+      var accountId = role.defaultAccountId;
+      if (role.syncsLegacySetting) {
+        final legacy = await customSelect(
+          'SELECT account_id FROM accounting_settings WHERE key = ? LIMIT 1',
+          variables: <Variable<Object>>[
+            Variable<String>(role.legacySettingKey),
+          ],
+        ).getSingleOrNull();
+        final legacyId = legacy?.data['account_id']?.toString().trim() ?? '';
+        if (legacyId.isNotEmpty) accountId = legacyId;
+      }
+      await customInsert(
+        r'''
+        INSERT OR IGNORE INTO accounting_settings
+          (key, account_id, value, description, updated_at)
+        VALUES (?, ?, '', ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(role.settingKey),
+          Variable<String>(accountId),
+          Variable<String>('Phase 2 account role: ${role.titleAr}'),
+          Variable<String>(now),
+        ],
+      );
+    }
+  }
+
+  Future<void> _seedAdvancedAccountingDefaults() async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final paymentAccounts = <List<String>>[
+      ['pa_cash', 'درج النقد', 'cash', 'acc_cash', '1'],
+      ['pa_bank', 'البنك / البطاقة', 'bank', 'acc_bank', '1'],
+    ];
+    for (final account in paymentAccounts) {
+      await customInsert(
+        r'''
+        INSERT OR IGNORE INTO payment_accounts
+          (id, name, type, account_id, is_default, is_active, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(account[0]),
+          Variable<String>(account[1]),
+          Variable<String>(account[2]),
+          Variable<String>(account[3]),
+          Variable<int>(int.tryParse(account[4]) ?? 0),
+          const Variable<String>('حساب دفع افتراضي للمحاسبة المتقدمة'),
+          Variable<String>(now),
+          Variable<String>(now),
+        ],
+      );
+    }
+
+    final cashLocations = <List<String>>[
+      [
+        'cl_main_vault',
+        'MAIN-VAULT',
+        'الخزنة الرئيسية',
+        'main_vault',
+        'acc_main_vault',
+        '',
+        'pa_cash',
+        '1'
+      ],
+      [
+        'cl_main_drawer',
+        'MAIN-DRAWER',
+        'درج النقد الرئيسي',
+        'cash_drawer',
+        'acc_main_drawer',
+        'cl_main_vault',
+        'pa_cash',
+        '1'
+      ],
+      [
+        'cl_main_bank',
+        'MAIN-BANK',
+        'البنك الرئيسي',
+        'bank',
+        'acc_main_bank',
+        '',
+        'pa_bank',
+        '1'
+      ],
+    ];
+    for (final location in cashLocations) {
+      await customInsert(
+        r'''
+        INSERT OR IGNORE INTO cash_locations
+          (id, code, name, type, account_id, parent_id, payment_account_id, is_default, is_active,
+           allow_negative, current_balance, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(location[0]),
+          Variable<String>(location[1]),
+          Variable<String>(location[2]),
+          Variable<String>(location[3]),
+          Variable<String>(location[4]),
+          Variable<String>(location[5]),
+          Variable<String>(location[6]),
+          Variable<int>(int.tryParse(location[7]) ?? 0),
+          const Variable<String>('موقع نقدي افتراضي لإدارة النقدية'),
+          Variable<String>(now),
+          Variable<String>(now),
+        ],
+      );
+    }
+
+    await customUpdate(
+      "UPDATE cash_locations SET account_id = 'acc_main_vault' WHERE id = 'cl_main_vault' AND account_id = 'acc_cash'",
+    );
+    await customUpdate(
+      "UPDATE cash_locations SET account_id = 'acc_main_drawer' WHERE id = 'cl_main_drawer' AND account_id = 'acc_cash'",
+    );
+    await customUpdate(
+      "UPDATE cash_locations SET account_id = 'acc_main_bank' WHERE id = 'cl_main_bank' AND account_id = 'acc_bank'",
+    );
+    await customUpdate(
+      "UPDATE cash_drawer_sessions SET cash_location_id = 'cl_main_drawer' WHERE cash_location_id = ''",
+    );
+
+    await customInsert(
+      r'''
+      INSERT OR IGNORE INTO cost_centers
+        (id, code, name, is_active, notes, created_at, updated_at)
+      VALUES ('cc_main', 'MAIN', 'مركز التكلفة الرئيسي', 1, 'مركز التكلفة الافتراضي', ?, ?)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(now),
+        Variable<String>(now)
+      ],
+    );
+    await customInsert(
+      r'''
+      INSERT OR IGNORE INTO accounting_branches
+        (id, code, name, is_active, notes, created_at, updated_at)
+      VALUES ('br_main', 'MAIN', 'الفرع الرئيسي', 1, 'الفرع المحاسبي الافتراضي', ?, ?)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(now),
+        Variable<String>(now)
+      ],
+    );
+    await customInsert(
+      r'''
+      INSERT INTO accounting_settings (key, account_id, value, description, updated_at)
+      VALUES ('accounting_engine_version', '', '13', 'إصدار بنية وبذور محرك المحاسبة', ?)
+      ON CONFLICT(key) DO UPDATE SET value = '13', updated_at = excluded.updated_at
+      ''',
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+  }
+
+  Future<void> _migrateDefaultAccountingArabicLabels() async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final accountNames = <List<String>>[
+      ['acc_assets', 'الأصول'],
+      ['acc_cash', 'النقدية'],
+      ['acc_bank', 'البنك'],
+      ['acc_customers', 'العملاء / الذمم المدينة'],
+      ['acc_inventory', 'المخزون'],
+      ['acc_fixed_assets', 'الأصول الثابتة'],
+      ['acc_accum_depreciation', 'مجمع الإهلاك'],
+      ['acc_vat_input', 'ضريبة المدخلات / ضريبة قابلة للاسترداد'],
+      ['acc_liabilities', 'الالتزامات'],
+      ['acc_suppliers', 'الموردون / الذمم الدائنة'],
+      ['acc_vat_output', 'ضريبة المخرجات / ضريبة مستحقة'],
+      ['acc_equity', 'حقوق الملكية'],
+      ['acc_owner_capital', 'رأس مال المالك'],
+      ['acc_revenue', 'الإيرادات'],
+      ['acc_sales', 'إيرادات المبيعات'],
+      ['acc_cost_of_sales', 'تكلفة المبيعات'],
+      ['acc_cogs', 'تكلفة البضاعة المباعة'],
+      ['acc_expenses', 'المصروفات'],
+      ['acc_general_expenses', 'مصروفات عامة'],
+      ['acc_cash_over_short', 'زيادة / عجز النقدية'],
+      ['acc_depreciation_expense', 'مصروف الإهلاك'],
+    ];
+    for (final account in accountNames) {
+      await customUpdate(
+        'UPDATE accounts SET name = ?, description = ?, updated_at = ? WHERE id = ? AND is_system = 1',
+        variables: <Variable<Object>>[
+          Variable<String>(account[1]),
+          const Variable<String>('حساب افتراضي أساسي للمحاسبة'),
+          Variable<String>(now),
+          Variable<String>(account[0]),
+        ],
+      );
+    }
+    final paymentAccounts = <List<String>>[
+      ['pa_cash', 'درج النقد', 'حساب دفع افتراضي للمحاسبة المتقدمة'],
+      ['pa_bank', 'البنك / البطاقة', 'حساب دفع افتراضي للمحاسبة المتقدمة'],
+    ];
+    for (final account in paymentAccounts) {
+      await customUpdate(
+        'UPDATE payment_accounts SET name = ?, notes = ?, updated_at = ? WHERE id = ?',
+        variables: <Variable<Object>>[
+          Variable<String>(account[1]),
+          Variable<String>(account[2]),
+          Variable<String>(now),
+          Variable<String>(account[0]),
+        ],
+      );
+    }
+    await customUpdate(
+      "UPDATE cost_centers SET name = 'مركز التكلفة الرئيسي', notes = 'مركز التكلفة الافتراضي', updated_at = ? WHERE id = 'cc_main'",
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+    await customUpdate(
+      "UPDATE accounting_branches SET name = 'الفرع الرئيسي', notes = 'الفرع المحاسبي الافتراضي', updated_at = ? WHERE id = 'br_main'",
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+    await customUpdate(
+      "UPDATE accounting_settings SET value = '13', description = 'إصدار بنية وبذور محرك المحاسبة', updated_at = ? WHERE key = 'accounting_engine_version'",
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+  }
+
+  Future<void> _ensureWarehouseTransferOrderColumns() async {
+    await _ensureColumn(
+        'warehouse_transfer_orders', 'order_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'from_warehouse_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'from_warehouse_name',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'to_warehouse_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'to_warehouse_name',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'document_date',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'status',
+        "TEXT NOT NULL DEFAULT 'completed'");
+    await _ensureColumn(
+        'warehouse_transfer_orders', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'created_by_user_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'created_by_user_name',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('warehouse_transfer_orders', 'items_json',
+        "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn(
+        'warehouse_transfer_orders', 'total_units', 'REAL NOT NULL DEFAULT 0');
+    await customStatement(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_order_no ON warehouse_transfer_orders(order_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_date ON warehouse_transfer_orders(document_date DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_route ON warehouse_transfer_orders(from_warehouse_id, to_warehouse_id, document_date DESC);');
+  }
+
+  Future<void> _createBusinessEntityTable(String tableName) async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS $tableName (
+        id TEXT PRIMARY KEY NOT NULL,
+        entity_type TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1,
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        sort_index INTEGER NOT NULL DEFAULT 0
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_${tableName}_updated_at ON $tableName(updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_${tableName}_deleted_at ON $tableName(deleted_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_${tableName}_store_branch ON $tableName(store_id, branch_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_${tableName}_sort_index ON $tableName(sort_index);');
+  }
+}

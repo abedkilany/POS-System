@@ -1,0 +1,28 @@
+PASS  fixture schema is v1
+PASS  golden ending cash is 168
+PASS  golden ending AR is 37.4
+PASS  golden ending AP is 100
+PASS  golden ending inventory is 110
+PASS  golden net income is 20
+PASS  golden balance sheet closes to zero
+PASS  golden assets are 325.4
+PASS  golden arithmetic closes
+PASS  scenario contains a bounded source block
+PASS  golden scenario SQL is read-only
+PASS  scenario creates and returns purchases
+PASS  scenario settles supplier payment
+PASS  scenario creates sale with settlement and return
+PASS  scenario posts cash expense
+PASS  opening cash has GL basis
+PASS  scenario verifies drawer expected cash
+PASS  scenario reconciles batch subledger
+PASS  scenario verifies trial balance
+PASS  scenario verifies production financial reports
+PASS  purchase inventory cost uses tax-exclusive taxable base
+PASS  batch receipt accepts normalized inventory unit cost
+PASS  all three purchase receipt/repost call sites pass normalized cost
+PASS  product cost previews use normalized VAT cost
+PASS  documentation records VAT/COGS closure
+PASS  documentation records net income 20
+
+Phase 8 static verification: 26/26 PASS

@@ -1,0 +1,48 @@
+PASS  phase10 health service exists
+PASS  quick/full sqlite integrity check
+PASS  foreign key check
+PASS  WAL durability check
+PASS  FULL synchronous durability check
+PASS  foreign keys enabled check
+PASS  audit chain health integration
+PASS  business reference health integration
+PASS  inventory traceability health integration
+PASS  accounting production health integration
+PASS  recovery identity health integration
+PASS  maintenance service runs phase10 gate
+PASS  maintenance summary carries phase10 report
+PASS  production health dashboard card
+PASS  dashboard exposes phase10 critical count
+PASS  disaster recovery service exists
+PASS  web-safe recovery stub exists
+PASS  readiness requires health gate
+PASS  readiness requires recovery key
+PASS  readiness requires recent backup
+PASS  readiness requires recent restore drill
+PASS  checkpoint requires backup export permission
+PASS  checkpoint restricted to host
+PASS  checkpoint uses dedicated recovery reason
+PASS  local backup writes dedicated recovery directory
+PASS  local backup writes timestamped recovery file
+PASS  recovery checkpoint retention bounded
+PASS  restore drill verifies zip crc
+PASS  restore drill requires manifest and payload
+PASS  restore drill requires AES-256-GCM
+PASS  restore drill decrypts with recovery key
+PASS  restore drill validates Ventio backup payload
+PASS  recovery actions append audit events
+PASS  maintenance exposes recovery readiness action
+PASS  maintenance exposes checkpoint action
+PASS  maintenance exposes restore drill action
+PASS  settings imports phase10 post-restore verifier
+PASS  restore performs post-restore deep health gate
+PASS  restore warns on critical post-check
+PASS  translation key parity
+PASS  translation production_health
+PASS  translation disaster_recovery_readiness
+PASS  translation create_recovery_checkpoint
+PASS  translation verify_latest_backup
+PASS  translation backup_imported_health_verified
+PASS  translation backup_imported_health_warning
+
+Phase 10 static verification: 46/46 PASS
