@@ -22,6 +22,7 @@ import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
 import '../../models/app_user.dart';
 import '../../models/customer.dart';
+import '../../models/credit_note.dart';
 import '../../models/product.dart';
 import '../../models/sale.dart';
 import '../../models/sale_item.dart';
@@ -151,6 +152,7 @@ class _SalesPageState extends State<SalesPage> {
       widget.store.canManageDeliveryNotes,
       widget.store.canDeleteOrCancel,
       widget.store.hasPermission(AppPermission.salesPrint),
+      widget.store.hasPermission(AppPermission.salesEdit),
       widget.store.hasPermission(AppPermission.salesExport),
       widget.store.saleWarehouseId,
     ]);
@@ -3858,12 +3860,39 @@ class _SalesPageState extends State<SalesPage> {
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled &&
                                             widget.store.hasPermission(
+                                                AppPermission.salesEdit))
+                                        ? () => _editPostedSale(context, sale)
+                                        : null,
+                                    icon: const Icon(Icons.edit_outlined),
+                                    label: Text(tr.text('edit_sale')),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: (!sale.isCancelled &&
+                                            widget.store.hasPermission(
                                                 AppPermission.salesCancel))
                                         ? () => _returnSale(context, sale)
                                         : null,
                                     icon: const Icon(
                                         Icons.assignment_return_outlined),
                                     label: Text(_saleReturnLabel(tr)),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: (widget.store.hasPermission(
+                                                AppPermission.salesEdit) &&
+                                            widget.store.hasPermission(
+                                                AppPermission.salesCancel) &&
+                                            _latestActiveCreditNoteForSale(
+                                                    sale.id) !=
+                                                null)
+                                        ? () => _editLatestSaleReturn(
+                                              context,
+                                              sale,
+                                            )
+                                        : null,
+                                    icon: const Icon(Icons.edit_note_outlined),
+                                    label: Text(
+                                      '${tr.text('edit')} ${_saleReturnLabel(tr)}',
+                                    ),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled &&
@@ -4113,11 +4142,28 @@ class _SalesPageState extends State<SalesPage> {
               ),
               OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
+                        widget.store.hasPermission(AppPermission.salesEdit))
+                    ? () => _editPostedSale(context, sale)
+                    : null,
+                icon: const Icon(Icons.edit_outlined),
+                label: Text(tr.text('edit_sale')),
+              ),
+              OutlinedButton.icon(
+                onPressed: (!sale.isCancelled &&
                         widget.store.hasPermission(AppPermission.salesCancel))
                     ? () => _returnSale(context, sale)
                     : null,
                 icon: const Icon(Icons.assignment_return_outlined),
                 label: Text(_saleReturnLabel(tr)),
+              ),
+              OutlinedButton.icon(
+                onPressed: (widget.store.hasPermission(AppPermission.salesEdit) &&
+                        widget.store.hasPermission(AppPermission.salesCancel) &&
+                        _latestActiveCreditNoteForSale(sale.id) != null)
+                    ? () => _editLatestSaleReturn(context, sale)
+                    : null,
+                icon: const Icon(Icons.edit_note_outlined),
+                label: Text('${tr.text('edit')} ${_saleReturnLabel(tr)}'),
               ),
               OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
@@ -5310,6 +5356,530 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
+  Future<void> _editPostedSale(BuildContext sheetContext, Sale sale) async {
+    if (!widget.store.hasPermission(AppPermission.salesEdit) ||
+        sale.isCancelled) {
+      return;
+    }
+    final tr = AppLocalizations.of(sheetContext);
+    final activeProducts = widget.store.products
+        .where((product) => product.isActive && !product.isDeleted)
+        .toList(growable: true);
+    final lines = <_PostedSaleEditLine>[];
+    for (final item in sale.items) {
+      Product? product;
+      for (final candidate in widget.store.products) {
+        if (candidate.id == item.productId) {
+          product = candidate;
+          break;
+        }
+      }
+      if (product == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.format('product_not_found_named', {'product': item.productName}))),
+        );
+        return;
+      }
+      if (!activeProducts.any((candidate) => candidate.id == product!.id)) {
+        activeProducts.add(product);
+      }
+      lines.add(_PostedSaleEditLine(
+        product: product,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        unitName: item.unitName.trim().isEmpty ? product.unit : item.unitName,
+        conversionToBase:
+            item.conversionToBase <= 0 ? 1 : item.conversionToBase,
+      ));
+    }
+    if (activeProducts.isEmpty) return;
+
+    final customerIds = <String>{AppStore.walkInCustomerId};
+    customerIds.addAll(widget.store.customers
+        .where((customer) => !customer.isDeleted)
+        .map((customer) => customer.id));
+    if (sale.customerId.trim().isNotEmpty) customerIds.add(sale.customerId);
+    var selectedCustomerId = customerIds.contains(sale.customerId)
+        ? sale.customerId
+        : AppStore.walkInCustomerId;
+
+    final warehouses = widget.store.warehouses
+        .where((warehouse) => warehouse.isActive && !warehouse.isDeleted)
+        .toList(growable: true);
+    for (final warehouse in widget.store.warehouses) {
+      if (warehouse.id == sale.warehouseId &&
+          !warehouses.any((item) => item.id == warehouse.id)) {
+        warehouses.add(warehouse);
+        break;
+      }
+    }
+    var selectedWarehouseId = warehouses.any((w) => w.id == sale.warehouseId)
+        ? sale.warehouseId
+        : widget.store
+            .resolveWarehouseForSale(warehouseId: sale.warehouseId)
+            .id;
+    final discountController =
+        TextEditingController(text: _formatMoneyInput(sale.discount));
+    var saving = false;
+
+    final edited = await showDialog<Sale>(
+      context: sheetContext,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> save() async {
+            if (saving || lines.isEmpty) return;
+            final discount =
+                double.tryParse(discountController.text.trim()) ?? 0.0;
+            final subtotal = lines.fold<double>(
+              0,
+              (sum, line) => sum + (line.quantity * line.unitPrice),
+            );
+            if (discount < 0 || discount > subtotal + 0.000001) {
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                SnackBar(content: Text(tr.text('discount_exceeds_subtotal'))),
+              );
+              return;
+            }
+            for (final line in lines) {
+              if (line.quantity <= 0 || line.unitPrice < 0) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(content: Text(tr.text('invalid_sale_item_values'))),
+                );
+                return;
+              }
+            }
+            setDialogState(() => saving = true);
+            try {
+              final warehouse = widget.store.resolveWarehouseForSale(
+                warehouseId: selectedWarehouseId,
+              );
+              final result = await widget.store.editPostedSale(
+                saleId: sale.id,
+                expectedVersion: sale.version,
+                customerId: selectedCustomerId,
+                customerName: selectedCustomerId == sale.customerId
+                    ? sale.customerName
+                    : widget.store.resolveCustomerName(selectedCustomerId),
+                items: lines
+                    .map((line) => SaleItem(
+                          productId: line.product.id,
+                          productName: line.product.name,
+                          unitPrice: line.unitPrice,
+                          quantity: line.quantity,
+                          unitName: line.unitName,
+                          baseQuantity:
+                              line.quantity * line.conversionToBase,
+                          conversionToBase: line.conversionToBase,
+                          unitCost: 0,
+                        ))
+                    .toList(growable: false),
+                discount: discount,
+                originalDiscount: discount,
+                discountCurrency: sale.discountCurrency,
+                discountExchangeRateAtEntry:
+                    sale.discountExchangeRateAtEntry,
+                warehouseId: selectedWarehouseId,
+                warehouseName: warehouse.name,
+              );
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop(result);
+              }
+            } catch (error) {
+              if (!dialogContext.mounted) return;
+              setDialogState(() => saving = false);
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                SnackBar(content: Text(localizedErrorText(tr, error))),
+              );
+            }
+          }
+
+          return AlertDialog(
+            title: Text(tr.text('edit_sale')),
+            content: SizedBox(
+              width: math.min(MediaQuery.sizeOf(context).width * 0.92, 760.0),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedCustomerId,
+                        decoration:
+                            InputDecoration(labelText: tr.text('customer')),
+                        items: customerIds
+                            .map((id) => DropdownMenuItem<String>(
+                                  value: id,
+                                  child: Text(id == sale.customerId
+                                      ? sale.customerName
+                                      : widget.store.resolveCustomerName(id)),
+                                ))
+                            .toList(growable: false),
+                        onChanged: saving
+                            ? null
+                            : (value) => setDialogState(() {
+                                  if (value != null) selectedCustomerId = value;
+                                }),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedWarehouseId,
+                        decoration:
+                            InputDecoration(labelText: tr.text('warehouse')),
+                        items: warehouses
+                            .map((warehouse) => DropdownMenuItem<String>(
+                                  value: warehouse.id,
+                                  child: Text(warehouse.name),
+                                ))
+                            .toList(growable: false),
+                        onChanged: saving
+                            ? null
+                            : (value) => setDialogState(() {
+                                  if (value != null) selectedWarehouseId = value;
+                                }),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: discountController,
+                        enabled: !saving,
+                        decoration:
+                            InputDecoration(labelText: tr.text('discount')),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      ...List.generate(lines.length, (index) {
+                        final line = lines[index];
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: DropdownButtonFormField<String>(
+                                        initialValue: line.product.id,
+                                        isExpanded: true,
+                                        decoration: InputDecoration(
+                                            labelText: tr.text('product')),
+                                        items: activeProducts
+                                            .map((product) =>
+                                                DropdownMenuItem<String>(
+                                                  value: product.id,
+                                                  child: Text(
+                                                    product.name,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ))
+                                            .toList(growable: false),
+                                        onChanged: saving
+                                            ? null
+                                            : (value) => setDialogState(() {
+                                                  if (value == null) return;
+                                                  final product = activeProducts
+                                                      .firstWhere((item) =>
+                                                          item.id == value);
+                                                  final unit = product
+                                                      .effectiveSaleUnits.first;
+                                                  line.product = product;
+                                                  line.unitName = unit.name;
+                                                  line.conversionToBase =
+                                                      unit.conversionToBase;
+                                                  line.unitPrice = unit.price > 0
+                                                      ? unit.price
+                                                      : product.price;
+                                                }),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: tr.text('remove'),
+                                      onPressed: saving || lines.length == 1
+                                          ? null
+                                          : () => setDialogState(
+                                              () => lines.removeAt(index)),
+                                      icon: const Icon(Icons.delete_outline),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextFormField(
+                                        key: ValueKey(
+                                            'sale-edit-qty-$index-${line.product.id}'),
+                                        initialValue:
+                                            _formatQuantity(line.quantity),
+                                        enabled: !saving,
+                                        decoration: InputDecoration(
+                                            labelText: tr.text('quantity')),
+                                        keyboardType: const TextInputType
+                                            .numberWithOptions(decimal: true),
+                                        onChanged: (value) => line.quantity =
+                                            double.tryParse(value) ?? 0,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: TextFormField(
+                                        key: ValueKey(
+                                            'sale-edit-price-$index-${line.product.id}'),
+                                        initialValue:
+                                            _formatMoneyInput(line.unitPrice),
+                                        enabled: !saving,
+                                        decoration: InputDecoration(
+                                            labelText: tr.text('price')),
+                                        keyboardType: const TextInputType
+                                            .numberWithOptions(decimal: true),
+                                        onChanged: (value) => line.unitPrice =
+                                            double.tryParse(value) ?? 0,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          onPressed: saving
+                              ? null
+                              : () => setDialogState(() {
+                                    final product = activeProducts.first;
+                                    final unit = product.effectiveSaleUnits.first;
+                                    lines.add(_PostedSaleEditLine(
+                                      product: product,
+                                      quantity: 1,
+                                      unitPrice: unit.price > 0
+                                          ? unit.price
+                                          : product.price,
+                                      unitName: unit.name,
+                                      conversionToBase: unit.conversionToBase,
+                                    ));
+                                  }),
+                          icon: const Icon(Icons.add),
+                          label: Text(tr.text('add_product')),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed:
+                    saving ? null : () => Navigator.of(dialogContext).pop(),
+                child: Text(tr.text('cancel')),
+              ),
+              FilledButton.icon(
+                key: const ValueKey('SalesEditSaveButton'),
+                onPressed: saving ? null : save,
+                icon: saving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: Text(tr.text('save')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    discountController.dispose();
+    if (edited == null || !mounted) return;
+
+    setState(() {
+      _salesQueryFuture = null;
+      _salesQueryFutureKey = '';
+      _invoiceDetailsFutureById.remove(sale.id);
+      _invoiceSearchIndexCache.invalidate();
+    });
+    if (sheetContext.mounted) {
+      ScaffoldMessenger.of(sheetContext).showSnackBar(
+        SnackBar(content: Text(tr.text('invoice_edited_successfully'))),
+      );
+    }
+  }
+
+  CreditNote? _latestActiveCreditNoteForSale(String saleId) {
+    final notes = widget.store.creditNotes
+        .where(
+          (note) =>
+              note.originalSaleId == saleId &&
+              !<String>{'cancelled', 'reversed', 'void'}
+                  .contains(note.status.trim().toLowerCase()),
+        )
+        .toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+    return notes.isEmpty ? null : notes.last;
+  }
+
+  Future<void> _editLatestSaleReturn(
+    BuildContext sheetContext,
+    Sale sale,
+  ) async {
+    if (!widget.store.hasPermission(AppPermission.salesEdit) ||
+        !widget.store.hasPermission(AppPermission.salesCancel)) {
+      return;
+    }
+    await widget.store.ensureCreditNotesLoaded();
+    final note = _latestActiveCreditNoteForSale(sale.id);
+    if (note == null || !sheetContext.mounted) return;
+    final tr = AppLocalizations.of(sheetContext);
+    final otherReturned = <String, double>{};
+    for (final candidate in widget.store.creditNotes) {
+      if (candidate.originalSaleId != sale.id || candidate.id == note.id) {
+        continue;
+      }
+      if (<String>{'cancelled', 'reversed', 'void'}
+          .contains(candidate.status.trim().toLowerCase())) {
+        continue;
+      }
+      for (final item in candidate.items) {
+        otherReturned.update(
+          item.productId,
+          (value) => value + item.quantity,
+          ifAbsent: () => item.quantity,
+        );
+      }
+    }
+    final originalByProduct = <String, double>{};
+    final productNameById = <String, String>{};
+    for (final item in sale.items) {
+      originalByProduct.update(
+        item.productId,
+        (value) => value + item.quantity,
+        ifAbsent: () => item.quantity,
+      );
+      productNameById[item.productId] = item.productName;
+    }
+    final currentByProduct = <String, double>{};
+    for (final item in note.items) {
+      currentByProduct.update(
+        item.productId,
+        (value) => value + item.quantity,
+        ifAbsent: () => item.quantity,
+      );
+    }
+    final controllers = <String, TextEditingController>{
+      for (final productId in originalByProduct.keys)
+        productId: TextEditingController(
+          text: (currentByProduct[productId] ?? 0).toString(),
+        ),
+    };
+    Map<String, double>? editedQuantities;
+    try {
+      editedQuantities = await showDialog<Map<String, double>>(
+        context: sheetContext,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('${tr.text('edit')} • ${_saleReturnLabel(tr)}'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('${note.creditNoteNo} • v${note.version}'),
+                  const SizedBox(height: 12),
+                  for (final entry in originalByProduct.entries) ...[
+                    TextField(
+                      controller: controllers[entry.key],
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: productNameById[entry.key] ?? entry.key,
+                        helperText:
+                            '${tr.text('quantity')}: 0 - ${(entry.value - (otherReturned[entry.key] ?? 0)).clamp(0, double.infinity)}',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                final values = <String, double>{};
+                for (final entry in controllers.entries) {
+                  final value = double.tryParse(entry.value.text.trim()) ?? -1;
+                  final max = (originalByProduct[entry.key]! -
+                          (otherReturned[entry.key] ?? 0))
+                      .clamp(0, double.infinity)
+                      .toDouble();
+                  if (value < 0 || value > max + 0.000001) return;
+                  if (value > 0.000001) values[entry.key] = value;
+                }
+                if (values.isEmpty) return;
+                Navigator.pop(dialogContext, values);
+              },
+              icon: const Icon(Icons.save_outlined),
+              label: Text(tr.text('save')),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      for (final controller in controllers.values) {
+        controller.dispose();
+      }
+    }
+    if (editedQuantities == null || !sheetContext.mounted) return;
+    if (!await requestSensitiveActionAuthorization(
+      sheetContext,
+      widget.store,
+      action: SensitiveAction.saleReverse,
+    )) {
+      return;
+    }
+    try {
+      await widget.store.editSaleReturn(
+        creditNoteId: note.id,
+        expectedVersion: note.version,
+        returnedQuantities: editedQuantities,
+      );
+      if (!mounted) return;
+      setState(() {
+        _salesQueryFuture = null;
+        _salesQueryFutureKey = '';
+        _invoiceDetailsFutureById.clear();
+        _invoiceSearchIndexCache.invalidate();
+      });
+      if (sheetContext.mounted) {
+        ScaffoldMessenger.of(sheetContext).showSnackBar(
+          SnackBar(
+            content: Text('${_saleReturnLabel(tr)} • ${tr.text('saved')}'),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!sheetContext.mounted) return;
+      ScaffoldMessenger.of(sheetContext).showSnackBar(
+        SnackBar(content: Text(localizedErrorText(tr, error))),
+      );
+    }
+  }
+
   Future<void> _returnSale(BuildContext sheetContext, Sale sale) async {
     if (!widget.store.hasPermission(AppPermission.salesCancel) ||
         sale.isCancelled) {
@@ -5694,6 +6264,22 @@ class _MobileSaleAction extends StatelessWidget {
   }
 }
 
+class _PostedSaleEditLine {
+  _PostedSaleEditLine({
+    required this.product,
+    required this.quantity,
+    required this.unitPrice,
+    required this.unitName,
+    required this.conversionToBase,
+  });
+
+  Product product;
+  double quantity;
+  double unitPrice;
+  String unitName;
+  double conversionToBase;
+}
+
 class _QuickProductSlot {
   const _QuickProductSlot({this.productId, this.shortName});
 
@@ -5742,6 +6328,16 @@ class _QuickProductPage {
       slots: slots,
     );
   }
+}
+
+String _formatMoneyInput(double value) {
+  if (!value.isFinite) return '0';
+  var text = value.toStringAsFixed(4);
+  while (text.contains('.') && text.endsWith('0')) {
+    text = text.substring(0, text.length - 1);
+  }
+  if (text.endsWith('.')) text = text.substring(0, text.length - 1);
+  return text;
 }
 
 String _formatQuantity(double value) {

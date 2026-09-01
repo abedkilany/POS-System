@@ -265,11 +265,15 @@ class InventoryTraceabilityService {
   Future<void> assertManufacturingTraceabilityInTransaction({
     required String orderId,
     required String storeId,
+    String operationReferenceId = '',
     required double expectedOutputQuantity,
     required double expectedMaterialCost,
     required double expectedWasteCost,
     required double expectedEligibleCost,
   }) async {
+    final operationId = operationReferenceId.trim().isEmpty
+        ? orderId
+        : operationReferenceId.trim();
     final movementRow = await db.customSelect(
       '''
       SELECT
@@ -280,12 +284,12 @@ class InventoryTraceabilityService {
         SUM(CASE WHEN movement_type = 'manufacturing_consume' AND trim(batch_id) = '' THEN 1 ELSE 0 END) AS unbatchedInputs,
         SUM(CASE WHEN movement_type = 'manufacturing_produce' AND trim(batch_id) = '' THEN 1 ELSE 0 END) AS unbatchedOutputs
       FROM stock_movements
-      WHERE store_id = ? AND reference_id = ? AND deleted_at = ''
+      WHERE store_id = ? AND movement_group_id = ? AND deleted_at = ''
         AND movement_type IN ('manufacturing_consume', 'manufacturing_produce')
       ''',
       variables: <Variable<Object>>[
         Variable<String>(storeId),
-        Variable<String>(orderId),
+        Variable<String>(operationId),
       ],
     ).getSingle();
     final materialCost =
@@ -315,13 +319,13 @@ class InventoryTraceabilityService {
       FROM stock_movements sm
       LEFT JOIN inventory_batches b
         ON b.id = sm.batch_id AND b.store_id = sm.store_id
-      WHERE sm.store_id = ? AND sm.reference_id = ? AND sm.deleted_at = ''
+      WHERE sm.store_id = ? AND sm.movement_group_id = ? AND sm.deleted_at = ''
         AND sm.movement_type IN ('manufacturing_consume', 'manufacturing_produce')
         AND (b.id IS NULL OR b.product_id <> sm.product_id)
       ''',
       variables: <Variable<Object>>[
         Variable<String>(storeId),
-        Variable<String>(orderId),
+        Variable<String>(operationId),
       ],
     ).getSingle();
     if ((invalidBatchRefs.data['rowCount'] as num? ?? 0).toInt() != 0) {
@@ -341,7 +345,7 @@ class InventoryTraceabilityService {
       ''',
       variables: <Variable<Object>>[
         Variable<String>(storeId),
-        Variable<String>(orderId),
+        Variable<String>(operationId),
       ],
     ).getSingle();
     final outputBatchQty =
@@ -563,19 +567,43 @@ class InventoryTraceabilityService {
              COALESCE((SELECT SUM(ABS(sm.quantity * sm.unit_cost))
                FROM stock_movements sm
                WHERE sm.store_id = mo.store_id AND sm.reference_id = mo.id
-                 AND sm.deleted_at = '' AND sm.movement_type = 'manufacturing_consume'), 0) AS actualMaterialCost,
+                 AND sm.deleted_at = '' AND sm.movement_type = 'manufacturing_consume'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM stock_movements rev
+                   WHERE rev.reversal_of_movement_id = sm.id
+                     AND rev.deleted_at = ''
+                 )), 0) AS actualMaterialCost,
              COALESCE((SELECT SUM(sm.quantity)
                FROM stock_movements sm
                WHERE sm.store_id = mo.store_id AND sm.reference_id = mo.id
-                 AND sm.deleted_at = '' AND sm.movement_type = 'manufacturing_produce'), 0) AS actualOutputQty,
+                 AND sm.deleted_at = '' AND sm.movement_type = 'manufacturing_produce'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM stock_movements rev
+                   WHERE rev.reversal_of_movement_id = sm.id
+                     AND rev.deleted_at = ''
+                 )), 0) AS actualOutputQty,
              COALESCE((SELECT SUM(sm.quantity * sm.unit_cost)
                FROM stock_movements sm
                WHERE sm.store_id = mo.store_id AND sm.reference_id = mo.id
-                 AND sm.deleted_at = '' AND sm.movement_type = 'manufacturing_produce'), 0) AS actualOutputValue,
-             COALESCE((SELECT COUNT(*) FROM inventory_batches b
-               WHERE b.store_id = mo.store_id
-                 AND b.source_type = 'manufacturing_output'
-                 AND b.source_id = mo.id), 0) AS outputBatchCount
+                 AND sm.deleted_at = '' AND sm.movement_type = 'manufacturing_produce'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM stock_movements rev
+                   WHERE rev.reversal_of_movement_id = sm.id
+                     AND rev.deleted_at = ''
+                 )), 0) AS actualOutputValue,
+             COALESCE((SELECT COUNT(DISTINCT b.id)
+               FROM stock_movements sm
+               INNER JOIN inventory_batches b
+                 ON b.id = sm.batch_id AND b.store_id = sm.store_id
+               WHERE sm.store_id = mo.store_id AND sm.reference_id = mo.id
+                 AND sm.deleted_at = ''
+                 AND sm.movement_type = 'manufacturing_produce'
+                 AND trim(sm.batch_id) <> ''
+                 AND NOT EXISTS (
+                   SELECT 1 FROM stock_movements rev
+                   WHERE rev.reversal_of_movement_id = sm.id
+                     AND rev.deleted_at = ''
+                 )), 0) AS outputBatchCount
       FROM manufacturing_orders mo
       WHERE mo.store_id = ? AND mo.deleted_at = ''
         AND lower(mo.status) = 'completed'
@@ -584,6 +612,11 @@ class InventoryTraceabilityService {
           WHERE scoped.store_id = mo.store_id AND scoped.reference_id = mo.id
             AND scoped.deleted_at = '' AND trim(scoped.batch_id) <> ''
             AND scoped.movement_type IN ('manufacturing_consume', 'manufacturing_produce')
+            AND NOT EXISTS (
+              SELECT 1 FROM stock_movements rev
+              WHERE rev.reversal_of_movement_id = scoped.id
+                AND rev.deleted_at = ''
+            )
         )
       ''',
       variables: <Variable<Object>>[Variable<String>(normalizedStoreId)],

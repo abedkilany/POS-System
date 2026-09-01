@@ -57,7 +57,12 @@ check('scenario verifies trial balance', 'SUM(jl.debit)' in scenario_source and 
 check('scenario verifies production financial reports', 'AccountingService.incomeStatementReport()' in scenario_source and 'AccountingService.balanceSheetReport()' in scenario_source)
 check('purchase inventory cost uses tax-exclusive taxable base', 'return tax.taxableBase / item.baseQuantity;' in PURCHASES)
 check('batch receipt accepts normalized inventory unit cost', 'required double inventoryUnitCost' in PURCHASES and 'unitCost: inventoryUnitCost' in PURCHASES)
-check('all three purchase receipt/repost call sites pass normalized cost', PURCHASES.count('inventoryUnitCost: _purchaseInventoryUnitCostPerBase(') == 3)
+purchase_receipt_calls = PURCHASES.count('await _receiveUnifiedPurchaseLineInTransaction(')
+normalized_cost_calls = PURCHASES.count('inventoryUnitCost: _purchaseInventoryUnitCostPerBase(')
+check(
+    'all purchase receipt/repost call sites pass normalized cost',
+    purchase_receipt_calls >= 4 and normalized_cost_calls == purchase_receipt_calls,
+)
 check('product cost previews use normalized VAT cost', PURCHASES.count('final unitCost = _purchaseInventoryUnitCostPerBase(') == 2)
 check('documentation records VAT/COGS closure', 'VAT inventory-cost closure discovered by the golden scenario' in DOC)
 check('documentation records net income 20', '| Net income | $20.00 |' in DOC)

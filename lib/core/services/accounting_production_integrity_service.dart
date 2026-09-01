@@ -60,8 +60,10 @@ class AccountingProductionIntegrityService {
 
     await _checkJournalStructure(issues);
     await _checkJournalReferences(issues);
+    await _checkPostedEditFamilyUniqueness(issues);
     await _checkVoucherAndControlIntegrity(issues);
     await _checkDocumentPosting(issues);
+    await _checkExpensePosting(issues);
     await _checkManufacturingAndCounts(issues);
     await _checkStockReversalLinks(issues);
     await _checkCostingMethodHistory(issues);
@@ -175,6 +177,66 @@ class AccountingProductionIntegrityService {
     }
   }
 
+  Future<void> _checkPostedEditFamilyUniqueness(
+      List<AccountingIntegrityIssue> issues) async {
+    final rows = await _db.customSelect(r'''
+      SELECT je.id, je.reference_type, je.reference_id
+      FROM journal_entries je
+      WHERE je.deleted_at = '' AND je.status = 'posted'
+        AND je.reference_type IN (
+          'sale', 'sale_return', 'purchase', 'receipt_voucher',
+          'payment_voucher', 'expense', 'manual_journal',
+          'inventory_adjustment', 'manufacturing_order'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM journal_entries rev
+          WHERE rev.reversed_entry_id = je.id
+            AND rev.deleted_at = '' AND rev.status = 'posted'
+        )
+    ''').get();
+
+    const markers = <String, String>{
+      'sale': ':sale_edit:',
+      'sale_return': ':sale_return_edit:',
+      'purchase': ':purchase_edit:',
+      'receipt_voucher': ':receipt_edit:',
+      'payment_voucher': ':payment_edit:',
+      'expense': ':expense_edit:',
+      'manual_journal': ':manual_edit:',
+      'inventory_adjustment': ':inventory_adjustment_edit:',
+      'manufacturing_order': ':manufacturing_edit:',
+    };
+    final activeByFamily = <String, List<String>>{};
+    for (final row in rows) {
+      final type = row.data['reference_type']?.toString() ?? '';
+      final referenceId = row.data['reference_id']?.toString() ?? '';
+      final marker = markers[type];
+      if (marker == null || referenceId.trim().isEmpty) continue;
+      final markerIndex = referenceId.indexOf(marker);
+      final familyId = markerIndex > 0
+          ? referenceId.substring(0, markerIndex)
+          : referenceId;
+      final key = '$type|$familyId';
+      activeByFamily.putIfAbsent(key, () => <String>[]).add(
+            row.data['id']?.toString() ?? '',
+          );
+    }
+    for (final entry in activeByFamily.entries) {
+      if (entry.value.length <= 1) continue;
+      final separator = entry.key.indexOf('|');
+      final type = entry.key.substring(0, separator);
+      final familyId = entry.key.substring(separator + 1);
+      issues.add(AccountingIntegrityIssue(
+        code: 'duplicate_active_posted_edit_family',
+        severity: AccountingIntegritySeverity.critical,
+        entityType: type,
+        entityId: familyId,
+        message:
+            'More than one active journal exists for the same posted-document edit family.',
+      ));
+    }
+  }
+
   Future<void> _checkVoucherAndControlIntegrity(
       List<AccountingIntegrityIssue> issues) async {
     for (final spec in const <(String, String, String, String)>[
@@ -185,6 +247,8 @@ class AccountingProductionIntegrityService {
       final voucherType = spec.$2;
       final referenceType = spec.$3;
       final partyType = spec.$4;
+      final editFamilyMarker =
+          voucherType == 'receipt' ? ':receipt_edit:' : ':payment_edit:';
 
       final missingJournal = await _db.customSelect(
         '''
@@ -193,7 +257,9 @@ class AccountingProductionIntegrityService {
         WHERE v.deleted_at = '' AND v.status = 'posted'
           AND NOT EXISTS (
             SELECT 1 FROM journal_entries je
-            WHERE je.reference_type = ? AND je.reference_id = v.id
+            WHERE je.reference_type = ?
+              AND (je.reference_id = v.id
+                   OR instr(je.reference_id, v.id || ?) = 1)
               AND je.deleted_at = '' AND je.status = 'posted'
               AND NOT EXISTS (
                 SELECT 1 FROM journal_entries rev
@@ -202,7 +268,10 @@ class AccountingProductionIntegrityService {
               )
           )
         ''',
-        variables: <Variable<Object>>[Variable<String>(referenceType)],
+        variables: <Variable<Object>>[
+          Variable<String>(referenceType),
+          Variable<String>(editFamilyMarker),
+        ],
       ).get();
       for (final row in missingJournal) {
         issues.add(AccountingIntegrityIssue(
@@ -223,7 +292,9 @@ class AccountingProductionIntegrityService {
           AND lower(trim(v.payment_method)) = 'cash'
           AND NOT EXISTS (
             SELECT 1 FROM cash_ledger_transactions clt
-            WHERE clt.reference_type = ? AND clt.reference_id = v.id
+            WHERE clt.reference_type = ?
+              AND (clt.reference_id = v.id
+                   OR instr(clt.reference_id, v.id || ?) = 1)
               AND clt.deleted_at = ''
               AND NOT EXISTS (
                 SELECT 1 FROM cash_ledger_transactions reversal
@@ -232,7 +303,10 @@ class AccountingProductionIntegrityService {
               )
           )
         ''',
-        variables: <Variable<Object>>[Variable<String>(referenceType)],
+        variables: <Variable<Object>>[
+          Variable<String>(referenceType),
+          Variable<String>(editFamilyMarker),
+        ],
       ).get();
       for (final row in missingCashLedger) {
         issues.add(AccountingIntegrityIssue(
@@ -482,7 +556,8 @@ class AccountingProductionIntegrityService {
         AND NOT EXISTS (
           SELECT 1 FROM journal_entries je
           WHERE je.reference_type = 'sale'
-            AND je.reference_id = s.id
+            AND (je.reference_id = s.id
+                 OR instr(je.reference_id, s.id || ':sale_edit:') = 1)
             AND je.deleted_at = '' AND je.status = 'posted'
             AND NOT EXISTS (
               SELECT 1 FROM journal_entries rev
@@ -510,7 +585,8 @@ class AccountingProductionIntegrityService {
         AND EXISTS (
           SELECT 1 FROM journal_entries je
           WHERE je.reference_type = 'sale'
-            AND je.reference_id = s.id
+            AND (je.reference_id = s.id
+                 OR instr(je.reference_id, s.id || ':sale_edit:') = 1)
             AND je.deleted_at = '' AND je.status = 'posted'
             AND NOT EXISTS (
               SELECT 1 FROM journal_entries rev
@@ -620,6 +696,68 @@ class AccountingProductionIntegrityService {
     }
   }
 
+  Future<void> _checkExpensePosting(
+      List<AccountingIntegrityIssue> issues) async {
+    final postedExpenses = await _db.customSelect(r'''
+      SELECT e.id, e.title
+      FROM expenses e
+      WHERE e.deleted_at = ''
+        AND lower(trim(e.expense_status)) = 'posted'
+        AND ABS(COALESCE(e.amount, 0)) > 0.005
+        AND NOT EXISTS (
+          SELECT 1 FROM journal_entries je
+          WHERE je.reference_type = 'expense'
+            AND (je.reference_id = e.id
+                 OR instr(je.reference_id, e.id || ':expense_edit:') = 1)
+            AND je.deleted_at = '' AND je.status = 'posted'
+            AND NOT EXISTS (
+              SELECT 1 FROM journal_entries rev
+              WHERE rev.reversed_entry_id = je.id
+                AND rev.deleted_at = '' AND rev.status = 'posted'
+            )
+        )
+    ''').get();
+    for (final row in postedExpenses) {
+      issues.add(AccountingIntegrityIssue(
+        code: 'posted_expense_missing_active_journal',
+        severity: AccountingIntegritySeverity.critical,
+        entityType: 'expense',
+        entityId: row.data['id']?.toString() ?? '',
+        message:
+            'Posted expense ${row.data['title'] ?? ''} has value but no active journal.',
+      ));
+    }
+
+    final cancelledExpenses = await _db.customSelect(r'''
+      SELECT e.id, e.title
+      FROM expenses e
+      WHERE e.deleted_at = ''
+        AND lower(trim(e.expense_status)) = 'cancelled'
+        AND EXISTS (
+          SELECT 1 FROM journal_entries je
+          WHERE je.reference_type = 'expense'
+            AND (je.reference_id = e.id
+                 OR instr(je.reference_id, e.id || ':expense_edit:') = 1)
+            AND je.deleted_at = '' AND je.status = 'posted'
+            AND NOT EXISTS (
+              SELECT 1 FROM journal_entries rev
+              WHERE rev.reversed_entry_id = je.id
+                AND rev.deleted_at = '' AND rev.status = 'posted'
+            )
+        )
+    ''').get();
+    for (final row in cancelledExpenses) {
+      issues.add(AccountingIntegrityIssue(
+        code: 'cancelled_expense_has_active_journal',
+        severity: AccountingIntegritySeverity.critical,
+        entityType: 'expense',
+        entityId: row.data['id']?.toString() ?? '',
+        message:
+            'Cancelled expense ${row.data['title'] ?? ''} still has an active journal.',
+      ));
+    }
+  }
+
   Future<void> _checkManufacturingAndCounts(
       List<AccountingIntegrityIssue> issues) async {
     final manufacturing = await _db.customSelect(r'''
@@ -639,7 +777,8 @@ class AccountingProductionIntegrityService {
                 SELECT 1 FROM journal_entries je
                 WHERE je.id = mo.journal_entry_id
                   AND je.reference_type = 'manufacturing_order'
-                  AND je.reference_id = mo.id
+                  AND (je.reference_id = mo.id
+                       OR instr(je.reference_id, mo.id || ':manufacturing_edit:') = 1)
                   AND je.deleted_at = '' AND je.status = 'posted'
               )
             )

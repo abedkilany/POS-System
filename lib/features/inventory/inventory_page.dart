@@ -13,6 +13,7 @@ import '../../core/services/sql_result_export_service.dart';
 import '../../core/services/warehouse_inventory_pdf_service.dart';
 import '../../data/app_store.dart';
 import '../../models/inventory_count.dart';
+import '../../models/inventory_batch.dart';
 import '../../models/product.dart';
 import '../../models/stock_movement.dart';
 import '../../models/user_role.dart';
@@ -1490,6 +1491,189 @@ class _MovementsListState extends State<_MovementsList> {
     });
   }
 
+  bool _isActiveManualAdjustment(StockMovement movement) {
+    if (movement.movementGroupId.trim().isEmpty ||
+        movement.reversalOfMovementId.isNotEmpty ||
+        (movement.type != 'inventory_loss' &&
+            movement.type != 'inventory_adjustment')) {
+      return false;
+    }
+    return !widget.store.stockMovements.any(
+      (candidate) => candidate.reversalOfMovementId == movement.id,
+    );
+  }
+
+  Future<void> _editManualAdjustment(StockMovement movement) async {
+    final tr = AppLocalizations.of(context);
+    final operationId = movement.movementGroupId.trim();
+    if (operationId.isEmpty) return;
+    final all = widget.store.stockMovements;
+    final reversedIds = <String>{
+      for (final candidate in all)
+        if (candidate.reversalOfMovementId.trim().isNotEmpty)
+          candidate.reversalOfMovementId.trim(),
+    };
+    final active = all
+        .where(
+          (candidate) =>
+              candidate.movementGroupId == operationId &&
+              candidate.reversalOfMovementId.isEmpty &&
+              !reversedIds.contains(candidate.id) &&
+              (candidate.type == 'inventory_loss' ||
+                  candidate.type == 'inventory_adjustment'),
+        )
+        .toList(growable: false);
+    if (active.isEmpty) return;
+    final first = active.first;
+    final delta = active.fold<double>(
+      0,
+      (sum, candidate) => sum + candidate.quantity,
+    );
+    final product = widget.store.stockTrackedProducts
+        .where((item) => item.id == first.productId)
+        .firstOrNull;
+    if (product == null) return;
+    final expectedVersion =
+        await widget.store.manualStockAdjustmentVersion(operationId);
+    if (!mounted || expectedVersion <= 0) return;
+
+    final quantityController =
+        TextEditingController(text: delta.toString());
+    final notesController = TextEditingController(text: first.notes);
+    final evidenceController = TextEditingController(text: first.evidenceRef);
+    var category = first.adjustmentCategory.trim().isEmpty
+        ? 'other'
+        : first.adjustmentCategory.trim();
+    final categories = <String, String>{
+      'damage': tr.text('adjustment_damage'),
+      'expired': tr.text('adjustment_expired'),
+      'free_sample': tr.text('adjustment_free_sample'),
+      'internal_consumption': tr.text('adjustment_internal_consumption'),
+      'stock_count_shortage': tr.text('adjustment_stock_count_shortage'),
+      'stock_count_overage': tr.text('adjustment_stock_count_overage'),
+      'other': tr.text('adjustment_other'),
+    };
+    if (!categories.containsKey(category)) category = 'other';
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text('${tr.text('edit')} • ${product.name}'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('${tr.text('warehouse')}: ${first.warehouseName}'),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: category,
+                    decoration: InputDecoration(
+                      labelText: tr.text('adjustment_reason_type'),
+                    ),
+                    items: categories.entries
+                        .map(
+                          (entry) => DropdownMenuItem<String>(
+                            value: entry.key,
+                            child: Text(entry.value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setDialogState(
+                      () => category = value ?? category,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: quantityController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      signed: true,
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: tr.text('quantity_delta'),
+                      helperText: tr.text('quantity_delta_help'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: notesController,
+                    decoration:
+                        InputDecoration(labelText: tr.text('notes_optional')),
+                    minLines: 1,
+                    maxLines: 3,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: evidenceController,
+                    decoration: InputDecoration(
+                      labelText: tr.text('evidence_optional'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel')),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final nextDelta =
+                      double.tryParse(quantityController.text.trim()) ?? 0;
+                  if (nextDelta.abs() <= 0.000001) return;
+                  List<BatchAllocation> allocations =
+                      const <BatchAllocation>[];
+                  if (product.expiryTrackingEnabled && nextDelta > 0) {
+                    final selected = await showBatchAllocationDialog(
+                      dialogContext,
+                      product: product,
+                      expectedQuantity: nextDelta,
+                      sourceId:
+                          '$operationId-edit-v${expectedVersion + 1}',
+                    );
+                    if (selected == null) return;
+                    allocations = selected;
+                  }
+                  await widget.store.editStockAdjustment(
+                    operationReferenceId: operationId,
+                    expectedVersion: expectedVersion,
+                    quantityDelta: nextDelta,
+                    reason: categories[category] ?? category,
+                    adjustmentCategory: category,
+                    notes: notesController.text,
+                    evidenceRef: evidenceController.text,
+                    batchAllocations: allocations,
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                },
+                child: Text(tr.text('save')),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _movementsFuture = null;
+          _movementsFutureKey = '';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizedErrorText(tr, error))),
+        );
+      }
+    } finally {
+      quantityController.dispose();
+      notesController.dispose();
+      evidenceController.dispose();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -1589,22 +1773,40 @@ class _MovementsListState extends State<_MovementsList> {
                             subtitle: Text(
                                 "${_movementTypeLabel(tr, movement.type)} • ${movement.warehouseName} • ${movement.referenceNo} • ${movement.date.toLocal().toString().split('.').first}\n${movement.reason}${movement.notes.isNotEmpty ? ' • ${movement.notes}' : ''}${movement.evidenceRef.isNotEmpty ? ' • ${tr.text('evidence')}: ${movement.evidenceRef}' : ''}"),
                             isThreeLine: true,
-                            trailing: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
                                       movement.quantity > 0
                                           ? '+${movement.quantity}'
                                           : '${movement.quantity}',
                                       style: Theme.of(context)
                                           .textTheme
-                                          .titleMedium),
-                                  if (movement.unitCost > 0)
-                                    Text(formatUsdReferenceAmount(
+                                          .titleMedium,
+                                    ),
+                                    if (movement.unitCost > 0)
+                                      Text(formatUsdReferenceAmount(
                                         movement.value,
-                                        widget.store.storeProfile)),
-                                ]),
+                                        widget.store.storeProfile,
+                                      )),
+                                  ],
+                                ),
+                                if (widget.store.hasPermission(
+                                      AppPermission.inventoryCorrectionsManage,
+                                    ) &&
+                                    _isActiveManualAdjustment(movement))
+                                  IconButton(
+                                    tooltip: tr.text('edit'),
+                                    onPressed: () =>
+                                        _editManualAdjustment(movement),
+                                    icon: const Icon(Icons.edit_outlined),
+                                  ),
+                              ],
+                            ),
                           ),
                           const Divider(height: 1),
                         ],

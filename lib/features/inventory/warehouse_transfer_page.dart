@@ -29,6 +29,7 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
   String _toWarehouseId = '';
   bool _loadingStock = false;
   bool _saving = false;
+  WarehouseTransferOrder? _editingOrder;
 
   List<Warehouse> get _warehouses => widget.store.warehouses
       .where((warehouse) => !warehouse.isDeleted && warehouse.isActive)
@@ -67,6 +68,16 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
         _sourceBalances = Map<String, double>.from(
           all[_fromWarehouseId] ?? const <String, double>{},
         );
+        final editing = _editingOrder;
+        if (editing != null && editing.fromWarehouseId == _fromWarehouseId) {
+          for (final item in editing.items) {
+            _sourceBalances.update(
+              item.productId,
+              (value) => value + item.baseQuantity,
+              ifAbsent: () => item.baseQuantity,
+            );
+          }
+        }
       });
     } finally {
       if (mounted) setState(() => _loadingStock = false);
@@ -150,6 +161,52 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
     return null;
   }
 
+  Future<void> _beginEditOrder(WarehouseTransferOrder order) async {
+    if (_saving) return;
+    for (final item in _cart) {
+      item.dispose();
+    }
+    _cart.clear();
+    setState(() {
+      _editingOrder = order;
+      _fromWarehouseId = order.fromWarehouseId;
+      _toWarehouseId = order.toWarehouseId;
+      _notesController.text = order.notes;
+    });
+    await _loadSourceBalances();
+    if (!mounted) return;
+    for (final item in order.items) {
+      final productIndex = widget.store.products.indexWhere(
+        (product) => product.id == item.productId && !product.isDeleted,
+      );
+      if (productIndex < 0) continue;
+      final product = widget.store.products[productIndex];
+      final units = product.effectiveSaleUnits;
+      final selectedUnitId = units.any((unit) => unit.id == item.unitId)
+          ? item.unitId
+          : units.first.id;
+      final draft = _TransferDraftItem(
+        product: product,
+        availableBase: _sourceBalances[item.productId] ?? item.baseQuantity,
+        selectedUnitId: selectedUnitId,
+        quantity: item.quantity,
+      );
+      draft.quantityController.addListener(_onDraftChanged);
+      _cart.add(draft);
+    }
+    setState(() {});
+  }
+
+  Future<void> _cancelEditOrder() async {
+    for (final item in _cart) {
+      item.dispose();
+    }
+    _cart.clear();
+    _notesController.clear();
+    setState(() => _editingOrder = null);
+    await _loadSourceBalances();
+  }
+
   Future<void> _submitTransfer() async {
     final error = _validateCart();
     if (error != null) {
@@ -159,28 +216,40 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
     }
     setState(() => _saving = true);
     try {
-      final order = await widget.store.createWarehouseTransferOrder(
-        fromWarehouseId: _fromWarehouseId,
-        toWarehouseId: _toWarehouseId,
-        notes: _notesController.text.trim(),
-        items: _cart.map((draft) {
-          final unit = draft.selectedUnit;
-          return WarehouseTransferOrderItem(
-            productId: draft.product.id,
-            productName: draft.product.name,
-            quantity: draft.enteredQuantity,
-            unitId: unit.id,
-            unitName: unit.name,
-            conversionToBase: unit.conversionToBase,
-          );
-        }).toList(growable: false),
-      );
+      final requestItems = _cart.map((draft) {
+        final unit = draft.selectedUnit;
+        return WarehouseTransferOrderItem(
+          productId: draft.product.id,
+          productName: draft.product.name,
+          quantity: draft.enteredQuantity,
+          unitId: unit.id,
+          unitName: unit.name,
+          conversionToBase: unit.conversionToBase,
+        );
+      }).toList(growable: false);
+      final editing = _editingOrder;
+      final order = editing == null
+          ? await widget.store.createWarehouseTransferOrder(
+              fromWarehouseId: _fromWarehouseId,
+              toWarehouseId: _toWarehouseId,
+              notes: _notesController.text.trim(),
+              items: requestItems,
+            )
+          : await widget.store.editWarehouseTransferOrder(
+              orderId: editing.id,
+              expectedVersion: editing.version,
+              fromWarehouseId: _fromWarehouseId,
+              toWarehouseId: _toWarehouseId,
+              notes: _notesController.text.trim(),
+              items: requestItems,
+            );
       if (!mounted) return;
       for (final item in _cart) {
         item.dispose();
       }
       _cart.clear();
       _notesController.clear();
+      _editingOrder = null;
       _historyFuture = widget.store.recentWarehouseTransferOrders();
       await _loadSourceBalances();
       if (!mounted) return;
@@ -453,11 +522,26 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.check_circle_outline),
-                  label: Text(AppLocalizations.of(context)
-                      .text('complete_transfer_order')),
+                      : Icon(_editingOrder == null
+                          ? Icons.check_circle_outline
+                          : Icons.save_outlined),
+                  label: Text(_editingOrder == null
+                      ? AppLocalizations.of(context)
+                          .text('complete_transfer_order')
+                      : AppLocalizations.of(context).text('save')),
                 ),
               ),
+              if (_editingOrder != null) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _saving ? null : _cancelEditOrder,
+                    icon: const Icon(Icons.close),
+                    label: Text(AppLocalizations.of(context).text('cancel')),
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               ExpansionTile(
                 tilePadding: EdgeInsets.zero,
@@ -580,6 +664,11 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
                   children: [
                     Text(_dateText(order.date)),
                     const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: AppLocalizations.of(context).text('edit'),
+                      onPressed: _saving ? null : () => _beginEditOrder(order),
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
                     IconButton(
                       tooltip:
                           Localizations.localeOf(context).languageCode == 'ar'

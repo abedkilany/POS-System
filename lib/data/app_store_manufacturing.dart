@@ -551,6 +551,12 @@ Future<ManufacturingOrder> completeManufacturingOrder({
     Map<String, double> wasteQuantities = const <String, double>{},
     Map<String, String> wasteReasons = const <String, String>{},
     String existingOrderId = '',
+    bool allowCompletedRepostInternal = false,
+    bool withinExistingTransactionInternal = false,
+    bool suppressPostCommitInternal = false,
+    String technicalReferenceIdOverride = '',
+    String operationReferenceIdOverride = '',
+    ManufacturingOrder? existingOrderOverride,
   }) async {
     requirePermission(AppPermission.inventoryManufacturingManage);
     if (!LocalDatabaseService.isSqliteAuthoritative ||
@@ -560,7 +566,9 @@ Future<ManufacturingOrder> completeManufacturingOrder({
     }
     // Prevent a stale debounced ProductCost snapshot from racing the finished
     // goods cost written atomically by the manufacturing transaction.
-    await _flushProductDerivedData();
+    if (!withinExistingTransactionInternal) {
+      await _flushProductDerivedData();
+    }
     if (quantity <= 0) {
       throw ArgumentError('Manufacturing quantity must be greater than zero.');
     }
@@ -569,15 +577,17 @@ Future<ManufacturingOrder> completeManufacturingOrder({
         : _manufacturingOrders.indexWhere(
             (item) => item.id == existingOrderId && !item.isDeleted,
           );
-    if (existingOrderId.trim().isNotEmpty && existingOrderIndex == -1) {
+    if (existingOrderId.trim().isNotEmpty &&
+        existingOrderIndex == -1 &&
+        existingOrderOverride == null) {
       throw ArgumentError('Manufacturing order was not found.');
     }
-    final existingOrder = existingOrderIndex == -1
-        ? null
-        : _manufacturingOrders[existingOrderIndex];
+    final existingOrder = existingOrderOverride ??
+        (existingOrderIndex == -1 ? null : _manufacturingOrders[existingOrderIndex]);
     if (existingOrder != null &&
         <String>{'completed', 'reversed'}
-            .contains(existingOrder.status.trim().toLowerCase())) {
+            .contains(existingOrder.status.trim().toLowerCase()) &&
+        !allowCompletedRepostInternal) {
       return existingOrder;
     }
     final bom = _billsOfMaterials.firstWhere(
@@ -597,8 +607,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
     final finishedWarehouse = resolveWarehouseForSale(
       warehouseId: finishedGoodsWarehouseId,
     );
-    var order = _withSyncMeta<ManufacturingOrder>(
-      ManufacturingOrder(
+    final orderPreview = ManufacturingOrder(
         id: existingOrder?.id ?? '${now.microsecondsSinceEpoch}-mfg',
         orderNo: existingOrder?.orderNo ??
             'MFG-${now.microsecondsSinceEpoch.toString().substring(6)}',
@@ -619,10 +628,28 @@ Future<ManufacturingOrder> completeManufacturingOrder({
         date: existingOrder?.date ?? now,
         createdAt: existingOrder?.createdAt,
         status: 'completed',
-      ),
-      now,
-      isCreate: existingOrder == null,
-    );
+      );
+    var order = suppressPostCommitInternal && existingOrder != null
+        ? orderPreview.copyWith(
+            updatedAt: now,
+            deviceId: _deviceId,
+            syncStatus: 'pending',
+            storeId: appIdentity.storeId,
+            branchId: appIdentity.branchId,
+            version: existingOrder.version + 1,
+            lastModifiedByDeviceId: _deviceId,
+          )
+        : _withSyncMeta<ManufacturingOrder>(
+            orderPreview,
+            now,
+            isCreate: existingOrder == null,
+          );
+    final operationReferenceId = operationReferenceIdOverride.trim().isEmpty
+        ? order.id
+        : operationReferenceIdOverride.trim();
+    final technicalReferenceId = technicalReferenceIdOverride.trim().isEmpty
+        ? order.id
+        : technicalReferenceIdOverride.trim();
     final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final stockService = StockTransactionService(
@@ -643,7 +670,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
       late double producedUnitCost;
       final materialCosts = <ManufacturingMaterialCost>[];
       final wasteLines = <ManufacturingWasteLine>[];
-      await sqliteDb.transaction(() async {
+      Future<void> persistCompletion() async {
         for (var lineIndex = 0;
             lineIndex < bom.components.length;
             lineIndex += 1) {
@@ -704,7 +731,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             ));
           }
           final baseMovement = StockMovement(
-            id: '${order.id}-$lineIndex-${component.productId}-manufacturing-consume',
+            id: '$operationReferenceId-$lineIndex-${component.productId}-manufacturing-consume',
             productId: component.productId,
             productName: product.name,
             type: 'manufacturing_consume',
@@ -715,9 +742,9 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             reason: 'Manufacturing component consumption',
             warehouseId: rawWarehouse.id,
             warehouseName: rawWarehouse.name,
-            movementGroupId: order.id,
-            documentLineId: '${order.id}-consume-$lineIndex',
-            idempotencyKey: '${order.id}:manufacture:consume:$lineIndex',
+            movementGroupId: operationReferenceId,
+            documentLineId: '$operationReferenceId-consume-$lineIndex',
+            idempotencyKey: '$operationReferenceId:manufacture:consume:$lineIndex',
             unitCost: lineUnitCost,
             createdAt: now,
             updatedAt: now,
@@ -739,9 +766,9 @@ Future<ManufacturingOrder> completeManufacturingOrder({
               batchId: allocation.batchId,
               unitCost: allocation.unitCost,
               documentLineId:
-                  '${order.id}-consume-$lineIndex-batch-$batchIndex',
+                  '$operationReferenceId-consume-$lineIndex-batch-$batchIndex',
               idempotencyKey:
-                  '${order.id}:manufacture:consume:$lineIndex:$batchIndex',
+                  '$operationReferenceId:manufacture:consume:$lineIndex:$batchIndex',
             ));
           }
           materialCosts.add(ManufacturingMaterialCost(
@@ -765,7 +792,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
         final eligibleCost = max(0.0, consumedCost - wasteCost);
         producedUnitCost = quantity <= 0 ? 0.0 : eligibleCost / quantity;
         final outputMovement = StockMovement(
-          id: '${order.id}-${output.id}-manufacturing-output',
+          id: '$operationReferenceId-${output.id}-manufacturing-output',
           productId: output.id,
           productName: output.name,
           type: 'manufacturing_produce',
@@ -776,9 +803,9 @@ Future<ManufacturingOrder> completeManufacturingOrder({
           reason: 'Manufacturing finished goods output',
           warehouseId: finishedWarehouse.id,
           warehouseName: finishedWarehouse.name,
-          movementGroupId: order.id,
-          documentLineId: '${order.id}-produce',
-          idempotencyKey: '${order.id}:manufacture:produce',
+          movementGroupId: operationReferenceId,
+          documentLineId: '$operationReferenceId-produce',
+          idempotencyKey: '$operationReferenceId:manufacture:produce',
           unitCost: producedUnitCost,
           createdAt: now,
           updatedAt: now,
@@ -797,7 +824,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             ? outputBatchAllocations
             : <BatchAllocation>[
                 BatchAllocation(
-                  batchId: '${order.id}-${output.id}-manufacturing-batch',
+                  batchId: '$operationReferenceId-${output.id}-manufacturing-batch',
                   quantity: quantity,
                   manufacturingDate: now,
                   unitCost: producedUnitCost,
@@ -830,14 +857,16 @@ Future<ManufacturingOrder> completeManufacturingOrder({
           final resolved = await batchService.addUnifiedBatchStockInTransaction(
             product: output,
             warehouseId: finishedWarehouse.id,
-            batchId: requested.batchId.trim().isEmpty
-                ? '${order.id}-${output.id}-manufacturing-batch-$batchIndex'
-                : requested.batchId.trim(),
+            batchId: operationReferenceId != order.id
+                ? '$operationReferenceId-${output.id}-manufacturing-batch-$batchIndex'
+                : requested.batchId.trim().isEmpty
+                    ? '$operationReferenceId-${output.id}-manufacturing-batch-$batchIndex'
+                    : requested.batchId.trim(),
             quantity: requested.quantity,
             unitCost: producedUnitCost,
             sourceType: 'manufacturing_output',
-            sourceId: order.id,
-            sourceLineId: '${order.id}:output:$batchIndex',
+            sourceId: operationReferenceId,
+            sourceLineId: '$operationReferenceId:output:$batchIndex',
             receivedAt: now,
             storeId: appIdentity.storeId,
             branchId: appIdentity.branchId,
@@ -854,8 +883,8 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             quantity: resolved.quantity,
             batchId: resolved.batchId,
             unitCost: producedUnitCost,
-            documentLineId: '${order.id}-produce-batch-$batchIndex',
-            idempotencyKey: '${order.id}:manufacture:produce:$batchIndex',
+            documentLineId: '$operationReferenceId-produce-batch-$batchIndex',
+            idempotencyKey: '$operationReferenceId:manufacture:produce:$batchIndex',
           ));
         }
         producedBatchAllocations = resolvedOutputBatches;
@@ -885,8 +914,8 @@ Future<ManufacturingOrder> completeManufacturingOrder({
           operationType: 'manufacturing',
           documentType: 'manufacturing_order',
           documentId: order.id,
-          movementGroupId: order.id,
-          idempotencyKey: '${order.id}:manufacture',
+          movementGroupId: operationReferenceId,
+          idempotencyKey: '$operationReferenceId:manufacture',
           movements: movements,
           storeId: appIdentity.storeId,
           branchId: appIdentity.branchId,
@@ -900,6 +929,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             .assertManufacturingTraceabilityInTransaction(
           orderId: order.id,
           storeId: appIdentity.storeId,
+          operationReferenceId: operationReferenceId,
           expectedOutputQuantity: quantity,
           expectedMaterialCost: consumedCost,
           expectedWasteCost: wasteCost,
@@ -956,17 +986,25 @@ Future<ManufacturingOrder> completeManufacturingOrder({
           <Map<String, dynamic>>[persistedOutputCost!.toJson()],
           sortIndices: const <int?>[0],
         );
-        persistedOutputProduct = _withSyncMeta<Product>(
-          output.copyWith(
-            stock: stockAfter,
-            cost: nextAverageCost,
-            usdCost: nextAverageCost,
-            originalCost: nextAverageCost,
-            costCurrency: 'USD',
-            costExchangeRateAtEntry: storeProfile.usdToLbpRate,
-          ),
-          now,
+        final outputPreview = output.copyWith(
+          stock: stockAfter,
+          cost: nextAverageCost,
+          usdCost: nextAverageCost,
+          originalCost: nextAverageCost,
+          costCurrency: 'USD',
+          costExchangeRateAtEntry: storeProfile.usdToLbpRate,
         );
+        persistedOutputProduct = suppressPostCommitInternal
+            ? outputPreview.copyWith(
+                updatedAt: now,
+                deviceId: _deviceId,
+                syncStatus: 'pending',
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                version: output.version + 1,
+                lastModifiedByDeviceId: _deviceId,
+              )
+            : _withSyncMeta<Product>(outputPreview, now);
         await BusinessSqliteStore.upsertEntityPayloads(
           sqliteDb,
           AppStore._productsKey,
@@ -978,6 +1016,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             await AccountingService.recordManufacturingCompletionInTransaction(
           database: sqliteDb,
           order: order,
+          technicalReferenceId: technicalReferenceId,
         );
         if (journalEntryId.isEmpty) {
           throw StateError('Manufacturing accounting journal was not created.');
@@ -993,7 +1032,13 @@ Future<ManufacturingOrder> completeManufacturingOrder({
           deletedAt: '',
           sortIndex: 0,
         );
-      });
+      }
+      if (withinExistingTransactionInternal) {
+        await persistCompletion();
+      } else {
+        await sqliteDb.transaction(persistCompletion);
+      }
+      if (suppressPostCommitInternal) return order;
       _mirrorAuthoritativeStockMovements(movements);
       _inventoryCostLayers
         ..clear()
@@ -1178,9 +1223,365 @@ Future<ManufacturingOrder> completeManufacturingOrder({
     return order;
   }
 
+
+Future<ManufacturingOrder> editCompletedManufacturingOrder({
+    required String orderId,
+    required int expectedVersion,
+    required String bomId,
+    required double quantity,
+    required String rawMaterialsWarehouseId,
+    required String rawMaterialsWarehouseName,
+    required String finishedGoodsWarehouseId,
+    required String finishedGoodsWarehouseName,
+    String notes = '',
+    List<BatchAllocation> outputBatchAllocations = const <BatchAllocation>[],
+    Map<String, double> actualConsumedQuantities = const <String, double>{},
+    Map<String, double> wasteQuantities = const <String, double>{},
+    Map<String, String> wasteReasons = const <String, String>{},
+  }) async {
+    requirePermission(AppPermission.inventoryManufacturingManage);
+    if (quantity <= 0) {
+      throw ArgumentError('Manufacturing quantity must be greater than zero.');
+    }
+    final db = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || db == null) {
+      throw StateError(
+        'Editing completed manufacturing requires the authoritative SQLite store.',
+      );
+    }
+    await _flushProductDerivedData();
+    final persistedOrders = await BusinessSqliteStore.readManufacturingOrders(db);
+    final initial = persistedOrders.firstWhere(
+      (item) => item.id == orderId && !item.isDeleted,
+      orElse: () => throw ArgumentError('Manufacturing order was not found.'),
+    );
+    if (!<String>{'completed', 'complete'}
+        .contains(initial.status.trim().toLowerCase())) {
+      throw StateError('Only a completed manufacturing order can be edited.');
+    }
+    if (initial.version != expectedVersion) {
+      throw StateError(
+        'Manufacturing order changed concurrently. Reload it before editing.',
+      );
+    }
+    final nextVersion = initial.version + 1;
+    final technicalReferenceId =
+        '${initial.id}:manufacturing_edit:v$nextVersion';
+    final operationReferenceId = technicalReferenceId;
+    final reversalOperationReferenceId =
+        '${initial.id}:manufacturing_edit_reverse:v$nextVersion';
+    late ManufacturingOrder updated;
+
+    await db.transaction(() async {
+      updated = await PostedDocumentEditPipeline<ManufacturingOrder>(
+        loadAuthoritative: () async {
+          final rows = await BusinessSqliteStore.readManufacturingOrders(db);
+          return rows.firstWhere(
+            (item) => item.id == orderId && !item.isDeleted,
+            orElse: () =>
+                throw StateError('Manufacturing order disappeared during edit.'),
+          );
+        },
+        validatePermission: (_) async {
+          requirePermission(AppPermission.inventoryManufacturingManage);
+        },
+        validateVersion: (current) async {
+          if (current.version != expectedVersion) {
+            throw StateError(
+              'Manufacturing order changed concurrently. Reload it before editing.',
+            );
+          }
+          if (!<String>{'completed', 'complete'}
+              .contains(current.status.trim().toLowerCase())) {
+            throw StateError(
+              'Only a completed manufacturing order can be edited.',
+            );
+          }
+        },
+        validateDependencies: (current) async {
+          final activeMovements = await BusinessSqliteStore.readStockMovements(db);
+          final reversedIds = activeMovements
+              .where((movement) => movement.reversalOfMovementId.isNotEmpty)
+              .map((movement) => movement.reversalOfMovementId)
+              .toSet();
+          final outputMovements = activeMovements.where(
+            (movement) =>
+                movement.referenceId == current.id &&
+                movement.type == 'manufacturing_produce' &&
+                movement.reversalOfMovementId.isEmpty &&
+                !reversedIds.contains(movement.id),
+          );
+          if (outputMovements.isEmpty) {
+            throw StateError(
+              'Active manufacturing output movements are missing.',
+            );
+          }
+          for (final outputMovement in outputMovements) {
+            final downstream = activeMovements.any(
+              (movement) =>
+                  movement.productId == outputMovement.productId &&
+                  movement.warehouseId == outputMovement.warehouseId &&
+                  (outputMovement.batchId.isEmpty ||
+                      movement.batchId == outputMovement.batchId) &&
+                  movement.referenceId != current.id &&
+                  movement.reversalOfMovementId.isEmpty &&
+                  !reversedIds.contains(movement.id) &&
+                  movement.date.isAfter(outputMovement.date) &&
+                  movement.quantity < -0.000001,
+            );
+            if (downstream) {
+              throw StateError(
+                'Manufactured output has downstream consumption. Reverse the downstream movement before editing this order.',
+              );
+            }
+          }
+        },
+        reverseOperationalEffects: (current) async {
+          await reverseManufacturingOrder(
+            orderId: current.id,
+            reason: 'Manufacturing order edited to version $nextVersion',
+            withinExistingTransactionInternal: true,
+            suppressPostCommitInternal: true,
+            operationReferenceIdOverride: reversalOperationReferenceId,
+          );
+        },
+        reverseAccountingEffects: (current) async {
+          final activeJournal = await db.customSelect(
+            '''
+            SELECT id
+            FROM journal_entries je
+            WHERE je.reference_type = 'manufacturing_order'
+              AND (je.reference_id = ? OR instr(je.reference_id, ?) = 1)
+              AND je.deleted_at = '' AND je.status = 'posted'
+              AND NOT EXISTS (
+                SELECT 1 FROM journal_entries rev
+                WHERE rev.reversed_entry_id = je.id
+                  AND rev.deleted_at = '' AND rev.status = 'posted'
+              )
+            LIMIT 1
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(current.id),
+              Variable<String>('${current.id}:manufacturing_edit:'),
+            ],
+          ).getSingleOrNull();
+          if (activeJournal != null) {
+            throw StateError(
+              'Manufacturing accounting reversal did not complete.',
+            );
+          }
+        },
+        applyChanges: (current) async => current,
+        rebuildOperationalEffects: (current) async {
+          return completeManufacturingOrder(
+            bomId: bomId,
+            quantity: quantity,
+            rawMaterialsWarehouseId: rawMaterialsWarehouseId,
+            rawMaterialsWarehouseName: rawMaterialsWarehouseName,
+            finishedGoodsWarehouseId: finishedGoodsWarehouseId,
+            finishedGoodsWarehouseName: finishedGoodsWarehouseName,
+            notes: notes,
+            outputBatchAllocations: outputBatchAllocations,
+            actualConsumedQuantities: actualConsumedQuantities,
+            wasteQuantities: wasteQuantities,
+            wasteReasons: wasteReasons,
+            existingOrderId: current.id,
+            allowCompletedRepostInternal: true,
+            withinExistingTransactionInternal: true,
+            suppressPostCommitInternal: true,
+            technicalReferenceIdOverride: technicalReferenceId,
+            operationReferenceIdOverride: operationReferenceId,
+            existingOrderOverride: current,
+          );
+        },
+        buildPostedSnapshot: (current) async => current,
+        repostAccounting: (current) async {
+          final journal = await db.customSelect(
+            '''
+            SELECT id
+            FROM journal_entries je
+            WHERE je.reference_type = 'manufacturing_order'
+              AND je.reference_id = ?
+              AND je.deleted_at = '' AND je.status = 'posted'
+              AND NOT EXISTS (
+                SELECT 1 FROM journal_entries rev
+                WHERE rev.reversed_entry_id = je.id
+                  AND rev.deleted_at = '' AND rev.status = 'posted'
+              )
+            LIMIT 1
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(technicalReferenceId),
+            ],
+          ).getSingleOrNull();
+          if (journal == null || current.journalEntryId.trim().isEmpty) {
+            throw StateError(
+              'Edited manufacturing accounting journal was not persisted.',
+            );
+          }
+        },
+        rebuildDerivedState: (current) async {},
+        verifyIntegrity: (current) async {
+          if (current.version != nextVersion ||
+              current.status.trim().toLowerCase() != 'completed') {
+            throw StateError(
+              'Edited manufacturing order failed version/status verification.',
+            );
+          }
+          final persisted = (await BusinessSqliteStore.readManufacturingOrders(db))
+              .firstWhere(
+            (item) => item.id == current.id && !item.isDeleted,
+            orElse: () => throw StateError(
+              'Edited manufacturing order was not persisted.',
+            ),
+          );
+          if (persisted.version != nextVersion ||
+              persisted.journalEntryId != current.journalEntryId) {
+            throw StateError(
+              'Edited manufacturing order failed persistence verification.',
+            );
+          }
+          final movementRow = await db.customSelect(
+            '''
+            SELECT
+              SUM(CASE WHEN movement_type = 'manufacturing_produce'
+                       THEN quantity ELSE 0 END) AS produced,
+              COUNT(*) AS movementCount
+            FROM stock_movements sm
+            WHERE sm.movement_group_id = ? AND sm.deleted_at = ''
+              AND sm.movement_type IN ('manufacturing_consume', 'manufacturing_produce')
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(operationReferenceId),
+            ],
+          ).getSingle();
+          final produced =
+              (movementRow.data['produced'] as num? ?? 0).toDouble();
+          final movementCount =
+              (movementRow.data['movementCount'] as num? ?? 0).toInt();
+          if (movementCount <= 0 || (produced - quantity).abs() > 0.000001) {
+            throw StateError(
+              'Edited manufacturing order failed stock verification.',
+            );
+          }
+        },
+      ).execute();
+    });
+
+    final authoritativeOrders =
+        await BusinessSqliteStore.readManufacturingOrders(db);
+    final persistedUpdated = authoritativeOrders.firstWhere(
+      (item) => item.id == updated.id && !item.isDeleted,
+      orElse: () => updated,
+    );
+    final orderIndex =
+        _manufacturingOrders.indexWhere((item) => item.id == persistedUpdated.id);
+    if (orderIndex == -1) {
+      _manufacturingOrders.add(persistedUpdated);
+    } else {
+      _manufacturingOrders[orderIndex] = persistedUpdated;
+    }
+    final allMovements = await BusinessSqliteStore.readStockMovements(db);
+    _mirrorAuthoritativeStockMovements(allMovements);
+    _inventoryCostLayers
+      ..clear()
+      ..addAll(await BusinessSqliteStore.readInventoryCostLayers(db));
+    _rebuildInventoryCostLayerLookupCache();
+    _productCosts
+      ..clear()
+      ..addAll(await BusinessSqliteStore.readProductCosts(db));
+    _rebuildProductCostLookupCache();
+
+    final newBom = _billsOfMaterials.firstWhere(
+      (item) => item.id == bomId && !item.isDeleted,
+      orElse: () => throw StateError('Edited manufacturing BOM is missing.'),
+    );
+    final touchedProductIds = <String>{
+      initial.outputProductId,
+      persistedUpdated.outputProductId,
+      for (final line in initial.materialCosts) line.productId,
+      for (final line in newBom.components) line.productId,
+    };
+    await _refreshProductStockCompatibilityCache(touchedProductIds);
+
+    _recordSyncChange(
+      entityType: 'manufacturing_order',
+      entityId: persistedUpdated.id,
+      operation: 'edit_completed',
+      payload: persistedUpdated.toJson(),
+    );
+    for (final movement in allMovements.where(
+      (movement) =>
+          movement.movementGroupId == operationReferenceId ||
+          movement.movementGroupId == reversalOperationReferenceId,
+    )) {
+      _recordSyncChange(
+        entityType: 'stock_movement',
+        entityId: movement.id,
+        operation: movement.movementGroupId == operationReferenceId
+            ? 'manufacturing_edit'
+            : 'manufacturing_edit_reversal',
+        payload: movement.toJson(),
+      );
+    }
+
+    final batchRows = await db.customSelect(
+      '''
+      SELECT id, initial_quantity, unit_cost, supplier_batch_number,
+             manufacturing_date, expiration_date, received_at
+      FROM inventory_batches
+      WHERE store_id = ? AND source_type = 'manufacturing_output'
+        AND source_id = ?
+      ORDER BY received_at, id
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(appIdentity.storeId),
+        Variable<String>(operationReferenceId),
+      ],
+    ).get();
+    final outputProduct = _findProductById(persistedUpdated.outputProductId);
+    if (outputProduct != null && batchRows.isNotEmpty) {
+      final allocations = batchRows.map((row) {
+        final data = row.data;
+        return BatchAllocation(
+          batchId: data['id']?.toString() ?? '',
+          quantity: (data['initial_quantity'] as num? ?? 0).toDouble(),
+          unitCost: (data['unit_cost'] as num? ?? 0).toDouble(),
+          supplierBatchNumber:
+              data['supplier_batch_number']?.toString() ?? '',
+          manufacturingDate:
+              DateTime.tryParse(data['manufacturing_date']?.toString() ?? ''),
+          expirationDate:
+              DateTime.tryParse(data['expiration_date']?.toString() ?? ''),
+        );
+      }).toList(growable: false);
+      _recordInventoryBatchSyncChanges(
+        product: outputProduct,
+        allocations: allocations,
+        sourceType: 'manufacturing_output',
+        sourceId: operationReferenceId,
+        now: persistedUpdated.completedAt ?? DateTime.now(),
+        unitCost: persistedUpdated.actualUnitCost,
+        sourceLineIds: <String>[
+          for (var index = 0; index < allocations.length; index += 1)
+            '$operationReferenceId:output:$index',
+        ],
+        receivedAt: persistedUpdated.completedAt,
+      );
+    }
+    await _saveDirty(sync: true);
+    AccountingService.notifyCommittedMutation();
+    _invalidateDerivedDataCaches();
+    notifyListeners();
+    return persistedUpdated;
+  }
+
 Future<ManufacturingOrder> reverseManufacturingOrder({
     required String orderId,
     required String reason,
+    bool withinExistingTransactionInternal = false,
+    bool suppressPostCommitInternal = false,
+    String operationReferenceIdOverride = '',
   }) async {
     requirePermission(AppPermission.inventoryManufacturingManage);
     if (reason.trim().isEmpty) {
@@ -1202,10 +1603,15 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
       throw StateError('Only a completed manufacturing order can be reversed.');
     }
     final allMovements = await BusinessSqliteStore.readStockMovements(db);
+    final reversedMovementIds = allMovements
+        .where((movement) => movement.reversalOfMovementId.isNotEmpty)
+        .map((movement) => movement.reversalOfMovementId)
+        .toSet();
     final originals = allMovements
         .where((movement) =>
             movement.referenceId == order.id &&
             movement.reversalOfMovementId.isEmpty &&
+            !reversedMovementIds.contains(movement.id) &&
             <String>{'manufacturing_consume', 'manufacturing_produce'}
                 .contains(movement.type))
         .toList(growable: false);
@@ -1245,10 +1651,6 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
     // Historical movements remain immutable. A downstream issue only blocks
     // manufacturing reversal while that movement is still active; if it has
     // already been reversed, its original negative row must not block forever.
-    final reversedMovementIds = allMovements
-        .where((movement) => movement.reversalOfMovementId.isNotEmpty)
-        .map((movement) => movement.reversalOfMovementId)
-        .toSet();
     for (final outputMovement in outputMovements) {
       final unsafe = allMovements.any((movement) =>
           movement.productId == outputMovement.productId &&
@@ -1276,6 +1678,13 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
       allowNegativeStockResolver: (_, __) => false,
     );
     final batchService = BatchInventoryService(db);
+    final reversalOperationReferenceId = operationReferenceIdOverride.trim().isEmpty
+        ? '${order.id}:reversal'
+        : operationReferenceIdOverride.trim();
+    final reversalTransactionIdempotencyKey =
+        operationReferenceIdOverride.trim().isEmpty
+            ? '${order.id}:manufacturing:reversal'
+            : '$reversalOperationReferenceId:manufacturing';
     final reversalMovements = originals
         .map((original) => original.copyWith(
               id: '${original.id}-reversal',
@@ -1285,8 +1694,8 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
               reason: reason.trim(),
               sourceMovementId: original.id,
               reversalOfMovementId: original.id,
-              movementGroupId: '${order.id}:reversal',
-              idempotencyKey: '${order.id}:reversal:${original.id}',
+              movementGroupId: reversalOperationReferenceId,
+              idempotencyKey: '$reversalOperationReferenceId:${original.id}',
               createdAt: now,
               updatedAt: now,
               reviewedBy: '',
@@ -1297,7 +1706,7 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
     late ManufacturingOrder reversedOrder;
     Product? reversedOutputProduct;
     ProductCost? reversedOutputCost;
-    await db.transaction(() async {
+    Future<void> persistReversal() async {
       final duplicate = await db.customSelect(
         '''
         SELECT id FROM stock_movements
@@ -1331,8 +1740,8 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
         operationType: 'manufacturing_reversal',
         documentType: 'manufacturing_order',
         documentId: order.id,
-        movementGroupId: '${order.id}:reversal',
-        idempotencyKey: '${order.id}:manufacturing:reversal',
+        movementGroupId: reversalOperationReferenceId,
+        idempotencyKey: reversalTransactionIdempotencyKey,
         movements: reversalMovements,
         storeId: appIdentity.storeId,
         branchId: appIdentity.branchId,
@@ -1504,18 +1913,25 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
             : _inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost
                 ? nextLast
                 : nextAverage;
-        reversedOutputProduct = _withSyncMeta<Product>(
-          outputProduct.copyWith(
-            stock: stockAfter,
-            cost: appliedCost,
-            usdCost: appliedCost,
-            originalCost: appliedCost,
-            costCurrency: 'USD',
-            costExchangeRateAtEntry: storeProfile.usdToLbpRate,
-            updatedAt: now,
-          ),
-          now,
+        final reversedOutputPreview = outputProduct.copyWith(
+          stock: stockAfter,
+          cost: appliedCost,
+          usdCost: appliedCost,
+          originalCost: appliedCost,
+          costCurrency: 'USD',
+          costExchangeRateAtEntry: storeProfile.usdToLbpRate,
+          updatedAt: now,
         );
+        reversedOutputProduct = suppressPostCommitInternal
+            ? reversedOutputPreview.copyWith(
+                deviceId: _deviceId,
+                syncStatus: 'pending',
+                storeId: appIdentity.storeId,
+                branchId: appIdentity.branchId,
+                version: outputProduct.version + 1,
+                lastModifiedByDeviceId: _deviceId,
+              )
+            : _withSyncMeta<Product>(reversedOutputPreview, now);
         await BusinessSqliteStore.upsertEntityPayloads(
           db,
           AppStore._productsKey,
@@ -1566,7 +1982,13 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
         deletedAt: '',
         sortIndex: 0,
       );
-    });
+    }
+    if (withinExistingTransactionInternal) {
+      await persistReversal();
+    } else {
+      await db.transaction(persistReversal);
+    }
+    if (suppressPostCommitInternal) return reversedOrder;
     _mirrorAuthoritativeStockMovements(reversalMovements);
     final index =
         _manufacturingOrders.indexWhere((item) => item.id == order.id);

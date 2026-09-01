@@ -1756,6 +1756,297 @@ void main() {
       );
     });
 
+    test(
+        'editing received purchase rebuilds frozen snapshot, journal and batch-derived cost',
+        () async {
+      final store = await readySqliteStore(storeId: 'ST-PUREDIT1');
+      await store.addOrUpdateProduct(
+          product(id: 'p-edit-cost', stock: 0, cost: 5));
+
+      final received = await store.createPurchase(
+        supplierId: 'supplier-edit',
+        supplierName: 'Edit Supplier',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        receiveNow: true,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-cost',
+            productName: 'Editable Product',
+            quantity: 2,
+            unitCost: 10,
+          ),
+        ],
+      );
+      expect(received.postedSnapshot, isNotNull);
+      expect(received.postedSnapshot!.totals.grandTotal, closeTo(20, 0.0001));
+
+      final edited = await store.updatePurchaseDraft(
+        purchaseId: received.id,
+        expectedVersion: received.version,
+        supplierId: received.supplierId,
+        supplierName: received.supplierName,
+        warehouseId: received.warehouseId,
+        warehouseName: received.warehouseName,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-cost',
+            productName: 'Editable Product',
+            quantity: 2,
+            unitCost: 20,
+          ),
+        ],
+      );
+
+      expect(edited.version, received.version + 1);
+      expect(edited.paymentStatus, 'credit');
+      expect(edited.postedSnapshot, isNotNull);
+      expect(edited.postedSnapshot!.documentId, edited.id);
+      expect(edited.postedSnapshot!.lines.single.productId, 'p-edit-cost');
+      expect(edited.postedSnapshot!.lines.single.unitPrice, closeTo(20, 0.0001));
+      expect(edited.postedSnapshot!.totals.grandTotal, closeTo(40, 0.0001));
+      expect(
+        await sqliteWarehouseQuantity(
+          productId: 'p-edit-cost',
+          warehouseId: Warehouse.defaultId,
+          storeId: store.appIdentity.storeId,
+        ),
+        closeTo(2, 0.0001),
+      );
+      expect(
+        store.productCostFor('p-edit-cost').averageCost,
+        closeTo(20, 0.0001),
+      );
+      expect(
+        store.productCostFor('p-edit-cost').lastCost,
+        closeTo(20, 0.0001),
+      );
+
+      final db = SqliteMigrationManager.database!;
+      final journal = await db.customSelect(
+        '''
+        SELECT COUNT(*) AS count
+        FROM journal_entries je
+        WHERE je.reference_type = 'purchase'
+          AND je.reference_id = ?
+          AND je.status = 'posted'
+          AND je.deleted_at = ''
+          AND NOT EXISTS (
+            SELECT 1 FROM journal_entries reversal
+            WHERE reversal.reversed_entry_id = je.id
+              AND reversal.status = 'posted'
+              AND reversal.deleted_at = ''
+          )
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>('${edited.id}:purchase_edit:v${edited.version}'),
+        ],
+      ).getSingle();
+      expect((journal.data['count'] as num? ?? 0).toInt(), 1);
+    });
+
+    test(
+        'editing received purchase can replace a product at the same total without reusing the old snapshot or cost',
+        () async {
+      final store = await readySqliteStore(storeId: 'ST-PUREDIT2');
+      await store.addOrUpdateProduct(
+          product(id: 'p-edit-old', code: 'P-EDIT-OLD', stock: 0, cost: 4));
+      await store.addOrUpdateProduct(
+          product(id: 'p-edit-new', code: 'P-EDIT-NEW', stock: 0, cost: 7));
+
+      final received = await store.createPurchase(
+        supplierId: 'supplier-edit-same-total',
+        supplierName: 'Same Total Supplier',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        receiveNow: true,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-old',
+            productName: 'Old Product',
+            quantity: 1,
+            unitCost: 20,
+          ),
+        ],
+      );
+
+      final edited = await store.updatePurchaseDraft(
+        purchaseId: received.id,
+        expectedVersion: received.version,
+        supplierId: received.supplierId,
+        supplierName: received.supplierName,
+        warehouseId: received.warehouseId,
+        warehouseName: received.warehouseName,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-new',
+            productName: 'New Product',
+            quantity: 2,
+            unitCost: 10,
+          ),
+        ],
+      );
+
+      expect(edited.subtotal, closeTo(received.subtotal, 0.0001));
+      expect(edited.postedSnapshot, isNotNull);
+      expect(edited.postedSnapshot!.lines.single.productId, 'p-edit-new');
+      expect(edited.postedSnapshot!.lines.single.quantity, closeTo(2, 0.0001));
+      expect(
+        await sqliteWarehouseQuantity(
+          productId: 'p-edit-old',
+          warehouseId: Warehouse.defaultId,
+          storeId: store.appIdentity.storeId,
+        ),
+        closeTo(0, 0.0001),
+      );
+      expect(
+        await sqliteWarehouseQuantity(
+          productId: 'p-edit-new',
+          warehouseId: Warehouse.defaultId,
+          storeId: store.appIdentity.storeId,
+        ),
+        closeTo(2, 0.0001),
+      );
+      expect(store.productCostFor('p-edit-old').averageCost, closeTo(0, 0.0001));
+      expect(store.productCostFor('p-edit-old').lastCost, closeTo(0, 0.0001));
+      expect(store.productCostFor('p-edit-new').averageCost, closeTo(10, 0.0001));
+      expect(store.productCostFor('p-edit-new').lastCost, closeTo(10, 0.0001));
+    });
+
+    test(
+        'editing an older received purchase does not overwrite lastCost from a newer purchase',
+        () async {
+      final store = await readySqliteStore(storeId: 'ST-PUREDIT3');
+      await store.addOrUpdateProduct(
+          product(id: 'p-edit-last-cost', stock: 0, cost: 3));
+
+      final older = await store.createPurchase(
+        supplierId: 'supplier-old-cost',
+        supplierName: 'Older Supplier',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        receiveNow: true,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-last-cost',
+            productName: 'Last Cost Product',
+            quantity: 1,
+            unitCost: 5,
+          ),
+        ],
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await store.createPurchase(
+        supplierId: 'supplier-new-cost',
+        supplierName: 'Newer Supplier',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        receiveNow: true,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-last-cost',
+            productName: 'Last Cost Product',
+            quantity: 1,
+            unitCost: 9,
+          ),
+        ],
+      );
+      expect(store.productCostFor('p-edit-last-cost').lastCost, closeTo(9, 0.0001));
+
+      await store.updatePurchaseDraft(
+        purchaseId: older.id,
+        expectedVersion: older.version,
+        supplierId: older.supplierId,
+        supplierName: older.supplierName,
+        warehouseId: older.warehouseId,
+        warehouseName: older.warehouseName,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-last-cost',
+            productName: 'Last Cost Product',
+            quantity: 1,
+            unitCost: 7,
+          ),
+        ],
+      );
+
+      expect(
+        store.productCostFor('p-edit-last-cost').averageCost,
+        closeTo(8, 0.0001),
+      );
+      expect(store.productCostFor('p-edit-last-cost').lastCost, closeTo(9, 0.0001));
+    });
+
+    test('received purchase edit recalculates payment status from allocations',
+        () async {
+      final store = await readySqliteStore(storeId: 'ST-PUREDIT4');
+      await store.addOrUpdateProduct(
+          product(id: 'p-edit-payment', stock: 0, cost: 2));
+      final received = await store.createPurchase(
+        supplierId: 'supplier-edit-payment',
+        supplierName: 'Payment Supplier',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        receiveNow: true,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-payment',
+            productName: 'Payment Product',
+            quantity: 10,
+            unitCost: 10,
+          ),
+        ],
+      );
+      final partiallyPaid = await store.settlePurchasePayment(
+        purchaseId: received.id,
+        amount: 40,
+        paymentMethod: 'Bank',
+        idempotencyKey: '${received.id}:payment-status-regression',
+      );
+      expect(partiallyPaid.paidAmount, closeTo(40, 0.0001));
+
+      final partialEdit = await store.updatePurchaseDraft(
+        purchaseId: partiallyPaid.id,
+        expectedVersion: partiallyPaid.version,
+        supplierId: partiallyPaid.supplierId,
+        supplierName: partiallyPaid.supplierName,
+        warehouseId: partiallyPaid.warehouseId,
+        warehouseName: partiallyPaid.warehouseName,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-payment',
+            productName: 'Payment Product',
+            quantity: 8,
+            unitCost: 10,
+          ),
+        ],
+      );
+      expect(partialEdit.paymentStatus, 'partial');
+      expect(partialEdit.paidAmount, closeTo(40, 0.0001));
+      expect(partialEdit.postedSnapshot!.totals.paid, closeTo(40, 0.0001));
+      expect(partialEdit.postedSnapshot!.totals.remaining, closeTo(40, 0.0001));
+
+      final paidEdit = await store.updatePurchaseDraft(
+        purchaseId: partialEdit.id,
+        expectedVersion: partialEdit.version,
+        supplierId: partialEdit.supplierId,
+        supplierName: partialEdit.supplierName,
+        warehouseId: partialEdit.warehouseId,
+        warehouseName: partialEdit.warehouseName,
+        items: const [
+          PurchaseItem(
+            productId: 'p-edit-payment',
+            productName: 'Payment Product',
+            quantity: 4,
+            unitCost: 10,
+          ),
+        ],
+      );
+      expect(paidEdit.paymentStatus, 'paid');
+      expect(paidEdit.paidAmount, closeTo(40, 0.0001));
+      expect(paidEdit.postedSnapshot!.totals.remaining, closeTo(0, 0.0001));
+    });
+
     test('handles purchase draft, receive, cancel, and manual stock adjustment',
         () async {
       final store = await readySqliteStore(storeId: 'ST-PURFLOW1');

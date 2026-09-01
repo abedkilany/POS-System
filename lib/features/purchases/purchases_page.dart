@@ -640,10 +640,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
                               ? () => _openPurchaseDialog(context,
                                   template: purchase)
                               : null,
-                          onEdit: (purchase.isDraft || purchase.isReceived) &&
-                                  !purchase.isCancelled &&
-                                  !purchase.isReturned &&
-                                  widget.store.canManagePurchases
+                          onEdit: ((purchase.isDraft || purchase.isReceived) &&
+                                      !purchase.isCancelled &&
+                                      !purchase.isReturned &&
+                                      widget.store.canManagePurchases) ||
+                                  (purchase.isReturned &&
+                                      widget.store.canManagePurchases &&
+                                      widget.store.hasPermission(
+                                          AppPermission.purchasesCancel))
                               ? () => _openPurchaseDialog(context,
                                   editPurchase: purchase)
                               : null,
@@ -970,10 +974,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             ? () =>
                                 _openPurchaseDialog(context, template: purchase)
                             : null,
-                        onEdit: (purchase.isDraft || purchase.isReceived) &&
-                                !purchase.isCancelled &&
-                                !purchase.isReturned &&
-                                widget.store.canManagePurchases
+                        onEdit: ((purchase.isDraft || purchase.isReceived) &&
+                                    !purchase.isCancelled &&
+                                    !purchase.isReturned &&
+                                    widget.store.canManagePurchases) ||
+                                (purchase.isReturned &&
+                                    widget.store.canManagePurchases &&
+                                    widget.store.hasPermission(
+                                        AppPermission.purchasesCancel))
                             ? () => _openPurchaseDialog(context,
                                 editPurchase: purchase)
                             : null,
@@ -1372,10 +1380,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       icon: const Icon(Icons.copy_all_outlined),
                       label: Text(tr.text('duplicate_purchase')),
                     ),
-                    if ((purchase.isDraft || purchase.isReceived) &&
-                        !purchase.isCancelled &&
-                        !purchase.isReturned &&
-                        widget.store.canManagePurchases)
+                    if (((purchase.isDraft || purchase.isReceived) &&
+                            !purchase.isCancelled &&
+                            !purchase.isReturned &&
+                            widget.store.canManagePurchases) ||
+                        (purchase.isReturned &&
+                            widget.store.canManagePurchases &&
+                            widget.store.hasPermission(
+                                AppPermission.purchasesCancel)))
                       FilledButton.icon(
                         onPressed: () {
                           Navigator.pop(sheetContext);
@@ -1509,6 +1521,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
     String paymentStatus = source?.paymentStatus ?? 'paid';
     String paymentMethod = source?.paymentMethod ?? 'Cash';
     final editingReceivedPurchase = editPurchase?.isReceived == true;
+    final editingReturnedPurchase = editPurchase?.isReturned == true;
+    final editingPostedPurchase =
+        editingReceivedPurchase || editingReturnedPurchase;
     final sourceCurrency = items
         .map((item) => item.unitCostCurrency.trim().toUpperCase())
         .firstWhere(
@@ -1518,7 +1533,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     String costCurrency = sourceCurrency.isEmpty
         ? widget.store.storeProfile.defaultProductCurrency
         : sourceCurrency;
-    bool receiveNow = editPurchase?.isReceived == true;
+    bool receiveNow = editingPostedPurchase;
     SupplierProductPrice? selectedSupplierPriceFor(Product product) {
       return supplierId.isEmpty
           ? null
@@ -2554,7 +2569,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
         final paidAmount = paymentStatus == 'partial'
             ? (double.tryParse(paidAmountController.text.trim()) ?? 0)
             : null;
-        if (!editingReceivedPurchase &&
+        if (!editingPostedPurchase &&
             paymentStatus == 'partial' &&
             (paidAmount == null || paidAmount <= 0 || paidAmount > total)) {
           ScaffoldMessenger.of(dialogContext).showSnackBar(
@@ -2562,18 +2577,30 @@ class _PurchasesPageState extends State<PurchasesPage> {
           return;
         }
         if (editPurchase != null) {
-          await widget.store.updatePurchaseDraft(
-            purchaseId: editPurchase.id,
-            expectedVersion: editPurchase.version,
-            supplierId: supplierId,
-            supplierName: supplierName,
-            items: purchaseItems,
-            paymentStatus: paymentStatus,
-            paymentMethod: paymentMethod,
-            paidAmount: paidAmount,
-            warehouseId: selectedWarehouseId,
-            warehouseName: selectedWarehouseName,
-          );
+          if (editingReturnedPurchase) {
+            await widget.store.editPurchaseReturn(
+              purchaseId: editPurchase.id,
+              expectedVersion: editPurchase.version,
+              supplierId: supplierId,
+              supplierName: supplierName,
+              items: purchaseItems,
+              warehouseId: selectedWarehouseId,
+              warehouseName: selectedWarehouseName,
+            );
+          } else {
+            await widget.store.updatePurchaseDraft(
+              purchaseId: editPurchase.id,
+              expectedVersion: editPurchase.version,
+              supplierId: supplierId,
+              supplierName: supplierName,
+              items: purchaseItems,
+              paymentStatus: paymentStatus,
+              paymentMethod: paymentMethod,
+              paidAmount: paidAmount,
+              warehouseId: selectedWarehouseId,
+              warehouseName: selectedWarehouseName,
+            );
+          }
         } else {
           await widget.store.createPurchase(
               supplierId: supplierId,
@@ -2966,7 +2993,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                             SwitchListTile(
                                               contentPadding: EdgeInsets.zero,
                                               value: receiveNow,
-                                              onChanged: editingReceivedPurchase
+                                              onChanged: editingPostedPurchase
                                                   ? null
                                                   : (value) => setDialogState(
                                                       () => receiveNow = value),
@@ -2995,13 +3022,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     child: Text(tr.text(
                                                         'partial_payment'))),
                                               ],
-                                              onChanged: editingReceivedPurchase
+                                              onChanged: editingPostedPurchase
                                                   ? null
                                                   : (value) => setDialogState(
                                                       () => paymentStatus =
                                                           value ?? 'paid'),
                                             ),
-                                            if (!editingReceivedPurchase &&
+                                            if (!editingPostedPurchase &&
                                                 paymentStatus != 'credit') ...[
                                               const SizedBox(height: 8),
                                               DropdownButtonFormField<String>(
@@ -3033,7 +3060,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                             value ?? 'Cash'),
                                               ),
                                             ],
-                                            if (!editingReceivedPurchase &&
+                                            if (!editingPostedPurchase &&
                                                 paymentStatus == 'partial') ...[
                                               SizedBox(height: gap),
                                               TextFormField(
@@ -3056,7 +3083,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                               children: [
                                                 Chip(
                                                     label: Text(
-                                                        '${tr.text('status')}: ${receiveNow ? tr.text('received') : tr.text('draft')}')),
+                                                        '${tr.text('status')}: ${editingReturnedPurchase ? tr.text('returned') : receiveNow ? tr.text('received') : tr.text('draft')}')),
                                                 Chip(
                                                     label: Text(
                                                         '${tr.text('items')}: ${items.length}')),

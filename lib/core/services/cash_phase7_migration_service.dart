@@ -766,7 +766,7 @@ class CashPhase7MigrationService {
     final checks = <(String, String, String)>[
       (
         'missing_sale_journal',
-        "SELECT id, invoice_no AS ref FROM sales s WHERE s.deleted_at = '' AND lower(s.status) <> 'cancelled' AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.deleted_at = '' AND je.status = 'posted' AND je.reference_type = 'sale' AND je.reference_id = s.id)",
+        "SELECT id, invoice_no AS ref FROM sales s WHERE s.deleted_at = '' AND lower(s.status) <> 'cancelled' AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.deleted_at = '' AND je.status = 'posted' AND je.reference_type = 'sale' AND (je.reference_id = s.id OR instr(je.reference_id, s.id || ':sale_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM journal_entries rev WHERE rev.reversed_entry_id = je.id AND rev.deleted_at = '' AND rev.status = 'posted'))",
         'Authoritative sale journal is still missing after Phase 7 reconciliation.'
       ),
       (
@@ -776,22 +776,22 @@ class CashPhase7MigrationService {
       ),
       (
         'missing_receipt_journal',
-        "SELECT id, voucher_no AS ref FROM receipt_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.deleted_at = '' AND je.status = 'posted' AND je.reference_type = 'receipt_voucher' AND je.reference_id = v.id)",
+        "SELECT id, voucher_no AS ref FROM receipt_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.deleted_at = '' AND je.status = 'posted' AND je.reference_type = 'receipt_voucher' AND (je.reference_id = v.id OR instr(je.reference_id, v.id || ':receipt_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM journal_entries rev WHERE rev.reversed_entry_id = je.id AND rev.deleted_at = '' AND rev.status = 'posted'))",
         'Posted receipt voucher has no authoritative journal entry.'
       ),
       (
         'missing_payment_journal',
-        "SELECT id, voucher_no AS ref FROM payment_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.deleted_at = '' AND je.status = 'posted' AND je.reference_type = 'payment_voucher' AND je.reference_id = v.id)",
+        "SELECT id, voucher_no AS ref FROM payment_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.deleted_at = '' AND je.status = 'posted' AND je.reference_type = 'payment_voucher' AND (je.reference_id = v.id OR instr(je.reference_id, v.id || ':payment_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM journal_entries rev WHERE rev.reversed_entry_id = je.id AND rev.deleted_at = '' AND rev.status = 'posted'))",
         'Posted payment voucher has no authoritative journal entry.'
       ),
       (
         'missing_receipt_cash_ledger',
-        "SELECT id, voucher_no AS ref FROM receipt_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'receipt_voucher' AND clt.reference_id = v.id)",
+        "SELECT id, voucher_no AS ref FROM receipt_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'receipt_voucher' AND (clt.reference_id = v.id OR instr(clt.reference_id, v.id || ':receipt_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions rev WHERE rev.reversal_of_id = clt.id AND rev.deleted_at = ''))",
         'Posted cash receipt voucher has no Cash Ledger transaction.'
       ),
       (
         'missing_payment_cash_ledger',
-        "SELECT id, voucher_no AS ref FROM payment_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'payment_voucher' AND clt.reference_id = v.id)",
+        "SELECT id, voucher_no AS ref FROM payment_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'payment_voucher' AND (clt.reference_id = v.id OR instr(clt.reference_id, v.id || ':payment_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions rev WHERE rev.reversal_of_id = clt.id AND rev.deleted_at = ''))",
         'Posted cash payment voucher has no Cash Ledger transaction.'
       ),
     ];

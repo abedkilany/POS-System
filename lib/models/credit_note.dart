@@ -16,6 +16,8 @@ class CreditNote {
     this.refundMethod = 'Customer balance',
     this.note = '',
     this.status = 'Issued',
+    this.operationReferenceId = '',
+    this.version = 1,
     this.createdAt,
     this.updatedAt,
     this.postedSnapshot,
@@ -23,13 +25,27 @@ class CreditNote {
 
   final String id, creditNoteNo, originalSaleId, originalInvoiceNo;
   final String customerName, customerId, currency, refundMethod, note, status;
+  final String operationReferenceId;
   final DateTime date;
   final List<SaleItem> items;
   final double amount;
+  final int version;
   final DateTime? createdAt, updatedAt;
   final PostedDocumentSnapshot? postedSnapshot;
 
   CreditNote copyWith({
+    String? customerName,
+    String? customerId,
+    DateTime? date,
+    List<SaleItem>? items,
+    double? amount,
+    String? currency,
+    String? refundMethod,
+    String? note,
+    String? status,
+    String? operationReferenceId,
+    int? version,
+    DateTime? updatedAt,
     PostedDocumentSnapshot? postedSnapshot,
     bool clearPostedSnapshot = false,
   }) =>
@@ -38,17 +54,20 @@ class CreditNote {
         creditNoteNo: creditNoteNo,
         originalSaleId: originalSaleId,
         originalInvoiceNo: originalInvoiceNo,
-        customerName: customerName,
-        customerId: customerId,
-        date: date,
-        items: items,
-        amount: amount,
-        currency: currency,
-        refundMethod: refundMethod,
-        note: note,
-        status: status,
+        customerName: customerName ?? this.customerName,
+        customerId: customerId ?? this.customerId,
+        date: date ?? this.date,
+        items: items ?? this.items,
+        amount: amount ?? this.amount,
+        currency: currency ?? this.currency,
+        refundMethod: refundMethod ?? this.refundMethod,
+        note: note ?? this.note,
+        status: status ?? this.status,
+        operationReferenceId:
+            operationReferenceId ?? this.operationReferenceId,
+        version: version ?? this.version,
         createdAt: createdAt,
-        updatedAt: updatedAt,
+        updatedAt: updatedAt ?? this.updatedAt,
         postedSnapshot: clearPostedSnapshot
             ? null
             : (postedSnapshot ?? this.postedSnapshot),
@@ -68,6 +87,8 @@ class CreditNote {
         'refundMethod': refundMethod,
         'note': note,
         'status': status,
+        'operationReferenceId': operationReferenceId,
+        'version': version,
         'createdAt': (createdAt ?? date).toIso8601String(),
         'updatedAt': (updatedAt ?? date).toIso8601String(),
         'postedSnapshot': postedSnapshot?.toJson(),
@@ -93,6 +114,9 @@ class CreditNote {
       refundMethod: json['refundMethod']?.toString() ?? 'Customer balance',
       note: json['note']?.toString() ?? '',
       status: json['status']?.toString() ?? 'Issued',
+      operationReferenceId:
+          json['operationReferenceId']?.toString() ?? '',
+      version: (json['version'] as num? ?? 1).toInt(),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
       postedSnapshot: json['postedSnapshot'] is Map

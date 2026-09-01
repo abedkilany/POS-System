@@ -19,8 +19,31 @@ void main() {
       editPath,
       contains('await _requirePurchaseBatchesUnusedInTransaction(sqliteDb, current);'),
     );
+    expect(editPath, contains('clearPostedSnapshot: current.isReceived'));
+    expect(editPath, contains('_receivedPurchasePaymentStatus('));
+    expect(
+      editPath,
+      contains('PostedDocumentSnapshotService.forPurchase('),
+    );
+    expect(
+      editPath,
+      contains('_rebuildProductCostsFromUnifiedBatchesInTransaction('),
+    );
+    expect(
+      editPath,
+      contains("referenceId: '\${updated.id}:purchase_edit:v\${updated.version}'"),
+    );
     expect(editPath, contains('purchase_edit:v'));
     expect(editPath, contains(r'Purchase edit reverse v${current.version}'));
+  });
+
+  test('purchase accounting rejects stale posted snapshots before posting', () {
+    final accounting =
+        File('lib/core/services/accounting_service.dart').readAsStringSync();
+    expect(accounting, contains('_requirePurchasePostedSnapshotMatches('));
+    expect(accounting, contains("mismatch('line identity at index \$index')"));
+    expect(accounting, contains("mismatch('line values at index \$index')"));
+    expect(accounting, contains("mismatch('totals')"));
   });
 
   test('receivePurchase can suppress normal accounting queue for edit repost',

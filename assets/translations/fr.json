@@ -2748,5 +2748,9 @@
   "backup_imported_health_verified": "Sauvegarde restaurée et contrôle de santé après restauration réussi.",
   "backup_imported_health_warning": "Sauvegarde restaurée, mais le contrôle après restauration a détecté {count} problème(s) critique(s). Ouvrez Maintenance avant de reprendre le travail normal.",
   "unified_batch": "Lots unifiés",
-  "unified_batch_fixed_desc": "Valorisation de stock fixe par lots. FEFO est utilisé pour les produits suivis par date d’expiration ; sinon, le lot reçu le plus ancien est consommé en premier."
+  "unified_batch_fixed_desc": "Valorisation de stock fixe par lots. FEFO est utilisé pour les produits suivis par date d’expiration ; sinon, le lot reçu le plus ancien est consommé en premier.",
+  "edit_sale": "Modifier la vente",
+  "invoice_edited_successfully": "Facture modifiée avec succès",
+  "product_not_found_named": "Produit introuvable : {product}",
+  "invalid_sale_item_values": "Valeurs de ligne de vente invalides."
 }

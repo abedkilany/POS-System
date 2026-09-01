@@ -147,6 +147,7 @@ class PostedDocumentSnapshotService {
     double? displayedPaidAmount,
     Map<String, String> taxProfileIdByProductId = const <String, String>{},
     double legacyDefaultVatRatePercent = 0,
+    Map<String, dynamic> extra = const <String, dynamic>{},
   }) {
     final frozenPaid = displayedPaidAmount ?? sale.paidAmount;
     final taxLines = _resolveTaxLines(
@@ -252,6 +253,7 @@ class PostedDocumentSnapshotService {
         'paidAmountInPaymentCurrency': sale.paidAmountInPaymentCurrency,
         'cashReceivedAmountInPaymentCurrency':
             sale.cashReceivedAmountInPaymentCurrency,
+        ...extra,
       },
     );
   }

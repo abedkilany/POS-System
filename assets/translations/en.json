@@ -2748,5 +2748,9 @@
   "backup_imported_health_verified": "Backup restored and post-restore health verification passed.",
   "backup_imported_health_warning": "Backup restored, but post-restore health verification found {count} critical issue(s). Open Maintenance before continuing normal work.",
   "unified_batch": "Unified Batch",
-  "unified_batch_fixed_desc": "Fixed inventory valuation. FEFO is used for expiry-tracked products; otherwise the oldest received batch is consumed first."
+  "unified_batch_fixed_desc": "Fixed inventory valuation. FEFO is used for expiry-tracked products; otherwise the oldest received batch is consumed first.",
+  "edit_sale": "Edit sale",
+  "invoice_edited_successfully": "Invoice updated successfully",
+  "product_not_found_named": "Product not found: {product}",
+  "invalid_sale_item_values": "Invalid sale item values."
 }

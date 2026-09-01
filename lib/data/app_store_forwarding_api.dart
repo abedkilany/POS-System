@@ -962,6 +962,30 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     CatalogItem? replacement,
   })  => _AppStoreSplitCatalogPartiesExpenses(this as AppStore).replaceAndDeleteCatalogItem(type: type, item: item, replacement: replacement);
 
+  Future<Expense> editPostedExpense({
+    required String expenseId,
+    required int expectedVersion,
+    String? title,
+    String? category,
+    double? amount,
+    double? originalAmount,
+    String? originalCurrency,
+    double? exchangeRateAtEntry,
+    DateTime? date,
+    String? notes,
+  }) => _AppStoreSplitCatalogPartiesExpenses(this as AppStore).editPostedExpense(
+        expenseId: expenseId,
+        expectedVersion: expectedVersion,
+        title: title,
+        category: category,
+        amount: amount,
+        originalAmount: originalAmount,
+        originalCurrency: originalCurrency,
+        exchangeRateAtEntry: exchangeRateAtEntry,
+        date: date,
+        notes: notes,
+      );
+
   Future<void> addOrUpdateExpense(Expense expense)  => _AppStoreSplitCatalogPartiesExpenses(this as AppStore).addOrUpdateExpense(expense);
 
   Future<void> postExpense(String id, {bool paidInCash = true})  => _AppStoreSplitCatalogPartiesExpenses(this as AppStore).postExpense(id, paidInCash: paidInCash);
@@ -981,6 +1005,24 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     String code = '',
     String location = '',
   })  => _AppStoreSplitWarehouseCash(this as AppStore).createWarehouse(name: name, code: code, location: location);
+
+  Future<WarehouseTransferOrder> editWarehouseTransferOrder({
+    required String orderId,
+    required int expectedVersion,
+    required String fromWarehouseId,
+    required String toWarehouseId,
+    required List<WarehouseTransferOrderItem> items,
+    String? notes,
+    DateTime? date,
+  }) => _AppStoreSplitWarehouseCash(this as AppStore).editWarehouseTransferOrder(
+        orderId: orderId,
+        expectedVersion: expectedVersion,
+        fromWarehouseId: fromWarehouseId,
+        toWarehouseId: toWarehouseId,
+        items: items,
+        notes: notes,
+        date: date,
+      );
 
   Future<List<WarehouseTransferOrder>> recentWarehouseTransferOrders({
     int limit = 100,
@@ -1077,6 +1119,62 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     String idempotencyKey = '',
     DateTime? date,
   })  => _AppStoreSplitWarehouseCash(this as AppStore).settleAccountPayment(accountType: accountType, accountId: accountId, accountName: accountName, amount: amount, paymentMethod: paymentMethod, referenceNo: referenceNo, notes: notes, idempotencyKey: idempotencyKey, date: date);
+
+  Future<ReceiptVoucher> editReceiptVoucher({
+    required String voucherId,
+    required int expectedVersion,
+    String? customerId,
+    String? customerName,
+    double? amount,
+    String? currency,
+    String? paymentMethod,
+    String? cashLocationId,
+    String? cashDrawerSessionId,
+    List<PaymentAllocationDraft>? allocations,
+    String? notes,
+    DateTime? date,
+  })  => _AppStoreSplitWarehouseCash(this as AppStore).editReceiptVoucher(
+        voucherId: voucherId,
+        expectedVersion: expectedVersion,
+        customerId: customerId,
+        customerName: customerName,
+        amount: amount,
+        currency: currency,
+        paymentMethod: paymentMethod,
+        cashLocationId: cashLocationId,
+        cashDrawerSessionId: cashDrawerSessionId,
+        allocations: allocations,
+        notes: notes,
+        date: date,
+      );
+
+  Future<PaymentVoucher> editPaymentVoucher({
+    required String voucherId,
+    required int expectedVersion,
+    String? supplierId,
+    String? supplierName,
+    double? amount,
+    String? currency,
+    String? paymentMethod,
+    String? cashLocationId,
+    String? cashDrawerSessionId,
+    List<PaymentAllocationDraft>? allocations,
+    String? notes,
+    DateTime? date,
+  })  => _AppStoreSplitWarehouseCash(this as AppStore).editPaymentVoucher(
+        voucherId: voucherId,
+        expectedVersion: expectedVersion,
+        supplierId: supplierId,
+        supplierName: supplierName,
+        amount: amount,
+        currency: currency,
+        paymentMethod: paymentMethod,
+        cashLocationId: cashLocationId,
+        cashDrawerSessionId: cashDrawerSessionId,
+        allocations: allocations,
+        notes: notes,
+        date: date,
+      );
 
   Future<Sale> settleSalePayment({
     required String saleId,
@@ -1175,16 +1273,36 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     required String referenceType,
     required String referenceId,
     bool includePurchaseEditFamily = false,
+    bool includeSaleEditFamily = false,
     required String failureMessage,
-  })  => _AppStoreSplitPurchases(this as AppStore)._requirePostedJournalInTransaction(sqliteDb, referenceType: referenceType, referenceId: referenceId, includePurchaseEditFamily: includePurchaseEditFamily, failureMessage: failureMessage);
+  })  => _AppStoreSplitPurchases(this as AppStore)._requirePostedJournalInTransaction(sqliteDb, referenceType: referenceType, referenceId: referenceId, includePurchaseEditFamily: includePurchaseEditFamily, includeSaleEditFamily: includeSaleEditFamily, failureMessage: failureMessage);
 
   Future<void> _requireNoActiveJournalInTransaction(
     dynamic sqliteDb, {
     required String referenceType,
     required String referenceId,
     bool includePurchaseEditFamily = false,
+    bool includeSaleEditFamily = false,
     required String failureMessage,
-  })  => _AppStoreSplitPurchases(this as AppStore)._requireNoActiveJournalInTransaction(sqliteDb, referenceType: referenceType, referenceId: referenceId, includePurchaseEditFamily: includePurchaseEditFamily, failureMessage: failureMessage);
+  })  => _AppStoreSplitPurchases(this as AppStore)._requireNoActiveJournalInTransaction(sqliteDb, referenceType: referenceType, referenceId: referenceId, includePurchaseEditFamily: includePurchaseEditFamily, includeSaleEditFamily: includeSaleEditFamily, failureMessage: failureMessage);
+
+  Future<Purchase> editPurchaseReturn({
+    required String purchaseId,
+    required int expectedVersion,
+    required String supplierId,
+    required String supplierName,
+    required List<PurchaseItem> items,
+    String warehouseId = '',
+    String warehouseName = '',
+  }) => _AppStoreSplitPurchases(this as AppStore).editPurchaseReturn(
+        purchaseId: purchaseId,
+        expectedVersion: expectedVersion,
+        supplierId: supplierId,
+        supplierName: supplierName,
+        items: items,
+        warehouseId: warehouseId,
+        warehouseName: warehouseName,
+      );
 
   Future<void> returnPurchase(
     String id, {
@@ -1263,6 +1381,30 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     String movementId, {
     String reason = '',
   })  => _AppStoreSplitInventory(this as AppStore).reverseExpiryBatchAdjustment(movementId, reason: reason);
+
+  Future<int> manualStockAdjustmentVersion(String operationReferenceId)
+      => _AppStoreSplitInventory(this as AppStore)
+          .manualStockAdjustmentVersion(operationReferenceId);
+
+  Future<void> editStockAdjustment({
+    required String operationReferenceId,
+    required int expectedVersion,
+    required double quantityDelta,
+    required String reason,
+    String adjustmentCategory = 'other',
+    String notes = '',
+    String evidenceRef = '',
+    List<BatchAllocation> batchAllocations = const <BatchAllocation>[],
+  }) => _AppStoreSplitInventory(this as AppStore).editStockAdjustment(
+        operationReferenceId: operationReferenceId,
+        expectedVersion: expectedVersion,
+        quantityDelta: quantityDelta,
+        reason: reason,
+        adjustmentCategory: adjustmentCategory,
+        notes: notes,
+        evidenceRef: evidenceRef,
+        batchAllocations: batchAllocations,
+      );
 
   Future<void> adjustStock({
     required String productId,
@@ -1366,6 +1508,37 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     String existingOrderId = '',
   })  => _AppStoreSplitManufacturing(this as AppStore).completeManufacturingOrder(bomId: bomId, quantity: quantity, rawMaterialsWarehouseId: rawMaterialsWarehouseId, rawMaterialsWarehouseName: rawMaterialsWarehouseName, finishedGoodsWarehouseId: finishedGoodsWarehouseId, finishedGoodsWarehouseName: finishedGoodsWarehouseName, notes: notes, outputBatchAllocations: outputBatchAllocations, actualConsumedQuantities: actualConsumedQuantities, wasteQuantities: wasteQuantities, wasteReasons: wasteReasons, existingOrderId: existingOrderId);
 
+  Future<ManufacturingOrder> editCompletedManufacturingOrder({
+    required String orderId,
+    required int expectedVersion,
+    required String bomId,
+    required double quantity,
+    required String rawMaterialsWarehouseId,
+    required String rawMaterialsWarehouseName,
+    required String finishedGoodsWarehouseId,
+    required String finishedGoodsWarehouseName,
+    String notes = '',
+    List<BatchAllocation> outputBatchAllocations = const <BatchAllocation>[],
+    Map<String, double> actualConsumedQuantities = const <String, double>{},
+    Map<String, double> wasteQuantities = const <String, double>{},
+    Map<String, String> wasteReasons = const <String, String>{},
+  }) => _AppStoreSplitManufacturing(this as AppStore)
+      .editCompletedManufacturingOrder(
+        orderId: orderId,
+        expectedVersion: expectedVersion,
+        bomId: bomId,
+        quantity: quantity,
+        rawMaterialsWarehouseId: rawMaterialsWarehouseId,
+        rawMaterialsWarehouseName: rawMaterialsWarehouseName,
+        finishedGoodsWarehouseId: finishedGoodsWarehouseId,
+        finishedGoodsWarehouseName: finishedGoodsWarehouseName,
+        notes: notes,
+        outputBatchAllocations: outputBatchAllocations,
+        actualConsumedQuantities: actualConsumedQuantities,
+        wasteQuantities: wasteQuantities,
+        wasteReasons: wasteReasons,
+      );
+
   /// Reverses a completed manufacturing order without deleting history.
   /// A conservative downstream-movement guard prevents returning raw material
   /// after any of the produced finished goods have subsequently moved out.
@@ -1424,11 +1597,47 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     String warehouseName = '',
   })  => _AppStoreSplitSalesReturns(this as AppStore).createSale(customerName: customerName, customerId: customerId, items: items, discount: discount, originalDiscount: originalDiscount, discountCurrency: discountCurrency, discountExchangeRateAtEntry: discountExchangeRateAtEntry, paymentMethod: paymentMethod, paymentStatus: paymentStatus, invoiceCurrency: invoiceCurrency, paymentCurrency: paymentCurrency, exchangeRateAtPayment: exchangeRateAtPayment, paidAmount: paidAmount, cashReceivedAmount: cashReceivedAmount, paidAmountInPaymentCurrency: paidAmountInPaymentCurrency, cashReceivedAmountInPaymentCurrency: cashReceivedAmountInPaymentCurrency, warehouseId: warehouseId, warehouseName: warehouseName);
 
+  Future<Sale> editPostedSale({
+    required String saleId,
+    required int expectedVersion,
+    required String customerName,
+    String customerId = '',
+    required List<SaleItem> items,
+    double discount = 0,
+    double? originalDiscount,
+    String? discountCurrency,
+    double? discountExchangeRateAtEntry,
+    String warehouseId = '',
+    String warehouseName = '',
+  })  => _AppStoreSplitSalesReturns(this as AppStore).editPostedSale(
+        saleId: saleId,
+        expectedVersion: expectedVersion,
+        customerName: customerName,
+        customerId: customerId,
+        items: items,
+        discount: discount,
+        originalDiscount: originalDiscount,
+        discountCurrency: discountCurrency,
+        discountExchangeRateAtEntry: discountExchangeRateAtEntry,
+        warehouseId: warehouseId,
+        warehouseName: warehouseName,
+      );
+
   Future<CreditNote> returnSale(
     String id, {
     bool restoreStock = true,
     Map<String, double>? returnedQuantities,
   })  => _AppStoreSplitSalesReturns(this as AppStore).returnSale(id, restoreStock: restoreStock, returnedQuantities: returnedQuantities);
+
+  Future<CreditNote> editSaleReturn({
+    required String creditNoteId,
+    required int expectedVersion,
+    required Map<String, double> returnedQuantities,
+  }) => _AppStoreSplitSalesReturns(this as AppStore).editSaleReturn(
+        creditNoteId: creditNoteId,
+        expectedVersion: expectedVersion,
+        returnedQuantities: returnedQuantities,
+      );
 
   Future<void> cancelSale(
     String id, {

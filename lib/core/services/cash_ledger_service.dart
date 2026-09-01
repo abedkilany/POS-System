@@ -289,11 +289,31 @@ class CashLedgerService {
     String deviceId = '',
     DateTime? occurredAt,
   }) async {
-    final rows = await list(
-      referenceType: referenceType,
-      referenceId: referenceId,
-      limit: 500,
-    );
+    final cleanType = referenceType.trim();
+    final cleanId = referenceId.trim();
+    final rows = cleanType == 'expense'
+        ? (await _db.customSelect(
+            '''
+            SELECT *
+            FROM cash_ledger_transactions tx
+            WHERE tx.reference_type = 'expense'
+              AND (tx.reference_id = ? OR instr(tx.reference_id, ?) = 1)
+              AND tx.deleted_at = ''
+            ORDER BY tx.occurred_at DESC, tx.created_at DESC
+            LIMIT 500
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(cleanId),
+              Variable<String>('$cleanId:expense_edit:'),
+            ],
+          ).get())
+            .map((row) => _fromRow(row.data))
+            .toList(growable: false)
+        : await list(
+            referenceType: cleanType,
+            referenceId: cleanId,
+            limit: 500,
+          );
     if (rows.isEmpty) return const <CashLedgerTransaction>[];
     return _db.transaction(() async {
       final result = <CashLedgerTransaction>[];

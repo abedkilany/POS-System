@@ -23,7 +23,9 @@ import '../core/services/inventory_traceability_service.dart';
 import '../core/services/unified_batch_phase4_closure_service.dart';
 import '../core/services/payment_voucher_service.dart';
 import '../core/services/posted_document_snapshot_service.dart';
+import '../core/services/posted_document_edit_framework.dart';
 import '../core/services/cash_reversal_service.dart';
+import '../core/services/cash_ledger_service.dart';
 import '../core/localization/localized_domain_exception.dart';
 import '../core/sync_unified/sync_device_state.dart';
 import '../core/snapshot/unified_snapshot.dart';
@@ -66,6 +68,8 @@ import '../models/user_role.dart';
 import '../models/app_user.dart';
 import '../models/app_identity.dart';
 import '../models/payment_allocation.dart';
+import '../models/receipt_voucher.dart';
+import '../models/payment_voucher.dart';
 
 part 'app_store_backup.dart';
 part 'app_store_purchase_insights.dart';

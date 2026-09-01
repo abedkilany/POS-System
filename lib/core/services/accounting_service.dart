@@ -21,6 +21,7 @@ import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
 import '../storage/sqlite/business_sqlite_store.dart';
 import 'cash_ledger_service.dart';
+import 'posted_document_edit_framework.dart';
 
 class AccountingService {
   AccountingService._();
@@ -1185,11 +1186,16 @@ class AccountingService {
 
   static Future<void> recordSale(
     Sale sale, {
+    String? accountingReferenceId,
     bool paymentPostedSeparately = false,
     bool withinExistingTransaction = false,
   }) async {
     if (sale.isDeleted || sale.isCancelled) return;
     if (!isAvailable) return;
+    _requireSalePostedSnapshotMatches(
+      sale,
+      validatePaymentTotals: !paymentPostedSeparately,
+    );
     final accountsReceivable = await resolveAccountRole('accounts_receivable');
     final salesRevenue = await resolveAccountRole('sales_revenue');
     final salesDiscounts = await resolveAccountRole('sales_discounts');
@@ -1348,7 +1354,9 @@ class AccountingService {
       JournalEntryDraft(
         entryDate: sale.date,
         referenceType: 'sale',
-        referenceId: sale.id,
+        referenceId: accountingReferenceId?.trim().isNotEmpty == true
+            ? accountingReferenceId!.trim()
+            : sale.id,
         referenceNo: sale.invoiceNo,
         description: 'فاتورة مبيعات ${sale.invoiceNo}',
         createdBy: sale.lastModifiedByDeviceId,
@@ -1481,6 +1489,10 @@ class AccountingService {
       return true;
     }
     if (!isAvailable) return true;
+    _requirePurchasePostedSnapshotMatches(
+      purchase,
+      validatePaymentTotals: !paymentPostedSeparately,
+    );
     final purchaseTax = await resolveAccountRole('purchase_tax');
     final accountsPayable = await resolveAccountRole('accounts_payable');
     final accountingCurrency = _moneyProfile.baseCurrency;
@@ -1769,6 +1781,43 @@ class AccountingService {
     _notifyMutation();
   }
 
+  /// Reposts an edited posted expense inside the caller's authoritative
+  /// transaction using a versioned technical reference. The original journal,
+  /// cash operation, Cash Ledger row and compatibility rows remain immutable.
+  static Future<void> repostEditedExpenseInExistingTransaction(
+    Expense expense, {
+    required bool paidInCash,
+    required String technicalReferenceId,
+  }) async {
+    if (expense.isDeleted || !expense.isPosted || expense.amount <= 0) {
+      throw StateError('Only a valid posted expense can be reposted.');
+    }
+    final ref = technicalReferenceId.trim();
+    if (ref.isEmpty) {
+      throw ArgumentError('technicalReferenceId is required.');
+    }
+    await _upsertExpenseRowInExistingTransaction(expense);
+    if (paidInCash) {
+      await _recordExpenseInExistingTransaction(
+        expense,
+        accountingReferenceId: ref,
+      );
+      await _recordExpenseCompatibilityLedgerInExistingTransaction(
+        expense,
+        movementVersionSuffix: 'edit-v${expense.version}',
+      );
+    } else {
+      await _recordCreditExpenseInExistingTransaction(
+        expense,
+        accountingReferenceId: ref,
+      );
+      await _recordCreditExpenseCompatibilityLedgerInExistingTransaction(
+        expense,
+        movementVersionSuffix: 'edit-v${expense.version}',
+      );
+    }
+  }
+
   /// Returns posted credit-expense ids that have not yet been settled from cash.
   /// Credit approval is identified by the compatibility ledger row written by
   /// [recordExpenseOnCredit]. A successful cash settlement is identified by the
@@ -1900,8 +1949,9 @@ class AccountingService {
   }
 
   static Future<void> _recordExpenseCompatibilityLedgerInExistingTransaction(
-    Expense expense,
-  ) async {
+    Expense expense, {
+    String movementVersionSuffix = '',
+  }) async {
     final accountId = expense.id.trim();
     if (accountId.isEmpty || expense.amount <= 0) return;
     final accountName =
@@ -1960,16 +2010,20 @@ class AccountingService {
       );
     }
 
-    await insertMovement('${expense.id}-expense-debit', 'expense',
+    final suffix = movementVersionSuffix.trim().isEmpty
+        ? ''
+        : '-${movementVersionSuffix.trim()}';
+    await insertMovement('${expense.id}-expense-debit$suffix', 'expense',
         expense.amount, 0, '', 'Expense ${expense.title}');
-    await insertMovement('${expense.id}-expense-credit', 'paymentPaid', 0,
+    await insertMovement('${expense.id}-expense-credit$suffix', 'paymentPaid', 0,
         expense.amount, 'Cash', 'Expense settlement ${expense.title}');
   }
 
   static Future<void>
       _recordCreditExpenseCompatibilityLedgerInExistingTransaction(
-    Expense expense,
-  ) async {
+    Expense expense, {
+    String movementVersionSuffix = '',
+  }) async {
     final accountId = expense.id.trim();
     if (accountId.isEmpty || expense.amount <= 0) return;
     final accountName =
@@ -1979,7 +2033,10 @@ class AccountingService {
         : expense.originalCurrency.trim().toUpperCase();
     final when = expense.date.toUtc().toIso8601String();
     final updated = expense.updatedAt.toUtc().toIso8601String();
-    final id = '${expense.id}-expense-debit';
+    final suffix = movementVersionSuffix.trim().isEmpty
+        ? ''
+        : '-${movementVersionSuffix.trim()}';
+    final id = '${expense.id}-expense-debit$suffix';
     final existing = await _db.customSelect(
       "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
       variables: <Variable<Object>>[Variable<String>(id)],
@@ -2024,8 +2081,9 @@ class AccountingService {
   }
 
   static Future<void> _recordCreditExpenseInExistingTransaction(
-    Expense expense,
-  ) async {
+    Expense expense, {
+    String accountingReferenceId = '',
+  }) async {
     final expenseAccount = await _resolveExpenseAccountForDatabase(
       _db,
       expense,
@@ -2035,11 +2093,14 @@ class AccountingService {
       'accounts_payable',
     );
     final amount = _roundMoney(expense.amount);
+    final referenceId = accountingReferenceId.trim().isEmpty
+        ? expense.id
+        : accountingReferenceId.trim();
     final entryId = await createPostedEntry(
       JournalEntryDraft(
         entryDate: expense.date,
         referenceType: 'expense',
-        referenceId: expense.id,
+        referenceId: referenceId,
         referenceNo: expense.title,
         description: 'مصروف آجل: ${expense.title}',
         source: 'system',
@@ -2070,8 +2131,9 @@ class AccountingService {
   }
 
   static Future<void> _recordExpenseInExistingTransaction(
-    Expense expense,
-  ) async {
+    Expense expense, {
+    String accountingReferenceId = '',
+  }) async {
     final cashExpenseLocation = await _openCashDrawerLocationForDevice(
         deviceId: expense.deviceId, branchId: expense.branchId);
     if (cashExpenseLocation == null) {
@@ -2093,8 +2155,11 @@ class AccountingService {
       expense,
     );
     final amount = _roundMoney(expense.amount);
-    final idempotencyKey = 'expense:${expense.id.trim()}';
-    final operationId = 'cashop_expense_${expense.id.trim()}';
+    final referenceId = accountingReferenceId.trim().isEmpty
+        ? expense.id.trim()
+        : accountingReferenceId.trim();
+    final idempotencyKey = 'expense:$referenceId';
+    final operationId = 'cashop_expense_$referenceId';
     final nowDate = DateTime.now().toUtc();
     final now = nowDate.toIso8601String();
     final ledger = CashLedgerService(_db);
@@ -2121,7 +2186,7 @@ class AccountingService {
       JournalEntryDraft(
         entryDate: expense.date,
         referenceType: 'expense',
-        referenceId: expense.id,
+        referenceId: referenceId,
         referenceNo: expense.title,
         description: 'مصروف: ${expense.title}',
         source: 'system',
@@ -2183,7 +2248,7 @@ class AccountingService {
     );
 
     await ledger.appendInExistingTransaction(CashLedgerTransaction(
-      id: 'cashledger_expense_${expense.id.trim()}',
+      id: 'cashledger_expense_$referenceId',
       type: 'expense',
       direction: 'out',
       amount: amount,
@@ -2191,7 +2256,7 @@ class AccountingService {
       cashLocationId: cashExpenseLocation.id,
       cashDrawerSessionId: sessionId,
       referenceType: 'expense',
-      referenceId: expense.id,
+      referenceId: referenceId,
       referenceNumber: expense.title,
       paymentMethod: 'Cash',
       createdBy: expense.lastModifiedByDeviceId,
@@ -2258,6 +2323,7 @@ class AccountingService {
     String createdBy = '',
     String storeId = '',
     String branchId = '',
+    String accountingReferenceId = '',
     bool withinExistingTransaction = false,
   }) async {
     final normalizedType = voucherType.trim().toLowerCase();
@@ -2270,6 +2336,9 @@ class AccountingService {
     if (cleanVoucherId.isEmpty) {
       throw ArgumentError('معرف السند مطلوب للترحيل المحاسبي.');
     }
+    final cleanAccountingReferenceId = accountingReferenceId.trim().isEmpty
+        ? cleanVoucherId
+        : accountingReferenceId.trim();
     final cleanAmount = _cleanAmount(amount);
     if (cleanAmount <= 0) {
       throw ArgumentError('مبلغ السند يجب أن يكون أكبر من صفر.');
@@ -2286,7 +2355,7 @@ class AccountingService {
       """,
       variables: <Variable<Object>>[
         Variable<String>(referenceType),
-        Variable<String>(cleanVoucherId),
+        Variable<String>(cleanAccountingReferenceId),
       ],
     ).getSingleOrNull();
     if (existing != null) {
@@ -2356,7 +2425,7 @@ class AccountingService {
       JournalEntryDraft(
         entryDate: date,
         referenceType: referenceType,
-        referenceId: cleanVoucherId,
+        referenceId: cleanAccountingReferenceId,
         referenceNo: voucherNo.trim(),
         description: isReceipt
             ? 'سند قبض عميل ${voucherNo.trim()}'
@@ -2661,11 +2730,141 @@ class AccountingService {
       return true;
     }
 
+
     final inserted = withinExistingTransaction
         ? await persistEntry()
         : await db.transaction(persistEntry);
     return inserted ? entryId : '';
   }
+
+  static void _requireSalePostedSnapshotMatches(
+    Sale sale, {
+    required bool validatePaymentTotals,
+  }) {
+    final snapshot = sale.postedSnapshot;
+    if (snapshot == null) return;
+    const tolerance = 0.000001;
+    bool sameNumber(double left, double right) =>
+        (left - right).abs() <= tolerance;
+    Never mismatch(String reason) => throw StateError(
+          'Sale posted snapshot does not match the current document ($reason). Rebuild the snapshot before accounting posting.',
+        );
+
+    if (snapshot.documentType != 'sale_invoice') mismatch('document type');
+    if (snapshot.documentId.trim() != sale.id.trim()) mismatch('document id');
+    if (snapshot.documentNumber.trim() != sale.invoiceNo.trim()) {
+      mismatch('document number');
+    }
+    if (snapshot.party.id.trim() != sale.customerId.trim()) mismatch('customer');
+    if (snapshot.warehouseId.trim() != sale.warehouseId.trim()) {
+      mismatch('warehouse');
+    }
+    if (snapshot.lines.length != sale.items.length) mismatch('line count');
+    for (var index = 0; index < sale.items.length; index += 1) {
+      final item = sale.items[index];
+      final line = snapshot.lines[index];
+      if (line.lineId.trim() != '${sale.id}-line-$index' ||
+          line.productId.trim() != item.productId.trim()) {
+        mismatch('line identity at index $index');
+      }
+      if (!sameNumber(line.quantity, item.quantity) ||
+          !sameNumber(line.baseQuantity, item.effectiveBaseQuantity) ||
+          !sameNumber(line.conversionToBase, item.conversionToBase) ||
+          !sameNumber(line.unitPrice, item.unitPrice) ||
+          !sameNumber(line.lineTotal, item.lineTotal)) {
+        mismatch('line values at index $index');
+      }
+    }
+    if (!sameNumber(snapshot.totals.subtotal, sale.subtotal) ||
+        !sameNumber(snapshot.totals.discount, sale.discount) ||
+        !sameNumber(snapshot.totals.grandTotal, sale.total) ||
+        !sameNumber(snapshot.totals.baseAmount, sale.baseAmount)) {
+      mismatch('totals');
+    }
+    if (validatePaymentTotals) {
+      final expectedPaid =
+          sale.paidAmount.clamp(0, sale.invoiceTotal).toDouble();
+      if (!sameNumber(snapshot.totals.paid, expectedPaid) ||
+          !sameNumber(
+            snapshot.totals.remaining,
+            (sale.invoiceTotal - expectedPaid)
+                .clamp(0, double.infinity)
+                .toDouble(),
+          )) {
+        mismatch('payment totals');
+      }
+    }
+  }
+
+  static void _requirePurchasePostedSnapshotMatches(
+    Purchase purchase, {
+    required bool validatePaymentTotals,
+  }) {
+    final snapshot = purchase.postedSnapshot;
+    if (snapshot == null) return;
+    const tolerance = 0.000001;
+    bool sameNumber(double left, double right) =>
+        (left - right).abs() <= tolerance;
+    Never mismatch(String reason) => throw StateError(
+          'Purchase posted snapshot does not match the current document ($reason). Rebuild the snapshot before accounting posting.',
+        );
+
+    if (snapshot.documentType != 'purchase_invoice') {
+      mismatch('document type');
+    }
+    if (snapshot.documentId.trim() != purchase.id.trim()) {
+      mismatch('document id');
+    }
+    if (snapshot.documentNumber.trim() != purchase.purchaseNo.trim()) {
+      mismatch('document number');
+    }
+    if (snapshot.party.id.trim() != purchase.supplierId.trim()) {
+      mismatch('supplier');
+    }
+    if (snapshot.warehouseId.trim() != purchase.warehouseId.trim()) {
+      mismatch('warehouse');
+    }
+    if (snapshot.lines.length != purchase.items.length) {
+      mismatch('line count');
+    }
+    for (var index = 0; index < purchase.items.length; index += 1) {
+      final item = purchase.items[index];
+      final line = snapshot.lines[index];
+      final expectedLineId = item.lineId.trim().isEmpty
+          ? '${purchase.id}-line-$index'
+          : item.lineId.trim();
+      if (line.lineId.trim() != expectedLineId ||
+          line.productId.trim() != item.productId.trim()) {
+        mismatch('line identity at index $index');
+      }
+      if (!sameNumber(line.quantity, item.quantity) ||
+          !sameNumber(line.baseQuantity, item.baseQuantity) ||
+          !sameNumber(line.conversionToBase, item.conversionToBase) ||
+          !sameNumber(line.unitPrice, item.unitCost) ||
+          !sameNumber(line.lineTotal, item.lineTotal)) {
+        mismatch('line values at index $index');
+      }
+    }
+    if (!sameNumber(snapshot.totals.subtotal, purchase.subtotal) ||
+        !sameNumber(snapshot.totals.grandTotal, purchase.subtotal) ||
+        !sameNumber(snapshot.totals.baseAmount, purchase.subtotal)) {
+      mismatch('totals');
+    }
+    if (validatePaymentTotals) {
+      final expectedPaid =
+          purchase.paidAmount.clamp(0, purchase.subtotal).toDouble();
+      if (!sameNumber(snapshot.totals.paid, expectedPaid) ||
+          !sameNumber(
+            snapshot.totals.remaining,
+            (purchase.subtotal - expectedPaid)
+                .clamp(0, double.infinity)
+                .toDouble(),
+          )) {
+        mismatch('payment totals');
+      }
+    }
+  }
+
 
   static Future<int> countPostedJournalEntriesForReferences({
     required String referenceType,
@@ -2695,6 +2894,72 @@ class AccountingService {
       ],
     ).getSingleOrNull();
     return row?.read<int>('count') ?? 0;
+  }
+
+  static Future<int> countPostedSaleEntriesForSale(
+    String saleId,
+  ) async {
+    if (!isAvailable) return 0;
+    final normalizedSaleId = saleId.trim();
+    if (normalizedSaleId.isEmpty) return 0;
+    final row = await _db.customSelect(
+      '''
+      SELECT COUNT(*) AS count
+      FROM journal_entries je
+      WHERE reference_type = 'sale'
+        AND (reference_id = ? OR instr(reference_id, ?) = 1)
+        AND deleted_at = '' AND status = 'posted'
+        AND NOT EXISTS (
+          SELECT 1 FROM journal_entries rev
+          WHERE rev.reversed_entry_id = je.id
+            AND rev.deleted_at = '' AND rev.status = 'posted'
+        )
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(normalizedSaleId),
+        Variable<String>('$normalizedSaleId:sale_edit:'),
+      ],
+    ).getSingleOrNull();
+    return row?.read<int>('count') ?? 0;
+  }
+
+  static Future<void> reverseSaleEntriesForSale({
+    required String saleId,
+    String reason = '',
+    String createdBy = '',
+    bool adjustCashLocationBalance = true,
+    bool notifyChange = true,
+    bool withinExistingTransaction = false,
+  }) async {
+    if (!isAvailable) return;
+    final normalizedSaleId = saleId.trim();
+    if (normalizedSaleId.isEmpty) return;
+    var remaining = await countPostedSaleEntriesForSale(normalizedSaleId);
+    var reversedAny = false;
+    var safetyCounter = 0;
+    while (remaining > 0) {
+      if (safetyCounter++ >= 100) {
+        throw StateError(
+            'Too many active sale journal entries for $normalizedSaleId.');
+      }
+      await reverseEntryForReference(
+        referenceType: 'sale',
+        referenceId: normalizedSaleId,
+        reason: reason,
+        createdBy: createdBy,
+        adjustCashLocationBalance: adjustCashLocationBalance,
+        notifyChange: false,
+        withinExistingTransaction: withinExistingTransaction,
+      );
+      final next = await countPostedSaleEntriesForSale(normalizedSaleId);
+      if (next >= remaining) {
+        throw StateError(
+            'Failed to reverse active sale journal for $normalizedSaleId.');
+      }
+      reversedAny = true;
+      remaining = next;
+    }
+    if (notifyChange && reversedAny) _notifyMutation();
   }
 
   static Future<int> countPostedPurchaseEntriesForPurchase(
@@ -2779,13 +3044,30 @@ class AccountingService {
     if (referenceType.trim().isEmpty || referenceId.trim().isEmpty) return;
     final normalizedReferenceType = referenceType.trim();
     final normalizedReferenceId = referenceId.trim();
-    // Purchase invoice edits use versioned technical references
-    // (<purchaseId>:purchase_edit:vN). A later edit/return must reverse the
-    // latest active member of that reference family, not only the original
-    // base reference. Other journal types keep exact-reference semantics.
-    final isPurchaseReference = normalizedReferenceType == 'purchase';
+    // Posted document edits use versioned technical references. A later
+    // edit/return/cancel must reverse the latest active member of that family.
+    final editFamilyPrefix = normalizedReferenceType == 'purchase'
+        ? '$normalizedReferenceId:purchase_edit:'
+        : normalizedReferenceType == 'sale'
+            ? '$normalizedReferenceId:sale_edit:'
+            : normalizedReferenceType == 'receipt_voucher'
+                ? '$normalizedReferenceId:receipt_edit:'
+                : normalizedReferenceType == 'payment_voucher'
+                    ? '$normalizedReferenceId:payment_edit:'
+                    : normalizedReferenceType == 'expense'
+                        ? '$normalizedReferenceId:expense_edit:'
+                        : normalizedReferenceType == 'manual_journal'
+                            ? '$normalizedReferenceId:manual_edit:'
+                            : normalizedReferenceType == 'inventory_adjustment'
+                                ? '$normalizedReferenceId:inventory_adjustment_edit:'
+                                : normalizedReferenceType == 'sale_return'
+                                    ? '$normalizedReferenceId:sale_return_edit:'
+                                    : normalizedReferenceType == 'manufacturing_order'
+                                        ? '$normalizedReferenceId:manufacturing_edit:'
+                                        : '';
+    final hasEditFamily = editFamilyPrefix.isNotEmpty;
     final entryRow = await db.customSelect(
-      isPurchaseReference
+      hasEditFamily
           ? '''
       SELECT id, entry_no, entry_date, reference_type, reference_id, reference_no,
              description, created_by, store_id, branch_id
@@ -2818,8 +3100,7 @@ class AccountingService {
       variables: <Variable<Object>>[
         Variable<String>(normalizedReferenceType),
         Variable<String>(normalizedReferenceId),
-        if (isPurchaseReference)
-          Variable<String>('$normalizedReferenceId:purchase_edit:'),
+        if (hasEditFamily) Variable<String>(editFamilyPrefix),
       ],
     ).getSingleOrNull();
     if (entryRow == null) return;
@@ -3072,7 +3353,7 @@ class AccountingService {
       WHERE ${conditions.join(' AND ')}
       GROUP BY je.id, je.entry_no, je.entry_date, je.reference_type,
                je.reference_id, je.reference_no, je.description, je.status,
-               je.source, je.created_by, je.branch_id, je.reversed_entry_id,
+               je.source, je.created_by, je.store_id, je.branch_id, je.reversed_entry_id,
                je.reversed_by_entry_id, je.reversal_reason
       ORDER BY datetime(je.entry_date) DESC, je.entry_no DESC
       LIMIT ?
@@ -4944,6 +5225,261 @@ class AccountingService {
     _notifyMutation();
   }
 
+
+  /// Safely edits an already-posted manual journal. System-generated journal
+  /// entries are intentionally excluded: they must be edited from their
+  /// owning business document so operational and accounting state stay aligned.
+  ///
+  /// Manual journals do not have a separate document table/version column, so
+  /// the currently-active journal entry id is the optimistic concurrency token.
+  /// Each successful edit reverses the active family member and posts a new
+  /// append-only member using `<base>:manual_edit:vN`.
+  static Future<String> editManualJournalEntry({
+    required String activeEntryId,
+    required DateTime entryDate,
+    required String description,
+    required List<JournalLineDraft> lines,
+    String createdBy = '',
+    String branchId = '',
+  }) async {
+    if (!isAvailable) return '';
+    final normalizedEntryId = activeEntryId.trim();
+    if (normalizedEntryId.isEmpty) {
+      throw ArgumentError.value(activeEntryId, 'activeEntryId');
+    }
+    _validateBalancedDraft(JournalEntryDraft(
+      entryDate: entryDate,
+      description: description,
+      lines: lines,
+    ));
+
+    final db = _db;
+    var nextReferenceId = '';
+    var createdEntryId = '';
+    var selectedStoreId = '';
+
+    Future<JournalEntryDetailsReport> loadSelected() async {
+      final entryRow = await db.customSelect(
+        '''
+        SELECT je.id, je.entry_no, je.entry_date, je.reference_type,
+               je.reference_id, je.reference_no, je.description, je.status,
+               je.source, je.created_by, je.store_id, je.branch_id, je.reversed_entry_id,
+               je.reversed_by_entry_id, je.reversal_reason, je.posted_at,
+               je.reversed_at, je.reversed_by
+        FROM journal_entries je
+        WHERE je.id = ? AND je.deleted_at = ''
+        LIMIT 1
+        ''',
+        variables: <Variable<Object>>[Variable<String>(normalizedEntryId)],
+      ).getSingleOrNull();
+      if (entryRow == null) {
+        throw StateError('Manual journal entry was not found.');
+      }
+      final data = entryRow.data;
+      selectedStoreId = data['store_id']?.toString() ?? '';
+      final lineRows = await db.customSelect(
+        '''
+        SELECT line_no, account_id, account_code, account_name, debit, credit,
+               memo, party_type, party_id, party_name, cost_center_id
+        FROM journal_lines
+        WHERE entry_id = ?
+        ORDER BY line_no
+        ''',
+        variables: <Variable<Object>>[Variable<String>(normalizedEntryId)],
+      ).get();
+      return JournalEntryDetailsReport(
+        id: normalizedEntryId,
+        entryNo: data['entry_no']?.toString() ?? '',
+        entryDate: _parseDate(data['entry_date']),
+        referenceType: data['reference_type']?.toString() ?? '',
+        referenceId: data['reference_id']?.toString() ?? '',
+        referenceNo: data['reference_no']?.toString() ?? '',
+        description: data['description']?.toString() ?? '',
+        status: data['status']?.toString() ?? '',
+        source: data['source']?.toString() ?? '',
+        createdBy: data['created_by']?.toString() ?? '',
+        branchId: data['branch_id']?.toString() ?? '',
+        reversedEntryId: data['reversed_entry_id']?.toString() ?? '',
+        reversedByEntryId: data['reversed_by_entry_id']?.toString() ?? '',
+        reversalReason: data['reversal_reason']?.toString() ?? '',
+        postedAt: DateTime.tryParse(data['posted_at']?.toString() ?? ''),
+        reversedAt: DateTime.tryParse(data['reversed_at']?.toString() ?? ''),
+        reversedBy: data['reversed_by']?.toString() ?? '',
+        lines: lineRows
+            .map((row) => JournalEntryDetailLineReport.fromRow(row.data))
+            .toList(growable: false),
+      );
+    }
+
+    String baseReference(String referenceId) {
+      return referenceId.trim().replaceFirst(
+            RegExp(r':manual_edit:v\d+$'),
+            '',
+          );
+    }
+
+    final selected = await db.transaction(() async {
+      return PostedDocumentEditPipeline<JournalEntryDetailsReport>(
+        loadAuthoritative: loadSelected,
+        validatePermission: (current) async {
+          if (current.referenceType != 'manual_journal' ||
+              current.source != 'manual') {
+            throw StateError(
+              'Only manual journal entries can be edited directly. Edit system journals from their source document.',
+            );
+          }
+          if (current.status != 'posted' || current.reversedByEntryId.isNotEmpty) {
+            throw StateError('Only an active posted manual journal can be edited.');
+          }
+        },
+        validateVersion: (current) async {
+          final base = baseReference(current.referenceId);
+          if (base.isEmpty) {
+            throw StateError('Manual journal reference is invalid.');
+          }
+          final active = await db.customSelect(
+            '''
+            SELECT je.id, je.reference_id
+            FROM journal_entries je
+            WHERE je.reference_type = 'manual_journal'
+              AND (je.reference_id = ? OR instr(je.reference_id, ?) = 1)
+              AND je.deleted_at = '' AND je.status = 'posted'
+              AND NOT EXISTS (
+                SELECT 1 FROM journal_entries rev
+                WHERE rev.reversed_entry_id = je.id
+                  AND rev.deleted_at = '' AND rev.status = 'posted'
+              )
+            ORDER BY datetime(je.created_at) DESC, datetime(je.entry_date) DESC
+            LIMIT 1
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(base),
+              Variable<String>('$base:manual_edit:'),
+            ],
+          ).getSingleOrNull();
+          if (active == null ||
+              active.data['id']?.toString() != normalizedEntryId) {
+            throw StateError(
+              'Manual journal changed after it was opened. Reload it before editing.',
+            );
+          }
+
+          final familyRows = await db.customSelect(
+            '''
+            SELECT reference_id
+            FROM journal_entries
+            WHERE reference_type = 'manual_journal'
+              AND (reference_id = ? OR instr(reference_id, ?) = 1)
+              AND deleted_at = ''
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(base),
+              Variable<String>('$base:manual_edit:'),
+            ],
+          ).get();
+          var maxVersion = 1;
+          final matcher = RegExp(r':manual_edit:v(\d+)$');
+          for (final row in familyRows) {
+            final reference = row.data['reference_id']?.toString() ?? '';
+            final match = matcher.firstMatch(reference);
+            final version = int.tryParse(match?.group(1) ?? '') ?? 1;
+            if (version > maxVersion) maxVersion = version;
+          }
+          nextReferenceId = '$base:manual_edit:v${maxVersion + 1}';
+        },
+        validateDependencies: (current) async {
+          if (lines.length < 2) {
+            throw StateError('Manual journal must contain at least two lines.');
+          }
+          await _assertDateNotInClosedPeriod(
+            entryDate,
+            branchId.trim().isNotEmpty ? branchId.trim() : current.branchId,
+            database: db,
+          );
+        },
+        reverseOperationalEffects: (current) async {},
+        reverseAccountingEffects: (current) async {
+          await reverseEntryForReference(
+            referenceType: 'manual_journal',
+            referenceId: baseReference(current.referenceId),
+            reason: 'Manual journal edit',
+            createdBy: createdBy,
+            adjustCashLocationBalance: false,
+            notifyChange: false,
+            withinExistingTransaction: true,
+          );
+          final reversed = await db.customSelect(
+            'SELECT status, reversed_by_entry_id FROM journal_entries WHERE id = ? LIMIT 1',
+            variables: <Variable<Object>>[Variable<String>(current.id)],
+          ).getSingleOrNull();
+          if (reversed?.data['status']?.toString() != 'reversed' ||
+              (reversed?.data['reversed_by_entry_id']?.toString() ?? '').isEmpty) {
+            throw StateError('Previous manual journal version was not reversed.');
+          }
+        },
+        applyChanges: (current) async => current,
+        rebuildOperationalEffects: (current) async => current,
+        buildPostedSnapshot: (current) async => current,
+        repostAccounting: (current) async {
+          createdEntryId = await createPostedEntry(
+            JournalEntryDraft(
+              entryDate: entryDate,
+              referenceType: 'manual_journal',
+              referenceId: nextReferenceId,
+              referenceNo: current.referenceNo.trim().isEmpty
+                  ? 'يدوي'
+                  : current.referenceNo,
+              description: description.trim().isEmpty
+                  ? 'قيد يومية يدوي'
+                  : description.trim(),
+              source: 'manual',
+              createdBy: createdBy.trim().isNotEmpty
+                  ? createdBy.trim()
+                  : current.createdBy,
+              storeId: selectedStoreId,
+              branchId: branchId.trim().isNotEmpty
+                  ? branchId.trim()
+                  : current.branchId,
+              lines: lines,
+            ),
+            database: db,
+            withinExistingTransaction: true,
+          );
+          if (createdEntryId.isEmpty) {
+            throw StateError('Edited manual journal was not posted.');
+          }
+        },
+        rebuildDerivedState: (current) async {},
+        verifyIntegrity: (current) async {
+          final row = await db.customSelect(
+            '''
+            SELECT je.status, je.reference_id, COUNT(jl.id) AS line_count,
+                   COALESCE(SUM(jl.debit), 0) AS total_debit,
+                   COALESCE(SUM(jl.credit), 0) AS total_credit
+            FROM journal_entries je
+            LEFT JOIN journal_lines jl ON jl.entry_id = je.id
+            WHERE je.id = ? AND je.deleted_at = ''
+            GROUP BY je.id, je.status, je.reference_id
+            ''',
+            variables: <Variable<Object>>[Variable<String>(createdEntryId)],
+          ).getSingleOrNull();
+          if (row == null ||
+              row.data['status']?.toString() != 'posted' ||
+              row.data['reference_id']?.toString() != nextReferenceId ||
+              ((row.data['line_count'] as num?)?.toInt() ?? 0) != lines.length ||
+              (_num(row.data['total_debit']) - _num(row.data['total_credit'])).abs() > 0.005) {
+            throw StateError('Edited manual journal failed integrity verification.');
+          }
+        },
+      ).execute();
+    });
+
+    if (selected.id.isNotEmpty && createdEntryId.isNotEmpty) {
+      _notifyMutation();
+    }
+    return createdEntryId;
+  }
+
   /// Posts the financial side of a manual stock adjustment. The caller owns
   /// the SQLite transaction together with stock/cost-layer mutations.
   static Future<String> recordManualInventoryAdjustmentInTransaction({
@@ -5094,6 +5630,7 @@ class AccountingService {
   static Future<String> recordManufacturingCompletionInTransaction({
     required VentioDriftDatabase database,
     required ManufacturingOrder order,
+    String technicalReferenceId = '',
   }) async {
     if (order.totalMaterialCost <= 0 || order.totalEligibleCost < 0) {
       throw ArgumentError('Manufacturing cost snapshot is invalid.');
@@ -5194,11 +5731,14 @@ class AccountingService {
         ),
       ],
     ];
+    final postedReferenceId = technicalReferenceId.trim().isEmpty
+        ? order.id
+        : technicalReferenceId.trim();
     return createPostedEntry(
       JournalEntryDraft(
         entryDate: order.completedAt ?? order.date,
         referenceType: 'manufacturing_order',
-        referenceId: order.id,
+        referenceId: postedReferenceId,
         referenceNo: order.orderNo,
         description: 'Manufacturing completion ${order.orderNo}',
         source: 'system',

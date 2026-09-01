@@ -376,7 +376,13 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                       ),
                       onPressed: order.status.toLowerCase() == 'in_progress'
                           ? () => _showEditOrderDialog(order)
-                          : null,
+                          : <String>{'completed', 'complete'}
+                                  .contains(order.status.toLowerCase())
+                              ? () => _showFinishOrderDialog(
+                                    order,
+                                    editCompleted: true,
+                                  )
+                              : null,
                       icon: const Icon(Icons.edit_outlined),
                     ),
                     Tooltip(
@@ -1466,40 +1472,67 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
     }
   }
 
-  Future<void> _showFinishOrderDialog(ManufacturingOrder order) async {
+  Future<void> _showFinishOrderDialog(
+    ManufacturingOrder order, {
+    bool editCompleted = false,
+  }) async {
     if (!widget.store.hasPermission(
       AppPermission.inventoryManufacturingManage,
     )) return;
 
+    final initialOutputQuantity = editCompleted && order.actualOutputQuantity > 0
+        ? order.actualOutputQuantity
+        : order.quantity;
     final qtyController =
-        TextEditingController(text: order.quantity.toString());
+        TextEditingController(text: initialOutputQuantity.toString());
     final bom = widget.store.billsOfMaterials.firstWhere(
       (item) => item.id == order.bomId && !item.isDeleted,
       orElse: () => throw ArgumentError('Manufacturing recipe was not found.'),
     );
-    final factor =
-        bom.outputQuantity <= 0 ? 0.0 : order.quantity / bom.outputQuantity;
+    final factor = bom.outputQuantity <= 0
+        ? 0.0
+        : initialOutputQuantity / bom.outputQuantity;
+    final historicalConsumed = <String, double>{
+      for (final line in order.materialCosts) line.productId: line.quantity,
+    };
+    final historicalWaste = <String, ManufacturingWasteLine>{
+      for (final line in order.wasteLines) line.productId: line,
+    };
     final consumedControllers = <String, TextEditingController>{
       for (final component in bom.components)
         component.productId: TextEditingController(
-          text: (component.quantity * factor).toString(),
+          text: (editCompleted
+                  ? historicalConsumed[component.productId]
+                  : null)
+              ?.toString() ??
+              (component.quantity * factor).toString(),
         ),
     };
     final wasteControllers = <String, TextEditingController>{
       for (final component in bom.components)
-        component.productId: TextEditingController(text: '0'),
+        component.productId: TextEditingController(
+          text: (editCompleted
+                  ? historicalWaste[component.productId]?.quantity
+                  : null)
+              ?.toString() ??
+              '0',
+        ),
     };
     final wasteReasonControllers = <String, TextEditingController>{
       for (final component in bom.components)
-        component.productId: TextEditingController(),
+        component.productId: TextEditingController(
+          text: editCompleted
+              ? historicalWaste[component.productId]?.reason ?? ''
+              : '',
+        ),
     };
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(_localizedText(
-          ar: 'تأكيد انتهاء التصنيع',
-          en: 'Confirm production completion',
-          fr: 'Confirmer la fin de fabrication',
+          ar: editCompleted ? 'تعديل التصنيع المكتمل' : 'تأكيد انتهاء التصنيع',
+          en: editCompleted ? 'Edit completed manufacturing' : 'Confirm production completion',
+          fr: editCompleted ? 'Modifier la fabrication terminée' : 'Confirmer la fin de fabrication',
         )),
         content: SizedBox(
           width: 520,
@@ -1606,11 +1639,11 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
           ),
           FilledButton.icon(
             onPressed: () => Navigator.pop(dialogContext, true),
-            icon: const Icon(Icons.task_alt),
+            icon: Icon(editCompleted ? Icons.save_outlined : Icons.task_alt),
             label: Text(_localizedText(
-              ar: 'تأكيد الانتهاء',
-              en: 'Confirm completion',
-              fr: 'Confirmer la fin',
+              ar: editCompleted ? 'حفظ التعديل' : 'تأكيد الانتهاء',
+              en: editCompleted ? 'Save edit' : 'Confirm completion',
+              fr: editCompleted ? 'Enregistrer' : 'Confirmer la fin',
             )),
           ),
         ],
@@ -1654,28 +1687,51 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
           : null;
       if (output.expiryTrackingEnabled && outputBatches == null) return;
 
-      await widget.store.finishManufacturingOrder(
-        orderId: order.id,
-        actualQuantity: actualQuantity,
-        outputBatchAllocations: outputBatches ?? const <BatchAllocation>[],
-        actualConsumedQuantities: <String, double>{
-          for (final component in bom.components)
-            component.productId: double.tryParse(
-                    consumedControllers[component.productId]!.text.trim()) ??
-                0,
-        },
-        wasteQuantities: <String, double>{
-          for (final component in bom.components)
-            component.productId: double.tryParse(
-                    wasteControllers[component.productId]!.text.trim()) ??
-                0,
-        },
-        wasteReasons: <String, String>{
-          for (final component in bom.components)
-            component.productId:
-                wasteReasonControllers[component.productId]!.text.trim(),
-        },
-      );
+      final consumed = <String, double>{
+        for (final component in bom.components)
+          component.productId: double.tryParse(
+                  consumedControllers[component.productId]!.text.trim()) ??
+              0,
+      };
+      final waste = <String, double>{
+        for (final component in bom.components)
+          component.productId: double.tryParse(
+                  wasteControllers[component.productId]!.text.trim()) ??
+              0,
+      };
+      final wasteReasons = <String, String>{
+        for (final component in bom.components)
+          component.productId:
+              wasteReasonControllers[component.productId]!.text.trim(),
+      };
+      if (editCompleted) {
+        await widget.store.editCompletedManufacturingOrder(
+          orderId: order.id,
+          expectedVersion: order.version,
+          bomId: order.bomId,
+          quantity: actualQuantity,
+          rawMaterialsWarehouseId: order.rawMaterialsWarehouseId,
+          rawMaterialsWarehouseName: order.rawMaterialsWarehouseName,
+          finishedGoodsWarehouseId: order.finishedGoodsWarehouseId,
+          finishedGoodsWarehouseName: order.finishedGoodsWarehouseName,
+          notes: order.notes,
+          outputBatchAllocations:
+              outputBatches ?? const <BatchAllocation>[],
+          actualConsumedQuantities: consumed,
+          wasteQuantities: waste,
+          wasteReasons: wasteReasons,
+        );
+      } else {
+        await widget.store.finishManufacturingOrder(
+          orderId: order.id,
+          actualQuantity: actualQuantity,
+          outputBatchAllocations:
+              outputBatches ?? const <BatchAllocation>[],
+          actualConsumedQuantities: consumed,
+          wasteQuantities: waste,
+          wasteReasons: wasteReasons,
+        );
+      }
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -452,7 +452,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                                 expense: expense,
                                 storeProfile: widget.store.storeProfile,
                                 onPrint: () => _printExpense(context, expense),
-                                onEdit: expense.isDraft &&
+                                onEdit: (expense.isDraft || expense.isPosted) &&
                                         widget.store.canManageExpenses
                                     ? () => _openExpenseForm(context,
                                         expense: expense)
@@ -692,7 +692,22 @@ class _ExpensesPageState extends State<ExpensesPage> {
     );
     if (result != null) {
       try {
-        await widget.store.addOrUpdateExpense(result);
+        if (expense?.isPosted == true) {
+          await widget.store.editPostedExpense(
+            expenseId: expense!.id,
+            expectedVersion: expense.version,
+            title: result.title,
+            category: result.category,
+            amount: result.amount,
+            originalAmount: result.originalAmount,
+            originalCurrency: result.originalCurrency,
+            exchangeRateAtEntry: result.exchangeRateAtEntry,
+            date: result.date,
+            notes: result.notes,
+          );
+        } else {
+          await widget.store.addOrUpdateExpense(result);
+        }
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(AppLocalizations.of(context).text(expense == null

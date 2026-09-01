@@ -72,7 +72,9 @@ void main() {
       'sale cancel commits accounting reversal and customer ledger with cancelled sale',
       () {
     final body = methodBody('Future<void> cancelSale(', 'Future<void> deleteSale(');
-    expect(body, contains('await AccountingService.reverseEntryForReference('));
+    expect(body,
+        contains('await AccountingService.reverseSaleEntriesForSale('));
+    expect(body, contains('includeSaleEditFamily: true'));
     expect(body, contains("id: '\${sale.id}-sale-cancel'"));
     expect(body, contains('_persistAccountTransactionInExistingTransaction('));
   });

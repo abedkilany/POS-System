@@ -468,6 +468,7 @@ mixin _AppStoreOrchestration
   bool get canViewSales => hasAnyPermission(<String>{
         AppPermission.salesView,
         AppPermission.salesCreate,
+        AppPermission.salesEdit,
         AppPermission.salesCancel,
       });
   bool get canSell => hasPermission(AppPermission.salesCreate);

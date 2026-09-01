@@ -3782,6 +3782,279 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
     });
   }
 
+
+  Future<void> _editManualJournal(
+      JournalEntrySummaryReport summary) async {
+    widget.store.requirePermission(AppPermission.accountingManage);
+    final tr = AppLocalizations.of(context);
+    try {
+      final details = await AccountingService.journalEntryDetails(
+        entryId: summary.id,
+      );
+      if (details.isEmpty) {
+        throw StateError('Manual journal details were not found.');
+      }
+      final entry = details.first;
+      if (entry.referenceType != 'manual_journal' ||
+          entry.source != 'manual' ||
+          entry.status != 'posted' ||
+          entry.reversedByEntryId.isNotEmpty) {
+        throw StateError(
+            'Only an active manual journal entry can be edited directly.');
+      }
+      if (entry.lines.length != 2) {
+        throw StateError(
+            'This manual journal has more than two lines and cannot be edited from the quick editor.');
+      }
+
+      final accounts = (await AccountingService.listAccounts())
+          .where((account) => account.isPostable)
+          .toList(growable: false);
+      final costCenters = await AccountingService.listCostCenters();
+      final branches = await AccountingService.listAccountingBranches();
+      if (!mounted) return;
+
+      final debitLine = entry.lines.firstWhere(
+        (line) => line.debit > 0.005,
+        orElse: () => entry.lines.first,
+      );
+      final creditLine = entry.lines.firstWhere(
+        (line) => line.credit > 0.005,
+        orElse: () => entry.lines.last,
+      );
+      AccountingAccount? accountById(String id) {
+        for (final account in accounts) {
+          if (account.id == id) return account;
+        }
+        return null;
+      }
+
+      AdvancedAccountingItem? advancedById(
+          List<AdvancedAccountingItem> items, String id) {
+        if (id.trim().isEmpty) return null;
+        for (final item in items) {
+          if (item.id == id) return item;
+        }
+        return null;
+      }
+
+      AccountingAccount? debitAccount = accountById(debitLine.accountId);
+      AccountingAccount? creditAccount = accountById(creditLine.accountId);
+      if (debitAccount == null || creditAccount == null) {
+        throw StateError(
+            'One of the journal accounts is no longer available for posting.');
+      }
+      AdvancedAccountingItem? debitCostCenter =
+          advancedById(costCenters, debitLine.costCenterId);
+      AdvancedAccountingItem? creditCostCenter =
+          advancedById(costCenters, creditLine.costCenterId);
+      AdvancedAccountingItem? branch = advancedById(branches, entry.branchId);
+      var entryDate = entry.entryDate.toLocal();
+      final description = TextEditingController(text: entry.description);
+      final amount = TextEditingController(
+        text: (debitLine.debit > 0 ? debitLine.debit : creditLine.credit)
+            .toStringAsFixed(2),
+      );
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text(_accountingUiText(
+              context,
+              'تعديل القيد اليدوي',
+              'Edit manual journal',
+              'Modifier l’écriture manuelle',
+            )),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: description,
+                    decoration:
+                        InputDecoration(labelText: tr.text('description')),
+                  ),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tr.text('date')),
+                    subtitle: Text(_dateText(entryDate)),
+                    trailing: const Icon(Icons.calendar_month_outlined),
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: entryDate,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(DateTime.now().year + 5, 12, 31),
+                      );
+                      if (picked != null) {
+                        setDialogState(() => entryDate = picked);
+                      }
+                    },
+                  ),
+                  DropdownButtonFormField<AdvancedAccountingItem?>(
+                    initialValue: branch,
+                    isExpanded: true,
+                    decoration: InputDecoration(labelText: tr.text('branch')),
+                    items: [
+                      DropdownMenuItem<AdvancedAccountingItem?>(
+                          value: null, child: Text(tr.text('no_branch'))),
+                      for (final item in branches)
+                        DropdownMenuItem<AdvancedAccountingItem?>(
+                          value: item,
+                          child: Text(
+                              '${item.accountCode} - ${_localizedAccountingName(item.name, tr)}'),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => branch = value),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<AccountingAccount>(
+                    initialValue: debitAccount,
+                    isExpanded: true,
+                    decoration:
+                        InputDecoration(labelText: tr.text('debit_account')),
+                    items: [
+                      for (final account in accounts)
+                        DropdownMenuItem<AccountingAccount>(
+                          value: account,
+                          child: Text(
+                              '${account.code} - ${_localizedAccountingName(account.name, tr)}'),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => debitAccount = value),
+                  ),
+                  DropdownButtonFormField<AdvancedAccountingItem?>(
+                    initialValue: debitCostCenter,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                        labelText: tr.text('debit_cost_center')),
+                    items: [
+                      DropdownMenuItem<AdvancedAccountingItem?>(
+                          value: null,
+                          child: Text(tr.text('no_cost_center'))),
+                      for (final item in costCenters)
+                        DropdownMenuItem<AdvancedAccountingItem?>(
+                          value: item,
+                          child: Text(
+                              '${item.accountCode} - ${_localizedAccountingName(item.name, tr)}'),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => debitCostCenter = value),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<AccountingAccount>(
+                    initialValue: creditAccount,
+                    isExpanded: true,
+                    decoration:
+                        InputDecoration(labelText: tr.text('credit_account')),
+                    items: [
+                      for (final account in accounts)
+                        DropdownMenuItem<AccountingAccount>(
+                          value: account,
+                          child: Text(
+                              '${account.code} - ${_localizedAccountingName(account.name, tr)}'),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => creditAccount = value),
+                  ),
+                  DropdownButtonFormField<AdvancedAccountingItem?>(
+                    initialValue: creditCostCenter,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                        labelText: tr.text('credit_cost_center')),
+                    items: [
+                      DropdownMenuItem<AdvancedAccountingItem?>(
+                          value: null,
+                          child: Text(tr.text('no_cost_center'))),
+                      for (final item in costCenters)
+                        DropdownMenuItem<AdvancedAccountingItem?>(
+                          value: item,
+                          child: Text(
+                              '${item.accountCode} - ${_localizedAccountingName(item.name, tr)}'),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => creditCostCenter = value),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: amount,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration:
+                        InputDecoration(labelText: tr.text('amount')),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(tr.text('cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(tr.text('save')),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (confirmed != true) return;
+      final value = double.tryParse(amount.text.trim()) ?? 0;
+      if (value <= 0 || debitAccount == null || creditAccount == null) {
+        throw StateError('A positive balanced journal amount is required.');
+      }
+      final user = widget.store.activeUser;
+      final actor = user?.fullName.trim().isNotEmpty == true
+          ? user!.fullName.trim()
+          : widget.store.currentRole;
+      await AccountingService.editManualJournalEntry(
+        activeEntryId: entry.id,
+        entryDate: entryDate,
+        description: description.text,
+        createdBy: actor,
+        branchId: branch?.id ?? '',
+        lines: [
+          JournalLineDraft(
+            accountId: debitAccount!.id,
+            debit: value,
+            credit: 0,
+            costCenterId: debitCostCenter?.id ?? '',
+          ),
+          JournalLineDraft(
+            accountId: creditAccount!.id,
+            debit: 0,
+            credit: value,
+            costCenterId: creditCostCenter?.id ?? '',
+          ),
+        ],
+      );
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_accountingUiText(
+            context,
+            'تم تعديل القيد اليدوي وإعادة ترحيله.',
+            'Manual journal edited and reposted.',
+            'Écriture manuelle modifiée et repostée.',
+          )),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
   String get _cacheKey => [
         'journal_entries_ui_v1',
         widget.query.trim().toLowerCase(),
@@ -3897,6 +4170,23 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                             ],
                           ),
                           const SizedBox(width: 8),
+                          if (entry.referenceType == 'manual_journal' &&
+                              entry.source == 'manual' &&
+                              entry.status == 'posted' &&
+                              entry.reversedByEntryId.isEmpty &&
+                              entry.lineCount == 2 &&
+                              widget.store.hasPermission(
+                                  AppPermission.accountingManage))
+                            IconButton(
+                              tooltip: _accountingUiText(
+                                context,
+                                'تعديل القيد اليدوي',
+                                'Edit manual journal',
+                                'Modifier l’écriture manuelle',
+                              ),
+                              onPressed: () => _editManualJournal(entry),
+                              icon: const Icon(Icons.edit_outlined),
+                            ),
                           IconButton(
                             tooltip: _accountingUiText(context, 'عرض القيد', 'View journal', 'Voir l’écriture'),
                             onPressed: () => _showJournalDrillDown(

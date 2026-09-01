@@ -28,6 +28,7 @@ class AppPermission {
   static const String productsManage = 'products.manage';
   static const String salesCreate = 'sales.create';
   static const String salesView = 'sales.view';
+  static const String salesEdit = 'sales.edit';
   static const String salesCancel = 'sales.cancel';
   static const String salesPrint = 'sales.print';
   static const String salesExport = 'sales.export';
@@ -94,6 +95,7 @@ class AppPermission {
     productsManage,
     salesView,
     salesCreate,
+    salesEdit,
     salesCancel,
     salesPrint,
     salesExport,
@@ -159,6 +161,7 @@ class AppPermission {
     productsManage: 'Manage products',
     salesView: 'View sales',
     salesCreate: 'Create sales',
+    salesEdit: 'Edit posted sales',
     salesCancel: 'Cancel/refund sales',
     salesPrint: 'Print sales documents',
     salesExport: 'Export sales data',
@@ -312,6 +315,7 @@ class AppPermission {
       permissions: [
         salesView,
         salesCreate,
+        salesEdit,
         salesCancel,
         salesPrint,
         salesExport,

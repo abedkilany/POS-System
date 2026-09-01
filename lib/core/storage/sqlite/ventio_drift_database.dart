@@ -3039,7 +3039,12 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await customStatement(
         'DROP INDEX IF EXISTS idx_payment_allocations_target_per_voucher;');
     await customStatement(
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_allocations_target_per_voucher_kind ON payment_allocations(voucher_type, voucher_id, reference_type, reference_id, allocation_kind, reversal_of_id) WHERE deleted_at = \'\';');
+        'DROP INDEX IF EXISTS idx_payment_allocations_target_per_voucher_kind;');
+    // Posted voucher edits preserve prior allocation rows as immutable reversed
+    // history. Only the current active allocation for a voucher/target/kind must
+    // be unique; historical reversed rows must not block a new edit version.
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_allocations_target_per_voucher_kind_active ON payment_allocations(voucher_type, voucher_id, reference_type, reference_id, allocation_kind, reversal_of_id) WHERE deleted_at = '' AND status = 'active';");
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_payment_allocations_status ON payment_allocations(status, reference_type, reference_id);');
 

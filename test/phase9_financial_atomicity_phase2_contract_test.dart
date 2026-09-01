@@ -45,8 +45,14 @@ void main() {
       expect(body,
           contains('await _finalizeExpenseCancellationInExistingTransaction('));
       expect(source, contains("SET expense_status = 'Cancelled'"));
-      expect(source, contains(r"'$expenseId-expense-debit-reversal'"));
-      expect(source, contains(r"'$expenseId-expense-credit-reversal'"));
+      // Expense edits create versioned compatibility rows. Cancellation must
+      // reverse the whole active compatibility family instead of assuming only
+      // the legacy unversioned ids exist.
+      expect(source, contains(r"'$expenseId-expense-debit'"));
+      expect(source, contains(r"'$expenseId-expense-debit-edit-v%'"));
+      expect(source, contains(r"'$expenseId-expense-credit'"));
+      expect(source, contains(r"'$expenseId-expense-credit-edit-v%'"));
+      expect(source, contains(r"final reversalId = '$originalId-reversal';"));
     });
 
     test(

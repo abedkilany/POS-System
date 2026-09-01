@@ -127,7 +127,7 @@ class CashReversalService {
         case 'cash_withdrawal':
         case 'expense':
           await _db.customUpdate(
-            "UPDATE cash_operations SET status = 'reversed', reversed_at = ?, reversal_reason = ?, reversed_by = ?, reversed_by_user_id = ?, updated_at = ? WHERE (id = ? OR idempotency_key = ?) AND deleted_at = ''",
+            "UPDATE cash_operations SET status = 'reversed', reversed_at = ?, reversal_reason = ?, reversed_by = ?, reversed_by_user_id = ?, updated_at = ? WHERE (id = ? OR idempotency_key = ? OR idempotency_key LIKE ?) AND deleted_at = '' AND status = 'posted'",
             variables: <Variable<Object>>[
               Variable<String>(now),
               Variable<String>(reason.trim()),
@@ -136,6 +136,7 @@ class CashReversalService {
               Variable<String>(now),
               Variable<String>(cleanId),
               Variable<String>('expense:$cleanId'),
+              Variable<String>('expense:$cleanId:expense_edit:%'),
             ],
           );
           break;
@@ -212,32 +213,42 @@ class CashReversalService {
       ],
     );
 
-    final title = row.data['title']?.toString().trim() ?? '';
-    final accountName = title.isEmpty ? 'Expense' : title;
-    final amount = (row.data['amount'] as num?)?.toDouble() ?? 0.0;
-    final currencyText = row.data['original_currency']?.toString().trim() ?? '';
-    final currency = currencyText.isEmpty ? 'USD' : currencyText.toUpperCase();
-    if (amount <= 0) return;
+    final originals = await _db.customSelect(
+      '''
+      SELECT id, account_type, account_id, account_name, reference_id,
+             reference_no, debit, credit, currency, payment_method,
+             store_id, branch_id
+      FROM account_transactions
+      WHERE deleted_at = ''
+        AND transaction_type NOT IN ('cancel', 'paymentReversal')
+        AND (id = ? OR id LIKE ? OR id = ? OR id LIKE ?)
+      ORDER BY transaction_date, created_at, id
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>('$expenseId-expense-debit'),
+        Variable<String>('$expenseId-expense-debit-edit-v%'),
+        Variable<String>('$expenseId-expense-credit'),
+        Variable<String>('$expenseId-expense-credit-edit-v%'),
+      ],
+    ).get();
 
-    Future<void> insertReversal(
-      String id,
-      String type,
-      double debit,
-      double credit,
-      String method,
-      String note,
-    ) async {
+    for (final original in originals) {
+      final originalId = original.data['id']?.toString() ?? '';
+      if (originalId.isEmpty) continue;
+      final reversalId = '$originalId-reversal';
       final existing = await _db.customSelect(
         "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
-        variables: <Variable<Object>>[Variable<String>(id)],
+        variables: <Variable<Object>>[Variable<String>(reversalId)],
       ).getSingleOrNull();
-      if (existing != null) return;
-      final nextSort = await _db
-          .customSelect(
-            'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
-          )
-          .getSingle();
+      if (existing != null) continue;
+
+      final nextSort = await _db.customSelect(
+        'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+      ).getSingle();
       final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+      final debit = (original.data['debit'] as num?)?.toDouble() ?? 0.0;
+      final credit = (original.data['credit'] as num?)?.toDouble() ?? 0.0;
+      final method = original.data['payment_method']?.toString().trim() ?? '';
       await _db.customInsert(
         '''
         INSERT INTO account_transactions
@@ -247,67 +258,33 @@ class CashReversalService {
            transaction_type, reference_id, reference_no, debit, credit,
            currency, payment_method, note, last_modified_by_device_id)
         VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?,
-                'supplier', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         variables: <Variable<Object>>[
-          Variable<String>(id),
+          Variable<String>(reversalId),
           Variable<String>(now),
           Variable<String>(now),
           Variable<String>(deviceId.trim()),
-          Variable<String>(row.data['store_id']?.toString() ?? ''),
-          Variable<String>(row.data['branch_id']?.toString() ?? ''),
+          Variable<String>(original.data['store_id']?.toString() ?? ''),
+          Variable<String>(original.data['branch_id']?.toString() ?? ''),
           Variable<int>(sortIndex),
-          Variable<String>(expenseId),
-          Variable<String>(accountName),
+          Variable<String>(original.data['account_type']?.toString() ?? 'supplier'),
+          Variable<String>(original.data['account_id']?.toString() ?? expenseId),
+          Variable<String>(original.data['account_name']?.toString() ?? 'Expense'),
           Variable<String>(now),
-          Variable<String>(type),
-          Variable<String>(expenseId),
-          Variable<String>(accountName),
-          Variable<double>(debit),
+          Variable<String>(credit > 0 ? 'paymentReversal' : 'cancel'),
+          Variable<String>(original.data['reference_id']?.toString() ?? expenseId),
+          Variable<String>(original.data['reference_no']?.toString() ?? ''),
           Variable<double>(credit),
-          Variable<String>(currency),
+          Variable<double>(debit),
+          Variable<String>(original.data['currency']?.toString() ?? 'USD'),
           Variable<String>(method),
-          Variable<String>(note),
+          Variable<String>('Reverse expense compatibility movement for $cleanReason'),
           Variable<String>(deviceId.trim()),
         ],
       );
     }
 
-    final originalDebit = await _db.customSelect(
-      "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
-      variables: <Variable<Object>>[
-        Variable<String>('$expenseId-expense-debit'),
-      ],
-    ).getSingleOrNull();
-    if (originalDebit != null) {
-      await insertReversal(
-        '$expenseId-expense-debit-reversal',
-        'cancel',
-        0,
-        amount,
-        '',
-        'Reverse expense debit for $cleanReason',
-      );
-    }
-
-    final originalPayment = await _db.customSelect(
-      "SELECT id, payment_method FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
-      variables: <Variable<Object>>[
-        Variable<String>('$expenseId-expense-credit'),
-      ],
-    ).getSingleOrNull();
-    if (originalPayment != null) {
-      final paymentMethod =
-          originalPayment.data['payment_method']?.toString().trim() ?? '';
-      await insertReversal(
-        '$expenseId-expense-credit-reversal',
-        'paymentReversal',
-        amount,
-        0,
-        paymentMethod.isEmpty ? 'Cash' : paymentMethod,
-        'Reverse expense payment for $cleanReason',
-      );
-    }
   }
 
   Future<void> _reverseCompatibilityRefundTransaction({
