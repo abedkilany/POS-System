@@ -30,6 +30,14 @@ class InventoryReconciliationRepository {
         (double.tryParse(value.toString())?.toInt() ?? 0);
   }
 
+  static String _reconciliationId({
+    required String storeId,
+    required String warehouseId,
+    required String productId,
+  }) {
+    return ['recon', storeId, warehouseId, productId].join('_');
+  }
+
   static Future<List<InventoryReconciliation>> listAll(
     VentioDriftDatabase db, {
     String storeId = '',
@@ -336,7 +344,13 @@ class InventoryReconciliationRepository {
           await _upsertReconciliation(
             db,
             InventoryReconciliation(
-              id: ['recon', storeId, productId].join('_'),
+              id: _reconciliationId(
+                storeId: storeId,
+                warehouseId: rowsForProduct.isEmpty
+                    ? 'main'
+                    : rowsForProduct.first.read<String>('warehouseId'),
+                productId: productId,
+              ),
               storeId: storeId,
               branchId: branchId.isEmpty ? 'main' : branchId,
               warehouseId: rowsForProduct.isEmpty
@@ -383,7 +397,11 @@ class InventoryReconciliationRepository {
         await _upsertReconciliation(
           db,
           InventoryReconciliation(
-            id: 'recon_${row.read<String>('storeId')}_$productId',
+            id: _reconciliationId(
+              storeId: row.read<String>('storeId'),
+              warehouseId: row.read<String>('warehouseId'),
+              productId: productId,
+            ),
             storeId: row.read<String>('storeId'),
             branchId: row.read<String>('branchId'),
             warehouseId: row.read<String>('warehouseId'),

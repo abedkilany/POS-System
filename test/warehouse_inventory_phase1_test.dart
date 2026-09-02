@@ -276,6 +276,85 @@ void main() {
     expect(await _countRows(db, 'inventory_migration_adjustments'), 1);
   });
 
+  test(
+      'backfill handles a deleted product with movements in multiple warehouses',
+      () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+
+    await db.customInsert(
+      '''
+      INSERT INTO products
+        (id, entity_type, created_at, updated_at, deleted_at, device_id,
+         sync_status, store_id, branch_id, version, last_modified_by_device_id,
+         sort_index, name, stock)
+      VALUES (?, 'product', ?, ?, ?, '', 'synced', ?, ?, 1, '', 0, ?, 0)
+      ''',
+      variables: <Variable<Object>>[
+        const Variable<String>('deleted-product'),
+        const Variable<String>('2026-01-01T00:00:00.000Z'),
+        const Variable<String>('2026-01-01T00:00:00.000Z'),
+        const Variable<String>('2026-01-02T00:00:00.000Z'),
+        const Variable<String>('store-1'),
+        const Variable<String>('branch-1'),
+        const Variable<String>('Deleted product'),
+      ],
+    );
+
+    Future<void> insertMovement(String id, String warehouseId) {
+      return db.customInsert(
+        '''
+        INSERT INTO stock_movements
+          (id, entity_type, created_at, updated_at, deleted_at, device_id,
+           sync_status, store_id, branch_id, version, sort_index, product_id,
+           product_name, movement_type, quantity, movement_date, reference_id,
+           reference_no, reason, adjustment_category, notes, evidence_ref,
+           warehouse_id, warehouse_name, movement_group_id, document_line_id,
+           source_movement_id, reversal_of_movement_id, idempotency_key, unit_cost,
+           last_modified_by_device_id, reviewed_at, reviewed_by, review_note)
+        VALUES (?, 'stock_movement', ?, ?, '', '', 'synced', ?, ?, 1, 0, ?,
+                ?, 'adjustment', 1, ?, '', '', '', '', '', '', ?, ?, 'group-1',
+                '', '', '', '', 0, '', '', '', '')
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(id),
+          const Variable<String>('2026-01-03T00:00:00.000Z'),
+          const Variable<String>('2026-01-03T00:00:00.000Z'),
+          const Variable<String>('store-1'),
+          const Variable<String>('branch-1'),
+          const Variable<String>('deleted-product'),
+          const Variable<String>('Deleted product'),
+          const Variable<String>('2026-01-03T10:00:00.000Z'),
+          Variable<String>(warehouseId),
+          Variable<String>('Warehouse $warehouseId'),
+        ],
+      );
+    }
+
+    await insertMovement('movement-wh-1', 'wh-1');
+    await insertMovement('movement-main', 'main');
+
+    await InventoryReconciliationRepository.backfillFromLegacyData(db);
+    await InventoryReconciliationRepository.backfillFromLegacyData(db);
+
+    final reconciliations =
+        await InventoryReconciliationRepository.listAll(db, storeId: 'store-1');
+    expect(reconciliations, hasLength(2));
+    expect(
+      reconciliations.map((item) => item.id),
+      containsAll(<String>[
+        'recon_store-1_wh-1_deleted-product',
+        'recon_store-1_main_deleted-product',
+      ]),
+    );
+    expect(
+      reconciliations.every(
+        (item) => item.classification == 'invalid_product_reference',
+      ),
+      isTrue,
+    );
+  });
+
   test('read model stops falling back to legacy stock after backfill completes',
       () async {
     final db = await _openDb();
