@@ -6,6 +6,7 @@ import 'package:ventio/core/services/accounting_service.dart';
 import 'package:ventio/core/services/cash_operation_service.dart';
 import 'package:ventio/core/storage/sqlite/sqlite_migration_manager.dart';
 import 'package:ventio/models/expense.dart';
+import 'package:ventio/models/journal_entry.dart';
 import 'package:ventio/models/store_profile.dart';
 import 'package:ventio/core/storage/sqlite/ventio_drift_database.dart';
 
@@ -303,6 +304,88 @@ void main() {
       throwsStateError,
     );
     expect(await _locationBalance(db), 10);
+  });
+
+  test('cash out may make the drawer negative when policy is enabled',
+      () async {
+    final db = await _openDb();
+    addTearDown(() async {
+      AccountingService.configureMoneyPolicy(StoreProfile.defaults);
+      await db.close();
+    });
+    await _seedDrawer(db, balance: 10);
+    AccountingService.configureMoneyPolicy(
+      StoreProfile.defaults.copyWith(allowNegativeCashBalance: true),
+    );
+    final service = CashOperationService(db, authorization: _authorization);
+
+    await service.withdrawal(
+      cashLocationId: 'drawer-p5',
+      cashDrawerSessionId: 'shift-p5',
+      counterpartAccountId: 'acc_owner_capital',
+      amount: 25,
+      idempotencyKey: 'negative-allowed-withdrawal',
+    );
+
+    expect(await _locationBalance(db), -15);
+  });
+
+  test('legacy journal reversal cannot bypass the negative-cash policy',
+      () async {
+    final db = await _openAccountingDb();
+    addTearDown(() async {
+      AccountingService.configureMoneyPolicy(StoreProfile.defaults);
+      await SqliteMigrationManager.resetForTesting();
+    });
+    await _seedDrawer(db, balance: 20);
+    AccountingService.configureMoneyPolicy(
+      StoreProfile.defaults.copyWith(allowNegativeCashBalance: false),
+    );
+
+    final originalEntryId = await AccountingService.createPostedEntry(
+      JournalEntryDraft(
+        entryDate: DateTime.utc(2026, 8, 18, 14),
+        referenceType: 'legacy_cash_in',
+        referenceId: 'legacy-cash-in-1',
+        referenceNo: 'LCI-1',
+        description: 'Legacy cash inflow used to verify reversal policy',
+        lines: const <JournalLineDraft>[
+          JournalLineDraft(
+            accountId: 'acc_cash',
+            debit: 50,
+            credit: 0,
+          ),
+          JournalLineDraft(
+            accountId: 'acc_owner_capital',
+            debit: 0,
+            credit: 50,
+          ),
+        ],
+      ),
+      database: db,
+    );
+
+    await expectLater(
+      AccountingService.reverseEntryForReference(
+        referenceType: 'legacy_cash_in',
+        referenceId: 'legacy-cash-in-1',
+        adjustCashLocationBalance: true,
+        notifyChange: false,
+      ),
+      throwsStateError,
+    );
+
+    expect(await _locationBalance(db), 20);
+    final original = await db.customSelect(
+      'SELECT status FROM journal_entries WHERE id = ?',
+      variables: <Variable<Object>>[Variable<String>(originalEntryId)],
+    ).getSingle();
+    expect(original.read<String>('status'), 'posted');
+    final reversalCount = await db.customSelect(
+      'SELECT COUNT(*) AS c FROM journal_entries WHERE reversed_entry_id = ?',
+      variables: <Variable<Object>>[Variable<String>(originalEntryId)],
+    ).getSingle();
+    expect(reversalCount.read<int>('c'), 0);
   });
 
   test(

@@ -387,6 +387,10 @@ class InventoryTraceabilityService {
         UNION
         SELECT store_id, warehouse_id, product_id
         FROM inventory_batch_balances WHERE store_id = ?
+        UNION
+        SELECT store_id, warehouse_id, product_id
+        FROM inventory_stock_deficits
+        WHERE store_id = ? AND status = 'open' AND quantity_open > 0.000001
       ), warehouse_totals AS (
         SELECT store_id, warehouse_id, product_id, SUM(quantity) AS quantity
         FROM warehouse_inventory WHERE store_id = ?
@@ -395,18 +399,28 @@ class InventoryTraceabilityService {
         SELECT store_id, warehouse_id, product_id, SUM(quantity) AS quantity
         FROM inventory_batch_balances WHERE store_id = ?
         GROUP BY store_id, warehouse_id, product_id
+      ), deficit_totals AS (
+        SELECT store_id, warehouse_id, product_id, SUM(quantity_open) AS quantity
+        FROM inventory_stock_deficits
+        WHERE store_id = ? AND status = 'open' AND quantity_open > 0.000001
+        GROUP BY store_id, warehouse_id, product_id
       )
       SELECT k.warehouse_id AS warehouseId, k.product_id AS productId,
              COALESCE(w.quantity, 0) AS warehouseQty,
-             COALESCE(b.quantity, 0) AS batchQty
+             COALESCE(b.quantity, 0) - COALESCE(d.quantity, 0) AS batchQty
       FROM keys k
       LEFT JOIN warehouse_totals w ON w.store_id = k.store_id
         AND w.warehouse_id = k.warehouse_id AND w.product_id = k.product_id
       LEFT JOIN batch_totals b ON b.store_id = k.store_id
         AND b.warehouse_id = k.warehouse_id AND b.product_id = k.product_id
-      WHERE ABS(COALESCE(w.quantity, 0) - COALESCE(b.quantity, 0)) > ?
+      LEFT JOIN deficit_totals d ON d.store_id = k.store_id
+        AND d.warehouse_id = k.warehouse_id AND d.product_id = k.product_id
+      WHERE ABS(COALESCE(w.quantity, 0)
+        - (COALESCE(b.quantity, 0) - COALESCE(d.quantity, 0))) > ?
       ''',
       variables: <Variable<Object>>[
+        Variable<String>(normalizedStoreId),
+        Variable<String>(normalizedStoreId),
         Variable<String>(normalizedStoreId),
         Variable<String>(normalizedStoreId),
         Variable<String>(normalizedStoreId),
@@ -417,7 +431,7 @@ class InventoryTraceabilityService {
     for (final row in aggregateMismatches) {
       addIssue(
         'warehouse_batch_quantity_mismatch',
-        'warehouse_inventory does not equal the sum of batch balances.',
+        'warehouse_inventory does not equal physical batch balances minus open stock deficits.',
         Map<String, Object?>.from(row.data),
       );
     }

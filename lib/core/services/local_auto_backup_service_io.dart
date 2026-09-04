@@ -128,7 +128,10 @@ class LocalAutoBackupService {
     }
     final now = DateTime.now();
     final scheduled = DateTime(now.year, now.month, now.day, 2);
-    if (now.isBefore(scheduled) && await _hasDailyForDate(settings, now)) {
+    if (await _hasDailyForDate(settings, now)) {
+      return;
+    }
+    if (now.isBefore(scheduled)) {
       return;
     }
     await createBackupNow(store, settings: settings, reason: 'auto');
@@ -183,12 +186,20 @@ class LocalAutoBackupService {
       }
       final encryptedBackup =
           await store.exportEncryptedBackupJson(recoverySecret);
-      final bytes = _buildZipBytes(encryptedBackup, now, reason);
+      final bytes = await compute(
+        _buildZipBytesInIsolate,
+        <String, String>{
+          'backupJson': encryptedBackup,
+          'generatedAt': now.toIso8601String(),
+          'reason': reason,
+        },
+      );
 
       if (reason == 'manual' || reason == 'disaster_recovery_checkpoint') {
         final isRecovery = reason == 'disaster_recovery_checkpoint';
         final destination = isRecovery ? recoveryDir : manualDir;
-        final prefix = isRecovery ? 'ventio_recovery_checkpoint' : 'ventio_manual';
+        final prefix =
+            isRecovery ? 'ventio_recovery_checkpoint' : 'ventio_manual';
         final file = File(
             '${destination.path}${Platform.pathSeparator}${prefix}_${_dateTimeStamp(now)}.vtb');
         await file.writeAsBytes(bytes, flush: true);
@@ -250,27 +261,6 @@ class LocalAutoBackupService {
         }
       });
     }
-  }
-
-  static List<int> _buildZipBytes(
-      String backupJson, DateTime generatedAt, String reason) {
-    final backupBytes = utf8.encode(backupJson);
-    final manifest = jsonEncode(<String, Object?>{
-      'app': 'Ventio',
-      'type': 'local-auto-backup',
-      'reason': reason,
-      'generatedAt': generatedAt.toIso8601String(),
-      'content': 'backup.json',
-      'encrypted': true,
-      'cipher': 'aes-256-gcm',
-      'keySource': 'store-recovery-key',
-    });
-    final manifestBytes = utf8.encode(manifest);
-    final archive = Archive()
-      ..addFile(ArchiveFile('backup.json', backupBytes.length, backupBytes))
-      ..addFile(
-          ArchiveFile('manifest.json', manifestBytes.length, manifestBytes));
-    return ZipEncoder().encode(archive);
   }
 
   static int _readPositiveInt(String key, int fallback) {
@@ -337,4 +327,25 @@ class LocalAutoBackupService {
       } catch (_) {}
     }
   }
+}
+
+List<int> _buildZipBytesInIsolate(Map<String, String> input) {
+  final backupBytes = utf8.encode(input['backupJson']!);
+  final generatedAt = DateTime.parse(input['generatedAt']!);
+  final manifest = jsonEncode(<String, Object?>{
+    'app': 'Ventio',
+    'type': 'local-auto-backup',
+    'reason': input['reason']!,
+    'generatedAt': generatedAt.toIso8601String(),
+    'content': 'backup.json',
+    'encrypted': true,
+    'cipher': 'aes-256-gcm',
+    'keySource': 'store-recovery-key',
+  });
+  final manifestBytes = utf8.encode(manifest);
+  final archive = Archive()
+    ..addFile(ArchiveFile('backup.json', backupBytes.length, backupBytes))
+    ..addFile(
+        ArchiveFile('manifest.json', manifestBytes.length, manifestBytes));
+  return ZipEncoder().encode(archive);
 }

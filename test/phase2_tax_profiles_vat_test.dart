@@ -552,7 +552,7 @@ void main() {
     await db.initializeFoundation();
     addTearDown(db.close);
 
-    expect(db.schemaVersion, 31);
+    expect(db.schemaVersion, 32);
     final columns = await db.customSelect("PRAGMA table_info('products')").get();
     expect(
       columns.map((row) => row.data['name']?.toString()).toSet(),

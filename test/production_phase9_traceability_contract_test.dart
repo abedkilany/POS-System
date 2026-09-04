@@ -29,7 +29,7 @@ void main() {
     expect(transfers, contains('assertTransferTraceabilityInTransaction'));
     expect(appStore, contains('traceInventoryBatch'));
     expect(appStore, contains('verifyInventoryTraceabilityIntegrity'));
-    expect(database, contains('schemaVersion => 31'));
+    expect(database, contains('schemaVersion => 32'));
     expect(database, contains('idx_stock_movements_reference_type_batch'));
     expect(database, contains('idx_inventory_batches_source_trace'));
   });

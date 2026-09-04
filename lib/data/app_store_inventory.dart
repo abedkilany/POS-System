@@ -195,7 +195,7 @@ Future<void> approveInventoryCount(String sessionId) async {
         defaultStoreId: appIdentity.storeId,
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
-        allowNegativeStockResolver: (_, __) => false,
+        allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
       );
       final batchService = BatchInventoryService(sqliteDb);
       InventoryCountSession? approvedSession;
@@ -298,6 +298,8 @@ Future<void> approveInventoryCount(String sessionId) async {
               movementDate: now,
               storeId: appIdentity.storeId,
               deviceId: _deviceId,
+              branchId: appIdentity.branchId,
+              allowNegativeStock: _storeProfile.allowNegativeStock,
             );
             differenceValue = allocations.fold<double>(
               0,
@@ -708,7 +710,7 @@ Future<void> reverseInventoryCount(
       defaultStoreId: appIdentity.storeId,
       defaultBranchId: appIdentity.branchId,
       defaultSyncTarget: _stockTransactionSyncTarget,
-      allowNegativeStockResolver: (_, __) => false,
+      allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     final committedReversals = <StockMovement>[];
     InventoryCountSession? reversedSession;
@@ -1189,7 +1191,7 @@ Future<void> adjustExpiryBatchStock({
         defaultStoreId: appIdentity.storeId,
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
-        allowNegativeStockResolver: (_, __) => false,
+        allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
       ).recordMovementsInTransaction(
         operationType: 'batch_adjustment',
         documentType: 'inventory_batch',
@@ -1257,7 +1259,7 @@ Future<void> reverseExpiryBatchAdjustment(
       defaultStoreId: appIdentity.storeId,
       defaultBranchId: appIdentity.branchId,
       defaultSyncTarget: _stockTransactionSyncTarget,
-      allowNegativeStockResolver: (_, __) => false,
+      allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     await db.transaction(() async {
       final activeJournalRow = await db.customSelect(
@@ -1523,7 +1525,7 @@ Future<void> editStockAdjustment({
       defaultStoreId: appIdentity.storeId,
       defaultBranchId: appIdentity.branchId,
       defaultSyncTarget: _stockTransactionSyncTarget,
-      allowNegativeStockResolver: (_, __) => false,
+      allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     final batchService = BatchInventoryService(db);
     late Product product;
@@ -1751,6 +1753,8 @@ Future<void> editStockAdjustment({
               movementDate: now,
               storeId: appIdentity.storeId,
               deviceId: _deviceId,
+              branchId: appIdentity.branchId,
+              allowNegativeStock: _storeProfile.allowNegativeStock,
             );
             resolved.addAll(allocations);
             newAdjustmentValue = allocations.fold<double>(
@@ -2067,7 +2071,7 @@ Future<void> adjustStock({
         defaultStoreId: appIdentity.storeId,
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
-        allowNegativeStockResolver: (_, __) => false,
+        allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
       );
       final operationId = operationReferenceId.trim().isEmpty
           ? '${now.microsecondsSinceEpoch}-$productId-adjustment'
@@ -2137,6 +2141,8 @@ Future<void> adjustStock({
               movementDate: now,
               storeId: appIdentity.storeId,
               deviceId: _deviceId,
+              branchId: appIdentity.branchId,
+              allowNegativeStock: _storeProfile.allowNegativeStock,
             );
             resolvedBatchAllocations = allocations;
             adjustmentValue = allocations.fold<double>(
@@ -2432,7 +2438,7 @@ Future<void> recordWasteLoss({
       defaultStoreId: appIdentity.storeId,
       defaultBranchId: appIdentity.branchId,
       defaultSyncTarget: _stockTransactionSyncTarget,
-      allowNegativeStockResolver: (_, __) => false,
+      allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     final roleKey = switch (adjustmentCategory.trim().toLowerCase()) {
       'expired' || 'expiry' => 'inventory_expiry',
@@ -2456,6 +2462,8 @@ Future<void> recordWasteLoss({
         movementDate: now,
         storeId: appIdentity.storeId,
         deviceId: _deviceId,
+        branchId: appIdentity.branchId,
+        allowNegativeStock: _storeProfile.allowNegativeStock,
       );
       wasteValue = allocations.fold<double>(
         0,
@@ -2564,7 +2572,7 @@ Future<void> reverseWasteLossGroup(String movementId) async {
       defaultStoreId: appIdentity.storeId,
       defaultBranchId: appIdentity.branchId,
       defaultSyncTarget: _stockTransactionSyncTarget,
-      allowNegativeStockResolver: (_, __) => false,
+      allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     final reversals = <StockMovement>[];
     await db.transaction(() async {
@@ -2738,7 +2746,7 @@ Future<void> deleteWasteLoss(String movementId) async {
         defaultStoreId: appIdentity.storeId,
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
-        allowNegativeStockResolver: (_, __) => false,
+        allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
       );
       await db.transaction(() async {
         final product = _findProductById(original.productId);

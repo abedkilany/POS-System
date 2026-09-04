@@ -215,12 +215,11 @@ class CashOperationService {
       }
 
       if (direction == 'out') {
-        final balance =
-            (location.data['current_balance'] as num?)?.toDouble() ?? 0;
-        if (!AccountingService.allowNegativeCashBalance &&
-            balance + 0.000001 < cleanAmount) {
-          throw StateError('Insufficient cash balance for this operation.');
-        }
+        await AccountingService.ensureCashOutflowAllowed(
+          cashLocationId: cleanLocationId,
+          amount: cleanAmount,
+          database: _db,
+        );
       }
 
       if (cleanCounterpartAccountId == cashAccountId) {
@@ -358,13 +357,11 @@ class CashOperationService {
         lastModifiedByDeviceId: deviceId.trim(),
       ));
 
-      await _db.customUpdate(
-        'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
-        variables: <Variable<Object>>[
-          Variable<double>(isIn ? cleanAmount : -cleanAmount),
-          Variable<String>(now.toIso8601String()),
-          Variable<String>(cleanLocationId),
-        ],
+      await AccountingService.applyCashLocationDelta(
+        cashLocationId: cleanLocationId,
+        delta: isIn ? cleanAmount : -cleanAmount,
+        updatedAt: now.toIso8601String(),
+        database: _db,
       );
       return CashOperationResult(id: id, journalEntryId: entryId);
     });

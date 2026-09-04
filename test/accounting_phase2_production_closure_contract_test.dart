@@ -100,7 +100,11 @@ void main() {
     expect(audit, contains('unified_batch_quantity_mismatch'));
     expect(
       audit,
-      contains('ABS(COALESCE(w.qty, 0) - COALESCE(b.qty, 0)) > 0.005'),
+      contains('COALESCE(b.qty, 0) - COALESCE(d.qty, 0)'),
+    );
+    expect(
+      audit,
+      contains('FROM inventory_stock_deficits'),
     );
     expect(audit, contains('post_cutover_unbatched_stock_out'));
   });

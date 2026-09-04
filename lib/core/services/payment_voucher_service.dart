@@ -218,20 +218,11 @@ class PaymentVoucherService {
       }
 
       if (_isCash(cleanPaymentMethod)) {
-        final location = await _db.customSelect(
-          "SELECT current_balance FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
-          variables: <Variable<Object>>[
-            Variable<String>(cashLocationId.trim())
-          ],
-        ).getSingleOrNull();
-        if (location == null) {
-          throw StateError('Cash location is unavailable.');
-        }
-        final balance = _number(location.data['current_balance']);
-        if (!AccountingService.allowNegativeCashBalance &&
-            balance + _epsilon < amount) {
-          throw StateError('Insufficient cash balance for supplier payment.');
-        }
+        await AccountingService.ensureCashOutflowAllowed(
+          cashLocationId: cashLocationId,
+          amount: amount,
+          database: _db,
+        );
       }
 
       final prepared = await _prepareAllocations(
@@ -1336,15 +1327,15 @@ class PaymentVoucherService {
         throw StateError('Cash drawer session is not open for this refund.');
       }
       final location = await _db.customSelect(
-        "SELECT account_id, current_balance FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
+        "SELECT account_id FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
         variables: <Variable<Object>>[Variable<String>(cashLocationId.trim())],
       ).getSingleOrNull();
       if (location == null) throw StateError('Cash location is unavailable.');
-      final balance = _number(location.data['current_balance']);
-      if (!AccountingService.allowNegativeCashBalance &&
-          balance + _epsilon < amount) {
-        throw StateError('Insufficient cash balance for customer refund.');
-      }
+      await AccountingService.ensureCashOutflowAllowed(
+        cashLocationId: cashLocationId,
+        amount: amount,
+        database: _db,
+      );
       final customersAccount =
           await AccountingService.resolveAccountRoleForDatabase(
         _db,
@@ -3790,19 +3781,12 @@ class PaymentVoucherService {
         database: _db,
       );
     }
-    final updated = await _db.customUpdate(
-      '''
-      UPDATE cash_locations
-      SET current_balance = current_balance + ?, updated_at = ?
-      WHERE id = ? AND deleted_at = '' AND is_active = 1
-      ''',
-      variables: <Variable<Object>>[
-        Variable<double>(delta),
-        Variable<String>(now.toIso8601String()),
-        Variable<String>(locationId),
-      ],
+    await AccountingService.applyCashLocationDelta(
+      cashLocationId: locationId,
+      delta: delta,
+      updatedAt: now.toIso8601String(),
+      database: _db,
     );
-    if (updated != 1) throw StateError('Cash location is unavailable.');
   }
 
   Future<ReceiptVoucher?> _findReceiptByIdentity(

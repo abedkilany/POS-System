@@ -658,7 +658,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
         defaultStoreId: appIdentity.storeId,
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
-        allowNegativeStockResolver: (_, __) => false,
+        allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
       );
       final batchService = BatchInventoryService(sqliteDb);
       final movements = <StockMovement>[];
@@ -691,7 +691,8 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             warehouseId: rawWarehouse.id,
             productId: component.productId,
           );
-          if (available + 0.000001 < usedQty) {
+          if (!_storeProfile.allowNegativeStock &&
+              available + 0.000001 < usedQty) {
             throw StateError(
               'Insufficient stock in ${rawWarehouse.name} for ${product.name}. Required: $usedQty, available: $available.',
             );
@@ -703,6 +704,8 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             movementDate: now,
             storeId: appIdentity.storeId,
             deviceId: _deviceId,
+            branchId: appIdentity.branchId,
+            allowNegativeStock: _storeProfile.allowNegativeStock,
           );
           final lineTotalCost = allocations.fold<double>(
             0,
@@ -1675,7 +1678,7 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
       defaultStoreId: appIdentity.storeId,
       defaultBranchId: appIdentity.branchId,
       defaultSyncTarget: _stockTransactionSyncTarget,
-      allowNegativeStockResolver: (_, __) => false,
+      allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     final batchService = BatchInventoryService(db);
     final reversalOperationReferenceId = operationReferenceIdOverride.trim().isEmpty

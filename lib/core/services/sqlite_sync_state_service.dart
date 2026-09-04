@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 
 import 'local_database_service.dart';
+import 'batch_inventory_service.dart';
 import '../repositories/business_session_context.dart';
 import '../storage/sqlite/business_sqlite_store.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
@@ -1991,35 +1992,20 @@ class SqliteSyncStateService {
     final warehouseId = movement.warehouseId.trim().isEmpty
         ? Warehouse.defaultId
         : movement.warehouseId.trim();
-    final nowText = movement.updatedAt.toUtc().toIso8601String();
-    final balanceId =
-        '$storeId::$warehouseId::${movement.productId}::${movement.batchId}';
-    await db.customStatement('''
-      INSERT INTO inventory_batch_balances
-        (id, batch_id, product_id, warehouse_id, store_id, branch_id,
-         quantity, reserved_quantity, version, created_at, updated_at,
-         device_id, last_modified_by_device_id, sync_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, 'synced')
-      ON CONFLICT(store_id, warehouse_id, product_id, batch_id) DO UPDATE SET
-        quantity = inventory_batch_balances.quantity + excluded.quantity,
-        version = inventory_batch_balances.version + 1,
-        updated_at = excluded.updated_at,
-        device_id = excluded.device_id,
-        last_modified_by_device_id = excluded.last_modified_by_device_id,
-        sync_status = 'synced'
-    ''', <Object?>[
-      balanceId,
-      movement.batchId,
-      movement.productId,
-      warehouseId,
-      storeId,
-      branchId,
-      movement.quantity,
-      nowText,
-      nowText,
-      movement.deviceId,
-      movement.lastModifiedByDeviceId,
-    ]);
+    await BatchInventoryService(db).applySyncedBatchMovementInTransaction(
+      productId: movement.productId,
+      productName: movement.productName,
+      warehouseId: warehouseId,
+      batchId: movement.batchId,
+      quantity: movement.quantity,
+      unitCost: movement.unitCost,
+      movementDate: movement.date,
+      storeId: storeId,
+      branchId: branchId,
+      deviceId: movement.lastModifiedByDeviceId.trim().isEmpty
+          ? movement.deviceId
+          : movement.lastModifiedByDeviceId,
+    );
   }
 
   String _stockOperationIdempotencyKey(

@@ -120,7 +120,7 @@ void main() {
   group('Phase 6 append-only audit contracts', () {
     test('SQLite schema seals audit rows and blocks update/delete', () {
       final db = _source('lib/core/storage/sqlite/ventio_drift_database.dart');
-      expect(db, contains('int get schemaVersion => 31;'));
+      expect(db, contains('int get schemaVersion => 32;'));
       expect(db, contains("previous_hash TEXT NOT NULL DEFAULT ''"));
       expect(db, contains("record_hash TEXT NOT NULL DEFAULT ''"));
       expect(db, contains('hash_version INTEGER NOT NULL DEFAULT 1'));

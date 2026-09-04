@@ -165,7 +165,7 @@ void main() {
   test('schema 31 preserves manufacturing and reversal audit indexes', () async {
     await support.readyPhase5SqliteStore();
     final db = SqliteMigrationManager.database!;
-    expect(db.schemaVersion, 31);
+    expect(db.schemaVersion, 32);
     final columns =
         await db.customSelect('PRAGMA table_info(manufacturing_orders)').get();
     final names = columns.map((row) => row.data['name']).toSet();

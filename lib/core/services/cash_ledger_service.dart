@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import '../../models/cash_ledger_transaction.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
+import 'cash_balance_policy_service.dart';
 
 /// Phase 1 authoritative access layer for cash-ledger movements.
 ///
@@ -234,15 +235,25 @@ class CashLedgerService {
           ? original.lastModifiedByDeviceId
           : deviceId.trim(),
     );
+    final reversalDelta =
+        reversal.direction == 'in' ? reversal.amount : -reversal.amount;
+    if (reversalDelta < 0) {
+      // Reversing a historical cash inflow is itself a cash outflow, so it
+      // must obey the same store-wide policy before any mutation is written.
+      await CashBalancePolicyService.ensureOutflowAllowed(
+        cashLocationId: reversal.cashLocationId,
+        amount: -reversalDelta,
+        database: _db,
+      );
+    }
+
     final saved = await appendInExistingTransaction(reversal);
     final delta = saved.direction == 'in' ? saved.amount : -saved.amount;
-    await _db.customUpdate(
-      "UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ? AND deleted_at = ''",
-      variables: <Variable<Object>>[
-        Variable<double>(delta),
-        Variable<String>(when.toIso8601String()),
-        Variable<String>(saved.cashLocationId),
-      ],
+    await CashBalancePolicyService.applyDelta(
+      cashLocationId: saved.cashLocationId,
+      delta: delta,
+      updatedAt: when.toIso8601String(),
+      database: _db,
     );
     await _refreshOpenSessionExpectedCash(saved.cashDrawerSessionId, when);
     return saved;

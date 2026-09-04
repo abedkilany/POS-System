@@ -23,6 +23,7 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/accounting_production_integrity_service.dart';
 import '../../core/services/cash_operation_service.dart';
+import '../../core/services/payment_voucher_service.dart';
 import '../../core/services/sql_result_export_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../core/storage/sqlite/business_sqlite_store.dart';
@@ -5772,6 +5773,763 @@ class _StressLabPageState extends State<StressLabPage> {
     return true;
   }
 
+  Future<void> _runNegativeBalancePolicyMaintenanceScenarios({
+    required String actor,
+  }) async {
+    const epsilon = 0.000001;
+    final section = _dual('صيانة التطبيق', 'App Maintenance');
+    final db = SqliteMigrationManager.database;
+    if (db == null) {
+      _auditCheck(
+        section,
+        _dual('سياسات الأرصدة السالبة', 'Negative-balance policies'),
+        false,
+        '',
+        _dual(
+          'قاعدة SQLite غير متاحة لتشغيل سيناريوهات السياسات.',
+          'SQLite is unavailable for the negative-balance policy scenarios.',
+        ),
+      );
+      return;
+    }
+
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    Customer? policyCustomer;
+    Supplier? policySupplier;
+    Product? policyProduct;
+    Sale? deficitSale;
+    double deficitSaleTotal = 0;
+
+    await _auditStep<String>(
+      section,
+      _dual('تهيئة سيناريوهات السالب', 'Prepare negative-balance scenarios'),
+      () async {
+        final customer = Customer(
+          id: '${_currentBatchId}_negative_policy_customer_$stamp',
+          name: '[POLICY] Customer $_currentBatchId',
+          phone: '',
+          address: 'Ventio maintenance negative-balance scenario',
+        );
+        final supplier = Supplier(
+          id: '${_currentBatchId}_negative_policy_supplier_$stamp',
+          name: '[POLICY] Supplier $_currentBatchId',
+          phone: '',
+          address: 'Ventio maintenance negative-balance scenario',
+          notes: 'Created by maintenance policy scenarios',
+        );
+        final product = Product(
+          id: '${_currentBatchId}_negative_policy_product_$stamp',
+          name: '[POLICY] Negative Stock $_currentBatchId',
+          nameEn: 'Negative Stock Policy',
+          nameAr: 'سيناريو سياسة المخزون السالب',
+          code: 'NEG-POL-$stamp',
+          barcode: 'NEGPOL$stamp',
+          price: 7,
+          cost: 2,
+          usdCost: 2,
+          stock: 0,
+          category: 'Maintenance Scenario',
+          unit: 'pcs',
+          trackStock: true,
+          isActive: true,
+        );
+        policyCustomer = customer;
+        policySupplier = supplier;
+        policyProduct = product;
+        await store.addOrUpdateCustomer(customer);
+        await store.addOrUpdateSupplier(supplier);
+        await store.addOrUpdateProduct(product);
+        return 'customer=${customer.id} supplier=${supplier.id} product=${product.id}';
+      },
+      successDetails: (value) => value,
+    );
+
+    await _auditStep<String>(
+      section,
+      _dual('المخزون السالب OFF — منع البيع', 'Negative stock OFF — block sale'),
+      () async {
+        final customer = policyCustomer;
+        final product = policyProduct;
+        if (customer == null || product == null) {
+          throw StateError('Negative-stock scenario prerequisites are unavailable.');
+        }
+        final entryProfile = store.storeProfile;
+        Sale? unexpectedSale;
+        try {
+          await store.updateStoreProfile(entryProfile.copyWith(allowNegativeStock: false));
+          final beforeStock = await store.totalWarehouseStockFromSqlite(product.id);
+          var blocked = false;
+          try {
+            unexpectedSale = await store.createSale(
+              customerId: customer.id,
+              customerName: customer.name,
+              paymentMethod: 'Credit',
+              paymentStatus: 'credit',
+              items: <SaleItem>[
+                SaleItem(
+                  productId: product.id,
+                  productName: product.name,
+                  unitPrice: 7,
+                  quantity: 1,
+                  unitCost: 2,
+                ),
+              ],
+            );
+          } catch (_) {
+            blocked = true;
+          }
+          final afterStock = await store.totalWarehouseStockFromSqlite(product.id);
+          final deficit = await db.customSelect(
+            '''
+            SELECT COALESCE(SUM(quantity_open), 0) AS qty
+            FROM inventory_stock_deficits
+            WHERE product_id = ? AND status = 'open'
+            ''',
+            variables: <Variable<Object>>[Variable<String>(product.id)],
+          ).getSingle();
+          final openDeficit = (deficit.data['qty'] as num? ?? 0).toDouble();
+          if (!blocked) {
+            throw StateError('Sale was accepted while negative stock was disabled.');
+          }
+          if ((afterStock - beforeStock).abs() > epsilon || openDeficit.abs() > epsilon) {
+            throw StateError('DENY mode mutated stock: before=$beforeStock after=$afterStock deficit=$openDeficit');
+          }
+          return 'blocked=true stock=${_money(afterStock)} deficit=${_money(openDeficit)}';
+        } finally {
+          if (unexpectedSale != null) {
+            try {
+              if (!store.storeProfile.allowNegativeStock) {
+                await store.updateStoreProfile(store.storeProfile.copyWith(allowNegativeStock: true));
+              }
+              await store.cancelSale(unexpectedSale.id, restoreStock: true);
+            } catch (_) {}
+          }
+          if (store.storeProfile.allowNegativeStock != entryProfile.allowNegativeStock) {
+            await store.updateStoreProfile(entryProfile);
+          }
+        }
+      },
+      successDetails: (value) => value,
+    );
+
+    deficitSale = await _auditStep<Sale>(
+      section,
+      _dual('المخزون السالب ON — إنشاء Deficit', 'Negative stock ON — create deficit'),
+      () async {
+        final customer = policyCustomer;
+        final product = policyProduct;
+        if (customer == null || product == null) {
+          throw StateError('Negative-stock scenario prerequisites are unavailable.');
+        }
+        final entryProfile = store.storeProfile;
+        try {
+          await store.updateStoreProfile(entryProfile.copyWith(allowNegativeStock: true));
+          final sale = await store.createSale(
+            customerId: customer.id,
+            customerName: customer.name,
+            paymentMethod: 'Credit',
+            paymentStatus: 'credit',
+            items: <SaleItem>[
+              SaleItem(
+                productId: product.id,
+                productName: product.name,
+                unitPrice: 7,
+                quantity: 3,
+                unitCost: 2,
+              ),
+            ],
+          );
+          final logicalStock = await store.totalWarehouseStockFromSqlite(product.id);
+          final deficit = await db.customSelect(
+            '''
+            SELECT COALESCE(SUM(quantity_open), 0) AS qty
+            FROM inventory_stock_deficits
+            WHERE product_id = ? AND status = 'open'
+            ''',
+            variables: <Variable<Object>>[Variable<String>(product.id)],
+          ).getSingle();
+          final negativeBatches = await db.customSelect(
+            '''
+            SELECT COUNT(*) AS c
+            FROM inventory_batch_balances
+            WHERE product_id = ? AND quantity < -0.000001
+            ''',
+            variables: <Variable<Object>>[Variable<String>(product.id)],
+          ).getSingle();
+          final openDeficit = (deficit.data['qty'] as num? ?? 0).toDouble();
+          final negativeBatchCount = (negativeBatches.data['c'] as num? ?? 0).toInt();
+          if ((logicalStock + 3).abs() > epsilon ||
+              (openDeficit - 3).abs() > epsilon ||
+              negativeBatchCount != 0) {
+            throw StateError('ALLOW mode mismatch: stock=$logicalStock deficit=$openDeficit negativeBatches=$negativeBatchCount');
+          }
+          deficitSaleTotal = sale.total;
+          return sale;
+        } finally {
+          if (store.storeProfile.allowNegativeStock != entryProfile.allowNegativeStock) {
+            await store.updateStoreProfile(entryProfile);
+          }
+        }
+      },
+      successDetails: (sale) => 'sale=${sale.invoiceNo} total=${_money(sale.total)} stock=-3 deficit=3 negativeBatches=0',
+    );
+
+    await _auditStep<String>(
+      section,
+      _dual('تسوية Deficit وتصحيح COGS', 'Settle deficit and reconcile COGS'),
+      () async {
+        final supplier = policySupplier;
+        final product = policyProduct;
+        final sale = deficitSale;
+        if (supplier == null || product == null || sale == null) {
+          throw StateError('Deficit settlement prerequisites are unavailable.');
+        }
+        final purchase = await store.createPurchase(
+          supplierId: supplier.id,
+          supplierName: supplier.name,
+          receiveNow: true,
+          paymentMethod: 'Credit',
+          paymentStatus: 'credit',
+          note: 'Maintenance negative-stock deficit settlement $_currentBatchId',
+          items: <PurchaseItem>[
+            PurchaseItem(
+              productId: product.id,
+              productName: product.name,
+              quantity: 3,
+              unitCost: 2.50,
+            ),
+          ],
+        );
+        final logicalStock = await store.totalWarehouseStockFromSqlite(product.id);
+        final deficit = await db.customSelect(
+          '''
+          SELECT COALESCE(SUM(quantity_open), 0) AS open_qty,
+                 SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved_rows
+          FROM inventory_stock_deficits
+          WHERE product_id = ?
+          ''',
+          variables: <Variable<Object>>[Variable<String>(product.id)],
+        ).getSingle();
+        final reconciliation = await db.customSelect(
+          '''
+          SELECT COUNT(*) AS c
+          FROM journal_entries
+          WHERE deleted_at = '' AND status = 'posted'
+            AND reference_type = 'inventory_deficit_cost_reconciliation'
+            AND reference_no = ?
+          ''',
+          variables: <Variable<Object>>[Variable<String>(sale.invoiceNo)],
+        ).getSingle();
+        final currentSale = store.sales.where((item) => item.id == sale.id).toList();
+        final saleTotalAfter = currentSale.isEmpty ? sale.total : currentSale.first.total;
+        final openDeficit = (deficit.data['open_qty'] as num? ?? 0).toDouble();
+        final resolvedRows = (deficit.data['resolved_rows'] as num? ?? 0).toInt();
+        final reconciliationCount = (reconciliation.data['c'] as num? ?? 0).toInt();
+        if (logicalStock.abs() > epsilon ||
+            openDeficit.abs() > epsilon ||
+            resolvedRows < 1 ||
+            reconciliationCount < 1 ||
+            (saleTotalAfter - deficitSaleTotal).abs() > epsilon) {
+          throw StateError('Deficit settlement mismatch: stock=$logicalStock openDeficit=$openDeficit resolvedRows=$resolvedRows reconciliation=$reconciliationCount saleBefore=$deficitSaleTotal saleAfter=$saleTotalAfter');
+        }
+        return 'purchase=${purchase.purchaseNo} stock=0 deficit=0 reconciliation=$reconciliationCount saleTotalUnchanged=${_money(saleTotalAfter)}';
+      },
+      successDetails: (value) => value,
+    );
+
+    await _auditStep<String>(
+      section,
+      _dual('الرصيد النقدي السالب OFF — منع السحب', 'Negative cash OFF — block outflow'),
+      () async {
+        if (!AccountingService.isAvailable) throw StateError('Accounting is unavailable for cash-policy scenario.');
+        await _ensureAuditCashDrawerOpen();
+        final drawer = await AccountingService.currentCashDrawerForDevice(
+          deviceId: store.appIdentity.deviceId,
+          branchId: store.appIdentity.branchId,
+        );
+        if (drawer == null) throw StateError('Cash drawer is unavailable.');
+        final sessionId = await AccountingService.currentOpenCashDrawerSessionId(
+          branchId: store.appIdentity.branchId,
+          cashLocationId: drawer.id,
+        );
+        if (sessionId.isEmpty) throw StateError('No open cash drawer session.');
+        final expenseAccountId = await _resolveNegativePolicyCounterpartAccount();
+        final entryProfile = store.storeProfile;
+        var unexpectedWithdrawalPosted = false;
+        final before = drawer.balance;
+        final amount = before >= 0 ? before + 10 : 10.0;
+        try {
+          await store.updateStoreProfile(entryProfile.copyWith(allowNegativeCashBalance: false));
+          try {
+            await CashOperationService.current(authorization: store).withdrawal(
+              cashLocationId: drawer.id,
+              cashDrawerSessionId: sessionId,
+              counterpartAccountId: expenseAccountId,
+              amount: amount,
+              notes: 'Maintenance DENY negative cash $_currentBatchId',
+              createdBy: actor,
+              createdByUserId: store.activeUser?.id ?? '',
+              deviceId: store.appIdentity.deviceId,
+              branchId: store.appIdentity.branchId,
+              storeId: store.appIdentity.storeId,
+              idempotencyKey: '$_currentBatchId:negative-cash-deny',
+            );
+            unexpectedWithdrawalPosted = true;
+          } catch (_) {}
+          final after = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (unexpectedWithdrawalPosted || after == null || (after.balance - before).abs() > epsilon) {
+            throw StateError('DENY cash policy failed: before=$before after=${after?.balance} posted=$unexpectedWithdrawalPosted');
+          }
+          return 'blocked=true balance=${_money(before)}';
+        } finally {
+          if (unexpectedWithdrawalPosted) {
+            try {
+              await CashOperationService.current(authorization: store).deposit(
+                cashLocationId: drawer.id,
+                cashDrawerSessionId: sessionId,
+                counterpartAccountId: expenseAccountId,
+                amount: amount,
+                notes: 'Cleanup unexpected DENY outflow $_currentBatchId',
+                createdBy: actor,
+                createdByUserId: store.activeUser?.id ?? '',
+                deviceId: store.appIdentity.deviceId,
+                branchId: store.appIdentity.branchId,
+                storeId: store.appIdentity.storeId,
+                idempotencyKey: '$_currentBatchId:negative-cash-deny-cleanup',
+              );
+            } catch (_) {}
+          }
+          if (store.storeProfile.allowNegativeCashBalance != entryProfile.allowNegativeCashBalance) {
+            await store.updateStoreProfile(entryProfile);
+          }
+        }
+      },
+      successDetails: (value) => value,
+    );
+
+    await _auditStep<String>(
+      section,
+      _dual('الرصيد النقدي السالب ON — السماح والاستعادة', 'Negative cash ON — allow and restore'),
+      () async {
+        if (!AccountingService.isAvailable) throw StateError('Accounting is unavailable for cash-policy scenario.');
+        await _ensureAuditCashDrawerOpen();
+        final drawer = await AccountingService.currentCashDrawerForDevice(
+          deviceId: store.appIdentity.deviceId,
+          branchId: store.appIdentity.branchId,
+        );
+        if (drawer == null) throw StateError('Cash drawer is unavailable.');
+        final sessionId = await AccountingService.currentOpenCashDrawerSessionId(
+          branchId: store.appIdentity.branchId,
+          cashLocationId: drawer.id,
+        );
+        if (sessionId.isEmpty) throw StateError('No open cash drawer session.');
+        final expenseAccountId = await _resolveNegativePolicyCounterpartAccount();
+        final entryProfile = store.storeProfile;
+        final before = drawer.balance;
+        final amount = before >= 0 ? before + 10 : 10.0;
+        var withdrawalPosted = false;
+        try {
+          await store.updateStoreProfile(entryProfile.copyWith(allowNegativeCashBalance: true));
+          await CashOperationService.current(authorization: store).withdrawal(
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            counterpartAccountId: expenseAccountId,
+            amount: amount,
+            notes: 'Maintenance ALLOW negative cash $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:negative-cash-allow',
+          );
+          withdrawalPosted = true;
+          final negative = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (negative == null || negative.balance >= -epsilon) {
+            throw StateError('ALLOW cash policy did not produce a negative balance: ${negative?.balance}');
+          }
+          await CashOperationService.current(authorization: store).deposit(
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            counterpartAccountId: expenseAccountId,
+            amount: amount,
+            notes: 'Restore ALLOW negative cash $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:negative-cash-allow-restore',
+          );
+          withdrawalPosted = false;
+          final restored = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (restored == null || (restored.balance - before).abs() > epsilon) {
+            throw StateError('Cash balance was not restored: before=$before after=${restored?.balance}');
+          }
+          return 'negativeAllowed=true restored=${_money(restored.balance)}';
+        } finally {
+          if (withdrawalPosted) {
+            try {
+              await CashOperationService.current(authorization: store).deposit(
+                cashLocationId: drawer.id,
+                cashDrawerSessionId: sessionId,
+                counterpartAccountId: expenseAccountId,
+                amount: amount,
+                notes: 'Cleanup ALLOW negative cash $_currentBatchId',
+                createdBy: actor,
+                createdByUserId: store.activeUser?.id ?? '',
+                deviceId: store.appIdentity.deviceId,
+                branchId: store.appIdentity.branchId,
+                storeId: store.appIdentity.storeId,
+                idempotencyKey: '$_currentBatchId:negative-cash-allow-cleanup',
+              );
+            } catch (_) {}
+          }
+          if (store.storeProfile.allowNegativeCashBalance != entryProfile.allowNegativeCashBalance) {
+            await store.updateStoreProfile(entryProfile);
+          }
+        }
+      },
+      successDetails: (value) => value,
+    );
+
+    await _auditStep<String>(
+      section,
+      _dual('Reversal نقدي OFF — منع التحول للسالب', 'Cash reversal OFF — block negative result'),
+      () async {
+        final customer = policyCustomer;
+        if (customer == null) throw StateError('Cash reversal scenario customer is unavailable.');
+        if (!AccountingService.isAvailable) throw StateError('Accounting is unavailable for cash reversal scenario.');
+        await _ensureAuditCashDrawerOpen();
+        final drawer = await AccountingService.currentCashDrawerForDevice(
+          deviceId: store.appIdentity.deviceId,
+          branchId: store.appIdentity.branchId,
+        );
+        if (drawer == null) throw StateError('Cash drawer is unavailable.');
+        final sessionId = await AccountingService.currentOpenCashDrawerSessionId(
+          branchId: store.appIdentity.branchId,
+          cashLocationId: drawer.id,
+        );
+        if (sessionId.isEmpty) throw StateError('No open cash drawer session.');
+        final expenseAccountId = await _resolveNegativePolicyCounterpartAccount();
+        final entryProfile = store.storeProfile;
+        final before = drawer.balance;
+        final receiptAmount = max(30.0, -before + 30.0);
+        final voucherService = PaymentVoucherService(db);
+        String voucherId = '';
+        var drainPosted = false;
+        var voucherReversed = false;
+        var drainAmount = 0.0;
+        try {
+          await store.updateStoreProfile(entryProfile.copyWith(allowNegativeCashBalance: false));
+          final receipt = await voucherService.createReceipt(
+            customerId: customer.id,
+            customerName: customer.name,
+            amount: receiptAmount,
+            paymentMethod: 'Cash',
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            notes: 'Maintenance receipt reversal policy $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:negative-cash-reversal-receipt',
+          );
+          voucherId = receipt.id;
+          final afterReceipt = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (afterReceipt == null || afterReceipt.balance < 20) {
+            throw StateError('Receipt did not create enough cash for reversal scenario.');
+          }
+          drainAmount = afterReceipt.balance - 5;
+          if (drainAmount <= epsilon) throw StateError('Unable to prepare low cash balance for reversal scenario.');
+          await CashOperationService.current(authorization: store).withdrawal(
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            counterpartAccountId: expenseAccountId,
+            amount: drainAmount,
+            notes: 'Prepare reversal DENY balance $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:negative-cash-reversal-drain',
+          );
+          drainPosted = true;
+          var blocked = false;
+          try {
+            voucherReversed = await voucherService.reverseReceiptVoucher(
+              voucherId: receipt.id,
+              reason: 'Maintenance DENY reversal scenario',
+              createdBy: actor,
+              createdByUserId: store.activeUser?.id ?? '',
+              deviceId: store.appIdentity.deviceId,
+            );
+          } catch (_) {
+            blocked = true;
+          }
+          final lowBalance = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          final voucherRow = await db.customSelect(
+            "SELECT status FROM receipt_vouchers WHERE id = ? AND deleted_at = '' LIMIT 1",
+            variables: <Variable<Object>>[Variable<String>(receipt.id)],
+          ).getSingleOrNull();
+          final voucherStatus = voucherRow?.data['status']?.toString() ?? '';
+          if (!blocked || voucherReversed || lowBalance == null ||
+              (lowBalance.balance - 5).abs() > 0.01 || voucherStatus != 'posted') {
+            throw StateError('Reversal DENY failed: blocked=$blocked reversed=$voucherReversed balance=${lowBalance?.balance} status=$voucherStatus');
+          }
+          return 'blocked=true balance=${_money(lowBalance.balance)} voucherStatus=$voucherStatus';
+        } finally {
+          if (drainPosted && drainAmount > epsilon) {
+            try {
+              await CashOperationService.current(authorization: store).deposit(
+                cashLocationId: drawer.id,
+                cashDrawerSessionId: sessionId,
+                counterpartAccountId: expenseAccountId,
+                amount: drainAmount,
+                notes: 'Restore reversal DENY balance $_currentBatchId',
+                createdBy: actor,
+                createdByUserId: store.activeUser?.id ?? '',
+                deviceId: store.appIdentity.deviceId,
+                branchId: store.appIdentity.branchId,
+                storeId: store.appIdentity.storeId,
+                idempotencyKey: '$_currentBatchId:negative-cash-reversal-restore',
+              );
+              drainPosted = false;
+            } catch (_) {}
+          }
+          if (voucherId.isNotEmpty && !voucherReversed) {
+            try {
+              if (!store.storeProfile.allowNegativeCashBalance) {
+                await store.updateStoreProfile(store.storeProfile.copyWith(allowNegativeCashBalance: true));
+              }
+              voucherReversed = await voucherService.reverseReceiptVoucher(
+                voucherId: voucherId,
+                reason: 'Maintenance reversal scenario cleanup',
+                createdBy: actor,
+                createdByUserId: store.activeUser?.id ?? '',
+                deviceId: store.appIdentity.deviceId,
+              );
+            } catch (_) {}
+          }
+          if (store.storeProfile.allowNegativeCashBalance != entryProfile.allowNegativeCashBalance) {
+            await store.updateStoreProfile(entryProfile);
+          }
+          final restored = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (restored != null && (restored.balance - before).abs() > 0.01) {
+            throw StateError('Cash reversal scenario cleanup failed: before=$before after=${restored.balance}');
+          }
+        }
+      },
+      successDetails: (value) => value,
+    );
+    await _auditStep<String>(
+      section,
+      _dual('Reversal نقدي ON — السماح بالسالب', 'Cash reversal ON — allow negative result'),
+      () async {
+        final customer = policyCustomer;
+        if (customer == null) throw StateError('Cash reversal scenario customer is unavailable.');
+        if (!AccountingService.isAvailable) throw StateError('Accounting is unavailable for cash reversal scenario.');
+        await _ensureAuditCashDrawerOpen();
+        final drawer = await AccountingService.currentCashDrawerForDevice(
+          deviceId: store.appIdentity.deviceId,
+          branchId: store.appIdentity.branchId,
+        );
+        if (drawer == null) throw StateError('Cash drawer is unavailable.');
+        final sessionId = await AccountingService.currentOpenCashDrawerSessionId(
+          branchId: store.appIdentity.branchId,
+          cashLocationId: drawer.id,
+        );
+        if (sessionId.isEmpty) throw StateError('No open cash drawer session.');
+        final expenseAccountId = await _resolveNegativePolicyCounterpartAccount();
+        final entryProfile = store.storeProfile;
+        final before = drawer.balance;
+        final receiptAmount = max(30.0, -before + 30.0);
+        final voucherService = PaymentVoucherService(db);
+        String voucherId = '';
+        var drainAmount = 0.0;
+        var drainPosted = false;
+        var voucherReversed = false;
+        try {
+          await store.updateStoreProfile(entryProfile.copyWith(allowNegativeCashBalance: true));
+          final receipt = await voucherService.createReceipt(
+            customerId: customer.id,
+            customerName: customer.name,
+            amount: receiptAmount,
+            paymentMethod: 'Cash',
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            notes: 'Maintenance ALLOW receipt reversal policy $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:negative-cash-reversal-allow-receipt',
+          );
+          voucherId = receipt.id;
+          final afterReceipt = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (afterReceipt == null || afterReceipt.balance < 20) {
+            throw StateError('Receipt did not create enough cash for ALLOW reversal scenario.');
+          }
+          drainAmount = afterReceipt.balance - 5;
+          await CashOperationService.current(authorization: store).withdrawal(
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            counterpartAccountId: expenseAccountId,
+            amount: drainAmount,
+            notes: 'Prepare reversal ALLOW balance $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:negative-cash-reversal-allow-drain',
+          );
+          drainPosted = true;
+          voucherReversed = await voucherService.reverseReceiptVoucher(
+            voucherId: receipt.id,
+            reason: 'Maintenance ALLOW reversal scenario',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+          );
+          final negative = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          final voucherRow = await db.customSelect(
+            "SELECT status FROM receipt_vouchers WHERE id = ? AND deleted_at = '' LIMIT 1",
+            variables: <Variable<Object>>[Variable<String>(receipt.id)],
+          ).getSingleOrNull();
+          final voucherStatus = voucherRow?.data['status']?.toString() ?? '';
+          if (!voucherReversed || negative == null || negative.balance >= -epsilon || voucherStatus != 'reversed') {
+            throw StateError('Reversal ALLOW failed: reversed=$voucherReversed balance=${negative?.balance} status=$voucherStatus');
+          }
+          await CashOperationService.current(authorization: store).deposit(
+            cashLocationId: drawer.id,
+            cashDrawerSessionId: sessionId,
+            counterpartAccountId: expenseAccountId,
+            amount: drainAmount,
+            notes: 'Restore reversal ALLOW balance $_currentBatchId',
+            createdBy: actor,
+            createdByUserId: store.activeUser?.id ?? '',
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+            storeId: store.appIdentity.storeId,
+            idempotencyKey: '$_currentBatchId:negative-cash-reversal-allow-restore',
+          );
+          drainPosted = false;
+          final restored = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (restored == null || (restored.balance - before).abs() > 0.01) {
+            throw StateError('ALLOW reversal cash was not restored: before=$before after=${restored?.balance}');
+          }
+          return 'reversed=true negativeReached=true restored=${_money(restored.balance)}';
+        } finally {
+          if (!voucherReversed && voucherId.isNotEmpty) {
+            try {
+              if (!store.storeProfile.allowNegativeCashBalance) {
+                await store.updateStoreProfile(store.storeProfile.copyWith(allowNegativeCashBalance: true));
+              }
+              voucherReversed = await voucherService.reverseReceiptVoucher(
+                voucherId: voucherId,
+                reason: 'Maintenance ALLOW reversal cleanup',
+                createdBy: actor,
+                createdByUserId: store.activeUser?.id ?? '',
+                deviceId: store.appIdentity.deviceId,
+              );
+            } catch (_) {}
+          }
+          if (drainPosted && drainAmount > epsilon) {
+            try {
+              await CashOperationService.current(authorization: store).deposit(
+                cashLocationId: drawer.id,
+                cashDrawerSessionId: sessionId,
+                counterpartAccountId: expenseAccountId,
+                amount: drainAmount,
+                notes: 'Cleanup reversal ALLOW balance $_currentBatchId',
+                createdBy: actor,
+                createdByUserId: store.activeUser?.id ?? '',
+                deviceId: store.appIdentity.deviceId,
+                branchId: store.appIdentity.branchId,
+                storeId: store.appIdentity.storeId,
+                idempotencyKey: '$_currentBatchId:negative-cash-reversal-allow-cleanup',
+              );
+            } catch (_) {}
+          }
+          if (store.storeProfile.allowNegativeCashBalance != entryProfile.allowNegativeCashBalance) {
+            await store.updateStoreProfile(entryProfile);
+          }
+          final restored = await AccountingService.currentCashDrawerForDevice(
+            deviceId: store.appIdentity.deviceId,
+            branchId: store.appIdentity.branchId,
+          );
+          if (restored != null && (restored.balance - before).abs() > 0.01) {
+            throw StateError('Cash reversal ALLOW cleanup failed: before=$before after=${restored.balance}');
+          }
+        }
+      },
+      successDetails: (value) => value,
+    );
+  }
+
+  Future<String> _resolveNegativePolicyCounterpartAccount() async {
+    final defaults = await AccountingService.readDefaultAccountMap();
+    final accounts = await AccountingService.listAccounts(activeOnly: true);
+    final byId = <String, AccountingAccount>{for (final account in accounts) account.id: account};
+
+    String resolvePostable(String rootId) {
+      final cleanRootId = rootId.trim();
+      if (cleanRootId.isEmpty) return '';
+      final root = byId[cleanRootId];
+      if (root != null && root.isActive && root.isPostable && root.subtype != 'group') return root.id;
+      final pending = <String>[cleanRootId];
+      final visited = <String>{};
+      while (pending.isNotEmpty) {
+        final parentId = pending.removeLast();
+        if (!visited.add(parentId)) continue;
+        for (final account in accounts) {
+          if (account.parentId != parentId || !account.isActive) continue;
+          if (account.isPostable && account.subtype != 'group') return account.id;
+          pending.add(account.id);
+        }
+      }
+      return '';
+    }
+
+    final expense = resolvePostable(defaults['default_expense_account_id'] ?? '');
+    if (expense.isEmpty) {
+      throw StateError('A postable expense account is required for cash policy scenarios.');
+    }
+    return expense;
+  }
+
   Future<void> _confirmRealUserScenario() async {
     if (_running) return;
     final seed = DateTime.now().millisecondsSinceEpoch.remainder(1000000);
@@ -8321,6 +9079,9 @@ class _StressLabPageState extends State<StressLabPage> {
     final beforeMovements = store.stockMovements.length;
     final beforeTransactions = store.accountTransactions.length;
     final startedAt = DateTime.now();
+    final actor = store.activeUser?.fullName.trim().isNotEmpty == true
+        ? store.activeUser!.fullName.trim()
+        : store.currentRole;
 
     try {
       _addLog(
@@ -8933,6 +9694,7 @@ class _StressLabPageState extends State<StressLabPage> {
           _dual(
               'إجمالي المبيعات النشطة ${_money(activeSalesTotal)} أقل من المتوقع ${_money(expectedMinimumRevenue)}.',
               'Active sales total ${_money(activeSalesTotal)} is lower than expected ${_money(expectedMinimumRevenue)}.'));
+      await _runNegativeBalancePolicyMaintenanceScenarios(actor: actor);
       await _runMaintenanceSurfaceBody();
       await _runSettingsSurfaceBody();
       await _runDatabaseSurfaceBody();

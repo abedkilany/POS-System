@@ -509,7 +509,7 @@ Future<Sale> createSale({
           defaultStoreId: appIdentity.storeId,
           defaultBranchId: appIdentity.branchId,
           defaultSyncTarget: _stockTransactionSyncTarget,
-          allowNegativeStockResolver: (_, __) => false,
+          allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
         );
         final batchService = BatchInventoryService(sqliteDb);
         await sqliteDb.transaction(() async {
@@ -559,6 +559,8 @@ Future<Sale> createSale({
               movementDate: now,
               storeId: appIdentity.storeId,
               deviceId: _deviceId,
+              branchId: appIdentity.branchId,
+              allowNegativeStock: _storeProfile.allowNegativeStock,
             );
             final totalBatchCost = allocations.fold<double>(
               0,
@@ -910,7 +912,7 @@ Future<Sale> editPostedSale({
     defaultStoreId: appIdentity.storeId,
     defaultBranchId: appIdentity.branchId,
     defaultSyncTarget: _stockTransactionSyncTarget,
-    allowNegativeStockResolver: (_, __) => false,
+    allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
   );
   final batchService = BatchInventoryService(sqliteDb);
   final legacyDefaultVatRatePercent =
@@ -1395,6 +1397,8 @@ Future<Sale> editPostedSale({
             movementDate: now,
             storeId: appIdentity.storeId,
             deviceId: _deviceId,
+            branchId: appIdentity.branchId,
+            allowNegativeStock: _storeProfile.allowNegativeStock,
           );
           final totalBatchCost = allocations.fold<double>(
             0,

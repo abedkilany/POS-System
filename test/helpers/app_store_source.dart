@@ -4,7 +4,9 @@ import 'dart:io';
 /// domain split. Contract tests use this instead of assuming every AppStore
 /// method body lives physically in app_store.dart.
 String readAppStoreImplementationSource() {
-  final mainSource = File('lib/data/app_store.dart').readAsStringSync();
+  final mainSource = File('lib/data/app_store.dart')
+      .readAsStringSync()
+      .replaceAll('\r\n', '\n');
   final partPattern = RegExp(r"^\s*part\s+'([^']+)';", multiLine: true);
   final buffer = StringBuffer();
 
@@ -17,7 +19,7 @@ String readAppStoreImplementationSource() {
     if (!partFile.existsSync()) continue;
     buffer
       ..writeln('// ---- $relativePath ----')
-      ..writeln(partFile.readAsStringSync())
+      ..writeln(partFile.readAsStringSync().replaceAll('\r\n', '\n'))
       ..writeln();
   }
 

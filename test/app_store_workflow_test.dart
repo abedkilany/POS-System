@@ -1095,7 +1095,9 @@ void main() {
             BatchAllocation(
               batchId: 'requested-early-p6',
               quantity: 4,
-              expirationDate: DateTime.utc(2026, 9, 1),
+              expirationDate: DateTime.now()
+                  .toUtc()
+                  .add(const Duration(days: 365)),
             ),
           ],
         },
@@ -1125,7 +1127,9 @@ void main() {
             BatchAllocation(
               batchId: 'requested-late-p6',
               quantity: 6,
-              expirationDate: DateTime.utc(2026, 10, 1),
+              expirationDate: DateTime.now()
+                  .toUtc()
+                  .add(const Duration(days: 730)),
             ),
           ],
         },
@@ -1255,14 +1259,18 @@ void main() {
             BatchAllocation(
               batchId: 'requested-p1-a',
               quantity: 2,
-              expirationDate: DateTime.utc(2026, 9, 1),
+              expirationDate: DateTime.now()
+                  .toUtc()
+                  .add(const Duration(days: 365)),
             ),
           ],
           1: <BatchAllocation>[
             BatchAllocation(
               batchId: 'requested-p1-b',
               quantity: 3,
-              expirationDate: DateTime.utc(2026, 10, 1),
+              expirationDate: DateTime.now()
+                  .toUtc()
+                  .add(const Duration(days: 730)),
             ),
           ],
         },

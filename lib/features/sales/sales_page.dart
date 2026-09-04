@@ -752,6 +752,10 @@ class _SalesPageState extends State<SalesPage> {
   bool _handlePaymentShortcutKey(KeyEvent event, BuildContext dialogContext,
       void Function(void Function()) setDialogState) {
     if (event is! KeyDownEvent) return false;
+    if (!dialogContext.mounted ||
+        ModalRoute.of(dialogContext)?.isCurrent != true) {
+      return false;
+    }
     final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
     if (keyName == null) return false;
     final action = SaleShortcutSettings.load().paymentActionForKey(keyName);
@@ -5140,28 +5144,10 @@ class _SalesPageState extends State<SalesPage> {
     final originalDiscount = _discountController.text;
     final originalDiscountCurrency = _discountCurrency;
 
-    BuildContext? activePaymentDialogContext;
-    StateSetter? activePaymentDialogSetState;
-    bool handlePaymentHardwareShortcut(KeyEvent event) {
-      final dialogContext = activePaymentDialogContext;
-      final setDialogState = activePaymentDialogSetState;
-      if (dialogContext == null ||
-          setDialogState == null ||
-          ModalRoute.of(dialogContext)?.isCurrent != true) {
-        return false;
-      }
-      return _handlePaymentShortcutKey(event, dialogContext, setDialogState);
-    }
-
-    HardwareKeyboard.instance.addHandler(handlePaymentHardwareShortcut);
-    final bool? confirmed;
-    try {
-      confirmed = await showDialog<bool>(
+    final bool? confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => StatefulBuilder(
           builder: (context, setDialogState) {
-            activePaymentDialogContext = dialogContext;
-            activePaymentDialogSetState = setDialogState;
             final pageTr = AppLocalizations.of(context);
             final invoiceTotal = _invoiceTotal;
             final cashInInvoice = _cashReceivedAmount;
@@ -5325,12 +5311,6 @@ class _SalesPageState extends State<SalesPage> {
           },
         ),
       );
-    } finally {
-      HardwareKeyboard.instance.removeHandler(handlePaymentHardwareShortcut);
-      activePaymentDialogContext = null;
-      activePaymentDialogSetState = null;
-    }
-
     if (confirmed == true) {
       await _saveCurrentInvoice(printAfterSave: printAfterSave);
     } else if (mounted) {

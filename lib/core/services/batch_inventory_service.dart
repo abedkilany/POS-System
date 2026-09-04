@@ -4,6 +4,7 @@ import '../../models/inventory_batch.dart';
 import '../../models/product.dart';
 import '../localization/localized_domain_exception.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
+import 'accounting_service.dart';
 
 /// Transactional batch inventory operations.
 ///
@@ -744,6 +745,24 @@ class BatchInventoryService {
       ],
     );
 
+    final settledDeficitQuantity = normalizedSourceType == 'inventory_deficit'
+        ? 0.0
+        : await _settleOpenDeficitsWithIncomingBatchInTransaction(
+            productId: product.id,
+            productName: product.name,
+            warehouseId: warehouseId,
+            incomingBatchId: normalizedBatchId,
+            incomingQuantity: quantity,
+            actualUnitCost: unitCost,
+            settledAt: receivedAt,
+            storeId: storeId,
+            branchId: branchId,
+            deviceId: deviceId,
+            postAccountingAdjustments: true,
+          );
+    final balanceQuantity = (quantity - settledDeficitQuantity) < 0.000001
+        ? 0.0
+        : quantity - settledDeficitQuantity;
     final balanceId =
         '$storeId::$warehouseId::${product.id}::$normalizedBatchId';
     await db.customStatement(
@@ -761,7 +780,7 @@ class BatchInventoryService {
         warehouseId,
         storeId,
         branchId,
-        quantity,
+        balanceQuantity,
         nowText,
         nowText,
         deviceId,
@@ -897,22 +916,69 @@ class BatchInventoryService {
         Variable<String>(product.id),
       ],
     ).getSingle();
-    final batchQuantity =
+    final physicalBatchQuantity =
         (batchRow.data['quantity'] as num?)?.toDouble() ?? 0.0;
+    final deficitRow = await db.customSelect(
+      '''
+      SELECT COALESCE(SUM(quantity_open), 0) AS quantity
+      FROM inventory_stock_deficits
+      WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+        AND status = 'open' AND quantity_open > 0.000001
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(product.id),
+      ],
+    ).getSingle();
+    final deficitQuantity =
+        (deficitRow.data['quantity'] as num?)?.toDouble() ?? 0.0;
+    final batchQuantity = physicalBatchQuantity - deficitQuantity;
     final difference = warehouseQuantity - batchQuantity;
     const tolerance = 0.000001;
-    if (difference < -tolerance) {
-      throw LocalizedDomainException(
-        'error_batch_cutover_overstated',
-        values: {'product': product.name},
-        fallback:
-            'Batch stock exceeds warehouse stock for ${product.name}; cutover was stopped.',
-      );
-    }
 
     String openingBatchId = '';
     double openingQuantity = 0;
-    if (difference > tolerance) {
+
+    // Legacy warehouse stock may already be negative before Unified Batch is
+    // activated. Preserve that valid historical state by converting the
+    // missing quantity into a tracked deficit during cutover. Positive stock
+    // with excess batch quantity remains a hard integrity error.
+    if (difference < -tolerance) {
+      if (warehouseQuantity < -tolerance) {
+        final legacyDeficitQuantity = -difference;
+        final legacyDeficitBatchId =
+            'deficit:cutover:$storeId:$warehouseId:${product.id}'
+                .replaceAll(' ', '_');
+        final provisionalUnitCost =
+            await _provisionalDeficitUnitCostInTransaction(
+          product: product,
+          warehouseId: warehouseId,
+          storeId: storeId,
+        );
+        await _ensureDeficitBatchAndRecordInTransaction(
+          productId: product.id,
+          productName: product.name,
+          warehouseId: warehouseId,
+          deficitBatchId: legacyDeficitBatchId,
+          quantity: legacyDeficitQuantity,
+          provisionalUnitCost: provisionalUnitCost,
+          createdAt: cutoverAt,
+          storeId: storeId,
+          branchId: branchId,
+          deviceId: deviceId,
+          expiryTracked: product.expiryTrackingEnabled,
+          syncStatus: 'pending',
+        );
+      } else {
+        throw LocalizedDomainException(
+          'error_batch_cutover_overstated',
+          values: {'product': product.name},
+          fallback:
+              'Batch stock exceeds warehouse stock for ${product.name}; cutover was stopped.',
+        );
+      }
+    } else if (difference > tolerance) {
       if (product.expiryTrackingEnabled) {
         throw LocalizedDomainException(
           'error_batch_cutover_expiry_missing',
@@ -979,6 +1045,757 @@ class BatchInventoryService {
     );
   }
 
+  static bool isDeficitBatchId(String batchId) =>
+      batchId.trim().startsWith('deficit:');
+
+  Future<double> _provisionalDeficitUnitCostInTransaction({
+    required Product product,
+    required String warehouseId,
+    required String storeId,
+  }) async {
+    final row = await db.customSelect(
+      '''
+      SELECT b.unit_cost
+      FROM inventory_batches b
+      LEFT JOIN inventory_batch_balances bb ON bb.batch_id = b.id
+        AND bb.store_id = b.store_id AND bb.product_id = b.product_id
+        AND bb.warehouse_id = ?
+      WHERE b.store_id = ? AND b.product_id = ?
+        AND b.source_type <> 'inventory_deficit'
+        AND b.unit_cost > 0
+      ORDER BY CASE WHEN bb.batch_id IS NULL THEN 1 ELSE 0 END ASC,
+               CASE WHEN trim(b.received_at) = '' THEN b.created_at ELSE b.received_at END DESC,
+               b.id DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(warehouseId),
+        Variable<String>(storeId),
+        Variable<String>(product.id),
+      ],
+    ).getSingleOrNull();
+    final batchCost = (row?.data['unit_cost'] as num?)?.toDouble() ?? 0.0;
+    if (batchCost > 0) return batchCost;
+    if (product.usdCost > 0) return product.usdCost;
+    if (product.cost > 0) return product.cost;
+    return 0.0;
+  }
+
+  Future<void> _ensureDeficitBatchAndRecordInTransaction({
+    required String productId,
+    required String productName,
+    required String warehouseId,
+    required String deficitBatchId,
+    required double quantity,
+    required double provisionalUnitCost,
+    required DateTime createdAt,
+    required String storeId,
+    required String branchId,
+    required String deviceId,
+    required bool expiryTracked,
+    required String syncStatus,
+  }) async {
+    if (quantity <= 0) return;
+    final normalizedBatchId = deficitBatchId.trim();
+    if (normalizedBatchId.isEmpty) {
+      throw const LocalizedDomainException(
+        'error_batch_identity_required',
+        fallback: 'A deficit batch identity is required.',
+      );
+    }
+    final nowText = createdAt.toUtc().toIso8601String();
+    final expirationText = expiryTracked ? '9999-12-31' : '';
+    await db.customStatement(
+      '''
+      INSERT OR IGNORE INTO inventory_batches
+        (id, product_id, product_name, supplier_batch_number,
+         manufacturing_date, expiration_date, status, source_type, source_id,
+         source_line_id, unit_cost, initial_quantity, cost_currency,
+         exchange_rate, received_at, store_id, branch_id, created_at,
+         updated_at, device_id, last_modified_by_device_id, sync_status, version)
+      VALUES (?, ?, ?, 'NEGATIVE-STOCK-DEFICIT', '', ?, 'active',
+              'inventory_deficit', ?, ?, ?, ?, 'USD', 1, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      ''',
+      <Object?>[
+        normalizedBatchId,
+        productId,
+        productName,
+        expirationText,
+        normalizedBatchId,
+        normalizedBatchId,
+        provisionalUnitCost < 0 ? 0.0 : provisionalUnitCost,
+        quantity,
+        nowText,
+        storeId,
+        branchId.trim().isEmpty ? 'main' : branchId.trim(),
+        nowText,
+        nowText,
+        deviceId,
+        deviceId,
+        syncStatus,
+      ],
+    );
+    final deficitId = 'deficit_record:$normalizedBatchId';
+    await db.customStatement(
+      '''
+      INSERT OR IGNORE INTO inventory_stock_deficits
+        (id, deficit_batch_id, product_id, warehouse_id, store_id, branch_id,
+         quantity_original, quantity_open, provisional_unit_cost, status,
+         created_at, updated_at, device_id, last_modified_by_device_id,
+         sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, 1)
+      ''',
+      <Object?>[
+        deficitId,
+        normalizedBatchId,
+        productId,
+        warehouseId,
+        storeId,
+        branchId.trim().isEmpty ? 'main' : branchId.trim(),
+        quantity,
+        quantity,
+        provisionalUnitCost < 0 ? 0.0 : provisionalUnitCost,
+        nowText,
+        nowText,
+        deviceId,
+        deviceId,
+        syncStatus,
+      ],
+    );
+  }
+
+  Future<double> _settleOpenDeficitsWithIncomingBatchInTransaction({
+    required String productId,
+    required String productName,
+    required String warehouseId,
+    required String incomingBatchId,
+    required double incomingQuantity,
+    required double actualUnitCost,
+    required DateTime settledAt,
+    required String storeId,
+    required String branchId,
+    required String deviceId,
+    required bool postAccountingAdjustments,
+  }) async {
+    if (incomingQuantity <= 0) return 0.0;
+    final deficits = await db.customSelect(
+      '''
+      SELECT id, deficit_batch_id, quantity_open, provisional_unit_cost
+      FROM inventory_stock_deficits
+      WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+        AND status = 'open' AND quantity_open > 0.000001
+      ORDER BY created_at ASC, id ASC
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(productId),
+      ],
+    ).get();
+    var remainingIncoming = incomingQuantity;
+    var totalSettled = 0.0;
+    var settlementIndex = 0;
+    final nowText = settledAt.toUtc().toIso8601String();
+    for (final deficit in deficits) {
+      if (remainingIncoming <= 0.000001) break;
+      final open = (deficit.data['quantity_open'] as num? ?? 0).toDouble();
+      if (open <= 0.000001) continue;
+      final settled = open < remainingIncoming ? open : remainingIncoming;
+      if (settled <= 0) continue;
+      final deficitId = deficit.data['id']?.toString() ?? '';
+      final deficitBatchId = deficit.data['deficit_batch_id']?.toString() ?? '';
+      final provisionalUnitCost =
+          (deficit.data['provisional_unit_cost'] as num? ?? 0).toDouble();
+      final nextOpen = open - settled;
+      await db.customStatement(
+        '''
+        UPDATE inventory_stock_deficits
+        SET quantity_open = ?,
+            status = CASE WHEN ? <= 0.000001 THEN 'resolved' ELSE 'open' END,
+            updated_at = ?, version = version + 1,
+            last_modified_by_device_id = ?, sync_status = ?
+        WHERE id = ?
+        ''',
+        <Object?>[
+          nextOpen < 0.000001 ? 0.0 : nextOpen,
+          nextOpen,
+          nowText,
+          deviceId,
+          postAccountingAdjustments ? 'pending' : 'synced',
+          deficitId,
+        ],
+      );
+      if (nextOpen <= 0.000001) {
+        await db.customStatement(
+          '''
+          UPDATE inventory_batches
+          SET status = 'depleted', updated_at = ?, version = version + 1,
+              last_modified_by_device_id = ?, sync_status = ?
+          WHERE id = ? AND store_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM inventory_batch_balances bb
+              WHERE bb.batch_id = inventory_batches.id
+                AND bb.store_id = inventory_batches.store_id
+                AND bb.quantity > 0.000001
+            )
+          ''',
+          <Object?>[
+            nowText,
+            deviceId,
+            postAccountingAdjustments ? 'pending' : 'synced',
+            deficitBatchId,
+            storeId,
+          ],
+        );
+      }
+      final settlementId =
+          'deficit_settlement:$deficitId:$incomingBatchId:${settledAt.microsecondsSinceEpoch}:$settlementIndex';
+      final costAdjustment = settled * (actualUnitCost - provisionalUnitCost);
+      await db.customStatement(
+        '''
+        INSERT OR IGNORE INTO inventory_deficit_settlements
+          (id, deficit_id, incoming_batch_id, quantity, reversed_quantity,
+           provisional_unit_cost, actual_unit_cost, cost_adjustment,
+           settled_at, updated_at, device_id, status)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 'active')
+        ''',
+        <Object?>[
+          settlementId,
+          deficitId,
+          incomingBatchId,
+          settled,
+          provisionalUnitCost,
+          actualUnitCost < 0 ? 0.0 : actualUnitCost,
+          costAdjustment,
+          nowText,
+          nowText,
+          deviceId,
+        ],
+      );
+
+      if (postAccountingAdjustments && costAdjustment.abs() > 0.000001) {
+        final source = await db.customSelect(
+          '''
+          SELECT movement_type, reference_id, reference_no, branch_id
+          FROM stock_movements
+          WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+            AND batch_id = ? AND quantity < 0 AND deleted_at = ''
+          ORDER BY movement_date ASC, id ASC
+          LIMIT 1
+          ''',
+          variables: <Variable<Object>>[
+            Variable<String>(storeId),
+            Variable<String>(warehouseId),
+            Variable<String>(productId),
+            Variable<String>(deficitBatchId),
+          ],
+        ).getSingleOrNull();
+        final sourceMovementType =
+            source?.data['movement_type']?.toString() ?? '';
+        final sourceBranchValue =
+            source?.data['branch_id']?.toString().trim() ?? '';
+        final sourceBranchId =
+            sourceBranchValue.isEmpty ? branchId : sourceBranchValue;
+        if (sourceMovementType == 'sale') {
+          await AccountingService
+              .recordInventoryDeficitCostReconciliationInTransaction(
+            database: db,
+            settlementId: settlementId,
+            productId: productId,
+            productName: productName,
+            quantity: settled,
+            provisionalUnitCost: provisionalUnitCost,
+            actualUnitCost: actualUnitCost,
+            entryDate: settledAt,
+            sourceReferenceId: source?.data['reference_id']?.toString() ?? '',
+            sourceReferenceNo: source?.data['reference_no']?.toString() ?? '',
+            createdBy: deviceId,
+            storeId: storeId,
+            branchId: sourceBranchId,
+          );
+        } else if (source != null) {
+          await AccountingService.recordInventoryDeficitCostVarianceInTransaction(
+            database: db,
+            settlementId: settlementId,
+            productId: productId,
+            productName: productName,
+            quantity: settled,
+            provisionalUnitCost: provisionalUnitCost,
+            actualUnitCost: actualUnitCost,
+            entryDate: settledAt,
+            sourceReferenceId: source.data['reference_id']?.toString() ?? '',
+            sourceReferenceNo: source.data['reference_no']?.toString() ?? '',
+            sourceMovementType: sourceMovementType,
+            createdBy: deviceId,
+            storeId: storeId,
+            branchId: sourceBranchId,
+          );
+        }
+      }
+      remainingIncoming -= settled;
+      totalSettled += settled;
+      settlementIndex += 1;
+    }
+    return totalSettled;
+  }
+
+  Future<void> _restoreDeficitAllocationInTransaction({
+    required String deficitBatchId,
+    required double quantity,
+    required DateTime restoredAt,
+    required String storeId,
+    required String warehouseId,
+    required String productId,
+    required String productName,
+    required String branchId,
+    required String deviceId,
+    required bool postAccountingAdjustments,
+  }) async {
+    if (quantity <= 0) return;
+    final deficit = await db.customSelect(
+      '''
+      SELECT id, quantity_open, provisional_unit_cost
+      FROM inventory_stock_deficits
+      WHERE deficit_batch_id = ? AND store_id = ? AND warehouse_id = ?
+        AND product_id = ?
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(deficitBatchId),
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(productId),
+      ],
+    ).getSingleOrNull();
+    if (deficit == null) {
+      throw const LocalizedDomainException(
+        'error_batch_restore_invalid',
+        fallback: 'Negative-stock deficit record was not found.',
+      );
+    }
+    final deficitId = deficit.data['id']?.toString() ?? '';
+    final provisionalUnitCost =
+        (deficit.data['provisional_unit_cost'] as num? ?? 0).toDouble();
+    var remaining = quantity;
+    var open = (deficit.data['quantity_open'] as num? ?? 0).toDouble();
+    final nowText = restoredAt.toUtc().toIso8601String();
+    if (open > 0.000001) {
+      final directRestore = open < remaining ? open : remaining;
+      open -= directRestore;
+      remaining -= directRestore;
+      await db.customStatement(
+        '''
+        UPDATE inventory_stock_deficits
+        SET quantity_open = ?, updated_at = ?, version = version + 1,
+            last_modified_by_device_id = ?, sync_status = ?
+        WHERE id = ?
+        ''',
+        <Object?>[
+          open < 0.000001 ? 0.0 : open,
+          nowText,
+          deviceId,
+          postAccountingAdjustments ? 'pending' : 'synced',
+          deficitId,
+        ],
+      );
+    }
+
+    if (remaining > 0.000001) {
+      final settlements = await db.customSelect(
+        '''
+        SELECT id, incoming_batch_id, quantity, reversed_quantity,
+               actual_unit_cost
+        FROM inventory_deficit_settlements
+        WHERE deficit_id = ? AND reversed_quantity < quantity - 0.000001
+        ORDER BY settled_at DESC, id DESC
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(deficitId),
+        ],
+      ).get();
+      var restoreIndex = 0;
+      for (final settlement in settlements) {
+        if (remaining <= 0.000001) break;
+        final settledQuantity =
+            (settlement.data['quantity'] as num? ?? 0).toDouble();
+        final reversedQuantity =
+            (settlement.data['reversed_quantity'] as num? ?? 0).toDouble();
+        final availableToRestore = settledQuantity - reversedQuantity;
+        if (availableToRestore <= 0.000001) continue;
+        final restored =
+            availableToRestore < remaining ? availableToRestore : remaining;
+        final incomingBatchId =
+            settlement.data['incoming_batch_id']?.toString() ?? '';
+        final updated = await db.customUpdate(
+          '''
+          UPDATE inventory_batch_balances
+          SET quantity = quantity + ?, version = version + 1,
+              updated_at = ?, device_id = ?, last_modified_by_device_id = ?,
+              sync_status = ?
+          WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+            AND batch_id = ?
+          ''',
+          variables: <Variable<Object>>[
+            Variable<double>(restored),
+            Variable<String>(nowText),
+            Variable<String>(deviceId),
+            Variable<String>(deviceId),
+            Variable<String>(
+                postAccountingAdjustments ? 'pending' : 'synced'),
+            Variable<String>(storeId),
+            Variable<String>(warehouseId),
+            Variable<String>(productId),
+            Variable<String>(incomingBatchId),
+          ],
+          updates: const <TableInfo<Table, Object?>>{},
+        );
+        if (updated != 1) {
+          throw LocalizedDomainException(
+            'error_batch_no_longer_exists',
+            values: {'batch': incomingBatchId},
+            fallback: 'Batch $incomingBatchId no longer exists.',
+          );
+        }
+        await db.customStatement(
+          '''
+          UPDATE inventory_batches
+          SET status = 'active', updated_at = ?, version = version + 1,
+              last_modified_by_device_id = ?, sync_status = ?
+          WHERE id = ? AND store_id = ?
+          ''',
+          <Object?>[
+            nowText,
+            deviceId,
+            postAccountingAdjustments ? 'pending' : 'synced',
+            incomingBatchId,
+            storeId,
+          ],
+        );
+        final nextReversed = reversedQuantity + restored;
+        final settlementId = settlement.data['id']?.toString() ?? '';
+        await db.customStatement(
+          '''
+          UPDATE inventory_deficit_settlements
+          SET reversed_quantity = ?,
+              status = CASE
+                WHEN ? >= quantity - 0.000001 THEN 'reversed'
+                ELSE 'partial_reversal'
+              END,
+              updated_at = ?
+          WHERE id = ?
+          ''',
+          <Object?>[
+            nextReversed,
+            nextReversed,
+            nowText,
+            settlementId,
+          ],
+        );
+        if (postAccountingAdjustments) {
+          final source = await db.customSelect(
+            '''
+            SELECT movement_type, reference_id, reference_no, branch_id
+            FROM stock_movements
+            WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+              AND batch_id = ? AND quantity < 0 AND deleted_at = ''
+            ORDER BY movement_date ASC, id ASC
+            LIMIT 1
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(storeId),
+              Variable<String>(warehouseId),
+              Variable<String>(productId),
+              Variable<String>(deficitBatchId),
+            ],
+          ).getSingleOrNull();
+          if (source != null) {
+            final actualUnitCost =
+                (settlement.data['actual_unit_cost'] as num? ?? 0).toDouble();
+            final sourceMovementType =
+                source.data['movement_type']?.toString() ?? '';
+            final sourceBranchId =
+                source.data['branch_id']?.toString().trim().isNotEmpty == true
+                    ? source.data['branch_id'].toString()
+                    : branchId;
+            final reversalSettlementId =
+                '$settlementId:restore:${restoredAt.microsecondsSinceEpoch}:$restoreIndex';
+            if (sourceMovementType == 'sale') {
+              await AccountingService
+                  .recordInventoryDeficitCostReconciliationInTransaction(
+                database: db,
+                settlementId: reversalSettlementId,
+                productId: productId,
+                productName: productName,
+                quantity: restored,
+                provisionalUnitCost: actualUnitCost,
+                actualUnitCost: provisionalUnitCost,
+                entryDate: restoredAt,
+                sourceReferenceId:
+                    source.data['reference_id']?.toString() ?? '',
+                sourceReferenceNo:
+                    source.data['reference_no']?.toString() ?? '',
+                createdBy: deviceId,
+                storeId: storeId,
+                branchId: sourceBranchId,
+              );
+            } else {
+              await AccountingService
+                  .recordInventoryDeficitCostVarianceInTransaction(
+                database: db,
+                settlementId: reversalSettlementId,
+                productId: productId,
+                productName: productName,
+                quantity: restored,
+                provisionalUnitCost: actualUnitCost,
+                actualUnitCost: provisionalUnitCost,
+                entryDate: restoredAt,
+                sourceReferenceId:
+                    source.data['reference_id']?.toString() ?? '',
+                sourceReferenceNo:
+                    source.data['reference_no']?.toString() ?? '',
+                sourceMovementType: sourceMovementType,
+                createdBy: deviceId,
+                storeId: storeId,
+                branchId: sourceBranchId,
+              );
+            }
+          }
+        }
+        remaining -= restored;
+        restoreIndex += 1;
+      }
+    }
+
+    if (remaining > 0.000001) {
+      throw const LocalizedDomainException(
+        'error_batch_restore_invalid',
+        fallback: 'Negative-stock deficit cannot be restored completely.',
+      );
+    }
+    final activeSettlementRow = await db.customSelect(
+      '''
+      SELECT COALESCE(SUM(quantity - reversed_quantity), 0) AS active_qty
+      FROM inventory_deficit_settlements
+      WHERE deficit_id = ?
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(deficitId),
+      ],
+    ).getSingle();
+    final activeSettled =
+        (activeSettlementRow.data['active_qty'] as num? ?? 0).toDouble();
+    final refreshedDeficit = await db.customSelect(
+      'SELECT quantity_open FROM inventory_stock_deficits WHERE id = ?',
+      variables: <Variable<Object>>[Variable<String>(deficitId)],
+    ).getSingle();
+    final refreshedOpen =
+        (refreshedDeficit.data['quantity_open'] as num? ?? 0).toDouble();
+    if (refreshedOpen <= 0.000001 && activeSettled <= 0.000001) {
+      await db.customStatement(
+        '''
+        UPDATE inventory_stock_deficits
+        SET status = 'reversed', updated_at = ?, version = version + 1,
+            last_modified_by_device_id = ?, sync_status = ?
+        WHERE id = ?
+        ''',
+        <Object?>[
+          nowText,
+          deviceId,
+          postAccountingAdjustments ? 'pending' : 'synced',
+          deficitId,
+        ],
+      );
+    }
+  }
+
+  Future<void> applySyncedBatchMovementInTransaction({
+    required String productId,
+    required String productName,
+    required String warehouseId,
+    required String batchId,
+    required double quantity,
+    required double unitCost,
+    required DateTime movementDate,
+    required String storeId,
+    required String branchId,
+    required String deviceId,
+  }) async {
+    if (batchId.trim().isEmpty || quantity.abs() <= 0.000001) return;
+    final normalizedBatchId = batchId.trim();
+    final nowText = movementDate.toUtc().toIso8601String();
+    if (isDeficitBatchId(normalizedBatchId)) {
+      if (quantity < 0) {
+        final productRow = await db.customSelect(
+          'SELECT expiry_tracking_enabled FROM products WHERE id = ? LIMIT 1',
+          variables: <Variable<Object>>[Variable<String>(productId)],
+        ).getSingleOrNull();
+        final expiryTracked =
+            (productRow?.data['expiry_tracking_enabled'] as num? ?? 0).toInt() == 1;
+        await _ensureDeficitBatchAndRecordInTransaction(
+          productId: productId,
+          productName: productName,
+          warehouseId: warehouseId,
+          deficitBatchId: normalizedBatchId,
+          quantity: quantity.abs(),
+          provisionalUnitCost: unitCost,
+          createdAt: movementDate,
+          storeId: storeId,
+          branchId: branchId,
+          deviceId: deviceId,
+          expiryTracked: expiryTracked,
+          syncStatus: 'synced',
+        );
+        return;
+      }
+      final localDeficit = await db.customSelect(
+        '''
+        SELECT id FROM inventory_stock_deficits
+        WHERE deficit_batch_id = ? AND store_id = ? AND warehouse_id = ?
+          AND product_id = ?
+        LIMIT 1
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(normalizedBatchId),
+          Variable<String>(storeId),
+          Variable<String>(warehouseId),
+          Variable<String>(productId),
+        ],
+      ).getSingleOrNull();
+      if (localDeficit != null) {
+        await _restoreDeficitAllocationInTransaction(
+          deficitBatchId: normalizedBatchId,
+          quantity: quantity,
+          restoredAt: movementDate,
+          storeId: storeId,
+          warehouseId: warehouseId,
+          productId: productId,
+          productName: productName,
+          branchId: branchId,
+          deviceId: deviceId,
+          postAccountingAdjustments: false,
+        );
+        return;
+      }
+    }
+
+    final batchExists = await db.customSelect(
+      'SELECT id FROM inventory_batches WHERE id = ? LIMIT 1',
+      variables: <Variable<Object>>[Variable<String>(normalizedBatchId)],
+    ).getSingleOrNull();
+    if (batchExists == null) {
+      await db.customStatement(
+        '''
+        INSERT INTO inventory_batches
+          (id, product_id, product_name, supplier_batch_number,
+           manufacturing_date, expiration_date, status, source_type,
+           source_id, source_line_id, unit_cost, initial_quantity,
+           cost_currency, exchange_rate, received_at, store_id, branch_id,
+           created_at, updated_at, device_id, last_modified_by_device_id,
+           sync_status, version)
+        VALUES (?, ?, ?, '', '', '', 'active', 'sync_movement', ?, '', ?, ?,
+                'USD', 1, ?, ?, ?, ?, ?, ?, ?, 'synced', 1)
+        ''',
+        <Object?>[
+          normalizedBatchId,
+          productId,
+          productName,
+          normalizedBatchId,
+          unitCost < 0 ? 0.0 : unitCost,
+          quantity > 0 ? quantity : 0.0,
+          nowText,
+          storeId,
+          branchId.trim().isEmpty ? 'main' : branchId.trim(),
+          nowText,
+          nowText,
+          deviceId,
+          deviceId,
+        ],
+      );
+    }
+
+    var balanceDelta = quantity;
+    if (quantity > 0 && !isDeficitBatchId(normalizedBatchId)) {
+      final settled = await _settleOpenDeficitsWithIncomingBatchInTransaction(
+        productId: productId,
+        productName: productName,
+        warehouseId: warehouseId,
+        incomingBatchId: normalizedBatchId,
+        incomingQuantity: quantity,
+        actualUnitCost: unitCost,
+        settledAt: movementDate,
+        storeId: storeId,
+        branchId: branchId,
+        deviceId: deviceId,
+        postAccountingAdjustments: false,
+      );
+      balanceDelta = quantity - settled;
+    }
+    final balanceId = '$storeId::$warehouseId::$productId::$normalizedBatchId';
+    if (quantity > 0) {
+      final persistedBalanceDelta =
+          balanceDelta <= 0.000001 ? 0.0 : balanceDelta;
+      await db.customStatement(
+        '''
+        INSERT INTO inventory_batch_balances
+          (id, batch_id, product_id, warehouse_id, store_id, branch_id,
+           quantity, reserved_quantity, version, created_at, updated_at,
+           device_id, last_modified_by_device_id, sync_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, 'synced')
+        ON CONFLICT(store_id, warehouse_id, product_id, batch_id) DO UPDATE SET
+          quantity = inventory_batch_balances.quantity + excluded.quantity,
+          version = inventory_batch_balances.version + 1,
+          updated_at = excluded.updated_at,
+          device_id = excluded.device_id,
+          last_modified_by_device_id = excluded.last_modified_by_device_id,
+          sync_status = 'synced'
+        ''',
+        <Object?>[
+          balanceId,
+          normalizedBatchId,
+          productId,
+          warehouseId,
+          storeId,
+          branchId.trim().isEmpty ? 'main' : branchId.trim(),
+          persistedBalanceDelta,
+          nowText,
+          nowText,
+          deviceId,
+          deviceId,
+        ],
+      );
+      return;
+    }
+    if (balanceDelta.abs() <= 0.000001) return;
+    final updated = await db.customUpdate(
+      '''
+      UPDATE inventory_batch_balances
+      SET quantity = quantity + ?, version = version + 1,
+          updated_at = ?, device_id = ?, last_modified_by_device_id = ?,
+          sync_status = 'synced'
+      WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+        AND batch_id = ? AND quantity + ? >= -0.000001
+      ''',
+      variables: <Variable<Object>>[
+        Variable<double>(balanceDelta),
+        Variable<String>(nowText),
+        Variable<String>(deviceId),
+        Variable<String>(deviceId),
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(productId),
+        Variable<String>(normalizedBatchId),
+        Variable<double>(balanceDelta),
+      ],
+      updates: const <TableInfo<Table, Object?>>{},
+    );
+    if (updated != 1) {
+      throw const LocalizedDomainException(
+        'error_batch_missing_or_insufficient',
+        fallback: 'The batch does not exist or has insufficient stock.',
+      );
+    }
+  }
+
   /// Unified allocation for all stock-tracked products.
   ///
   /// Expiry products use FEFO. Non-expiry products use oldest received batch
@@ -990,6 +1807,8 @@ class BatchInventoryService {
     required DateTime movementDate,
     required String storeId,
     required String deviceId,
+    String branchId = 'main',
+    bool allowNegativeStock = false,
   }) async {
     if (!product.trackStock || quantity <= 0) {
       return const <BatchAllocation>[];
@@ -1078,11 +1897,58 @@ class BatchInventoryService {
       remaining -= used;
     }
     if (remaining > 0.000001) {
-      throw LocalizedDomainException(
-        'error_insufficient_batch_stock',
-        values: {'product': product.name},
-        fallback: 'Insufficient batch stock for ${product.name}.',
+      if (!allowNegativeStock) {
+        throw LocalizedDomainException(
+          'error_insufficient_batch_stock',
+          values: {'product': product.name},
+          fallback: 'Insufficient batch stock for ${product.name}.',
+        );
+      }
+      final provisionalUnitCost =
+          await _provisionalDeficitUnitCostInTransaction(
+        product: product,
+        warehouseId: warehouseId,
+        storeId: storeId,
       );
+      final counterRow = await db.customSelect(
+        '''
+        SELECT COUNT(*) AS c
+        FROM inventory_stock_deficits
+        WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(storeId),
+          Variable<String>(warehouseId),
+          Variable<String>(product.id),
+        ],
+      ).getSingle();
+      final deficitSequence =
+          ((counterRow.data['c'] as num?)?.toInt() ?? 0) + 1;
+      final deficitBatchId =
+          'deficit:$storeId:$warehouseId:${product.id}:${movementDate.microsecondsSinceEpoch}:$deficitSequence';
+      await _ensureDeficitBatchAndRecordInTransaction(
+        productId: product.id,
+        productName: product.name,
+        warehouseId: warehouseId,
+        deficitBatchId: deficitBatchId,
+        quantity: remaining,
+        provisionalUnitCost: provisionalUnitCost,
+        createdAt: movementDate,
+        storeId: storeId,
+        branchId: branchId,
+        deviceId: deviceId,
+        expiryTracked: product.expiryTrackingEnabled,
+        syncStatus: 'pending',
+      );
+      allocations.add(BatchAllocation(
+        batchId: deficitBatchId,
+        quantity: remaining,
+        supplierBatchNumber: 'NEGATIVE-STOCK-DEFICIT',
+        expirationDate: product.expiryTrackingEnabled
+            ? DateTime.utc(9999, 12, 31)
+            : null,
+        unitCost: provisionalUnitCost,
+      ));
     }
     return allocations;
   }
@@ -1094,6 +1960,7 @@ class BatchInventoryService {
     required DateTime restoredAt,
     required String storeId,
     required String deviceId,
+    String branchId = 'main',
   }) async {
     if (!product.trackStock || allocations.isEmpty) return;
     for (final allocation in allocations) {
@@ -1103,6 +1970,21 @@ class BatchInventoryService {
           'error_batch_restore_invalid',
           fallback: 'A valid batch and positive quantity are required.',
         );
+      }
+      if (isDeficitBatchId(batchId)) {
+        await _restoreDeficitAllocationInTransaction(
+          deficitBatchId: batchId,
+          quantity: allocation.quantity,
+          restoredAt: restoredAt,
+          storeId: storeId,
+          warehouseId: warehouseId,
+          productId: product.id,
+          productName: product.name,
+          branchId: branchId,
+          deviceId: deviceId,
+          postAccountingAdjustments: true,
+        );
+        continue;
       }
       final updated = await db.customUpdate(
         '''
@@ -1204,6 +2086,7 @@ class BatchInventoryService {
     required String storeId,
     required String branchId,
     required String deviceId,
+    bool allowNegativeStock = false,
   }) async {
     final allocations = await allocateUnifiedInTransaction(
       product: product,
@@ -1212,9 +2095,30 @@ class BatchInventoryService {
       movementDate: transferredAt,
       storeId: storeId,
       deviceId: deviceId,
+      branchId: branchId,
+      allowNegativeStock: allowNegativeStock,
     );
     final nowText = transferredAt.toUtc().toIso8601String();
     for (final allocation in allocations) {
+      final settledAtDestination =
+          await _settleOpenDeficitsWithIncomingBatchInTransaction(
+        productId: product.id,
+        productName: product.name,
+        warehouseId: toWarehouseId,
+        incomingBatchId: allocation.batchId,
+        incomingQuantity: allocation.quantity,
+        actualUnitCost: allocation.unitCost,
+        settledAt: transferredAt,
+        storeId: storeId,
+        branchId: branchId,
+        deviceId: deviceId,
+        postAccountingAdjustments: true,
+      );
+      final destinationBalanceQuantity =
+          allocation.quantity - settledAtDestination;
+      final persistedDestinationBalance = destinationBalanceQuantity <= 0.000001
+          ? 0.0
+          : destinationBalanceQuantity;
       final id = '$storeId::$toWarehouseId::${product.id}::${allocation.batchId}';
       await db.customStatement(
         '''
@@ -1238,7 +2142,7 @@ class BatchInventoryService {
           toWarehouseId,
           storeId,
           branchId,
-          allocation.quantity,
+          persistedDestinationBalance,
           nowText,
           nowText,
           deviceId,
@@ -1286,14 +2190,35 @@ class BatchInventoryService {
         Variable<String>(productId),
       ],
     ).getSingle();
+    final deficitRow = await db.customSelect(
+      '''
+      SELECT COALESCE(SUM(quantity_open), 0) AS quantity,
+             COALESCE(SUM(quantity_open * provisional_unit_cost), 0) AS carrying_value
+      FROM inventory_stock_deficits
+      WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+        AND status = 'open' AND quantity_open > 0.000001
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(productId),
+      ],
+    ).getSingle();
+    final physicalQuantity =
+        (batchRow.data['quantity'] as num? ?? 0).toDouble();
+    final physicalValue =
+        (batchRow.data['carrying_value'] as num? ?? 0).toDouble();
+    final deficitQuantity =
+        (deficitRow.data['quantity'] as num? ?? 0).toDouble();
+    final deficitValue =
+        (deficitRow.data['carrying_value'] as num? ?? 0).toDouble();
     return BatchInventoryBalanceCheck(
       productId: productId,
       warehouseId: warehouseId,
       warehouseQuantity:
           (aggregateRow?.data['quantity'] as num? ?? 0).toDouble(),
-      batchQuantity: (batchRow.data['quantity'] as num? ?? 0).toDouble(),
-      batchCarryingValue:
-          (batchRow.data['carrying_value'] as num? ?? 0).toDouble(),
+      batchQuantity: physicalQuantity - deficitQuantity,
+      batchCarryingValue: physicalValue - deficitValue,
       tolerance: tolerance,
     );
   }

@@ -27,17 +27,17 @@ class InvoicePdfService {
     final documentSale = PostedDocumentSnapshotService.saleView(sale);
     final documentProfile =
         PostedDocumentSnapshotService.profileForSale(sale, profile);
-    final baseFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Roboto-Regular.ttf'),
-    );
-    final boldFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Roboto-Medium.ttf'),
-    );
+    final labels = _InvoicePdfLabels(locale.languageCode);
+    final isArabic = locale.languageCode == 'ar';
     final arabicFont = pw.Font.ttf(
       await rootBundle.load('assets/fonts/Tahoma.ttf'),
     );
-    final labels = _InvoicePdfLabels(locale.languageCode);
-    final isArabic = locale.languageCode == 'ar';
+    final arabicBoldFont = arabicFont;
+    // Keep Latin invoices independent from optional bundled TTF parsing.
+    // Arabic (or Arabic text inside a Latin invoice) is still covered by
+    // the known-good Tahoma assets through the base font/fallback.
+    final baseFont = isArabic ? arabicFont : pw.Font.helvetica();
+    final boldFont = isArabic ? arabicBoldFont : pw.Font.helveticaBold();
     final logoBytes = _logoBytes(documentProfile.logoDataBase64);
 
     final pdf = pw.Document(

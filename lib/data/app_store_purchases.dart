@@ -399,6 +399,28 @@ Future<void> _requirePurchaseBatchesUnusedInTransaction(
       );
     }
 
+    final deficitSettlement = await sqliteDb.customSelect(
+      '''
+      SELECT ids.id, ids.incoming_batch_id, ids.quantity, ids.reversed_quantity
+      FROM inventory_deficit_settlements ids
+      INNER JOIN inventory_batches b ON b.id = ids.incoming_batch_id
+      WHERE b.store_id = ? AND b.source_type = 'purchase' AND b.source_id = ?
+        AND ids.status <> 'reversed'
+        AND ids.quantity - ids.reversed_quantity > 0.000001
+      ORDER BY ids.settled_at ASC, ids.id ASC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(appIdentity.storeId),
+        Variable<String>(purchase.id),
+      ],
+    ).getSingleOrNull();
+    if (deficitSettlement != null) {
+      throw StateError(
+        'Cannot edit or cancel ${purchase.purchaseNo}: part of its received batch has already settled an earlier negative-stock deficit. Reverse the dependent stock movement first.',
+      );
+    }
+
     // Legacy purchases may be mixed: an expiry line can already own a batch
     // while a non-expiry line from the same invoice has no historical batch.
     // Guard lineage per stock-tracked line rather than per purchase.

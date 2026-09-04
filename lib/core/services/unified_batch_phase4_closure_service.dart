@@ -218,6 +218,9 @@ class UnifiedBatchPhase4ClosureService {
         UNION
         SELECT store_id, warehouse_id, product_id FROM inventory_batch_balances
         WHERE store_id = ?
+        UNION
+        SELECT store_id, warehouse_id, product_id FROM inventory_stock_deficits
+        WHERE store_id = ? AND status = 'open' AND quantity_open > 0.000001
       ), warehouse AS (
         SELECT store_id, warehouse_id, product_id, SUM(quantity) AS qty
         FROM warehouse_inventory
@@ -228,19 +231,29 @@ class UnifiedBatchPhase4ClosureService {
         FROM inventory_batch_balances
         WHERE store_id = ?
         GROUP BY store_id, warehouse_id, product_id
+      ), deficits AS (
+        SELECT store_id, warehouse_id, product_id, SUM(quantity_open) AS qty
+        FROM inventory_stock_deficits
+        WHERE store_id = ? AND status = 'open' AND quantity_open > 0.000001
+        GROUP BY store_id, warehouse_id, product_id
       )
       SELECT s.product_id, s.warehouse_id,
              COALESCE(w.qty, 0) AS warehouse_qty,
-             COALESCE(b.qty, 0) AS batch_qty
+             COALESCE(b.qty, 0) - COALESCE(d.qty, 0) AS batch_qty
       FROM scoped s
       LEFT JOIN warehouse w ON w.store_id = s.store_id
         AND w.warehouse_id = s.warehouse_id AND w.product_id = s.product_id
       LEFT JOIN batches b ON b.store_id = s.store_id
         AND b.warehouse_id = s.warehouse_id AND b.product_id = s.product_id
-      WHERE ABS(COALESCE(w.qty, 0) - COALESCE(b.qty, 0)) > 0.000001
+      LEFT JOIN deficits d ON d.store_id = s.store_id
+        AND d.warehouse_id = s.warehouse_id AND d.product_id = s.product_id
+      WHERE ABS(COALESCE(w.qty, 0)
+        - (COALESCE(b.qty, 0) - COALESCE(d.qty, 0))) > 0.000001
       LIMIT 1
       ''',
       variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(storeId),
         Variable<String>(storeId),
         Variable<String>(storeId),
         Variable<String>(storeId),

@@ -20,6 +20,7 @@ import '../utils/currency_utils.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
 import '../storage/sqlite/business_sqlite_store.dart';
+import 'cash_balance_policy_service.dart';
 import 'cash_ledger_service.dart';
 import 'posted_document_edit_framework.dart';
 
@@ -27,9 +28,9 @@ class AccountingService {
   AccountingService._();
 
   static final Random _random = Random.secure();
+  static StoreProfile _moneyProfile = StoreProfile.defaults;
   static bool get isAvailable => SqliteMigrationManager.database != null;
   static void Function()? _mutationListener;
-  static StoreProfile _moneyProfile = StoreProfile.defaults;
   static int? _entryNoCacheDbIdentity;
   static int? _settingsCacheDbIdentity;
   static Map<String, String>? _defaultAccountMapCache;
@@ -67,29 +68,38 @@ class AccountingService {
 
   static void configureMoneyPolicy(StoreProfile profile) {
     _moneyProfile = profile;
+    CashBalancePolicyService.configure(profile);
   }
 
   /// Single store-wide policy for cash outflows. The per-location database
   /// flag is legacy compatibility data and is not an authorization source.
   static bool get allowNegativeCashBalance =>
-      _moneyProfile.allowNegativeCashBalance;
+      CashBalancePolicyService.allowNegativeCashBalance;
 
   static Future<void> ensureCashOutflowAllowed({
     required String cashLocationId,
     required double amount,
     VentioDriftDatabase? database,
-  }) async {
-    if (allowNegativeCashBalance || amount <= 0) return;
-    final db = database ?? _db;
-    final row = await db.customSelect(
-      'SELECT current_balance FROM cash_locations WHERE id = ? AND deleted_at = \'\' AND is_active = 1 LIMIT 1',
-      variables: <Variable<Object>>[Variable<String>(cashLocationId.trim())],
-    ).getSingleOrNull();
-    if (row == null) throw StateError('Cash location is unavailable.');
-    final balance = _num(row.data['current_balance']);
-    if (balance + 0.000001 < amount) {
-      throw StateError('Insufficient cash balance.');
-    }
+  }) {
+    return CashBalancePolicyService.ensureOutflowAllowed(
+      cashLocationId: cashLocationId,
+      amount: amount,
+      database: database,
+    );
+  }
+
+  static Future<void> applyCashLocationDelta({
+    required String cashLocationId,
+    required double delta,
+    required String updatedAt,
+    VentioDriftDatabase? database,
+  }) {
+    return CashBalancePolicyService.applyDelta(
+      cashLocationId: cashLocationId,
+      delta: delta,
+      updatedAt: updatedAt,
+      database: database,
+    );
   }
 
   static VentioDriftDatabase get _db {
@@ -1641,18 +1651,11 @@ class AccountingService {
       throw StateError(
           'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل دفع نقدي.');
     }
-    final location = await _db.customSelect(
-      "SELECT current_balance FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
-      variables: <Variable<Object>>[Variable<String>(drawer.id)],
-    ).getSingleOrNull();
-    if (location == null) {
-      throw StateError('درج النقد غير متاح.');
-    }
-    final balance = _num(location.data['current_balance']);
-    if (!allowNegativeCashBalance && balance + 0.000001 < paidAmount) {
-      throw StateError(
-          'رصيد الصندوق غير كافٍ لتسجيل الشراء النقدي. الرصيد الحالي: ${_roundMoney(balance)}، المطلوب: ${_roundMoney(paidAmount)}.');
-    }
+    await ensureCashOutflowAllowed(
+      cashLocationId: drawer.id,
+      amount: paidAmount,
+      database: _db,
+    );
   }
 
   static String _expenseAccountRoleKey(Expense expense) {
@@ -2170,17 +2173,11 @@ class AccountingService {
     ).getSingleOrNull();
     if (existing != null) return;
 
-    final balanceRow = await _db.customSelect(
-      "SELECT current_balance FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
-      variables: <Variable<Object>>[Variable<String>(cashExpenseLocation.id)],
-    ).getSingleOrNull();
-    if (balanceRow == null) {
-      throw StateError('موقع النقدية الخاص بالمصروف غير موجود أو غير فعال.');
-    }
-    final currentBalance = _num(balanceRow.data['current_balance']);
-    if (!allowNegativeCashBalance && currentBalance + 0.000001 < amount) {
-      throw StateError('الرصيد النقدي في الدرج غير كافٍ لتسجيل المصروف.');
-    }
+    await ensureCashOutflowAllowed(
+      cashLocationId: cashExpenseLocation.id,
+      amount: amount,
+      database: _db,
+    );
 
     final entryId = await createPostedEntry(
       JournalEntryDraft(
@@ -2275,13 +2272,11 @@ class AccountingService {
       lastModifiedByDeviceId: expense.lastModifiedByDeviceId,
     ));
 
-    await _db.customUpdate(
-      'UPDATE cash_locations SET current_balance = current_balance - ?, updated_at = ? WHERE id = ?',
-      variables: <Variable<Object>>[
-        Variable<double>(amount),
-        Variable<String>(now),
-        Variable<String>(cashExpenseLocation.id),
-      ],
+    await applyCashLocationDelta(
+      cashLocationId: cashExpenseLocation.id,
+      delta: -amount,
+      updatedAt: now,
+      database: _db,
     );
 
     // expected_cash is a persisted shift cache used by the open-shift UI.
@@ -3161,6 +3156,43 @@ class AccountingService {
         : 'عكس قيد اليومية $originalEntryNo: ${reason.trim()}';
 
     Future<void> persistReversal() async {
+      final cashBalanceDeltas = <String, double>{};
+      if (adjustCashLocationBalance) {
+        for (final line in reversalLines) {
+          final delta = line.debit - line.credit;
+          if (delta.abs() < 0.01) continue;
+          final cashLocations = await db.customSelect(
+            '''
+            SELECT id
+            FROM cash_locations
+            WHERE account_id = ? AND type = 'cash_drawer'
+              AND deleted_at = '' AND is_active = 1
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>(line.accountId),
+            ],
+          ).get();
+          for (final location in cashLocations) {
+            final locationId = location.data['id']?.toString() ?? '';
+            if (locationId.isEmpty) continue;
+            cashBalanceDeltas[locationId] =
+                (cashBalanceDeltas[locationId] ?? 0) + delta;
+          }
+        }
+        // Validate every resulting outflow before creating the reversal journal.
+        // This keeps DENY mode atomic even for legacy callers that still ask
+        // journal reversal code to repair operational cash balances.
+        for (final entry in cashBalanceDeltas.entries) {
+          if (entry.value < 0) {
+            await ensureCashOutflowAllowed(
+              cashLocationId: entry.key,
+              amount: -entry.value,
+              database: db,
+            );
+          }
+        }
+      }
+
       await db.customInsert(
         '''
         INSERT INTO journal_entries
@@ -3223,30 +3255,14 @@ class AccountingService {
       // operational cash balance. Phase 6 cash-event reversals set this to
       // false and let the immutable Cash Ledger reversal own that balance.
       if (adjustCashLocationBalance) {
-        for (final line in reversalLines) {
-          final delta = _cleanAmount(line.debit - line.credit);
-          if (delta.abs() < 0.01) continue;
-          final cashLocations = await db.customSelect(
-            '''
-            SELECT id
-            FROM cash_locations
-            WHERE account_id = ? AND type = 'cash_drawer'
-              AND deleted_at = '' AND is_active = 1
-            ''',
-            variables: <Variable<Object>>[
-              Variable<String>(line.accountId),
-            ],
-          ).get();
-          for (final location in cashLocations) {
-            await db.customUpdate(
-              'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
-              variables: <Variable<Object>>[
-                Variable<double>(delta),
-                Variable<String>(now),
-                Variable<String>(location.data['id']?.toString() ?? ''),
-              ],
-            );
-          }
+        for (final entry in cashBalanceDeltas.entries) {
+          if (entry.value.abs() < 0.01) continue;
+          await applyCashLocationDelta(
+            cashLocationId: entry.key,
+            delta: entry.value,
+            updatedAt: now,
+            database: db,
+          );
         }
       }
       await db.customUpdate(
@@ -3877,8 +3893,8 @@ class AccountingService {
         SELECT wi.product_id, p.name AS product_name, wi.warehouse_id,
                COALESCE(w.name, wi.warehouse_id) AS warehouse_name,
                wi.quantity,
-               COALESCE(batch.batch_qty, 0) AS batch_qty,
-               COALESCE(batch.batch_value, 0) AS batch_value,
+               COALESCE(batch.batch_qty, 0) - COALESCE(deficit.deficit_qty, 0) AS batch_qty,
+               COALESCE(batch.batch_value, 0) - COALESCE(deficit.deficit_value, 0) AS batch_value,
                CASE
                  WHEN EXISTS (
                    SELECT 1 FROM bill_of_materials bom
@@ -3909,6 +3925,16 @@ class AccountingService {
         ) batch ON batch.store_id = wi.store_id
           AND batch.product_id = wi.product_id
           AND batch.warehouse_id = wi.warehouse_id
+        LEFT JOIN (
+          SELECT store_id, product_id, warehouse_id,
+                 SUM(quantity_open) AS deficit_qty,
+                 SUM(quantity_open * provisional_unit_cost) AS deficit_value
+          FROM inventory_stock_deficits
+          WHERE status = 'open' AND quantity_open > 0.000001
+          GROUP BY store_id, product_id, warehouse_id
+        ) deficit ON deficit.store_id = wi.store_id
+          AND deficit.product_id = wi.product_id
+          AND deficit.warehouse_id = wi.warehouse_id
         WHERE ABS(wi.quantity) > 0.000001
         ORDER BY p.name, warehouse_name
       ''').get();
@@ -3916,7 +3942,7 @@ class AccountingService {
         final quantity = _num(row.data['quantity']);
         final batchQuantity = _num(row.data['batch_qty']);
         final batchValue = _num(row.data['batch_value']);
-        final unitCost = batchQuantity <= 0.000001
+        final unitCost = batchQuantity.abs() <= 0.000001
             ? 0.0
             : batchValue / batchQuantity;
         final category = row.data['inventory_category']?.toString() ??
@@ -5480,6 +5506,165 @@ class AccountingService {
     return createdEntryId;
   }
 
+  /// Reconciles provisional COGS created by an allowed negative-stock sale
+  /// when a later incoming batch provides the actual unit cost. The posted
+  /// sales invoice remains immutable; only COGS and inventory value are
+  /// corrected with a separate auditable journal entry.
+  static Future<String> recordInventoryDeficitCostReconciliationInTransaction({
+    required VentioDriftDatabase database,
+    required String settlementId,
+    required String productId,
+    required String productName,
+    required double quantity,
+    required double provisionalUnitCost,
+    required double actualUnitCost,
+    required DateTime entryDate,
+    String sourceReferenceId = '',
+    String sourceReferenceNo = '',
+    String createdBy = '',
+    String storeId = '',
+    String branchId = '',
+  }) async {
+    if (quantity <= 0) return '';
+    final difference = _roundMoney(
+      quantity * (actualUnitCost - provisionalUnitCost),
+    );
+    if (difference.abs() <= 0.000001) return '';
+    final cogsAccount = await _resolveAccountRoleForDatabase(database, 'cogs');
+    final inventoryAccount =
+        await _inventoryAccountForProduct(database, productId);
+    final amount = difference.abs();
+    final lines = difference > 0
+        ? <JournalLineDraft>[
+            JournalLineDraft(
+              accountId: cogsAccount,
+              debit: amount,
+              credit: 0,
+              memo: 'Negative-stock COGS reconciliation - $productName',
+            ),
+            JournalLineDraft(
+              accountId: inventoryAccount,
+              debit: 0,
+              credit: amount,
+              memo: 'Negative-stock inventory reconciliation - $productName',
+            ),
+          ]
+        : <JournalLineDraft>[
+            JournalLineDraft(
+              accountId: inventoryAccount,
+              debit: amount,
+              credit: 0,
+              memo: 'Negative-stock inventory reconciliation - $productName',
+            ),
+            JournalLineDraft(
+              accountId: cogsAccount,
+              debit: 0,
+              credit: amount,
+              memo: 'Negative-stock COGS reconciliation - $productName',
+            ),
+          ];
+    return createPostedEntry(
+      JournalEntryDraft(
+        entryDate: entryDate,
+        referenceType: 'inventory_deficit_cost_reconciliation',
+        referenceId: settlementId,
+        referenceNo: sourceReferenceNo.trim().isEmpty
+            ? sourceReferenceId
+            : sourceReferenceNo.trim(),
+        description:
+            'Negative-stock cost reconciliation - $productName',
+        source: 'system',
+        createdBy: createdBy,
+        storeId: storeId,
+        branchId: branchId,
+        lines: lines,
+      ),
+      database: database,
+      withinExistingTransaction: true,
+    );
+  }
+
+  /// Reconciles a provisional negative-stock cost for non-sale movements.
+  /// The difference is kept explicit as an inventory cost variance so the
+  /// inventory ledger remains aligned with the later actual incoming cost.
+  static Future<String> recordInventoryDeficitCostVarianceInTransaction({
+    required VentioDriftDatabase database,
+    required String settlementId,
+    required String productId,
+    required String productName,
+    required double quantity,
+    required double provisionalUnitCost,
+    required double actualUnitCost,
+    required DateTime entryDate,
+    String sourceReferenceId = '',
+    String sourceReferenceNo = '',
+    String sourceMovementType = '',
+    String createdBy = '',
+    String storeId = '',
+    String branchId = '',
+  }) async {
+    if (quantity <= 0) return '';
+    final difference = _roundMoney(
+      quantity * (actualUnitCost - provisionalUnitCost),
+    );
+    if (difference.abs() <= 0.000001) return '';
+    final inventoryAccount =
+        await _inventoryAccountForProduct(database, productId);
+    final lossAccount =
+        await _resolveAccountRoleForDatabase(database, 'inventory_count_loss');
+    final gainAccount =
+        await _resolveAccountRoleForDatabase(database, 'inventory_count_gain');
+    final amount = difference.abs();
+    final lines = difference > 0
+        ? <JournalLineDraft>[
+            JournalLineDraft(
+              accountId: lossAccount,
+              debit: amount,
+              credit: 0,
+              memo: 'Negative-stock cost variance - $productName',
+            ),
+            JournalLineDraft(
+              accountId: inventoryAccount,
+              debit: 0,
+              credit: amount,
+              memo: 'Negative-stock inventory cost variance - $productName',
+            ),
+          ]
+        : <JournalLineDraft>[
+            JournalLineDraft(
+              accountId: inventoryAccount,
+              debit: amount,
+              credit: 0,
+              memo: 'Negative-stock inventory cost variance - $productName',
+            ),
+            JournalLineDraft(
+              accountId: gainAccount,
+              debit: 0,
+              credit: amount,
+              memo: 'Negative-stock cost variance - $productName',
+            ),
+          ];
+    return createPostedEntry(
+      JournalEntryDraft(
+        entryDate: entryDate,
+        referenceType: 'inventory_deficit_cost_variance',
+        referenceId: settlementId,
+        referenceNo: sourceReferenceNo.trim().isEmpty
+            ? sourceReferenceId
+            : sourceReferenceNo.trim(),
+        description:
+            'Negative-stock cost variance (${sourceMovementType.trim().isEmpty ? 'stock' : sourceMovementType}) - $productName',
+        source: 'system',
+        createdBy: createdBy,
+        storeId: storeId,
+        branchId: branchId,
+        lines: lines,
+      ),
+      database: database,
+      withinExistingTransaction: true,
+    );
+  }
+
   /// Posts the financial side of a manual stock adjustment. The caller owns
   /// the SQLite transaction together with stock/cost-layer mutations.
   static Future<String> recordManualInventoryAdjustmentInTransaction({
@@ -6721,14 +6906,11 @@ class AccountingService {
             'تحويل الوردية يتطلب ورديتين مفتوحتين ومطابقتين لدرجَي المصدر والوجهة.');
       }
     }
-    final sourceRow = await _db.customSelect(
-      "SELECT current_balance FROM cash_locations WHERE id = ? AND deleted_at = '' AND is_active = 1 LIMIT 1",
-      variables: <Variable<Object>>[Variable<String>(fromLocation.id)],
-    ).getSingleOrNull();
-    final sourceBalance = _num(sourceRow?.data['current_balance']);
-    if (!allowNegativeCashBalance && sourceBalance + 0.000001 < cleanAmount) {
-      throw StateError('الرصيد النقدي في الموقع المصدر غير كافٍ للتحويل.');
-    }
+    await ensureCashOutflowAllowed(
+      cashLocationId: fromLocation.id,
+      amount: cleanAmount,
+      database: _db,
+    );
 
     final id = _newId('cashtx');
     final date = transferDate ?? DateTime.now();
@@ -6851,21 +7033,17 @@ class AccountingService {
         lastModifiedByDeviceId: deviceId.trim(),
       ));
 
-      await _db.customUpdate(
-        'UPDATE cash_locations SET current_balance = current_balance - ?, updated_at = ? WHERE id = ?',
-        variables: <Variable<Object>>[
-          Variable<double>(cleanAmount),
-          Variable<String>(now),
-          Variable<String>(fromLocation.id)
-        ],
+      await applyCashLocationDelta(
+        cashLocationId: fromLocation.id,
+        delta: -cleanAmount,
+        updatedAt: now,
+        database: _db,
       );
-      await _db.customUpdate(
-        'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
-        variables: <Variable<Object>>[
-          Variable<double>(cleanAmount),
-          Variable<String>(now),
-          Variable<String>(toLocation.id)
-        ],
+      await applyCashLocationDelta(
+        cashLocationId: toLocation.id,
+        delta: cleanAmount,
+        updatedAt: now,
+        database: _db,
       );
     }
 
@@ -7387,20 +7565,11 @@ class AccountingService {
     final db = database ?? _db;
     final id = cashLocationId.trim();
     if (id.isEmpty || delta.abs() < 0.01) return;
-    if (delta < 0) {
-      await ensureCashOutflowAllowed(
-        cashLocationId: id,
-        amount: -delta,
-        database: db,
-      );
-    }
-    await db.customUpdate(
-      'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
-      variables: <Variable<Object>>[
-        Variable<double>(_roundMoney(delta)),
-        Variable<String>(movementDate.toUtc().toIso8601String()),
-        Variable<String>(id),
-      ],
+    await applyCashLocationDelta(
+      cashLocationId: id,
+      delta: _roundMoney(delta),
+      updatedAt: movementDate.toUtc().toIso8601String(),
+      database: db,
     );
   }
 
@@ -7408,6 +7577,10 @@ class AccountingService {
       String cashLocationId, double balance, String updatedAt) async {
     final id = cashLocationId.trim();
     if (id.isEmpty) return;
+    if (!balance.isFinite || balance < 0) {
+      throw ArgumentError(
+          'Direct cash balance reset requires a finite non-negative value.');
+    }
     await _db.customUpdate(
       'UPDATE cash_locations SET current_balance = ?, updated_at = ? WHERE id = ?',
       variables: <Variable<Object>>[

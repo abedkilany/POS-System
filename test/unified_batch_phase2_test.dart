@@ -133,6 +133,53 @@ void main() {
     expect(marker.read<double>('opening_unit_cost'), 2.25);
   });
 
+  test('legacy negative warehouse cutover creates a tracked deficit', () async {
+    final db = VentioDriftDatabase(NativeDatabase.memory());
+    await db.initializeFoundation();
+    addTearDown(db.close);
+    final product = _phase2Product(id: 'legacy-negative', expiry: false);
+    await _persistPhase2Product(db, product);
+    await _setPhase2Warehouse(db, product.id, -9);
+    final service = BatchInventoryService(db);
+
+    await db.transaction(
+      () => service.ensureUnifiedCutoverInTransaction(
+        product: product,
+        warehouseId: 'main',
+        openingUnitCost: 2.25,
+        cutoverAt: DateTime.utc(2026, 8, 28, 10),
+        storeId: 'store-1',
+        branchId: 'main',
+        deviceId: 'device-1',
+      ),
+    );
+
+    final physical = await db.customSelect(
+      "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE product_id = 'legacy-negative'",
+    ).getSingle();
+    expect((physical.data['qty'] as num).toDouble(), 0);
+
+    final deficit = await db.customSelect(
+      "SELECT quantity_open, status FROM inventory_stock_deficits WHERE product_id = 'legacy-negative'",
+    ).getSingle();
+    expect(deficit.read<double>('quantity_open'), 9);
+    expect(deficit.read<String>('status'), 'open');
+
+    final check = await service.checkWarehouseBatchBalanceInTransaction(
+      productId: product.id,
+      warehouseId: 'main',
+      storeId: 'store-1',
+    );
+    expect(check.isConsistent, isTrue);
+    expect(check.warehouseQuantity, -9);
+    expect(check.batchQuantity, -9);
+
+    final marker = await db.customSelect(
+      "SELECT opening_quantity FROM unified_batch_cutovers WHERE product_id = 'legacy-negative'",
+    ).getSingle();
+    expect(marker.read<double>('opening_quantity'), 0);
+  });
+
   test('existing cutover refuses warehouse/batch drift', () async {
     final db = VentioDriftDatabase(NativeDatabase.memory());
     await db.initializeFoundation();

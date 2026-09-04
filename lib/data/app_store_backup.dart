@@ -90,20 +90,18 @@ extension AppStoreBackupExtensions on AppStore {
     if (cleaned.length < 8) {
       throw ArgumentError('Backup password must be at least 8 characters.');
     }
-    final plain = utf8.encode(await exportBackupJson());
+    final plainJson = await exportBackupJson();
     final salt = _generateSalt();
     final nonce = _generateNonce();
-    final key = _deriveBackupKey(cleaned, salt);
-    final encrypted = _aesGcmEncrypt(plain, key, base64Url.decode(nonce));
-    final payload = {
-      'format': 'store_manager_pro_encrypted_backup',
-      'version': 3,
-      'kdf': 'pbkdf2-hmac-sha256-200000',
-      'cipher': 'aes-256-gcm',
-      'salt': salt,
-      'nonce': nonce,
-      'data': base64UrlEncode(encrypted),
-    };
+    final encryptedPayload = await compute(
+      _encryptBackupPayloadInIsolate,
+      <String, String>{
+        'password': cleaned,
+        'plainJson': plainJson,
+        'salt': salt,
+        'nonce': nonce,
+      },
+    );
     await AuditLogger.record(
       entityType: 'backup',
       entityId: appIdentity.storeId,
@@ -120,7 +118,7 @@ extension AppStoreBackupExtensions on AppStore {
       sourceModule: 'backup',
       isImportant: true,
     );
-    return const JsonEncoder.withIndent('  ').convert(payload);
+    return encryptedPayload;
   }
 
   BackupImportPlan inspectBackupJson(String rawJson) {
@@ -406,4 +404,47 @@ extension AppStoreBackupExtensions on AppStore {
       );
     }
   }
+}
+
+String _encryptBackupPayloadInIsolate(Map<String, String> input) {
+  final plain = utf8.encode(input['plainJson']!);
+  final salt = input['salt']!;
+  final nonce = input['nonce']!;
+  final key = _deriveBackupKeyForIsolate(input['password']!, salt);
+  final encrypted =
+      _aesGcmEncryptForIsolate(plain, key, base64Url.decode(nonce));
+  return const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+    'format': 'store_manager_pro_encrypted_backup',
+    'version': 3,
+    'kdf': 'pbkdf2-hmac-sha256-200000',
+    'cipher': 'aes-256-gcm',
+    'salt': salt,
+    'nonce': nonce,
+    'data': base64UrlEncode(encrypted),
+  });
+}
+
+List<int> _deriveBackupKeyForIsolate(String password, String salt) {
+  final derivator = pc.PBKDF2KeyDerivator(pc.HMac(pc.SHA256Digest(), 64));
+  derivator.init(
+    pc.Pbkdf2Parameters(Uint8List.fromList(utf8.encode(salt)), 200000, 32),
+  );
+  return derivator.process(
+    Uint8List.fromList(utf8.encode('store_manager_pro|backup_v3|$password')),
+  );
+}
+
+List<int> _aesGcmEncryptForIsolate(
+    List<int> plain, List<int> key, List<int> nonce) {
+  final cipher = pc.GCMBlockCipher(pc.AESEngine())
+    ..init(
+      true,
+      pc.AEADParameters(
+        pc.KeyParameter(Uint8List.fromList(key)),
+        128,
+        Uint8List.fromList(nonce),
+        Uint8List(0),
+      ),
+    );
+  return cipher.process(Uint8List.fromList(plain));
 }

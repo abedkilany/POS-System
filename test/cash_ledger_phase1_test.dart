@@ -1,8 +1,10 @@
 import 'package:drift/drift.dart' hide isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ventio/core/services/accounting_service.dart';
 import 'package:ventio/core/services/cash_ledger_service.dart';
 import 'package:ventio/core/storage/sqlite/ventio_drift_database.dart';
+import 'package:ventio/models/store_profile.dart';
 
 Future<VentioDriftDatabase> _openDb() async {
   final db = VentioDriftDatabase(NativeDatabase.memory());
@@ -158,4 +160,87 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test('cash-ledger reversal blocks a negative drawer when policy denies it',
+      () async {
+    final db = await _openDb();
+    addTearDown(() async {
+      AccountingService.configureMoneyPolicy(StoreProfile.defaults);
+      await db.close();
+    });
+    await _seedDrawer(db);
+    await db.customUpdate(
+      "UPDATE cash_locations SET current_balance = 20 WHERE id = 'drawer-1'",
+    );
+    AccountingService.configureMoneyPolicy(
+      StoreProfile.defaults.copyWith(allowNegativeCashBalance: false),
+    );
+    final service = CashLedgerService(db);
+    final original = await service.append(
+      id: 'receipt-to-reverse-deny',
+      type: 'receipt_voucher',
+      direction: 'in',
+      amount: 50,
+      cashLocationId: 'drawer-1',
+      cashDrawerSessionId: 'shift-1',
+      referenceType: 'receipt_voucher',
+      referenceId: 'rv-deny',
+    );
+
+    await expectLater(
+      service.reverseTransaction(transactionId: original.id),
+      throwsStateError,
+    );
+
+    final balance = await db.customSelect(
+      "SELECT current_balance FROM cash_locations WHERE id = 'drawer-1'",
+    ).getSingle();
+    expect((balance.data['current_balance'] as num).toDouble(), 20);
+    final reversalCount = await db.customSelect(
+      "SELECT COUNT(*) AS c FROM cash_ledger_transactions WHERE reversal_of_id = 'receipt-to-reverse-deny' AND deleted_at = ''",
+    ).getSingle();
+    expect(reversalCount.read<int>('c'), 0);
+  });
+
+  test('cash-ledger reversal allows a negative drawer when policy allows it',
+      () async {
+    final db = await _openDb();
+    addTearDown(() async {
+      AccountingService.configureMoneyPolicy(StoreProfile.defaults);
+      await db.close();
+    });
+    await _seedDrawer(db);
+    await db.customUpdate(
+      "UPDATE cash_locations SET current_balance = 20 WHERE id = 'drawer-1'",
+    );
+    AccountingService.configureMoneyPolicy(
+      StoreProfile.defaults.copyWith(allowNegativeCashBalance: true),
+    );
+    final service = CashLedgerService(db);
+    final original = await service.append(
+      id: 'receipt-to-reverse-allow',
+      type: 'receipt_voucher',
+      direction: 'in',
+      amount: 50,
+      cashLocationId: 'drawer-1',
+      cashDrawerSessionId: 'shift-1',
+      referenceType: 'receipt_voucher',
+      referenceId: 'rv-allow',
+    );
+
+    final reversal =
+        await service.reverseTransaction(transactionId: original.id);
+
+    expect(reversal, isNotNull);
+    expect(reversal!.direction, 'out');
+    final balance = await db.customSelect(
+      "SELECT current_balance FROM cash_locations WHERE id = 'drawer-1'",
+    ).getSingle();
+    expect((balance.data['current_balance'] as num).toDouble(), -30);
+    final reversalCount = await db.customSelect(
+      "SELECT COUNT(*) AS c FROM cash_ledger_transactions WHERE reversal_of_id = 'receipt-to-reverse-allow' AND deleted_at = ''",
+    ).getSingle();
+    expect(reversalCount.read<int>('c'), 1);
+  });
+
 }

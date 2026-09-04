@@ -190,7 +190,7 @@ Future<WarehouseTransferOrder> createWarehouseTransferOrder({
       defaultStoreId: appIdentity.storeId,
       defaultBranchId: appIdentity.branchId,
       defaultSyncTarget: _stockTransactionSyncTarget,
-      allowNegativeStockResolver: (_, __) => false,
+      allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     final batchService = BatchInventoryService(sqliteDb);
     final transferMovements = <StockMovement>[];
@@ -275,6 +275,7 @@ Future<WarehouseTransferOrder> createWarehouseTransferOrder({
             storeId: appIdentity.storeId,
             branchId: appIdentity.branchId,
             deviceId: _deviceId,
+            allowNegativeStock: _storeProfile.allowNegativeStock,
           );
           for (var batchIndex = 0;
               batchIndex < allocations.length;
@@ -519,7 +520,7 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
         defaultStoreId: appIdentity.storeId,
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
-        allowNegativeStockResolver: (_, __) => false,
+        allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
       );
       final batchService = BatchInventoryService(sqliteDb);
       final pipeline = PostedDocumentEditPipeline<WarehouseTransferOrder>(
@@ -785,6 +786,7 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
               storeId: appIdentity.storeId,
               branchId: appIdentity.branchId,
               deviceId: _deviceId,
+              allowNegativeStock: _storeProfile.allowNegativeStock,
             );
             for (var batchIndex = 0;
                 batchIndex < allocations.length;
@@ -998,7 +1000,7 @@ Future<void> transferStock({
         defaultStoreId: appIdentity.storeId,
         defaultBranchId: appIdentity.branchId,
         defaultSyncTarget: _stockTransactionSyncTarget,
-        allowNegativeStockResolver: (_, __) => false,
+        allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
       );
       final outMovement = StockMovement(
         id: '$transferId-$productId-transfer-out',
@@ -1074,6 +1076,7 @@ Future<void> transferStock({
             storeId: appIdentity.storeId,
             branchId: appIdentity.branchId,
             deviceId: _deviceId,
+            allowNegativeStock: _storeProfile.allowNegativeStock,
           );
           transferMovements = <StockMovement>[
             for (var batchIndex = 0;

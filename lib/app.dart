@@ -159,16 +159,26 @@ class _VentioAppState extends State<VentioApp> {
   Future<void> _startBackupsAfterLogin() async {
     await Future<void>.delayed(const Duration(seconds: 15));
     if (!mounted || _store.activeUser == null) return;
-    unawaited(StartupTimingService.measure(
-      'ventio_app.run_local_backup_after_login',
-      () => LocalAutoBackupService.runDueBackup(_store),
-      category: 'app_store',
-    ));
-    unawaited(StartupTimingService.measure(
-      'ventio_app.run_google_backup_after_login',
-      () => GoogleDriveBackupService.runDueBackup(_store),
-      category: 'app_store',
-    ));
+    try {
+      await StartupTimingService.measure(
+        'ventio_app.run_local_backup_after_login',
+        () => LocalAutoBackupService.runDueBackup(_store),
+        category: 'app_store',
+      );
+    } catch (_) {
+      // The backup service records its own error status. Keep Google Drive
+      // backup independent if the local backup fails.
+    }
+    if (!mounted || _store.activeUser == null) return;
+    try {
+      await StartupTimingService.measure(
+        'ventio_app.run_google_backup_after_login',
+        () => GoogleDriveBackupService.runDueBackup(_store),
+        category: 'app_store',
+      );
+    } catch (_) {
+      // The backup service records its own error status.
+    }
   }
 
   Future<void> _stopSyncForLogout() async {

@@ -17,7 +17,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 31;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1630,6 +1630,67 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_batch_balances_fefo ON inventory_batch_balances(store_id, warehouse_id, product_id, quantity);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_batch_balances_batch ON inventory_batch_balances(batch_id);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_stock_deficits (
+        id TEXT PRIMARY KEY NOT NULL,
+        deficit_batch_id TEXT NOT NULL UNIQUE,
+        product_id TEXT NOT NULL,
+        warehouse_id TEXT NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        quantity_original REAL NOT NULL,
+        quantity_open REAL NOT NULL,
+        provisional_unit_cost REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (deficit_batch_id) REFERENCES inventory_batches(id),
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        CHECK (quantity_original > 0),
+        CHECK (quantity_open >= 0),
+        CHECK (quantity_open <= quantity_original + 0.000001),
+        CHECK (provisional_unit_cost >= 0),
+        CHECK (status IN ('open', 'resolved', 'reversed'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_stock_deficits_open ON inventory_stock_deficits(store_id, warehouse_id, product_id, status, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_stock_deficits_batch ON inventory_stock_deficits(deficit_batch_id);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_deficit_settlements (
+        id TEXT PRIMARY KEY NOT NULL,
+        deficit_id TEXT NOT NULL,
+        incoming_batch_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        reversed_quantity REAL NOT NULL DEFAULT 0,
+        provisional_unit_cost REAL NOT NULL DEFAULT 0,
+        actual_unit_cost REAL NOT NULL DEFAULT 0,
+        cost_adjustment REAL NOT NULL DEFAULT 0,
+        settled_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        FOREIGN KEY (deficit_id) REFERENCES inventory_stock_deficits(id),
+        FOREIGN KEY (incoming_batch_id) REFERENCES inventory_batches(id),
+        CHECK (quantity > 0),
+        CHECK (reversed_quantity >= 0),
+        CHECK (reversed_quantity <= quantity + 0.000001),
+        CHECK (provisional_unit_cost >= 0),
+        CHECK (actual_unit_cost >= 0),
+        CHECK (status IN ('active', 'partial_reversal', 'reversed'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_deficit_settlements_deficit ON inventory_deficit_settlements(deficit_id, settled_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_deficit_settlements_batch ON inventory_deficit_settlements(incoming_batch_id);');
 
     await customStatement('''
       CREATE TABLE IF NOT EXISTS purchase_item_batch_allocations (

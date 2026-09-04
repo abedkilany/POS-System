@@ -963,6 +963,9 @@ class AccountingProductionIntegrityService {
         SELECT store_id, warehouse_id, product_id FROM warehouse_inventory
         UNION
         SELECT store_id, warehouse_id, product_id FROM inventory_batch_balances
+        UNION
+        SELECT store_id, warehouse_id, product_id FROM inventory_stock_deficits
+        WHERE status = 'open' AND quantity_open > 0.000001
       ), warehouse AS (
         SELECT store_id, warehouse_id, product_id, SUM(quantity) AS qty
         FROM warehouse_inventory
@@ -971,10 +974,15 @@ class AccountingProductionIntegrityService {
         SELECT store_id, warehouse_id, product_id, SUM(quantity) AS qty
         FROM inventory_batch_balances
         GROUP BY store_id, warehouse_id, product_id
+      ), deficits AS (
+        SELECT store_id, warehouse_id, product_id, SUM(quantity_open) AS qty
+        FROM inventory_stock_deficits
+        WHERE status = 'open' AND quantity_open > 0.000001
+        GROUP BY store_id, warehouse_id, product_id
       )
       SELECT s.store_id, s.warehouse_id, s.product_id,
              COALESCE(w.qty, 0) AS warehouse_qty,
-             COALESCE(b.qty, 0) AS batch_qty
+             COALESCE(b.qty, 0) - COALESCE(d.qty, 0) AS batch_qty
       FROM scoped s
       INNER JOIN products p ON p.id = s.product_id
         AND p.deleted_at = '' AND p.track_stock = 1
@@ -982,7 +990,10 @@ class AccountingProductionIntegrityService {
         AND w.warehouse_id = s.warehouse_id AND w.product_id = s.product_id
       LEFT JOIN batches b ON b.store_id = s.store_id
         AND b.warehouse_id = s.warehouse_id AND b.product_id = s.product_id
-      WHERE ABS(COALESCE(w.qty, 0) - COALESCE(b.qty, 0)) > 0.005
+      LEFT JOIN deficits d ON d.store_id = s.store_id
+        AND d.warehouse_id = s.warehouse_id AND d.product_id = s.product_id
+      WHERE ABS(COALESCE(w.qty, 0)
+        - (COALESCE(b.qty, 0) - COALESCE(d.qty, 0))) > 0.005
     ''').get();
     for (final row in mismatches) {
       final warehouse = _num(row.data['warehouse_qty']);
@@ -994,7 +1005,7 @@ class AccountingProductionIntegrityService {
         entityId: row.data['product_id']?.toString() ?? '',
         difference: _round(warehouse - batches),
         message:
-            'Warehouse quantity ($warehouse) does not equal Unified Batch quantity ($batches) in warehouse ${row.data['warehouse_id'] ?? ''}.',
+            'Warehouse quantity ($warehouse) does not equal Unified Batch quantity net of open deficits ($batches) in warehouse ${row.data['warehouse_id'] ?? ''}.',
       ));
     }
 

@@ -175,6 +175,7 @@ class GoogleDriveBackupService {
       ValueNotifier<GoogleDriveBackupStatus>(const GoogleDriveBackupStatus());
 
   static bool _isRunning = false;
+  static const Duration _httpTimeout = Duration(seconds: 30);
 
   static Future<GoogleDriveBackupSettings> loadSettings() async {
     final savedClientId = LocalDatabaseService.getString(_clientIdKey) ?? '';
@@ -201,7 +202,8 @@ class GoogleDriveBackupService {
   }
 
   static Future<String> _readSecretWithLegacyMigration(String key) async {
-    final secure = (await LocalDatabaseService.readSecureString(key))?.trim() ?? '';
+    final secure =
+        (await LocalDatabaseService.readSecureString(key))?.trim() ?? '';
     if (secure.isNotEmpty) return secure;
     final legacy = (LocalDatabaseService.getString(key) ?? '').trim();
     if (legacy.isEmpty) return '';
@@ -270,7 +272,7 @@ class GoogleDriveBackupService {
         'client_id': settings.clientId.trim(),
         'scope': _scope,
       },
-    );
+    ).timeout(_httpTimeout);
     final decoded = _decodeResponse(response);
     return GoogleDriveAuthorizationChallenge(
       deviceCode: decoded['device_code'] as String,
@@ -348,7 +350,7 @@ class GoogleDriveBackupService {
     final deadline = DateTime.now().add(const Duration(minutes: 5));
     while (DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(seconds: 2));
-      final response = await http.get(statusUrl);
+      final response = await http.get(statusUrl).timeout(_httpTimeout);
       final decoded = response.body.trim().isEmpty
           ? <String, dynamic>{}
           : jsonDecode(response.body) as Map<String, dynamic>;
@@ -485,11 +487,13 @@ class GoogleDriveBackupService {
     if (includeSecret && settings.clientSecret.trim().isNotEmpty) {
       body['client_secret'] = settings.clientSecret.trim();
     }
-    final response = await http.post(
-      Uri.parse('https://oauth2.googleapis.com/token'),
-      headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: body,
-    );
+    final response = await http
+        .post(
+          Uri.parse('https://oauth2.googleapis.com/token'),
+          headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
+          body: body,
+        )
+        .timeout(_httpTimeout);
     final decoded = response.body.trim().isEmpty
         ? <String, dynamic>{}
         : jsonDecode(response.body) as Map<String, dynamic>;
@@ -508,7 +512,10 @@ class GoogleDriveBackupService {
     }
     final now = DateTime.now();
     final scheduled = DateTime(now.year, now.month, now.day, 2, 15);
-    if (now.isBefore(scheduled) && await _hasDailyForDate(settings, now)) {
+    if (await _hasDailyForDate(settings, now)) {
+      return;
+    }
+    if (now.isBefore(scheduled)) {
       return;
     }
     await createBackupNow(store, settings: settings, reason: 'auto');
@@ -559,7 +566,14 @@ class GoogleDriveBackupService {
       }
       final encryptedBackup =
           await store.exportEncryptedBackupJson(recoverySecret);
-      final bytes = _buildZipBytes(encryptedBackup, now, reason);
+      final bytes = await compute(
+        _buildZipBytesInIsolate,
+        <String, String>{
+          'backupJson': encryptedBackup,
+          'generatedAt': now.toIso8601String(),
+          'reason': reason,
+        },
+      );
       final fileName = reason == 'manual'
           ? 'ventio_manual_${_dateTimeStamp(now)}.vtb'
           : 'ventio_daily_${_dateStamp(now)}.vtb';
@@ -669,7 +683,7 @@ class GoogleDriveBackupService {
         'alt': 'media',
       }),
       headers: <String, String>{'Authorization': 'Bearer $token'},
-    );
+    ).timeout(_httpTimeout);
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return response.bodyBytes;
     }
@@ -705,11 +719,13 @@ class GoogleDriveBackupService {
         settings.clientSecret.trim().isEmpty) {
       final base =
           VpsControlPlaneSettings.normalizeApiBaseUrl(direct.apiBaseUrl);
-      final response = await http.post(
-        Uri.parse('$base/api/google-drive/refresh'),
-        headers: const {'Content-Type': 'application/json; charset=utf-8'},
-        body: jsonEncode({'refreshToken': settings.refreshToken.trim()}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$base/api/google-drive/refresh'),
+            headers: const {'Content-Type': 'application/json; charset=utf-8'},
+            body: jsonEncode({'refreshToken': settings.refreshToken.trim()}),
+          )
+          .timeout(_httpTimeout);
       final decoded = response.body.trim().isEmpty
           ? <String, dynamic>{}
           : jsonDecode(response.body) as Map<String, dynamic>;
@@ -730,11 +746,13 @@ class GoogleDriveBackupService {
       'refresh_token': settings.refreshToken.trim(),
       'grant_type': 'refresh_token',
     };
-    final response = await http.post(
-      Uri.parse('https://oauth2.googleapis.com/token'),
-      headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: body,
-    );
+    final response = await http
+        .post(
+          Uri.parse('https://oauth2.googleapis.com/token'),
+          headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
+          body: body,
+        )
+        .timeout(_httpTimeout);
     var decoded = response.body.trim().isEmpty
         ? <String, dynamic>{}
         : jsonDecode(response.body) as Map<String, dynamic>;
@@ -742,11 +760,15 @@ class GoogleDriveBackupService {
         decoded['error']?.toString() == 'invalid_request' &&
         settings.clientSecret.trim().isNotEmpty) {
       body['client_secret'] = settings.clientSecret.trim();
-      final retry = await http.post(
-        Uri.parse('https://oauth2.googleapis.com/token'),
-        headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: body,
-      );
+      final retry = await http
+          .post(
+            Uri.parse('https://oauth2.googleapis.com/token'),
+            headers: const {
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: body,
+          )
+          .timeout(_httpTimeout);
       decoded = _decodeResponse(retry);
     } else if (response.statusCode < 200 || response.statusCode >= 300) {
       decoded = _decodeResponse(response);
@@ -791,7 +813,7 @@ class GoogleDriveBackupService {
         'fields': 'id,mimeType,trashed',
       }),
       headers: <String, String>{'Authorization': 'Bearer $token'},
-    );
+    ).timeout(_httpTimeout);
     if (response.statusCode == 404) return false;
     final decoded = _decodeResponse(response);
     return decoded['mimeType'] == 'application/vnd.google-apps.folder' &&
@@ -858,15 +880,17 @@ class GoogleDriveBackupService {
       ...bytes,
       ...utf8.encode('\r\n--$boundary--\r\n'),
     ];
-    final response = await http.post(
-      Uri.parse(
-          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id'),
-      headers: <String, String>{
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'multipart/related; boundary=$boundary',
-      },
-      body: body,
-    );
+    final response = await http
+        .post(
+          Uri.parse(
+              'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id'),
+          headers: <String, String>{
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'multipart/related; boundary=$boundary',
+          },
+          body: body,
+        )
+        .timeout(_httpTimeout);
     return _decodeResponse(response)['id'] as String;
   }
 
@@ -887,7 +911,7 @@ class GoogleDriveBackupService {
       await http.delete(
         Uri.parse('https://www.googleapis.com/drive/v3/files/${file['id']}'),
         headers: <String, String>{'Authorization': 'Bearer $token'},
-      );
+      ).timeout(_httpTimeout);
     }
   }
 
@@ -896,7 +920,7 @@ class GoogleDriveBackupService {
     final response = await http.get(
       Uri.https('www.googleapis.com', '/drive/v3/$path', query),
       headers: <String, String>{'Authorization': 'Bearer $token'},
-    );
+    ).timeout(_httpTimeout);
     return _decodeResponse(response);
   }
 
@@ -906,14 +930,16 @@ class GoogleDriveBackupService {
     Map<String, Object?> body, {
     Map<String, String> query = const {},
   }) async {
-    final response = await http.post(
-      Uri.https('www.googleapis.com', '/drive/v3/$path', query),
-      headers: <String, String>{
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      body: jsonEncode(body),
-    );
+    final response = await http
+        .post(
+          Uri.https('www.googleapis.com', '/drive/v3/$path', query),
+          headers: <String, String>{
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json; charset=utf-8',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(_httpTimeout);
     return _decodeResponse(response);
   }
 
@@ -932,27 +958,6 @@ class GoogleDriveBackupService {
       throw StateError(error);
     }
     throw StateError('Google Drive request failed (${response.statusCode}).');
-  }
-
-  static List<int> _buildZipBytes(
-      String backupJson, DateTime generatedAt, String reason) {
-    final backupBytes = utf8.encode(backupJson);
-    final manifest = jsonEncode(<String, Object?>{
-      'app': 'Ventio',
-      'type': 'google-drive-backup',
-      'reason': reason,
-      'generatedAt': generatedAt.toIso8601String(),
-      'content': 'backup.json',
-      'encrypted': true,
-      'cipher': 'aes-256-gcm',
-      'keySource': 'store-recovery-key',
-    });
-    final manifestBytes = utf8.encode(manifest);
-    final archive = Archive()
-      ..addFile(ArchiveFile('backup.json', backupBytes.length, backupBytes))
-      ..addFile(
-          ArchiveFile('manifest.json', manifestBytes.length, manifestBytes));
-    return ZipEncoder().encode(archive);
   }
 
   static int _readPositiveInt(String key, int fallback) {
@@ -990,4 +995,25 @@ class GoogleDriveBackupService {
     final bytes = List<int>.generate(32, (_) => random.nextInt(256));
     return base64UrlEncode(bytes).replaceAll('=', '');
   }
+}
+
+List<int> _buildZipBytesInIsolate(Map<String, String> input) {
+  final backupBytes = utf8.encode(input['backupJson']!);
+  final generatedAt = DateTime.parse(input['generatedAt']!);
+  final manifest = jsonEncode(<String, Object?>{
+    'app': 'Ventio',
+    'type': 'google-drive-backup',
+    'reason': input['reason']!,
+    'generatedAt': generatedAt.toIso8601String(),
+    'content': 'backup.json',
+    'encrypted': true,
+    'cipher': 'aes-256-gcm',
+    'keySource': 'store-recovery-key',
+  });
+  final manifestBytes = utf8.encode(manifest);
+  final archive = Archive()
+    ..addFile(ArchiveFile('backup.json', backupBytes.length, backupBytes))
+    ..addFile(
+        ArchiveFile('manifest.json', manifestBytes.length, manifestBytes));
+  return ZipEncoder().encode(archive);
 }
