@@ -141,7 +141,11 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       throw StateError('Direct Host cannot open a Client session.');
     }
     if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
-    if (!_settings.isConfigured) {
+    // During first-time pairing, the Host/peer identity is already known but
+    // setupComplete must remain false until the initial Snapshot has been
+    // imported and verified. Allow only that provisional bootstrap state here;
+    // normal auto-sync still relies on DirectSyncSettings.isConfigured.
+    if (!_settings.hasBootstrapConfiguration) {
       throw StateError('Direct pairing is not configured.');
     }
     try {

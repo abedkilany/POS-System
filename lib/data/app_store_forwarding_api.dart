@@ -1720,8 +1720,6 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
 
   String _generateNonce() => _AppStoreSplitBackupRecovery(this as AppStore)._generateNonce();
 
-  List<int> _aesGcmEncrypt(List<int> plain, List<int> key, List<int> nonce) => _AppStoreSplitBackupRecovery(this as AppStore)._aesGcmEncrypt(plain, key, nonce);
-
   List<int> _aesGcmDecrypt(
     List<int> encrypted,
     List<int> key,

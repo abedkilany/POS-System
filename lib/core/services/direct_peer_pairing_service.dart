@@ -233,13 +233,16 @@ class DirectPeerPairingService {
           .copyWith(
             apiBaseUrl: settings.apiBaseUrl,
             peerDeviceId: claim.hostDeviceId,
-            setupComplete: true,
+            // Claiming the one-time code only establishes a provisional
+            // bootstrap identity. The Direct setup becomes complete only after
+            // the initial Host Snapshot is imported and verified.
+            setupComplete: false,
           )
           .save();
       onProgress?.call(1.0, 'Direct device paired successfully.');
       return DirectPairingClaimResult(
         ok: true,
-        message: 'Device paired successfully. Please sign in.',
+        message: 'Device registered. Downloading Store data...',
         identity: store.appIdentity,
       );
     } catch (error) {

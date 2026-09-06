@@ -1036,20 +1036,6 @@ String _generateNonce() {
     return base64UrlEncode(bytes);
   }
 
-List<int> _aesGcmEncrypt(List<int> plain, List<int> key, List<int> nonce) {
-    final cipher = pc.GCMBlockCipher(pc.AESEngine())
-      ..init(
-        true,
-        pc.AEADParameters(
-          pc.KeyParameter(Uint8List.fromList(key)),
-          128,
-          Uint8List.fromList(nonce),
-          Uint8List(0),
-        ),
-      );
-    return cipher.process(Uint8List.fromList(plain));
-  }
-
 List<int> _aesGcmDecrypt(
     List<int> encrypted,
     List<int> key,

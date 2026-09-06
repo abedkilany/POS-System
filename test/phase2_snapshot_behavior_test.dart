@@ -192,6 +192,77 @@ void main() {
     );
 
     test(
+      'snapshot validation uses the incoming Store policy for negative inventory',
+      () async {
+        final store = await _readySqliteStore();
+        addTearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
+        await _clearAuthoritativeTables();
+
+        await store.addOrUpdateProduct(
+          Product(
+            id: 'p-negative-snapshot',
+            code: 'PNEG-SNAPSHOT',
+            name: 'Negative Snapshot Product',
+            price: 10,
+            cost: 5,
+            stock: 0,
+            category: 'Test',
+          ),
+        );
+
+        expect(store.storeProfile.allowNegativeStock, isFalse);
+        final payload =
+            jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+        final incomingProfile =
+            Map<String, dynamic>.from(payload['storeProfile'] as Map)
+              ..['allowNegativeStock'] = true;
+        payload['storeProfile'] = incomingProfile;
+        payload['warehouseInventory'] = <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'wi-negative-snapshot',
+            'storeId': store.appIdentity.storeId,
+            'branchId': store.appIdentity.branchId,
+            'warehouseId': 'main',
+            'productId': 'p-negative-snapshot',
+            'quantity': -3.0,
+            'version': 1,
+            'createdAt': DateTime.utc(2026, 9, 4).toIso8601String(),
+            'updatedAt': DateTime.utc(2026, 9, 4).toIso8601String(),
+            'deviceId': store.deviceId,
+            'syncStatus': 'synced',
+            'lastModifiedByDeviceId': store.deviceId,
+          },
+        ];
+        payload['inventoryBatchBalances'] = const <Map<String, dynamic>>[];
+
+        await store.importSyncSnapshotJson(jsonEncode(payload));
+
+        expect(store.storeProfile.allowNegativeStock, isTrue);
+        final imported = await SqliteMigrationManager.database!.customSelect(
+          "SELECT quantity FROM warehouse_inventory WHERE id = 'wi-negative-snapshot'",
+        ).getSingle();
+        expect(imported.read<double>('quantity'), -3.0);
+
+        final rejectingPayload = Map<String, dynamic>.from(payload);
+        rejectingPayload['storeProfile'] =
+            Map<String, dynamic>.from(incomingProfile)
+              ..['allowNegativeStock'] = false;
+
+        await expectLater(
+          store.importSyncSnapshotJson(jsonEncode(rejectingPayload)),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('negative warehouse inventory'),
+            ),
+          ),
+        );
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
+
+    test(
       'legacy snapshots remain compatible without warehouse-aware tables',
       () async {
         final store = await _readySqliteStore();

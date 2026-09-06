@@ -8,6 +8,7 @@ import '../sync_unified/sync_transport_adapter.dart';
 import '../sync_unified/unified_snapshot_lifecycle.dart';
 import 'unified_sync_core_service.dart';
 import 'direct_peer_protocol.dart';
+import 'direct_sync_settings.dart';
 import 'sync_diagnostics_log.dart';
 
 class _DirectPullJob {
@@ -582,6 +583,11 @@ class DirectClientSyncService {
         'appliedSequence': applied.sequence,
         'ackSequence': applied.sequence,
       });
+      final directSettings = DirectSyncSettings.load();
+      if (directSettings.hasBootstrapConfiguration &&
+          !directSettings.setupComplete) {
+        await directSettings.copyWith(setupComplete: true).save();
+      }
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] client snapshot complete sequence=${applied.sequence}');
       return UnifiedSyncResultFactory.success(

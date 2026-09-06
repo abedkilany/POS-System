@@ -19,6 +19,18 @@ void main() {
     expect(identity.transportType, 'direct');
   });
 
+  test('keeps Direct bootstrap provisional until the initial snapshot completes', () {
+    const settings = DirectSyncSettings(
+      apiBaseUrl: 'https://api.example.test',
+      peerDeviceId: 'DV-HOST',
+      setupComplete: false,
+    );
+
+    expect(settings.hasBootstrapConfiguration, isTrue);
+    expect(settings.isConfigured, isFalse);
+    expect(settings.copyWith(setupComplete: true).isConfigured, isTrue);
+  });
+
   test('derives the runtime STUN host from the API URL', () {
     const settings = DirectSyncSettings(
       apiBaseUrl: 'https://api.example.test',

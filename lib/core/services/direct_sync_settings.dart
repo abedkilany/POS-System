@@ -121,10 +121,10 @@ class DirectSyncSettings {
         'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
       };
 
-  bool get isConfigured =>
-      setupComplete &&
-      apiBaseUrl.trim().isNotEmpty &&
-      peerDeviceId.trim().isNotEmpty;
+  bool get hasBootstrapConfiguration =>
+      apiBaseUrl.trim().isNotEmpty && peerDeviceId.trim().isNotEmpty;
+
+  bool get isConfigured => setupComplete && hasBootstrapConfiguration;
 
   DirectSyncSettings copyWith({
     String? apiBaseUrl,

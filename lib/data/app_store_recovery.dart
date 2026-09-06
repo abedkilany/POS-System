@@ -26,7 +26,14 @@ class AppStoreRecoveryService {
       branchId: currentIdentityBeforeImport.branchId,
       deviceId: store.deviceId,
     );
-    _assertNegativeStockPolicy(decoded);
+    final effectiveStoreProfile = _effectiveStoreProfile(
+      decoded,
+      useIncomingStoreProfile: wants('storeProfile'),
+    );
+    _assertNegativeStockPolicy(
+      decoded,
+      allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
+    );
     final preservePairedHostIdentity = currentIdentityBeforeImport.isHost;
     final liveHostConnectionEntries = preservePairedHostIdentity
         ? Map<String, String>.fromEntries(
@@ -182,7 +189,7 @@ class AppStoreRecoveryService {
           await LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
             _snapshotListMaps(decoded, 'warehouseInventory',
                 aliases: <String>['warehouse_inventory']),
-            allowNegativeStock: store._storeProfile.allowNegativeStock,
+            allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
           );
           await LocalDatabaseService.replaceStockOperationsRowsImmediate(
             _snapshotListMaps(decoded, 'stockOperations',
@@ -437,6 +444,11 @@ class AppStoreRecoveryService {
     bool markSynced = false,
   }) async {
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+    final effectiveStoreProfile = _effectiveStoreProfile(decoded);
+    _assertNegativeStockPolicy(
+      decoded,
+      allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
+    );
     final now = DateTime.now();
     await StartupTimingService.measure(
       'backup_merge.direct_to_sqlite',
@@ -519,7 +531,7 @@ class AppStoreRecoveryService {
           await LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
             _snapshotListMaps(decoded, 'warehouseInventory',
                 aliases: <String>['warehouse_inventory']),
-            allowNegativeStock: store._storeProfile.allowNegativeStock,
+            allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
           );
           await LocalDatabaseService.replaceStockOperationsRowsImmediate(
             _snapshotListMaps(decoded, 'stockOperations',
@@ -693,7 +705,11 @@ class AppStoreRecoveryService {
             .toList(growable: false),
       );
     }
-    _assertNegativeStockPolicy(decoded);
+    final effectiveStoreProfile = _effectiveStoreProfile(decoded);
+    _assertNegativeStockPolicy(
+      decoded,
+      allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
+    );
 
     await StartupTimingService.measure(
       'snapshot_import.direct_payload_to_sqlite',
@@ -799,7 +815,7 @@ class AppStoreRecoveryService {
                 'warehouseInventory',
                 aliases: <String>['warehouse_inventory'],
               ),
-              allowNegativeStock: store._storeProfile.allowNegativeStock,
+              allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
             ),
             LocalDatabaseService.replaceStockOperationsRowsImmediate(
               _snapshotListMaps(
@@ -1156,8 +1172,25 @@ class AppStoreRecoveryService {
     );
   }
 
-  void _assertNegativeStockPolicy(Map<String, dynamic> decoded) {
-    if (store._storeProfile.allowNegativeStock) return;
+  StoreProfile _effectiveStoreProfile(
+    Map<String, dynamic> decoded, {
+    bool useIncomingStoreProfile = true,
+  }) {
+    if (!useIncomingStoreProfile) return store._storeProfile;
+    final raw = decoded['storeProfile'];
+    if (raw is! Map) return store._storeProfile;
+    try {
+      return StoreProfile.fromJson(Map<String, dynamic>.from(raw));
+    } catch (error) {
+      throw StateError('Snapshot contains an invalid Store profile: $error');
+    }
+  }
+
+  void _assertNegativeStockPolicy(
+    Map<String, dynamic> decoded, {
+    required bool allowNegativeStock,
+  }) {
+    if (allowNegativeStock) return;
 
     double valueOf(Map<String, dynamic> row, String key) {
       final value = row[key];

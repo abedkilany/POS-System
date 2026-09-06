@@ -318,7 +318,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       unawaited(DirectSyncSettings(
         apiBaseUrl: apiBaseUrl,
         peerDeviceId: peerDeviceId,
-        setupComplete: peerDeviceId.isNotEmpty,
+        // QR metadata may contain the Host device id, but it is not proof that
+        // the Store Snapshot was imported successfully.
+        setupComplete: false,
         autoSyncEnabled: existingDirect.autoSyncEnabled,
         stunServer: existingDirect.stunServer,
         stunServers: existingDirect.stunServers,
