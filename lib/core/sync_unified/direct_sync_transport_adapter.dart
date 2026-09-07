@@ -294,7 +294,18 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       {int ttlMinutes = 5}) async {
     SyncDiagnosticsLog.add('[DIRECT_PAIRING] create start ttl=$ttlMinutes');
     if (store.appIdentity.isHost) {
-      _startHostListener();
+      // Do not expose a one-time pairing code until the Host signaling/WebRTC
+      // listener is actually ready. Otherwise a fast Client can claim the code
+      // and send its offer before the Host has subscribed to signaling, leaving
+      // the Client to time out with no answer.
+      await _startHostListener();
+      if (_hostManager == null) {
+        return const UnifiedPairingCodeResult(
+          ok: false,
+          message:
+              'Direct Host listener is not ready. Check the Host connection and try again.',
+        );
+      }
     }
     final result = await _pairing.createPairingCode(
       _pairingSettings,
@@ -413,23 +424,36 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
         message: 'Direct Host already owns the authoritative snapshot.',
       );
     }
-    try {
-      final session = await _clientSession();
-      return await DirectClientSyncService(store, session)
-          .rebuildFromHostSnapshot(
-        onProgress: onProgress,
-      );
-    } catch (error) {
-      await _invalidateClientSession(error);
-      return UnifiedSyncResult(
-        ok: false,
-        message: 'Direct snapshot connection failed: $error',
-        error: const UnifiedSyncError(
-          code: UnifiedSyncErrorCode.networkUnavailable,
-        ),
-        cursor: _cursor(),
-      );
+    Object? lastConnectionError;
+    // Pairing is already complete at this point, so a transient signaling race
+    // or Host listener restart should not force the user to consume another
+    // one-time code immediately. Retry only session establishment; once a
+    // session exists, snapshot/import failures are returned as-is and are not
+    // blindly replayed.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (attempt > 0) {
+          onProgress?.call(0, 'Retrying Direct Host connection...');
+          await Future<void>.delayed(const Duration(seconds: 2));
+        }
+        final session = await _clientSession();
+        return await DirectClientSyncService(store, session)
+            .rebuildFromHostSnapshot(
+          onProgress: onProgress,
+        );
+      } catch (error) {
+        lastConnectionError = error;
+        await _invalidateClientSession(error);
+      }
     }
+    return UnifiedSyncResult(
+      ok: false,
+      message: 'Direct snapshot connection failed: $lastConnectionError',
+      error: const UnifiedSyncError(
+        code: UnifiedSyncErrorCode.networkUnavailable,
+      ),
+      cursor: _cursor(),
+    );
   }
 
   @override

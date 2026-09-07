@@ -6,6 +6,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/app_brand.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/direct_control_plane_service.dart';
+import '../../core/services/direct_sync_settings.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/startup_timing_service.dart';
@@ -1054,6 +1055,26 @@ class _LoginGatePageState extends State<LoginGatePage> {
         ),
       );
     }
+    final identity = widget.store.appIdentity;
+    final directSettings = DirectSyncSettings.load();
+    final directBootstrapIncomplete = identity.isClient &&
+        identity.activeSyncTransportNormalized == 'direct' &&
+        directSettings.hasBootstrapConfiguration &&
+        !directSettings.setupComplete;
+    if (directBootstrapIncomplete) {
+      return PageTimingScope(
+        key: const ValueKey('IncompleteDirectBootstrapPage'),
+        pageKey: 'SyncSetupPage',
+        pageLabel: 'Complete Store connection',
+        child: SyncSetupPage(
+          store: widget.store,
+          onDone: () async {
+            if (mounted) setState(() {});
+          },
+        ),
+      );
+    }
+
     if (widget.store.activeUser != null) return widget.child;
 
     if (_showRegister && !kIsWeb && !widget.store.hasLocalAdminUser) {

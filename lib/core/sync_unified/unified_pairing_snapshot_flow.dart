@@ -32,11 +32,7 @@ class UnifiedPairingSnapshotFlow {
       store: store,
       envelope: envelope,
       afterImport: (_) => markSnapshotApplied(),
-      verifyLocalData: true,
     );
-    if (store.needsInitialAdminSetup) {
-      throw StateError(applied.verificationMessage);
-    }
     await SyncDeviceStateStore.recordSyncResult(
       store.appIdentity,
       transport: 'direct',

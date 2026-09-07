@@ -403,6 +403,34 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   Future<void> _connectDirect() async {
     _beginConnectionAttempt('Connecting directly to Host...');
+    final previousIdentity = widget.store.appIdentity;
+    final previousDirectSettings = DirectSyncSettings.load();
+    var provisionalPairingCreated = false;
+
+    Future<void> rollbackProvisionalPairing() async {
+      if (!provisionalPairingCreated) return;
+      try {
+        // Snapshot import is atomic. If bootstrap never reaches its successful
+        // ACK/setupComplete point, restore the local role/settings that existed
+        // before claiming the one-time code. This prevents a failed Direct
+        // attempt from turning Connect to Store into the permanent login gate.
+        final restoreSettings = previousIdentity.isClient &&
+                previousIdentity.activeSyncTransportNormalized == 'direct'
+            ? previousDirectSettings
+            : previousDirectSettings.copyWith(
+                peerDeviceId: '',
+                setupComplete: false,
+              );
+        await restoreSettings.save();
+        await widget.store.updateAppIdentityDuringSetup(previousIdentity);
+        SyncDiagnosticsLog.add(
+            '[DIRECT_PAIRING] provisional bootstrap rolled back after failed snapshot');
+      } catch (rollbackError) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_PAIRING] provisional bootstrap rollback failed=$rollbackError');
+      }
+    }
+
     try {
       final code = _directPairingCodeController.text.trim();
       if (code.isEmpty) {
@@ -422,6 +450,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         _setStatus(claim.message, type: _SetupStatus.error);
         return;
       }
+      provisionalPairingCreated = true;
       final syncEngine = UnifiedSyncFactory.directEngine(widget.store);
       final snapshot = await syncEngine.rebuildFromHostSnapshot(
         onProgress: (value, label) {
@@ -431,12 +460,17 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         },
       );
       if (!snapshot.ok) {
+        await rollbackProvisionalPairing();
+        provisionalPairingCreated = false;
         _markQrFailed(snapshot.message);
         _setStatus(snapshot.message, type: _SetupStatus.error);
         return;
       }
+      provisionalPairingCreated = false;
       await _finishSuccessfulConnection('Direct connection completed.');
     } catch (error) {
+      await rollbackProvisionalPairing();
+      provisionalPairingCreated = false;
       _markQrFailed(error.toString());
       _setStatus('Direct connection failed: $error', type: _SetupStatus.error);
     } finally {

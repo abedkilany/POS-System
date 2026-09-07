@@ -48,6 +48,23 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
         _restoreActiveUser();
         _appIdentity = _loadOrCreateAppIdentity();
         final initializedIdentity = appIdentity;
+        final directSettings = DirectSyncSettings.load();
+        final directBootstrapIncomplete = initializedIdentity.isClient &&
+            initializedIdentity.activeSyncTransportNormalized == 'direct' &&
+            directSettings.hasBootstrapConfiguration &&
+            !directSettings.setupComplete;
+        if (directBootstrapIncomplete && _activeUser != null) {
+          // A failed first Snapshot must never restore a remembered local
+          // session from partially imported data. Keep the device behind the
+          // connection gate until a new Snapshot completes and is verified.
+          _activeUser = null;
+          _rememberLogin = false;
+          await LocalDatabaseService.setString(AppStore._activeUserKey, '');
+          await LocalDatabaseService.setString(
+            AppStore._rememberLoginKey,
+            'false',
+          );
+        }
         _syncSequence = _loadSyncSequence();
 
         if (!kIsWeb &&
@@ -60,6 +77,7 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
                 storeId: initializedIdentity.storeId,
                 branchId: initializedIdentity.branchId,
                 deviceId: _deviceId,
+                allowNegativeStock: _storeProfile.allowNegativeStock,
               );
               debugPrint(
                 'Unified Batch Phase 4 closed: ${closure.cutoversCreated} cutover(s) created, ${closure.productWarehousePairs} inventory pair(s) verified.',

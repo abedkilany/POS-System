@@ -710,10 +710,22 @@ class AppStoreRecoveryService {
       decoded,
       allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
     );
-
-    await StartupTimingService.measure(
-      'snapshot_import.direct_payload_to_sqlite',
-      () async {
+    final importedStockMovements =
+        _snapshotListMaps(decoded, 'stockMovements');
+    final AppIdentity? importedIdentity = preserveLocalIdentityForLanClient
+        ? _identityForLanSnapshotImport(decoded)
+        : decoded['appIdentity'] is Map
+            ? AppIdentity.fromJson(
+                Map<String, dynamic>.from(decoded['appIdentity'] as Map),
+              ).copyWith(
+                deviceId: store._deviceId,
+                platform: store._detectPlatform(),
+              )
+            : null;
+    try {
+      await StartupTimingService.measure(
+        'snapshot_import.direct_payload_to_sqlite',
+        () async {
         await LocalDatabaseService.runSqliteAuthoritativeTransaction(() async {
           Future<void> replaceRows(
             String storageKey,
@@ -725,16 +737,6 @@ class AppStoreRecoveryService {
               sortIndices: List<int?>.generate(rows.length, (index) => index),
             );
           }
-
-          final importedStockMovements =
-              _snapshotListMaps(decoded, 'stockMovements');
-          store._stockMovements
-            ..clear()
-            ..addAll(
-              importedStockMovements
-                  .map((item) => StockMovement.fromJson(item))
-                  .toList(growable: false),
-            );
 
           final now = DateTime.now();
           final rawSyncChanges = _snapshotListMaps(decoded, 'syncChanges');
@@ -912,23 +914,11 @@ class AppStoreRecoveryService {
             LocalDatabaseService.setString(AppStore._schemaVersionKey, '17'),
           ];
 
-          if (preserveLocalIdentityForLanClient) {
-            store._appIdentity = _identityForLanSnapshotImport(decoded);
+          if (importedIdentity != null) {
             writes.add(
               LocalDatabaseService.setString(
                 AppStore._appIdentityKey,
-                jsonEncode(store._appIdentity!.toJson()),
-              ),
-            );
-          } else if (decoded['appIdentity'] is Map) {
-            store._appIdentity = AppIdentity.fromJson(
-              Map<String, dynamic>.from(decoded['appIdentity'] as Map),
-            ).copyWith(
-                deviceId: store._deviceId, platform: store._detectPlatform());
-            writes.add(
-              LocalDatabaseService.setString(
-                AppStore._appIdentityKey,
-                jsonEncode(store._appIdentity!.toJson()),
+                jsonEncode(importedIdentity.toJson()),
               ),
             );
           }
@@ -942,11 +932,29 @@ class AppStoreRecoveryService {
               AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases'));
         });
         await LocalDatabaseService.flushPendingWrites();
-      },
-      category: 'snapshot',
-    );
+        },
+        category: 'snapshot',
+      );
+    } catch (_) {
+      await LocalDatabaseService.refreshSqliteMirrorAfterRollback();
+      rethrow;
+    }
 
-    await _refreshRuntimeAfterRecovery(loadStoreProfile: true);
+    store._stockMovements
+      ..clear()
+      ..addAll(
+        importedStockMovements
+            .map((item) => StockMovement.fromJson(item))
+            .toList(growable: false),
+      );
+    if (importedIdentity != null) {
+      store._appIdentity = importedIdentity;
+    }
+
+    await _refreshRuntimeAfterRecovery(
+      loadStoreProfile: true,
+      runUnifiedBatchClosure: false,
+    );
     await _refreshSummaryTables();
     store.refreshUi();
   }
@@ -1114,6 +1122,7 @@ class AppStoreRecoveryService {
 
   Future<void> _refreshRuntimeAfterRecovery({
     bool loadStoreProfile = false,
+    bool runUnifiedBatchClosure = true,
   }) async {
     if (loadStoreProfile) {
       store._storeProfile = store._loadStoreProfile();
@@ -1143,7 +1152,8 @@ class AppStoreRecoveryService {
     store._purchaseCounter = store._loadPurchaseCounter();
     store._syncSequence = store._loadSyncSequence();
 
-    if (!kIsWeb &&
+    if (runUnifiedBatchClosure &&
+        !kIsWeb &&
         LocalDatabaseService.isSqliteAuthoritative &&
         !LocalDatabaseService.isSqliteDatabaseForTesting) {
       final db = SqliteMigrationManager.database;
@@ -1152,6 +1162,7 @@ class AppStoreRecoveryService {
           storeId: store.appIdentity.storeId,
           branchId: store.appIdentity.branchId,
           deviceId: store.deviceId,
+          allowNegativeStock: store._storeProfile.allowNegativeStock,
         );
         await LocalDatabaseService.setString(
           AppStore._inventoryCostingMethodKey,

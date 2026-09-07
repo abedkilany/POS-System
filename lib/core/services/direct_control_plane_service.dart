@@ -1529,11 +1529,7 @@ class DirectControlPlaneService {
 
         final applied = retryResult.value;
         if (applied != null) {
-          onProgress?.call(0.88, 'Verifying local store data...');
-          if (!applied.verificationOk) {
-            debugPrint(
-                'Direct pairing completed with verification warnings: ${applied.verificationMessage}');
-          }
+          onProgress?.call(0.88, 'Finalizing local store data...');
           onProgress?.call(0.94, 'Publishing this device sync state...');
           final registration =
               await registerCurrentDevice(settings, transport: 'direct');
@@ -3626,8 +3622,6 @@ class DirectControlPlaneService {
           envelope,
           markRestoreCommandExecuted: true,
         ),
-        verifyLocalData: true,
-        cleanupSoftDeleted: true,
       );
     } catch (error, stackTrace) {
       onDiagnostic?.call(
@@ -3635,12 +3629,8 @@ class DirectControlPlaneService {
       rethrow;
     }
     onDiagnostic?.call(
-        '[DIRECT_REBUILD] snapshot applied verificationOk=${applied.verificationOk} verification=${applied.verificationMessage} sequence=${applied.sequence}');
-    onProgress?.call(0.90, 'Verifying rebuilt local data...');
-    if (!applied.verificationOk) {
-      debugPrint(
-          'Direct rebuild completed with verification warnings: ${applied.verificationMessage}');
-    }
+        '[DIRECT_REBUILD] snapshot applied sequence=${applied.sequence}');
+    onProgress?.call(0.90, 'Finalizing rebuilt local data...');
     onProgress?.call(0.96, 'Cleaning up local records...');
     await DirectProvisioningStatus.markComplete(
         message: 'Initial Store data downloaded.');

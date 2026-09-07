@@ -102,6 +102,121 @@ void main() {
     expect(meta!.data['value'], '2026-08-29T01:00:00.000Z');
   });
 
+
+
+  test('phase 4 converts allowed negative warehouse stock into a tracked deficit',
+      () async {
+    final db = VentioDriftDatabase(NativeDatabase.memory());
+    await db.initializeFoundation();
+    addTearDown(db.close);
+    final product = _product(id: 'phase4-negative', expiry: false);
+    await _persistProduct(db, product);
+    await _warehouseQty(db, product, -3);
+
+    final service = UnifiedBatchPhase4ClosureService(db);
+    final first = await service.close(
+      storeId: 'store-1',
+      branchId: 'main',
+      deviceId: 'device-1',
+      allowNegativeStock: true,
+      closedAt: DateTime.utc(2026, 8, 29, 1),
+    );
+    final second = await service.close(
+      storeId: 'store-1',
+      branchId: 'main',
+      deviceId: 'device-1',
+      allowNegativeStock: true,
+      closedAt: DateTime.utc(2026, 8, 29, 2),
+    );
+
+    expect(first.cutoversCreated, 1);
+    expect(second.cutoversCreated, 0);
+
+    final warehouse = await db.customSelect(
+      "SELECT quantity FROM warehouse_inventory WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative'",
+    ).getSingle();
+    expect((warehouse.data['quantity'] as num).toDouble(), -3);
+
+    final physical = await db.customSelect(
+      "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative'",
+    ).getSingle();
+    expect((physical.data['qty'] as num).toDouble(), 0);
+
+    final deficit = await db.customSelect(
+      "SELECT COALESCE(SUM(quantity_open), 0) AS qty, COUNT(*) AS count FROM inventory_stock_deficits WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative' AND status = 'open'",
+    ).getSingle();
+    expect((deficit.data['qty'] as num).toDouble(), 3);
+    expect((deficit.data['count'] as num).toInt(), 1);
+
+    final deficitBatch = await db.customSelect(
+      "SELECT supplier_batch_number, source_type FROM inventory_batches WHERE store_id = 'store-1' AND product_id = 'phase4-negative' AND source_type = 'inventory_deficit'",
+    ).getSingle();
+    expect(deficitBatch.data['supplier_batch_number'], 'NEGATIVE-STOCK-DEFICIT');
+    expect(deficitBatch.data['source_type'], 'inventory_deficit');
+  });
+
+  test('phase 4 still rejects negative warehouse stock when policy disables it',
+      () async {
+    final db = VentioDriftDatabase(NativeDatabase.memory());
+    await db.initializeFoundation();
+    addTearDown(db.close);
+    final product = _product(id: 'phase4-negative-blocked', expiry: false);
+    await _persistProduct(db, product);
+    await _warehouseQty(db, product, -2);
+
+    await expectLater(
+      UnifiedBatchPhase4ClosureService(db).close(
+        storeId: 'store-1',
+        branchId: 'main',
+        deviceId: 'device-1',
+        allowNegativeStock: false,
+        closedAt: DateTime.utc(2026, 8, 29, 1),
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final deficit = await db.customSelect(
+      "SELECT COUNT(*) AS count FROM inventory_stock_deficits WHERE store_id = 'store-1' AND product_id = 'phase4-negative-blocked'",
+    ).getSingle();
+    expect((deficit.data['count'] as num).toInt(), 0);
+    final meta = await db.customSelect(
+      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
+    ).getSingleOrNull();
+    expect(meta, isNull);
+  });
+
+  test('phase 4 can participate in an outer snapshot transaction rollback',
+      () async {
+    final db = VentioDriftDatabase(NativeDatabase.memory());
+    await db.initializeFoundation();
+    addTearDown(db.close);
+    final product = _product(id: 'phase4-atomic', expiry: false);
+    await _persistProduct(db, product);
+    await _warehouseQty(db, product, -1);
+
+    await expectLater(
+      db.transaction(() async {
+        await db.customStatement(
+          "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('snapshot_atomic_probe', 'written', '2026-08-29T00:00:00.000Z')",
+        );
+        await UnifiedBatchPhase4ClosureService(db).close(
+          storeId: 'store-1',
+          branchId: 'main',
+          deviceId: 'device-1',
+          allowNegativeStock: false,
+          alreadyInTransaction: true,
+          closedAt: DateTime.utc(2026, 8, 29, 1),
+        );
+      }),
+      throwsA(isA<StateError>()),
+    );
+
+    final probe = await db.customSelect(
+      "SELECT value FROM settings WHERE key = 'snapshot_atomic_probe'",
+    ).getSingleOrNull();
+    expect(probe, isNull);
+  });
+
   test('phase 4 refuses anonymous expiry stock', () async {
     final db = VentioDriftDatabase(NativeDatabase.memory());
     await db.initializeFoundation();

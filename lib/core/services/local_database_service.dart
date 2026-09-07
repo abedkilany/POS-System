@@ -1710,6 +1710,32 @@ class LocalDatabaseService {
     });
   }
 
+
+  /// Rehydrates the SQLite scalar mirror from the committed database state.
+  ///
+  /// Immediate snapshot writes update the in-memory mirror while a Drift
+  /// transaction is still open. If that transaction rolls back, SQLite is
+  /// correct but the mirror would otherwise keep the rejected values. Call
+  /// this after an authoritative transaction failure before exposing runtime
+  /// state again.
+  static Future<void> refreshSqliteMirrorAfterRollback() async {
+    final db = SqliteMigrationManager.database;
+    if (db == null || !_sqliteReady || _memoryStore != null || _webStore != null) {
+      return;
+    }
+    _sqliteMirror
+      ..clear()
+      ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(db))
+      ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(db));
+    _pendingScalarWrites.clear();
+    _pendingScalarDeletes.clear();
+    _pendingBusinessEntityWrites.clear();
+    _pendingSyncChanges.clear();
+    _pendingSyncQueueItems.clear();
+    _flushTimer?.cancel();
+    _flushTimer = null;
+  }
+
   static Future<void> replaceBusinessEntityJsonListImmediate(
       String key, List<Map<String, dynamic>> payloads,
       {List<int?>? sortIndices}) async {

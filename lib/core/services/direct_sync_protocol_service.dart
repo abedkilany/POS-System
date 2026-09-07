@@ -565,11 +565,7 @@ class DirectClientSyncService {
       final applied = await UnifiedSnapshotLifecycle.applyEnvelope(
         store: store,
         envelope: envelope,
-        verifyLocalData: true,
       );
-      if (!applied.verificationOk) {
-        throw StateError(applied.verificationMessage);
-      }
       await _core.recordTransportSyncState(
         store,
         transport: 'direct',

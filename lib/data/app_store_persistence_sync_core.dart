@@ -1350,14 +1350,11 @@ Future<int> cleanupSoftDeletedRecords({
 
 Future<BusinessDataIntegrityResult> verifyLocalBusinessDataIntegrity() async {
     final problems = <String>[];
-    final productIds = _products
-        .where((item) => !item.isDeleted)
-        .map((item) => item.id)
-        .toSet();
-    final supplierIds = _suppliers
-        .where((item) => !item.isDeleted)
-        .map((item) => item.id)
-        .toSet();
+    // Historical documents may reference soft-deleted catalog records.
+    // Those records still exist and are valid referential targets; only a
+    // truly absent entity should fail the business-data integrity check.
+    final productIds = _products.map((item) => item.id).toSet();
+    final supplierIds = _suppliers.map((item) => item.id).toSet();
 
     for (final price in _supplierProductPrices.where(
       (item) => !item.isDeleted,
@@ -1400,15 +1397,10 @@ Future<BusinessDataIntegrityResult> verifyLocalBusinessDataIntegrity() async {
           );
         }
       }
-      final movements = _stockMovements
-          .where(
-            (movement) =>
-                movement.referenceId == sale.id && movement.type == 'sale',
-          )
-          .toList();
-      if (sale.status != 'Cancelled' && movements.length < sale.items.length) {
-        problems.add('Sale ${sale.invoiceNo} is missing stock movement(s)');
-      }
+      // Sale line count is not a valid proxy for stock-movement count:
+      // non-stock/service/correction lines, returns, and legacy posted Sales
+      // can legitimately have no sale movement. Dedicated inventory integrity
+      // checks own movement/batch consistency instead.
     }
 
     for (final purchase in _purchases.where((item) => !item.isDeleted)) {

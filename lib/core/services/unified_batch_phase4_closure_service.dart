@@ -45,6 +45,8 @@ class UnifiedBatchPhase4ClosureService {
     required String storeId,
     required String branchId,
     required String deviceId,
+    bool allowNegativeStock = false,
+    bool alreadyInTransaction = false,
     DateTime? closedAt,
   }) async {
     final requestedAt = (closedAt ?? DateTime.now()).toUtc();
@@ -75,7 +77,7 @@ class UnifiedBatchPhase4ClosureService {
     final legacyLayers = await _countLegacyLayers(normalizedStoreId);
     var scopedPairs = 0;
 
-    await _db.transaction(() async {
+    Future<void> closeInTransaction() async {
       final inventoryRows = await _db.customSelect(
         r'''
         SELECT wi.product_id, wi.warehouse_id, wi.quantity
@@ -97,9 +99,9 @@ class UnifiedBatchPhase4ClosureService {
         final quantity = (row.data['quantity'] as num? ?? 0).toDouble();
         final product = productById[productId];
         if (product == null || warehouseId.trim().isEmpty) continue;
-        if (quantity < -0.000001) {
+        if (quantity < -0.000001 && !allowNegativeStock) {
           throw StateError(
-            'Unified Batch Phase 4 cannot close with negative warehouse stock for ${product.name}.',
+            'Unified Batch Phase 4 cannot close with negative warehouse stock for ${product.name} while negative stock is disabled.',
           );
         }
         scopedPairs += 1;
@@ -129,7 +131,13 @@ class UnifiedBatchPhase4ClosureService {
       );
       await _writeMeta(closureMetaKey, nowText, nowText);
       await _writeMeta(legacyLayerModeMetaKey, 'read_only', nowText);
-    });
+    }
+
+    if (alreadyInTransaction) {
+      await closeInTransaction();
+    } else {
+      await _db.transaction(closeInTransaction);
+    }
 
     final cutoversAfter = await _countCutovers(normalizedStoreId);
     return UnifiedBatchPhase4ClosureResult(
