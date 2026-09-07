@@ -2565,6 +2565,8 @@
   "dashboard_pending_changes": "{count} من التغييرات المعلقة",
   "dashboard_last_backup_at": "آخر نسخة احتياطية في {date}",
   "app_startup_failed": "تعذّر تشغيل التطبيق",
+  "sqlite_startup_audit_integrity_failure": "تعذّر تشغيل التطبيق لأن {count} من سجلات التدقيق غير مكتملة. لم يتم تغيير قاعدة البيانات تلقائياً.",
+  "sqlite_startup_failed_reason": "تعذّر تشغيل التطبيق لأن قاعدة البيانات المحلية لم تتم تهيئتها. التفاصيل: {reason}",
   "add_cash_drawer_first": "لا يوجد درج نقدية معرّف. أضف درجًا نقديًا أولًا من الإعدادات المالية.",
   "settings_general": "عام",
   "settings_general_desc": "معلومات المتجر واللغة والمظهر والمنطقة وبيانات التواصل",

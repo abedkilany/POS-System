@@ -4862,7 +4862,9 @@ class BusinessSqliteStore {
         'expiry_tracking_enabled':
             _boolValue(payload['expiryTrackingEnabled'], fallback: false),
         'expiry_entry_required':
-            _boolValue(payload['expiryEntryRequired'], fallback: true),
+            _boolValue(payload['expiryTrackingEnabled'], fallback: false)
+                ? true
+                : _boolValue(payload['expiryEntryRequired'], fallback: true),
         'expiry_alert_days':
             _intValue(payload['expiryAlertDays'], fallback: 30),
         'default_shelf_life_days':
@@ -5003,7 +5005,10 @@ class BusinessSqliteStore {
             _boolValue(payload['expiryTrackingEnabled'], fallback: false)
                 ? 1
                 : 0,
-            _boolValue(payload['expiryEntryRequired'], fallback: true) ? 1 : 0,
+            (_boolValue(payload['expiryTrackingEnabled'], fallback: false) ||
+                    _boolValue(payload['expiryEntryRequired'], fallback: true))
+                ? 1
+                : 0,
             _intValue(payload['expiryAlertDays'], fallback: 30),
             _intValue(payload['defaultShelfLifeDays'], fallback: 0),
             _intValue(payload['minimumReceiptShelfLifeDays'], fallback: 0),

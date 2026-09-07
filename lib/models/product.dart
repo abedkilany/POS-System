@@ -111,8 +111,8 @@ class Product {
     List<ProductSaleUnit>? purchaseUnits,
     this.lowStockThreshold = 5,
     this.trackStock = true,
-    this.expiryTrackingEnabled = false,
-    this.expiryEntryRequired = true,
+    bool expiryTrackingEnabled = false,
+    bool expiryEntryRequired = true,
     this.expiryAlertDays = 30,
     this.defaultShelfLifeDays = 0,
     this.minimumReceiptShelfLifeDays = 0,
@@ -128,7 +128,10 @@ class Product {
     this.lastModifiedByDeviceId = '',
     this.imagePath = '',
     this.taxProfileId = '',
-  })  : originalCost = originalCost ?? cost,
+  })  : expiryTrackingEnabled = expiryTrackingEnabled,
+        expiryEntryRequired =
+            expiryTrackingEnabled ? true : expiryEntryRequired,
+        originalCost = originalCost ?? cost,
         usdCost = usdCost ?? cost,
         costExchangeRateAtEntry = costExchangeRateAtEntry ?? 0,
         originalPrice = originalPrice ?? price,
@@ -474,7 +477,13 @@ class Product {
         lowStockThreshold: (json['lowStockThreshold'] as num? ?? 5).toInt(),
         trackStock: json['trackStock'] as bool? ?? true,
         expiryTrackingEnabled: json['expiryTrackingEnabled'] as bool? ?? false,
-        expiryEntryRequired: json['expiryEntryRequired'] as bool? ?? true,
+        // Unified Batch contract: expiry-tracked products always require a
+        // dated batch. Keep the persisted field for backward compatibility,
+        // but normalize legacy payloads that allowed it to be false.
+        expiryEntryRequired:
+            (json['expiryTrackingEnabled'] as bool? ?? false)
+                ? true
+                : (json['expiryEntryRequired'] as bool? ?? true),
         expiryAlertDays: (json['expiryAlertDays'] as num? ?? 30).toInt(),
         defaultShelfLifeDays:
             (json['defaultShelfLifeDays'] as num? ?? 0).toInt(),

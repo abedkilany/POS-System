@@ -2560,6 +2560,8 @@
   "dashboard_pending_changes": "{count} en attente de modification(s)",
   "dashboard_last_backup_at": "Dernière sauvegarde sur {date}",
   "app_startup_failed": "Impossible de démarrer l'application",
+  "sqlite_startup_audit_integrity_failure": "L’application n’a pas pu démarrer car {count} enregistrement(s) d’audit sont incomplets. La base de données n’a pas été modifiée automatiquement.",
+  "sqlite_startup_failed_reason": "L’application n’a pas pu démarrer car la base de données locale n’a pas pu être initialisée. Détails : {reason}",
   "add_cash_drawer_first": "Aucun tiroir-caisse n'est défini. Ajoutez d'abord un tiroir-caisse à partir des paramètres financiers.",
   "settings_general": "Général",
   "settings_general_desc": "Informations du magasin, langue, apparence, région et coordonnées",

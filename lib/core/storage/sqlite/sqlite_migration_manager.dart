@@ -55,8 +55,8 @@ class SqliteMigrationManager {
       );
     }
 
+    final db = VentioDriftDatabase();
     try {
-      final db = VentioDriftDatabase();
       await db.initializeFoundation();
       final validated = await BusinessSqliteStore.isValidationPassed(db);
       if (!validated) {
@@ -70,8 +70,8 @@ class SqliteMigrationManager {
               'Validated SQLite typed tables were not found; legacy storage migration is required.',
         );
       }
-      _database = db;
       await SyncSqliteStore.markSyncMigrationCompleted(db);
+      _database = db;
       _initialized = true;
       _lastError = null;
       return const SqliteMigrationStatus(
@@ -84,6 +84,7 @@ class SqliteMigrationManager {
       );
     } catch (error, stackTrace) {
       _lastError = error;
+      await db.close();
       debugPrint('SQLite validated startup failed: $error\n$stackTrace');
       return SqliteMigrationStatus(
         phase: currentPhase,
@@ -106,10 +107,9 @@ class SqliteMigrationManager {
       );
     }
 
+    final db = VentioDriftDatabase();
     try {
-      final db = VentioDriftDatabase();
       await db.initializeFoundation();
-      _database = db;
       await BusinessSqliteStore.markFreshInstallValidated(db);
       await SyncSqliteStore.markSyncMigrationCompleted(db);
       final runId = 'fresh_${DateTime.now().toUtc().millisecondsSinceEpoch}';
@@ -131,6 +131,7 @@ class SqliteMigrationManager {
               'Fresh SQLite/Drift store initialized without opening or creating legacy storage.'),
         ],
       );
+      _database = db;
       _initialized = true;
       _lastError = null;
       return SqliteMigrationStatus(
@@ -145,6 +146,7 @@ class SqliteMigrationManager {
     } catch (error, stackTrace) {
       _lastError = error;
       debugPrint('Fresh SQLite initialization failed: $error\n$stackTrace');
+      await db.close();
       return SqliteMigrationStatus(
         phase: currentPhase,
         sqliteFoundationReady: false,

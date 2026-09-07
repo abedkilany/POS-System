@@ -573,4 +573,141 @@ void main() {
     );
   });
 
+  test('expiry tracking always normalizes expiry entry as required', () {
+    final product = Product(
+      id: 'expiry-contract',
+      name: 'Expiry contract',
+      code: 'EXP-C',
+      price: 1,
+      cost: 1,
+      stock: 0,
+      category: 'Test',
+      trackStock: true,
+      expiryTrackingEnabled: true,
+      expiryEntryRequired: false,
+    );
+
+    expect(product.expiryEntryRequired, isTrue);
+    expect(product.requiresExpiryDate, isTrue);
+  });
+
+  test('batch lifecycle becomes depleted at zero and active after restore',
+      () async {
+    final db = VentioDriftDatabase(NativeDatabase.memory());
+    await db.initializeFoundation();
+    addTearDown(db.close);
+    final service = BatchInventoryService(db);
+    final now = DateTime.utc(2026, 9, 7, 10);
+    final product = _product(
+      id: 'status-lifecycle',
+      now: now,
+      expiryTrackingEnabled: false,
+    );
+    await _persistProduct(db, product);
+
+    await db.transaction(() async {
+      await service.addUnifiedBatchStockInTransaction(
+        product: product,
+        warehouseId: 'main',
+        batchId: 'status-batch',
+        quantity: 4,
+        unitCost: 2,
+        sourceType: 'purchase',
+        sourceId: 'purchase-status',
+        sourceLineId: 'line-status',
+        receivedAt: now,
+        storeId: 'store-1',
+        branchId: 'main',
+        deviceId: 'device-1',
+      );
+    });
+
+    final allocations = await db.transaction(
+      () => service.allocateUnifiedInTransaction(
+        product: product,
+        warehouseId: 'main',
+        quantity: 4,
+        movementDate: now.add(const Duration(minutes: 1)),
+        storeId: 'store-1',
+        deviceId: 'device-1',
+      ),
+    );
+    expect(allocations.single.batchId, 'status-batch');
+
+    var row = await db.customSelect(
+      "SELECT status FROM inventory_batches WHERE id = 'status-batch'",
+    ).getSingle();
+    expect(row.read<String>('status'), 'depleted');
+
+    await db.transaction(
+      () => service.restoreUnifiedInTransaction(
+        product: product,
+        warehouseId: 'main',
+        allocations: allocations,
+        restoredAt: now.add(const Duration(minutes: 2)),
+        storeId: 'store-1',
+        deviceId: 'device-1',
+      ),
+    );
+
+    row = await db.customSelect(
+      "SELECT status FROM inventory_batches WHERE id = 'status-batch'",
+    ).getSingle();
+    expect(row.read<String>('status'), 'active');
+  });
+
+  test('full warehouse transfer does not leave the batch depleted', () async {
+    final db = VentioDriftDatabase(NativeDatabase.memory());
+    await db.initializeFoundation();
+    addTearDown(db.close);
+    final service = BatchInventoryService(db);
+    final now = DateTime.utc(2026, 9, 7, 11);
+    final product = _product(
+      id: 'transfer-status',
+      now: now,
+      expiryTrackingEnabled: false,
+    );
+    await _persistProduct(db, product);
+
+    await db.transaction(() async {
+      await service.addUnifiedBatchStockInTransaction(
+        product: product,
+        warehouseId: 'main',
+        batchId: 'transfer-status-batch',
+        quantity: 3,
+        unitCost: 1.5,
+        sourceType: 'purchase',
+        sourceId: 'purchase-transfer-status',
+        sourceLineId: 'line-transfer-status',
+        receivedAt: now,
+        storeId: 'store-1',
+        branchId: 'main',
+        deviceId: 'device-1',
+      );
+    });
+
+    await db.transaction(
+      () => service.transferUnifiedInTransaction(
+        product: product,
+        fromWarehouseId: 'main',
+        toWarehouseId: 'secondary',
+        quantity: 3,
+        transferredAt: now.add(const Duration(minutes: 1)),
+        storeId: 'store-1',
+        branchId: 'main',
+        deviceId: 'device-1',
+      ),
+    );
+
+    final status = await db.customSelect(
+      "SELECT status FROM inventory_batches WHERE id = 'transfer-status-batch'",
+    ).getSingle();
+    expect(status.read<String>('status'), 'active');
+
+    final destination = await db.customSelect(
+      "SELECT quantity FROM inventory_batch_balances WHERE batch_id = 'transfer-status-batch' AND warehouse_id = 'secondary'",
+    ).getSingle();
+    expect(destination.read<double>('quantity'), 3);
+  });
+
 }

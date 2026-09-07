@@ -2565,6 +2565,8 @@
   "dashboard_pending_changes": "{count} pending change(s)",
   "dashboard_last_backup_at": "Last backup at {date}",
   "app_startup_failed": "Unable to start the app",
+  "sqlite_startup_audit_integrity_failure": "The app could not start because {count} audit record(s) are incomplete. The database was not changed automatically.",
+  "sqlite_startup_failed_reason": "The app could not start because the local database could not be initialized. Details: {reason}",
   "add_cash_drawer_first": "No cash drawer is defined. Add a cash drawer first from the financial settings.",
   "settings_general": "General",
   "settings_general_desc": "Store details, language, appearance, region, and contact information",

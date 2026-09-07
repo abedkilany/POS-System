@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 
 import '../../accounting/accounting_account_role.dart';
 import '../../security/audit_integrity.dart';
+import '../../security/audit_insert_guard.dart';
 import 'sqlite_database_connection.dart';
 
 /// Drift-backed SQLite foundation for Ventio.
@@ -17,7 +18,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 32;
+  int get schemaVersion => 33;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -260,14 +261,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
       "SELECT COUNT(*) AS row_count FROM audit_logs WHERE record_hash = ''",
     ).getSingle();
     final count = pending.read<int>('row_count');
-    if (count == 0) return;
 
     final triggerRows = await customSelect(
       "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_audit_logs_no_update', 'trg_audit_logs_no_delete')",
     ).get();
-    if (triggerRows.isNotEmpty) {
+    if (count > 0 && triggerRows.isNotEmpty) {
       throw StateError(
-        'Audit integrity failure: an append-only audit row is missing its integrity hash.',
+        'Audit integrity failure: $count append-only audit row(s) are missing '
+        'their integrity hash.',
       );
     }
 
@@ -738,6 +739,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'products', 'expiry_tracking_enabled', 'INTEGER NOT NULL DEFAULT 0');
     await _ensureColumn(
         'products', 'expiry_entry_required', 'INTEGER NOT NULL DEFAULT 1');
+    // Unified Batch has one unambiguous expiry contract: enabling expiry
+    // tracking means every received batch must have an expiration date.
+    // Repair legacy rows created while expiry_entry_required could be false.
+    await customStatement('''
+      UPDATE products
+      SET expiry_entry_required = 1
+      WHERE expiry_tracking_enabled = 1 AND expiry_entry_required <> 1;
+    ''');
     await _ensureColumn(
         'products', 'expiry_alert_days', 'INTEGER NOT NULL DEFAULT 30');
     await _ensureColumn(
@@ -2657,6 +2666,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn(
         'audit_logs', 'hash_version', 'INTEGER NOT NULL DEFAULT 1');
     await _sealLegacyAuditRows();
+    await customStatement(auditInsertGuardSql);
     await customStatement(r'''
       CREATE TRIGGER IF NOT EXISTS trg_audit_logs_no_update
       BEFORE UPDATE ON audit_logs

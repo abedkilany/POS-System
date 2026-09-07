@@ -1763,6 +1763,13 @@ class BatchInventoryService {
           deviceId,
         ],
       );
+      await _refreshBatchLifecycleStatusInTransaction(
+        batchId: normalizedBatchId,
+        storeId: storeId,
+        updatedAt: movementDate,
+        deviceId: deviceId,
+        syncStatus: 'synced',
+      );
       return;
     }
     if (balanceDelta.abs() <= 0.000001) return;
@@ -1794,6 +1801,13 @@ class BatchInventoryService {
         fallback: 'The batch does not exist or has insufficient stock.',
       );
     }
+    await _refreshBatchLifecycleStatusInTransaction(
+      batchId: normalizedBatchId,
+      storeId: storeId,
+      updatedAt: movementDate,
+      deviceId: deviceId,
+      syncStatus: 'synced',
+    );
   }
 
   /// Unified allocation for all stock-tracked products.
@@ -1884,6 +1898,12 @@ class BatchInventoryService {
           fallback: 'Batch stock changed while allocating inventory.',
         );
       }
+      await _refreshBatchLifecycleStatusInTransaction(
+        batchId: batchId,
+        storeId: storeId,
+        updatedAt: movementDate,
+        deviceId: deviceId,
+      );
       allocations.add(BatchAllocation(
         batchId: batchId,
         quantity: used,
@@ -2020,20 +2040,11 @@ class BatchInventoryService {
           fallback: 'Batch $batchId no longer exists.',
         );
       }
-      await db.customStatement(
-        '''
-        UPDATE inventory_batches
-        SET status = CASE WHEN status = 'depleted' THEN 'active' ELSE status END,
-            updated_at = ?, version = version + 1,
-            last_modified_by_device_id = ?, sync_status = 'pending'
-        WHERE id = ? AND store_id = ?
-        ''',
-        <Object?>[
-          restoredAt.toUtc().toIso8601String(),
-          deviceId,
-          batchId,
-          storeId,
-        ],
+      await _refreshBatchLifecycleStatusInTransaction(
+        batchId: batchId,
+        storeId: storeId,
+        updatedAt: restoredAt,
+        deviceId: deviceId,
       );
     }
   }
@@ -2075,6 +2086,12 @@ class BatchInventoryService {
         fallback: 'The batch does not exist or has insufficient stock.',
       );
     }
+    await _refreshBatchLifecycleStatusInTransaction(
+      batchId: batchId.trim(),
+      storeId: storeId,
+      updatedAt: adjustedAt,
+      deviceId: deviceId,
+    );
   }
 
   Future<List<BatchAllocation>> transferUnifiedInTransaction({
@@ -2148,6 +2165,12 @@ class BatchInventoryService {
           deviceId,
           deviceId,
         ],
+      );
+      await _refreshBatchLifecycleStatusInTransaction(
+        batchId: allocation.batchId,
+        storeId: storeId,
+        updatedAt: transferredAt,
+        deviceId: deviceId,
       );
     }
     return allocations;
@@ -2246,6 +2269,48 @@ class BatchInventoryService {
             'Warehouse inventory and batch balances do not match for $productId.',
       );
     }
+  }
+
+  Future<void> _refreshBatchLifecycleStatusInTransaction({
+    required String batchId,
+    required String storeId,
+    required DateTime updatedAt,
+    required String deviceId,
+    String syncStatus = 'pending',
+  }) async {
+    // Negative-stock deficit batches have their own lifecycle/status contract.
+    if (isDeficitBatchId(batchId)) return;
+    final hasPositiveBalance = await db.customSelect(
+      '''
+      SELECT 1
+      FROM inventory_batch_balances
+      WHERE store_id = ? AND batch_id = ? AND quantity > 0.000001
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(batchId),
+      ],
+    ).getSingleOrNull();
+    final nextStatus = hasPositiveBalance == null ? 'depleted' : 'active';
+    final currentOpposite = nextStatus == 'depleted' ? 'active' : 'depleted';
+    await db.customStatement(
+      '''
+      UPDATE inventory_batches
+      SET status = ?, updated_at = ?, version = version + 1,
+          last_modified_by_device_id = ?, sync_status = ?
+      WHERE id = ? AND store_id = ? AND status = ?
+      ''',
+      <Object?>[
+        nextStatus,
+        updatedAt.toUtc().toIso8601String(),
+        deviceId,
+        syncStatus,
+        batchId,
+        storeId,
+        currentOpposite,
+      ],
+    );
   }
 
   void _validateUnifiedExpiryContract({

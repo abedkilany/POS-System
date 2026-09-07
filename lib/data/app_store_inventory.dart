@@ -1052,10 +1052,10 @@ Future<void> adjustExpiryBatchStock({
     requirePermission(AppPermission.inventoryCorrectionsManage);
     if (quantityDelta == 0) return;
     final product = _findProductById(productId);
-    if (product == null || !product.expiryTrackingEnabled) {
+    if (product == null || !product.trackStock) {
       throw const LocalizedDomainException(
-          'error_expiry_tracked_product_not_found',
-          fallback: 'Expiry-tracked product not found.');
+          'error_batch_requires_stock_tracking',
+          fallback: 'Stock-tracked product not found.');
     }
     final db = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || db == null) {

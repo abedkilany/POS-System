@@ -247,16 +247,35 @@ class LocalDatabaseService {
           category: 'database',
         );
         var db = SqliteMigrationManager.database;
+        if (existingSqliteStatus.lastStatus == 'failed') {
+          final reason = existingSqliteStatus.message
+              .replaceFirst(RegExp(r'^Bad state: '), '');
+          throw StateError('SQLite database failed to initialize. Reason: $reason');
+        }
         if (!existingSqliteStatus.sqliteFoundationReady || db == null) {
-          await StartupTimingService.measure(
+          final freshSqliteStatus = await StartupTimingService.measure(
             'sqlite_fresh_initialize',
             SqliteMigrationManager.initializeFreshSqlite,
             category: 'database',
           );
           db = SqliteMigrationManager.database;
-        }
-        if (db == null) {
-          throw StateError('SQLite database failed to initialize.');
+          if (db == null) {
+            final details = <String>[
+              freshSqliteStatus.message,
+              existingSqliteStatus.message,
+            ]
+                .map((message) => message.trim())
+                .map((message) => message.startsWith('Bad state: ')
+                    ? message.substring('Bad state: '.length).trim()
+                    : message)
+                .firstWhere(
+                  (message) => message.isNotEmpty,
+                  orElse: () => 'No diagnostic details were returned.',
+                );
+            throw StateError(
+              'SQLite database failed to initialize. Reason: $details',
+            );
+          }
         }
         final activeDb = db;
 
@@ -729,7 +748,7 @@ class LocalDatabaseService {
   }
 
   static Future<List<Map<String, dynamic>>?>
-      getExpiryBatchReportFromSqlite() async {
+      getInventoryBatchReportFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) return null;
     final db = SqliteMigrationManager.database;
     if (db == null) return null;
@@ -737,20 +756,32 @@ class LocalDatabaseService {
       SELECT b.id AS batchId, b.product_id AS productId,
              b.product_name AS productName,
              b.supplier_batch_number AS supplierBatchNumber,
+             b.manufacturing_date AS manufacturingDate,
              b.expiration_date AS expirationDate, b.status,
+             b.source_type AS sourceType, b.source_id AS sourceId,
+             b.source_line_id AS sourceLineId, b.received_at AS receivedAt,
              bb.warehouse_id AS warehouseId, bb.quantity,
              bb.reserved_quantity AS reservedQuantity,
-             p.expiry_alert_days AS alertDays, CASE WHEN b.unit_cost > 0 THEN b.unit_cost ELSE p.usd_cost END AS unitCost
+             p.expiry_tracking_enabled AS expiryTrackingEnabled,
+             p.expiry_alert_days AS alertDays,
+             CASE WHEN b.unit_cost > 0 THEN b.unit_cost ELSE p.usd_cost END AS unitCost
       FROM inventory_batches b
       JOIN inventory_batch_balances bb ON bb.batch_id = b.id
       JOIN products p ON p.id = b.product_id
-      WHERE bb.quantity > 0.000001 OR b.status = 'disposed'
-      ORDER BY b.expiration_date ASC, b.product_name ASC, b.id ASC
+      WHERE b.source_type <> 'inventory_deficit'
+      ORDER BY b.product_name ASC,
+               CASE WHEN trim(b.received_at) = '' THEN b.created_at ELSE b.received_at END ASC,
+               b.expiration_date ASC, b.id ASC
     ''').get();
     return rows
         .map((row) => Map<String, dynamic>.from(row.data))
         .toList(growable: false);
   }
+
+  /// Backward-compatible alias for older callers. The report is now the
+  /// complete Unified Batch ledger, not expiry-only.
+  static Future<List<Map<String, dynamic>>?>
+      getExpiryBatchReportFromSqlite() => getInventoryBatchReportFromSqlite();
 
   static Future<void> replaceInventoryBatchRowsImmediate({
     required List<Map<String, dynamic>> batches,

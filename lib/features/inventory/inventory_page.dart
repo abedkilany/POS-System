@@ -24,6 +24,18 @@ import '../barcode/barcode_scanner_page.dart';
 import 'batch_allocation_dialog.dart';
 import 'warehouse_transfer_page.dart';
 
+String _batchStatusLabel(AppLocalizations tr, String status) {
+  if (status != 'depleted') return tr.text(status);
+  switch (tr.locale.languageCode) {
+    case 'ar':
+      return 'نافدة';
+    case 'fr':
+      return 'Épuisé';
+    default:
+      return 'Depleted';
+  }
+}
+
 String _movementTypeLabel(AppLocalizations tr, String type) {
   switch (type) {
     case 'auto_correction':
@@ -113,16 +125,16 @@ class _InventoryOverviewMetrics {
   }
 }
 
-class _ExpiryBatchesTab extends StatefulWidget {
-  const _ExpiryBatchesTab({required this.store});
+class _InventoryBatchesTab extends StatefulWidget {
+  const _InventoryBatchesTab({required this.store});
 
   final AppStore store;
 
   @override
-  State<_ExpiryBatchesTab> createState() => _ExpiryBatchesTabState();
+  State<_InventoryBatchesTab> createState() => _InventoryBatchesTabState();
 }
 
-class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
+class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
   String query = '';
   String status = 'all';
 
@@ -223,7 +235,7 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     return FutureBuilder<List<Map<String, dynamic>>?>(
-      future: LocalDatabaseService.getExpiryBatchReportFromSqlite(),
+      future: LocalDatabaseService.getInventoryBatchReportFromSqlite(),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator.adaptive());
@@ -240,21 +252,27 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
           final rowStatus = row['status']?.toString() ?? 'active';
           if (status != 'all' && rowStatus != status) return false;
           if (normalizedQuery.isEmpty) return true;
-          return '${row['productName']} ${row['supplierBatchNumber']} ${row['warehouseId']}'
+          return '${row['productName']} ${row['supplierBatchNumber']} ${row['warehouseId']} ${row['sourceType']} ${row['sourceId']}'
               .toLowerCase()
               .contains(normalizedQuery);
         }).toList();
-        if (rows.isEmpty) {
-          return Center(child: Text(tr.text('no_expiry_batches')));
+        if (allRows.isEmpty) {
+          return Center(child: Text(tr.text('no_inventory_items')));
         }
         final today = DateTime.now();
         final startOfToday = DateTime(today.year, today.month, today.day);
         final expiredCount = allRows.where((row) {
+          if ((row['quantity'] as num? ?? 0).toDouble() <= 0.000001) {
+            return false;
+          }
           final expiry =
               DateTime.tryParse(row['expirationDate']?.toString() ?? '');
           return expiry != null && expiry.isBefore(startOfToday);
         }).length;
         final expiringSoonCount = allRows.where((row) {
+          if ((row['quantity'] as num? ?? 0).toDouble() <= 0.000001) {
+            return false;
+          }
           final expiry =
               DateTime.tryParse(row['expirationDate']?.toString() ?? '');
           if (expiry == null || expiry.isBefore(startOfToday)) return false;
@@ -262,19 +280,23 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
           return expiry.difference(startOfToday).inDays <= alertDays;
         }).length;
         final atRiskValue = allRows.fold<double>(0, (sum, row) {
+          final quantity = (row['quantity'] as num? ?? 0).toDouble();
+          if (quantity <= 0.000001) return sum;
           final expiry =
               DateTime.tryParse(row['expirationDate']?.toString() ?? '');
           if (expiry == null) return sum;
           final alertDays = (row['alertDays'] as num? ?? 30).toInt();
           if (expiry.difference(startOfToday).inDays > alertDays) return sum;
           return sum +
-              (row['quantity'] as num? ?? 0).toDouble() *
-                  (row['unitCost'] as num? ?? 0).toDouble();
+              quantity * (row['unitCost'] as num? ?? 0).toDouble();
         });
         return Column(children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Wrap(spacing: 12, runSpacing: 8, children: [
+              Chip(
+                  avatar: const Icon(Icons.inventory_2_outlined),
+                  label: Text('${tr.text('unified_batch')}: ${allRows.length}')),
               Chip(
                   avatar: const Icon(Icons.error_outline, color: Colors.red),
                   label: Text('${tr.text('expired')}: $expiredCount')),
@@ -302,9 +324,9 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
               const SizedBox(width: 12),
               DropdownButton<String>(
                 value: status,
-                items: <String>['all', 'active', 'blocked', 'disposed']
+                items: <String>['all', 'active', 'blocked', 'depleted', 'disposed']
                     .map((value) => DropdownMenuItem(
-                        value: value, child: Text(tr.text(value))))
+                        value: value, child: Text(_batchStatusLabel(tr, value))))
                     .toList(),
                 onChanged: (value) => setState(() => status = value ?? 'all'),
               ),
@@ -320,7 +342,7 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
                                 .map((row) => Map<String, Object?>.from(row))
                                 .toList(),
                             format: 'csv',
-                            baseFileName: 'ventio-expiry-batches',
+                            baseFileName: 'ventio-inventory-batches',
                           );
                         } catch (error) {
                           if (context.mounted) {
@@ -337,11 +359,13 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
             ]),
           ),
           Expanded(
-              child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            itemCount: rows.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
+            child: rows.isEmpty
+                ? Center(child: Text(tr.text('no_inventory_items')))
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    itemCount: rows.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
               final row = rows[index];
               final expiry =
                   DateTime.tryParse(row['expirationDate']?.toString() ?? '');
@@ -362,7 +386,12 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
                 child: ListTile(
                   leading: CircleAvatar(
                     backgroundColor: color.withValues(alpha: .14),
-                    child: Icon(Icons.event_outlined, color: color),
+                    child: Icon(
+                      expiry == null
+                          ? Icons.inventory_2_outlined
+                          : Icons.event_outlined,
+                      color: color,
+                    ),
                   ),
                   title: Text(row['productName']?.toString() ?? ''),
                   subtitle: Text([
@@ -371,6 +400,13 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
                       '${tr.text('batch_number')}: ${row['supplierBatchNumber']}',
                     '${tr.text('warehouse')}: ${row['warehouseId']}',
                     '${tr.text('quantity')}: ${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 2)}',
+                    '${tr.text('status')}: ${_batchStatusLabel(tr, row['status']?.toString() ?? 'active')}',
+                    if ((row['sourceType']?.toString() ?? '').isNotEmpty)
+                      row['sourceType'].toString().replaceAll('_', ' '),
+                    if (DateTime.tryParse(
+                            row['receivedAt']?.toString() ?? '') !=
+                        null)
+                      '${tr.text('received')}: ${MaterialLocalizations.of(context).formatMediumDate(DateTime.parse(row['receivedAt'].toString()).toLocal())}',
                   ].join(' • ')),
                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                     Column(
@@ -413,9 +449,10 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
                         PopupMenuItem(
                             value: 'count',
                             child: Text(tr.text('batch_count'))),
-                        PopupMenuItem(
-                            value: 'dispose',
-                            child: Text(tr.text('dispose_batch'))),
+                        if (expiry != null)
+                          PopupMenuItem(
+                              value: 'dispose',
+                              child: Text(tr.text('dispose_batch'))),
                         PopupMenuItem(
                             value: 'reverse',
                             child: Text(tr.text('reverse_adjustment'))),
@@ -433,8 +470,9 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
                   ]),
                 ),
               );
-            },
-          )),
+                    },
+                  ),
+          ),
         ]);
       },
     );
@@ -713,7 +751,7 @@ class _InventoryPageState extends State<InventoryPage>
               Tab(text: tr.text('auto_corrections')),
               Tab(text: tr.text('stock_count')),
               Tab(text: tr.text('waste_loss_report')),
-              Tab(text: tr.text('expiry_batches')),
+              Tab(text: tr.text('unified_batch')),
             ],
           ),
         ),
@@ -751,7 +789,7 @@ class _InventoryPageState extends State<InventoryPage>
                 store: widget.store,
                 canManageWaste: canManageWaste,
               ),
-              _ExpiryBatchesTab(store: widget.store),
+              _InventoryBatchesTab(store: widget.store),
             ],
           ),
         ),

@@ -18,7 +18,10 @@ Future<void> main() async {
       await AccountAuthCache.migrateLegacySecrets();
     },
     category: 'bootstrap',
-  ));
+  ).catchError((Object error, StackTrace stackTrace) {
+    // VentioApp awaits the same initialization and displays its failure.
+    debugPrint('Database prewarm failed: $error\n$stackTrace');
+  }));
   StartupTimingService.event('runApp_called');
   runApp(const VentioApp());
 }

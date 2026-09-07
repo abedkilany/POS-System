@@ -667,7 +667,7 @@ class AuditLogger {
 
   static const int defaultLimit = 200;
   static final List<_PendingAuditLog> _pending = <_PendingAuditLog>[];
-  static bool _flushInProgress = false;
+  static Future<void>? _flushInFlight;
 
   static Future<void> record({
     required String entityType,
@@ -713,24 +713,21 @@ class AuditLogger {
     await flushPending();
   }
 
-  static Future<void> flushPending() async {
-    if (_flushInProgress) return;
+  static Future<void> flushPending() {
+    return _flushInFlight ??= _flushPendingInternal().whenComplete(() {
+      _flushInFlight = null;
+    });
+  }
+
+  static Future<void> _flushPendingInternal() async {
     final db = SqliteMigrationManager.database;
     if (db == null) return;
-    _flushInProgress = true;
-    try {
-      while (_pending.isNotEmpty) {
-        final item = _pending.first;
-        try {
-          await _insertAuditLog(db, item);
-          _pending.removeAt(0);
-        } catch (error, stackTrace) {
-          debugPrint('AuditLogger flush failed: $error\n$stackTrace');
-          break;
-        }
-      }
-    } finally {
-      _flushInProgress = false;
+    while (_pending.isNotEmpty) {
+      final item = _pending.first;
+      // Read the chain tip and append in the same transaction. Failed writes
+      // remain queued and propagate to callers instead of reporting success.
+      await db.transaction(() => _insertAuditLog(db, item));
+      _pending.removeAt(0);
     }
   }
 

@@ -1358,7 +1358,6 @@ class _ProductDialogState extends State<_ProductDialog> {
   late List<_SaleUnitDraft> saleUnitDrafts;
   bool trackStock = true;
   bool expiryTrackingEnabled = false;
-  bool expiryEntryRequired = true;
   bool isActive = true;
   bool addToQuickProducts = false;
   String imagePath = '';
@@ -1468,7 +1467,6 @@ class _ProductDialogState extends State<_ProductDialog> {
         .toList();
     trackStock = product?.trackStock ?? true;
     expiryTrackingEnabled = product?.expiryTrackingEnabled ?? false;
-    expiryEntryRequired = product?.expiryEntryRequired ?? true;
     isActive = product?.isActive ?? true;
   }
 
@@ -1686,13 +1684,6 @@ class _ProductDialogState extends State<_ProductDialog> {
                           : null,
                     ),
                     if (trackStock && expiryTrackingEnabled) ...[
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(tr.text('expiry_date_required')),
-                        value: expiryEntryRequired,
-                        onChanged: (value) =>
-                            setState(() => expiryEntryRequired = value),
-                      ),
                       _ResponsiveFields(children: [
                         TextFormField(
                           controller: expiryAlertDaysController,
@@ -2079,7 +2070,7 @@ class _ProductDialogState extends State<_ProductDialog> {
               .toList(),
           trackStock: trackStock,
           expiryTrackingEnabled: trackStock && expiryTrackingEnabled,
-          expiryEntryRequired: expiryEntryRequired,
+          expiryEntryRequired: true,
           expiryAlertDays:
               int.tryParse(expiryAlertDaysController.text.trim()) ?? 30,
           defaultShelfLifeDays:

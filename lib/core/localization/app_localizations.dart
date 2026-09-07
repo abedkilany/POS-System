@@ -116,6 +116,9 @@ class _AppLocalizationsDelegate
 String localizeRuntimeMessage(String message, AppLocalizations tr) {
   var value = message.trim();
   if (value.isEmpty) return value;
+  if (value.startsWith('Bad state: ')) {
+    value = value.substring('Bad state: '.length).trim();
+  }
 
   final exact = <String, String>{
     'Host restored data. Rebuilding this device from the latest snapshot...':
@@ -273,6 +276,26 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
   };
   final key = exact[value];
   if (key != null) return tr.text(key);
+
+  final auditIntegrityFailure = RegExp(
+    r'^SQLite database failed to initialize\. Reason: '
+    r'Audit integrity failure: (\d+) append-only audit row\(s\) are missing '
+    r'their integrity hash\.$',
+  ).firstMatch(value);
+  if (auditIntegrityFailure != null) {
+    return tr.format('sqlite_startup_audit_integrity_failure', {
+      'count': auditIntegrityFailure.group(1),
+    });
+  }
+
+  final sqliteStartupFailure = RegExp(
+    r'^SQLite database failed to initialize\. Reason: (.+)$',
+  ).firstMatch(value);
+  if (sqliteStartupFailure != null) {
+    return tr.format('sqlite_startup_failed_reason', {
+      'reason': sqliteStartupFailure.group(1),
+    });
+  }
 
   final translatedTemplate = tr.localizeEnglishMessage(value);
   if (translatedTemplate != null) return translatedTemplate;
