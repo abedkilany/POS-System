@@ -1624,6 +1624,43 @@ Future<void> _applySyncChangePayload(SyncChange change) async {
       case 'stock_movement':
         final movement = StockMovement.fromJson(p);
         if (_stockMovementIndexForId(movement.id) != -1) break;
+        if (LocalDatabaseService.isSqliteAuthoritative &&
+            movement.batchId.trim().isEmpty &&
+            movement.quantity.abs() > 0.000001) {
+          final sqliteDb = SqliteMigrationManager.database;
+          if (sqliteDb != null) {
+            final marker = await sqliteDb.customSelect(
+              '''
+              SELECT p.name AS product_name
+              FROM unified_batch_cutovers uc
+              INNER JOIN products p ON p.id = uc.product_id
+                AND p.deleted_at = '' AND p.track_stock = 1
+              WHERE uc.store_id = ? AND uc.warehouse_id = ?
+                AND uc.product_id = ?
+                AND datetime(?) >= datetime(uc.cutover_at)
+              LIMIT 1
+              ''',
+              variables: <Variable<Object>>[
+                Variable<String>(movement.storeId.trim().isEmpty
+                    ? appIdentity.storeId
+                    : movement.storeId.trim()),
+                Variable<String>(movement.warehouseId),
+                Variable<String>(movement.productId),
+                Variable<String>(movement.date.toUtc().toIso8601String()),
+              ],
+            ).getSingleOrNull();
+            if (marker != null) {
+              final productName =
+                  marker.data['product_name']?.toString() ?? movement.productName;
+              throw LocalizedDomainException(
+                'error_post_cutover_batch_required',
+                values: <String, Object?>{'product': productName},
+                fallback:
+                    'لا يمكن تسجيل حركة مخزون للمنتج $productName بعد تفعيل نظام الدُفعات دون تحديد الدفعة.',
+              );
+            }
+          }
+        }
         final productIndex = _productIndexById[movement.productId];
         if (!_storeProfile.allowNegativeStock &&
             productIndex != null &&

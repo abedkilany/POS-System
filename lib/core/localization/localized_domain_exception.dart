@@ -17,7 +17,11 @@ class LocalizedDomainException implements Exception {
 
 String localizedErrorText(AppLocalizations translations, Object error) {
   if (error is LocalizedDomainException) {
-    return translations.format(error.key, error.values);
+    final localized = translations.format(error.key, error.values);
+    if (localized.trim().isEmpty || localized == error.key) {
+      return error.fallback;
+    }
+    return localized;
   }
   return error.toString();
 }

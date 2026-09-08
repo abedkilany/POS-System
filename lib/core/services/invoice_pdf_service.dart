@@ -9,6 +9,7 @@ import 'package:printing/printing.dart';
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
 import '../utils/currency_utils.dart';
+import 'pdf_font_loader.dart';
 import 'posted_document_snapshot_service.dart';
 
 class InvoicePdfService {
@@ -29,10 +30,9 @@ class InvoicePdfService {
         PostedDocumentSnapshotService.profileForSale(sale, profile);
     final labels = _InvoicePdfLabels(locale.languageCode);
     final isArabic = locale.languageCode == 'ar';
-    final arabicFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Tahoma.ttf'),
-    );
-    final arabicBoldFont = arabicFont;
+    final pdfFonts = await PdfFontLoader.loadArabicFonts();
+    final arabicFont = pdfFonts.regular;
+    final arabicBoldFont = pdfFonts.bold;
     // Keep Latin invoices independent from optional bundled TTF parsing.
     // Arabic (or Arabic text inside a Latin invoice) is still covered by
     // the known-good Tahoma assets through the base font/fallback.

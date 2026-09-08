@@ -836,7 +836,7 @@ class BatchInventoryService {
           'error_batch_cutover_mismatch',
           values: {'product': product.name},
           fallback:
-              'Unified batch stock no longer matches warehouse stock for ${product.name}.',
+              'رصيد الدُفعات لا يطابق رصيد المستودع للمنتج ${product.name}.',
         );
       }
       return;
@@ -1018,7 +1018,7 @@ class BatchInventoryService {
         'error_batch_cutover_mismatch',
         values: {'product': product.name},
         fallback:
-            'Unified batch cutover did not reconcile for ${product.name}.',
+            'تعذر مطابقة رصيد الدُفعات مع رصيد المستودع للمنتج ${product.name} أثناء الترحيل.',
       );
     }
     final nowText = cutoverAt.toUtc().toIso8601String();

@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 
 import '../../models/cash_ledger_transaction.dart';
 import '../../models/store_profile.dart';
+import 'pdf_font_loader.dart';
 
 class CashReceiptPdfService {
   static const PdfColor _navy = PdfColor(0.035, 0.13, 0.25);
@@ -22,12 +23,9 @@ class CashReceiptPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final baseFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Tahoma.ttf'),
-    );
-    final boldFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Tahoma-Bold.ttf'),
-    );
+    final pdfFonts = await PdfFontLoader.loadArabicFonts();
+    final baseFont = pdfFonts.regular;
+    final boldFont = pdfFonts.bold;
     final ar = locale.languageCode == 'ar';
     final logoBytes = _logoBytes(profile.logoDataBase64);
     final reference = [

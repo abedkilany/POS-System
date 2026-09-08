@@ -5,6 +5,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../../models/store_profile.dart';
+import 'pdf_font_loader.dart';
 
 class ProfessionalPdfTheme {
   static const PdfColor navy = PdfColor(0.035, 0.13, 0.25);
@@ -44,11 +45,11 @@ class ProfessionalPdfTheme {
   }
 
   static Future<pw.ThemeData> loadTheme() async {
-    final baseFont =
-        pw.Font.ttf(await rootBundle.load('assets/fonts/Tahoma.ttf'));
-    final boldFont =
-        pw.Font.ttf(await rootBundle.load('assets/fonts/Tahoma-Bold.ttf'));
-    return pw.ThemeData.withFont(base: baseFont, bold: boldFont);
+    final pdfFonts = await PdfFontLoader.loadArabicFonts();
+    return pw.ThemeData.withFont(
+      base: pdfFonts.regular,
+      bold: pdfFonts.bold,
+    );
   }
 
   static Uint8List? logoBytes(StoreProfile profile) {

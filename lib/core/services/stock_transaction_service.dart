@@ -6,6 +6,7 @@ import '../../models/stock_movement.dart';
 import '../../models/warehouse_inventory.dart';
 import '../../models/sync_change.dart';
 import '../repositories/warehouse_inventory_repository.dart';
+import '../localization/localized_domain_exception.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
 
 class StockTransactionReceipt {
@@ -353,6 +354,7 @@ class StockTransactionService {
         idempotencyKeyPrefix: idempotencyKey,
         fallbackSyncStatus: 'pending',
       );
+      await _assertUnifiedBatchIdentityInTransaction(normalized);
       final appliedMovementId = await _applyMovementAtomically(
         normalized,
         operationType: operationType,
@@ -777,6 +779,50 @@ class StockTransactionService {
     );
     await WarehouseInventoryRepository.upsert(db, inventory);
     return inventory;
+  }
+
+  Future<void> _assertUnifiedBatchIdentityInTransaction(
+    StockMovement movement,
+  ) async {
+    if (movement.batchId.trim().isNotEmpty ||
+        movement.quantity.abs() <= 0.000001) {
+      return;
+    }
+    final storeId = movement.storeId.trim().isEmpty
+        ? defaultStoreId
+        : movement.storeId.trim();
+    final warehouseId = movement.warehouseId.trim();
+    if (storeId.isEmpty || warehouseId.isEmpty || movement.productId.isEmpty) {
+      return;
+    }
+    final marker = await db.customSelect(
+      '''
+      SELECT p.name AS product_name
+      FROM unified_batch_cutovers uc
+      INNER JOIN products p ON p.id = uc.product_id
+        AND p.deleted_at = '' AND p.track_stock = 1
+      WHERE uc.store_id = ? AND uc.warehouse_id = ? AND uc.product_id = ?
+        AND datetime(?) >= datetime(uc.cutover_at)
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(movement.productId),
+        Variable<String>(movement.date.toUtc().toIso8601String()),
+      ],
+    ).getSingleOrNull();
+    if (marker == null) return;
+    final productName =
+        marker.data['product_name']?.toString().trim().isNotEmpty == true
+            ? marker.data['product_name']!.toString()
+            : movement.productName;
+    throw LocalizedDomainException(
+      'error_post_cutover_batch_required',
+      values: <String, Object?>{'product': productName},
+      fallback:
+          'لا يمكن تسجيل حركة مخزون للمنتج $productName بعد تفعيل نظام الدُفعات دون تحديد الدفعة.',
+    );
   }
 
   Future<String> _applyMovementAtomically(

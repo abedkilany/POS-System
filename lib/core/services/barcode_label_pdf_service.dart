@@ -6,6 +6,7 @@ import 'package:printing/printing.dart';
 
 import '../../models/product.dart';
 import '../../models/store_profile.dart';
+import 'pdf_font_loader.dart';
 
 class BarcodeLabelItem {
   const BarcodeLabelItem({
@@ -69,24 +70,10 @@ class BarcodeLabelPdfService {
     BarcodeLabelPrintOptions options = const BarcodeLabelPrintOptions(),
     bool showGuides = false,
   }) async {
-    final baseFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Tahoma.ttf'),
-    );
-    final boldFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Tahoma-Bold.ttf'),
-    );
-
-    // Prefer Arial for the product/weight/price block when the app bundle
-    // contains it. Older Ventio packages may not include Arial, so keep a
-    // safe Tahoma fallback rather than making barcode printing fail.
-    pw.Font productBoldFont = boldFont;
-    try {
-      productBoldFont = pw.Font.ttf(
-        await rootBundle.load('assets/fonts/Arial-Bold.ttf'),
-      );
-    } catch (_) {
-      // Backward-compatible fallback for installations without Arial assets.
-    }
+    final pdfFonts = await PdfFontLoader.loadArabicFonts();
+    final baseFont = pdfFonts.regular;
+    final boldFont = pdfFonts.bold;
+    final productBoldFont = boldFont;
     final isArabic = locale.languageCode == 'ar';
     final labels = <BarcodeLabelItem>[];
     for (final item in items) {

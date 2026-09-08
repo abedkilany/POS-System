@@ -9,6 +9,7 @@ import 'package:printing/printing.dart';
 import '../../models/purchase.dart';
 import '../../models/store_profile.dart';
 import '../utils/currency_utils.dart';
+import 'pdf_font_loader.dart';
 import 'posted_document_snapshot_service.dart';
 
 class PurchasePdfService {
@@ -28,12 +29,9 @@ class PurchasePdfService {
         PostedDocumentSnapshotService.purchaseView(purchase);
     final documentProfile =
         PostedDocumentSnapshotService.profileForPurchase(purchase, profile);
-    final baseFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Tahoma.ttf'),
-    );
-    final boldFont = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Tahoma-Bold.ttf'),
-    );
+    final pdfFonts = await PdfFontLoader.loadArabicFonts();
+    final baseFont = pdfFonts.regular;
+    final boldFont = pdfFonts.bold;
     final labels = _PurchasePdfLabels(locale.languageCode);
     final isArabic = labels.isArabic;
     final logoBytes = _logoBytes(documentProfile.logoDataBase64);

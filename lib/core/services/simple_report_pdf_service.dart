@@ -3,15 +3,17 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import 'pdf_font_loader.dart';
+
 class SimpleReportPdfService {
   static Future<void> printReport({
     required String title,
     required List<String> lines,
     bool arabic = false,
   }) async {
-    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/Tahoma.ttf'));
-    final bold =
-        pw.Font.ttf(await rootBundle.load('assets/fonts/Tahoma-Bold.ttf'));
+    final pdfFonts = await PdfFontLoader.loadArabicFonts();
+    final font = pdfFonts.regular;
+    final bold = pdfFonts.bold;
     final pdf =
         pw.Document(theme: pw.ThemeData.withFont(base: font, bold: bold));
     pdf.addPage(pw.MultiPage(
