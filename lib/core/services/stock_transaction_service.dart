@@ -784,10 +784,7 @@ class StockTransactionService {
   Future<void> _assertUnifiedBatchIdentityInTransaction(
     StockMovement movement,
   ) async {
-    if (movement.batchId.trim().isNotEmpty ||
-        movement.quantity.abs() <= 0.000001) {
-      return;
-    }
+    if (movement.quantity.abs() <= 0.000001) return;
     final storeId = movement.storeId.trim().isEmpty
         ? defaultStoreId
         : movement.storeId.trim();
@@ -795,12 +792,59 @@ class StockTransactionService {
     if (storeId.isEmpty || warehouseId.isEmpty || movement.productId.isEmpty) {
       return;
     }
+
+    final productRow = await db.customSelect(
+      '''
+      SELECT name, track_stock
+      FROM products
+      WHERE id = ? AND deleted_at = ''
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(movement.productId),
+      ],
+    ).getSingleOrNull();
+    final trackStock =
+        (productRow?.data['track_stock'] as num? ?? 0).toInt() == 1;
+    if (!trackStock) return;
+    final productName =
+        productRow?.data['name']?.toString().trim().isNotEmpty == true
+            ? productRow!.data['name']!.toString()
+            : movement.productName;
+
+    final phaseRow = await db.customSelect(
+      '''
+      SELECT value
+      FROM migration_meta
+      WHERE key = 'unified_batch_phase4_state'
+      LIMIT 1
+      ''',
+    ).getSingleOrNull();
+    final phaseState =
+        phaseRow?.data['value']?.toString().trim().toLowerCase() ?? '';
+    if (phaseState == 'blocked') {
+      throw LocalizedDomainException(
+        'error_unified_batch_phase4_blocked',
+        values: <String, Object?>{'product': productName},
+        fallback:
+            'Unified Batch migration is blocked by an inventory reconciliation error. Repair the inventory before posting new stock movements.',
+      );
+    }
+
+    if (movement.batchId.trim().isNotEmpty) return;
+    if (phaseState == 'completed') {
+      throw LocalizedDomainException(
+        'error_post_cutover_batch_required',
+        values: <String, Object?>{'product': productName},
+        fallback:
+            'لا يمكن تسجيل حركة مخزون للمنتج $productName بعد تفعيل نظام الدُفعات دون تحديد الدفعة.',
+      );
+    }
+
     final marker = await db.customSelect(
       '''
-      SELECT p.name AS product_name
+      SELECT 1
       FROM unified_batch_cutovers uc
-      INNER JOIN products p ON p.id = uc.product_id
-        AND p.deleted_at = '' AND p.track_stock = 1
       WHERE uc.store_id = ? AND uc.warehouse_id = ? AND uc.product_id = ?
         AND datetime(?) >= datetime(uc.cutover_at)
       LIMIT 1
@@ -813,10 +857,6 @@ class StockTransactionService {
       ],
     ).getSingleOrNull();
     if (marker == null) return;
-    final productName =
-        marker.data['product_name']?.toString().trim().isNotEmpty == true
-            ? marker.data['product_name']!.toString()
-            : movement.productName;
     throw LocalizedDomainException(
       'error_post_cutover_batch_required',
       values: <String, Object?>{'product': productName},

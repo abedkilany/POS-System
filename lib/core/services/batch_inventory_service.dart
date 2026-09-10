@@ -6,6 +6,26 @@ import '../localization/localized_domain_exception.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
 import 'accounting_service.dart';
 
+class UnifiedBatchCostPreview {
+  const UnifiedBatchCostPreview({
+    required this.requestedQuantity,
+    required this.physicalQuantity,
+    required this.shortageQuantity,
+    required this.totalCost,
+    required this.unitCost,
+    required this.usesProvisionalCost,
+  });
+
+  final double requestedQuantity;
+  final double physicalQuantity;
+  final double shortageQuantity;
+  final double totalCost;
+  final double unitCost;
+  final bool usesProvisionalCost;
+
+  bool get hasShortage => shortageQuantity > 0.000001;
+}
+
 /// Transactional batch inventory operations.
 ///
 /// Phase 1 introduces a unified batch engine for every stock-tracked product.
@@ -439,6 +459,8 @@ class BatchInventoryService {
       JOIN inventory_batches b ON b.id = bb.batch_id
       WHERE bb.store_id = ? AND bb.warehouse_id = ? AND bb.product_id = ?
         AND b.status = 'active'
+        AND b.source_type <> 'inventory_deficit'
+        AND b.id NOT LIKE 'deficit:%'
         AND (bb.quantity - bb.reserved_quantity) > 0.000001
         AND (trim(b.expiration_date) = '' OR b.expiration_date >= ?)
       ORDER BY CASE WHEN trim(b.expiration_date) = '' THEN 1 ELSE 0 END ASC,
@@ -874,6 +896,14 @@ class BatchInventoryService {
           last_modified_by_device_id = ?,
           sync_status = 'pending'
       WHERE store_id = ? AND product_id = ? AND unit_cost <= 0
+        AND EXISTS (
+          SELECT 1
+          FROM inventory_batch_balances bb
+          WHERE bb.batch_id = inventory_batches.id
+            AND bb.store_id = inventory_batches.store_id
+            AND bb.product_id = inventory_batches.product_id
+            AND bb.warehouse_id = ?
+        )
       ''',
       <Object?>[
         safeOpeningCost,
@@ -884,6 +914,7 @@ class BatchInventoryService {
         deviceId,
         storeId,
         product.id,
+        warehouseId,
       ],
     );
 
@@ -1062,6 +1093,7 @@ class BatchInventoryService {
         AND bb.warehouse_id = ?
       WHERE b.store_id = ? AND b.product_id = ?
         AND b.source_type <> 'inventory_deficit'
+        AND b.id NOT LIKE 'deficit:%'
         AND b.unit_cost > 0
       ORDER BY CASE WHEN bb.batch_id IS NULL THEN 1 ELSE 0 END ASC,
                CASE WHEN trim(b.received_at) = '' THEN b.created_at ELSE b.received_at END DESC,
@@ -1079,6 +1111,227 @@ class BatchInventoryService {
     if (product.usdCost > 0) return product.usdCost;
     if (product.cost > 0) return product.cost;
     return 0.0;
+  }
+
+  Future<UnifiedBatchCostPreview> previewUnifiedAllocationInTransaction({
+    required Product product,
+    required String warehouseId,
+    required double quantity,
+    required DateTime movementDate,
+    required String storeId,
+    bool includeProvisionalShortage = false,
+  }) async {
+    if (!product.trackStock || quantity <= 0) {
+      return UnifiedBatchCostPreview(
+        requestedQuantity: quantity < 0 ? 0 : quantity,
+        physicalQuantity: 0,
+        shortageQuantity: 0,
+        totalCost: 0,
+        unitCost: 0,
+        usesProvisionalCost: false,
+      );
+    }
+    final startOfMovementDay = _calendarDateText(movementDate);
+    final expiryPredicate = product.expiryTrackingEnabled
+        ? "trim(b.expiration_date) <> '' AND substr(b.expiration_date, 1, 10) >= ?"
+        : "trim(b.expiration_date) = ''";
+    final ordering = product.expiryTrackingEnabled
+        ? '''substr(b.expiration_date, 1, 10) ASC,
+             CASE WHEN trim(b.received_at) = '' THEN b.created_at ELSE b.received_at END ASC,
+             b.id ASC'''
+        : '''CASE WHEN trim(b.received_at) = '' THEN b.created_at ELSE b.received_at END ASC,
+             b.id ASC''';
+    final rows = await db.customSelect(
+      '''
+      SELECT b.id AS batch_id, b.unit_cost,
+             bb.quantity, bb.reserved_quantity
+      FROM inventory_batch_balances bb
+      JOIN inventory_batches b ON b.id = bb.batch_id
+        AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+      WHERE bb.store_id = ? AND bb.warehouse_id = ? AND bb.product_id = ?
+        AND b.status = 'active'
+        AND b.source_type <> 'inventory_deficit'
+        AND b.id NOT LIKE 'deficit:%'
+        AND (bb.quantity - bb.reserved_quantity) > 0.000001
+        AND $expiryPredicate
+      ORDER BY $ordering
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(product.id),
+        if (product.expiryTrackingEnabled)
+          Variable<String>(startOfMovementDay),
+      ],
+    ).get();
+
+    var remaining = quantity;
+    var physicalQuantity = 0.0;
+    var totalCost = 0.0;
+    for (final row in rows) {
+      if (remaining <= 0.000001) break;
+      final available =
+          row.read<double>('quantity') - row.read<double>('reserved_quantity');
+      final used = available < remaining ? available : remaining;
+      if (used <= 0) continue;
+      physicalQuantity += used;
+      totalCost += used * row.read<double>('unit_cost');
+      remaining -= used;
+    }
+    var usesProvisionalCost = false;
+    if (remaining > 0.000001 && includeProvisionalShortage) {
+      final provisional = await _provisionalDeficitUnitCostInTransaction(
+        product: product,
+        warehouseId: warehouseId,
+        storeId: storeId,
+      );
+      totalCost += remaining * provisional;
+      usesProvisionalCost = true;
+    }
+    final unitCost = quantity <= 0.000001 ? 0.0 : totalCost / quantity;
+    return UnifiedBatchCostPreview(
+      requestedQuantity: quantity,
+      physicalQuantity: physicalQuantity,
+      shortageQuantity: remaining <= 0.000001 ? 0.0 : remaining,
+      totalCost: totalCost,
+      unitCost: unitCost,
+      usesProvisionalCost: usesProvisionalCost,
+    );
+  }
+
+  Future<void> requirePhysicalUnifiedStockInTransaction({
+    required Product product,
+    required String warehouseId,
+    required double quantity,
+    required DateTime movementDate,
+    required String storeId,
+    String operation = 'operation',
+  }) async {
+    final preview = await previewUnifiedAllocationInTransaction(
+      product: product,
+      warehouseId: warehouseId,
+      quantity: quantity,
+      movementDate: movementDate,
+      storeId: storeId,
+    );
+    if (!preview.hasShortage) return;
+    throw LocalizedDomainException(
+      'error_physical_batch_stock_required',
+      values: <String, Object?>{
+        'product': product.name,
+        'required': quantity,
+        'available': preview.physicalQuantity,
+        'operation': operation,
+      },
+      fallback:
+          'The $operation requires physical batch stock for ${product.name}. Required: $quantity, available: ${preview.physicalQuantity}.',
+    );
+  }
+
+  Future<void> removeUnifiedInboundInTransaction({
+    required Product product,
+    required String warehouseId,
+    required String batchId,
+    required double quantity,
+    required DateTime removedAt,
+    required String storeId,
+    required String deviceId,
+  }) async {
+    if (!product.trackStock || quantity <= 0) return;
+    final normalizedBatchId = batchId.trim();
+    if (normalizedBatchId.isEmpty) {
+      throw const LocalizedDomainException(
+        'error_batch_restore_invalid',
+        fallback: 'A valid batch identity is required.',
+      );
+    }
+    if (isDeficitBatchId(normalizedBatchId)) {
+      throw const LocalizedDomainException(
+        'error_deficit_inbound_reverse_unsupported',
+        fallback:
+            'This returned negative-stock deficit cannot be edited safely. Reverse the dependent transaction first and recreate it.',
+      );
+    }
+    final settlementRow = await db.customSelect(
+      '''
+      SELECT COALESCE(SUM(ids.quantity - ids.reversed_quantity), 0) AS active_qty
+      FROM inventory_deficit_settlements ids
+      INNER JOIN inventory_stock_deficits d ON d.id = ids.deficit_id
+      WHERE ids.incoming_batch_id = ?
+        AND d.store_id = ? AND d.warehouse_id = ? AND d.product_id = ?
+        AND ids.status <> 'reversed'
+        AND ids.quantity - ids.reversed_quantity > 0.000001
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(normalizedBatchId),
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(product.id),
+      ],
+    ).getSingle();
+    final settledQuantity =
+        (settlementRow.data['active_qty'] as num? ?? 0).toDouble();
+    if (settledQuantity > 0.000001) {
+      throw LocalizedDomainException(
+        'error_inbound_batch_settled_deficit',
+        values: <String, Object?>{
+          'product': product.name,
+          'batch': normalizedBatchId,
+        },
+        fallback:
+            'Batch $normalizedBatchId for ${product.name} has already settled an earlier negative-stock deficit. Reverse the dependent deficit movement first.',
+      );
+    }
+    await adjustUnifiedBatchInTransaction(
+      product: product,
+      warehouseId: warehouseId,
+      batchId: normalizedBatchId,
+      quantityDelta: -quantity,
+      adjustedAt: removedAt,
+      storeId: storeId,
+      deviceId: deviceId,
+    );
+  }
+
+  Future<void> reverseUnifiedMovementEffectInTransaction({
+    required Product product,
+    required String warehouseId,
+    required String batchId,
+    required double movementQuantity,
+    required double unitCost,
+    required DateTime reversedAt,
+    required String storeId,
+    required String deviceId,
+    String branchId = 'main',
+  }) async {
+    if (!product.trackStock || movementQuantity.abs() <= 0.000001) return;
+    if (movementQuantity < 0) {
+      await restoreUnifiedInTransaction(
+        product: product,
+        warehouseId: warehouseId,
+        allocations: <BatchAllocation>[
+          BatchAllocation(
+            batchId: batchId,
+            quantity: movementQuantity.abs(),
+            unitCost: unitCost,
+          ),
+        ],
+        restoredAt: reversedAt,
+        storeId: storeId,
+        deviceId: deviceId,
+        branchId: branchId,
+      );
+      return;
+    }
+    await removeUnifiedInboundInTransaction(
+      product: product,
+      warehouseId: warehouseId,
+      batchId: batchId,
+      quantity: movementQuantity,
+      removedAt: reversedAt,
+      storeId: storeId,
+      deviceId: deviceId,
+    );
   }
 
   Future<void> _ensureDeficitBatchAndRecordInTransaction({
@@ -1676,6 +1929,12 @@ class BatchInventoryService {
         );
         return;
       }
+      throw LocalizedDomainException(
+        'error_batch_restore_invalid',
+        values: <String, Object?>{'batch': normalizedBatchId},
+        fallback:
+            'A synchronized negative-stock reversal arrived before its source deficit. Retry synchronization after the source movement is available.',
+      );
     }
 
     final batchExists = await db.customSelect(
@@ -1854,6 +2113,8 @@ class BatchInventoryService {
         AND b.product_id = bb.product_id AND b.store_id = bb.store_id
       WHERE bb.store_id = ? AND bb.warehouse_id = ? AND bb.product_id = ?
         AND b.status = 'active'
+        AND b.source_type <> 'inventory_deficit'
+        AND b.id NOT LIKE 'deficit:%'
         AND (bb.quantity - bb.reserved_quantity) > 0.000001
         AND $expiryPredicate
       ORDER BY $ordering
@@ -2105,6 +2366,17 @@ class BatchInventoryService {
     required String deviceId,
     bool allowNegativeStock = false,
   }) async {
+    // A warehouse transfer is a physical lineage operation. The store may
+    // allow negative stock for sales, but a virtual deficit must never become
+    // positive stock in another warehouse with a provisional cost.
+    await requirePhysicalUnifiedStockInTransaction(
+      product: product,
+      warehouseId: fromWarehouseId,
+      quantity: quantity,
+      movementDate: transferredAt,
+      storeId: storeId,
+      operation: 'warehouse transfer',
+    );
     final allocations = await allocateUnifiedInTransaction(
       product: product,
       warehouseId: fromWarehouseId,
@@ -2113,7 +2385,7 @@ class BatchInventoryService {
       storeId: storeId,
       deviceId: deviceId,
       branchId: branchId,
-      allowNegativeStock: allowNegativeStock,
+      allowNegativeStock: false,
     );
     final nowText = transferredAt.toUtc().toIso8601String();
     for (final allocation in allocations) {
@@ -2252,6 +2524,35 @@ class BatchInventoryService {
     required String storeId,
     double tolerance = 0.000001,
   }) async {
+    final virtualBalance = await db.customSelect(
+      '''
+      SELECT bb.batch_id
+      FROM inventory_batch_balances bb
+      INNER JOIN inventory_batches b ON b.id = bb.batch_id
+        AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+      WHERE bb.store_id = ? AND bb.warehouse_id = ? AND bb.product_id = ?
+        AND bb.quantity > ?
+        AND (b.source_type = 'inventory_deficit' OR b.id LIKE 'deficit:%')
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(productId),
+        Variable<double>(tolerance),
+      ],
+    ).getSingleOrNull();
+    if (virtualBalance != null) {
+      throw LocalizedDomainException(
+        'error_batch_warehouse_balance_mismatch',
+        values: <String, Object?>{
+          'warehouseQuantity': 'virtual_deficit_balance',
+          'batchQuantity': virtualBalance.data['batch_id']?.toString() ?? '',
+        },
+        fallback:
+            'Virtual negative-stock deficit batches cannot hold physical warehouse balances for $productId.',
+      );
+    }
     final check = await checkWarehouseBatchBalanceInTransaction(
       productId: productId,
       warehouseId: warehouseId,

@@ -728,13 +728,16 @@ Future<void> reverseInventoryCount(
           if (product == null) {
             throw StateError('Count product no longer exists.');
           }
-          await BatchInventoryService(sqliteDb).adjustUnifiedBatchInTransaction(
+          await BatchInventoryService(sqliteDb)
+              .reverseUnifiedMovementEffectInTransaction(
             product: product,
             warehouseId: original.warehouseId,
             batchId: original.batchId,
-            quantityDelta: -original.quantity,
-            adjustedAt: now,
+            movementQuantity: original.quantity,
+            unitCost: original.unitCost,
+            reversedAt: now,
             storeId: appIdentity.storeId,
+            branchId: appIdentity.branchId,
             deviceId: _deviceId,
           );
         } else {
@@ -1372,13 +1375,16 @@ Future<void> reverseExpiryBatchAdjustment(
             sortIndices: const <int?>[0],
           );
         }
-        await BatchInventoryService(db).adjustUnifiedBatchInTransaction(
+        await BatchInventoryService(db)
+            .reverseUnifiedMovementEffectInTransaction(
           product: product,
           warehouseId: original.warehouseId,
           batchId: original.batchId,
-          quantityDelta: -original.quantity,
-          adjustedAt: now,
+          movementQuantity: original.quantity,
+          unitCost: original.unitCost,
+          reversedAt: now,
           storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
           deviceId: _deviceId,
         );
       }
@@ -1677,32 +1683,17 @@ Future<void> editStockAdjustment({
         reverseOperationalEffects: (current) async {
           final reversedAt = DateTime.now();
           for (final movement in current) {
-            if (movement.quantity < -0.000001) {
-              await batchService.restoreUnifiedInTransaction(
-                product: product,
-                warehouseId: warehouseId,
-                allocations: <BatchAllocation>[
-                  BatchAllocation(
-                    batchId: movement.batchId,
-                    quantity: movement.quantity.abs(),
-                    unitCost: movement.unitCost,
-                  ),
-                ],
-                restoredAt: reversedAt,
-                storeId: appIdentity.storeId,
-                deviceId: _deviceId,
-              );
-            } else if (movement.quantity > 0.000001) {
-              await batchService.adjustUnifiedBatchInTransaction(
-                product: product,
-                warehouseId: warehouseId,
-                batchId: movement.batchId,
-                quantityDelta: -movement.quantity,
-                adjustedAt: reversedAt,
-                storeId: appIdentity.storeId,
-                deviceId: _deviceId,
-              );
-            }
+            await batchService.reverseUnifiedMovementEffectInTransaction(
+              product: product,
+              warehouseId: warehouseId,
+              batchId: movement.batchId,
+              movementQuantity: movement.quantity,
+              unitCost: movement.unitCost,
+              reversedAt: reversedAt,
+              storeId: appIdentity.storeId,
+              branchId: appIdentity.branchId,
+              deviceId: _deviceId,
+            );
             await stockService.recordReversalInTransaction(
               originalMovement: movement,
               operationType: 'manual_adjustment_edit_reversal',

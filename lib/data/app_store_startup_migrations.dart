@@ -2,6 +2,7 @@ part of 'app_store.dart';
 
 extension _AppStoreSplitStartupMigrations on AppStore {
 Future<void> initialize({bool hydrateHeavyData = true}) async {
+    var unifiedBatchPhase4Blocked = false;
     StartupTimingService.event('app_store.initialize.begin',
         category: 'app_store');
     await LocalDatabaseService.initialize();
@@ -72,8 +73,9 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
             !LocalDatabaseService.isSqliteDatabaseForTesting) {
           final db = SqliteMigrationManager.database;
           if (db != null) {
+            final phase4Service = UnifiedBatchPhase4ClosureService(db);
             try {
-              final closure = await UnifiedBatchPhase4ClosureService(db).close(
+              final closure = await phase4Service.close(
                 storeId: initializedIdentity.storeId,
                 branchId: initializedIdentity.branchId,
                 deviceId: _deviceId,
@@ -86,17 +88,17 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
                 AppStore._inventoryCostingMethodKey,
                 InventoryCostingMethod.batch.code,
               );
+              _inventoryCostingMethod = InventoryCostingMethod.batch;
             } catch (error, stackTrace) {
-              // Keep the app available for reconciliation/repair, but never
-              // re-enable legacy valuation methods after the Phase 4 build.
+              // A failed closure is a hard integrity boundary. Keep the app
+              // available for diagnostics/repair, but do not mark costing as
+              // migrated and do not allow further stock mutations until the
+              // closure can be completed successfully.
+              unifiedBatchPhase4Blocked = true;
+              await phase4Service.markBlocked(error: error);
               debugPrint('Unified Batch Phase 4 closure requires attention: $error');
               debugPrint('$stackTrace');
-              await LocalDatabaseService.setString(
-                AppStore._inventoryCostingMethodKey,
-                InventoryCostingMethod.batch.code,
-              );
             }
-            _inventoryCostingMethod = InventoryCostingMethod.batch;
           }
         }
       },
@@ -105,7 +107,8 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
 
     if (!kIsWeb &&
         LocalDatabaseService.isSqliteAuthoritative &&
-        AccountingService.isAvailable) {
+        AccountingService.isAvailable &&
+        !unifiedBatchPhase4Blocked) {
       try {
         await AccountingService.ensureInventoryAccountClassificationMigration();
         final reconciled = await AccountingService

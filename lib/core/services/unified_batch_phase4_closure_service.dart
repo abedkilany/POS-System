@@ -35,6 +35,8 @@ class UnifiedBatchPhase4ClosureService {
   UnifiedBatchPhase4ClosureService(this._db);
 
   static const String closureMetaKey = 'unified_batch_phase4_closed_at';
+  static const String closureStateMetaKey = 'unified_batch_phase4_state';
+  static const String closureErrorMetaKey = 'unified_batch_phase4_error';
   static const String legacyLayerModeMetaKey =
       'unified_batch_legacy_cost_layers_mode';
   static const String costingSettingKey = 'inventory_costing_method_v1';
@@ -130,6 +132,8 @@ class UnifiedBatchPhase4ClosureService {
         at: now,
       );
       await _writeMeta(closureMetaKey, nowText, nowText);
+      await _writeMeta(closureStateMetaKey, 'completed', nowText);
+      await _writeMeta(closureErrorMetaKey, '', nowText);
       await _writeMeta(legacyLayerModeMetaKey, 'read_only', nowText);
     }
 
@@ -146,6 +150,24 @@ class UnifiedBatchPhase4ClosureService {
       cutoversAfter: cutoversAfter,
       productWarehousePairs: scopedPairs,
       legacyCostLayersRetained: legacyLayers,
+    );
+  }
+
+  Future<String> readClosureState() async {
+    return (await _readMeta(closureStateMetaKey)) ?? 'pending';
+  }
+
+  Future<void> markBlocked({
+    required Object error,
+    DateTime? blockedAt,
+  }) async {
+    final at = (blockedAt ?? DateTime.now()).toUtc().toIso8601String();
+    await _writeMeta(closureStateMetaKey, 'blocked', at);
+    final text = error.toString().trim();
+    await _writeMeta(
+      closureErrorMetaKey,
+      text.length <= 2000 ? text : text.substring(0, 2000),
+      at,
     );
   }
 
@@ -215,6 +237,24 @@ class UnifiedBatchPhase4ClosureService {
     if (negative != null) {
       throw StateError(
         'Unified Batch Phase 4 found a negative batch balance for ${negative.data['product_id'] ?? ''}.',
+      );
+    }
+
+    final virtualDeficitBalance = await _db.customSelect(
+      r'''
+      SELECT bb.batch_id, bb.product_id, bb.warehouse_id, bb.quantity
+      FROM inventory_batch_balances bb
+      INNER JOIN inventory_batches b ON b.id = bb.batch_id
+        AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+      WHERE bb.store_id = ? AND bb.quantity > 0.000001
+        AND (b.source_type = 'inventory_deficit' OR b.id LIKE 'deficit:%')
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(storeId)],
+    ).getSingleOrNull();
+    if (virtualDeficitBalance != null) {
+      throw StateError(
+        'Unified Batch Phase 4 found a virtual negative-stock deficit carrying a physical batch balance for ${virtualDeficitBalance.data['product_id'] ?? ''}.',
       );
     }
 

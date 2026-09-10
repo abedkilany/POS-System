@@ -2961,13 +2961,15 @@ Future<CreditNote> editSaleReturn({
             if (product == null) {
               throw StateError('Returned product no longer exists.');
             }
-            await batchService.adjustUnifiedBatchInTransaction(
+            await batchService.reverseUnifiedMovementEffectInTransaction(
               product: product,
               warehouseId: movement.warehouseId,
               batchId: movement.batchId,
-              quantityDelta: -movement.quantity,
-              adjustedAt: now,
+              movementQuantity: movement.quantity,
+              unitCost: movement.unitCost,
+              reversedAt: now,
               storeId: appIdentity.storeId,
+              branchId: appIdentity.branchId,
               deviceId: _deviceId,
             );
             await stockService.recordReversalInTransaction(

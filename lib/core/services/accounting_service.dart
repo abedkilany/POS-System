@@ -16,6 +16,7 @@ import '../../models/store_profile.dart';
 import '../../models/user_role.dart';
 import '../repositories/business_session_context.dart';
 import '../accounting/accounting_account_role.dart';
+import '../localization/localized_domain_exception.dart';
 import '../utils/currency_utils.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
@@ -23,6 +24,7 @@ import '../storage/sqlite/business_sqlite_store.dart';
 import 'cash_balance_policy_service.dart';
 import 'cash_ledger_service.dart';
 import 'posted_document_edit_framework.dart';
+import 'unified_batch_phase4_closure_service.dart';
 
 class AccountingService {
   AccountingService._();
@@ -3889,6 +3891,41 @@ class AccountingService {
         costingMethod == 'batch' || costingMethod == 'unified_batch';
 
     if (useBatch) {
+      // A blocked Phase 4 closure means Unified Batch is not yet a complete
+      // valuation authority for every Product x Warehouse pair. Returning a
+      // partial Batch valuation here would make accounting reports and
+      // reclassification logic look authoritative while silently omitting
+      // legacy inventory. Fail closed until the closure is repaired and
+      // completed successfully.
+      final phase4StateRow = await db.customSelect(
+        'SELECT value FROM migration_meta WHERE key = ? LIMIT 1',
+        variables: const <Variable<Object>>[
+          Variable<String>(
+            UnifiedBatchPhase4ClosureService.closureStateMetaKey,
+          ),
+        ],
+      ).getSingleOrNull();
+      final phase4State =
+          phase4StateRow?.data['value']?.toString().trim().toLowerCase() ?? '';
+      if (phase4State == 'blocked') {
+        final phase4ErrorRow = await db.customSelect(
+          'SELECT value FROM migration_meta WHERE key = ? LIMIT 1',
+          variables: const <Variable<Object>>[
+            Variable<String>(
+              UnifiedBatchPhase4ClosureService.closureErrorMetaKey,
+            ),
+          ],
+        ).getSingleOrNull();
+        final detail =
+            phase4ErrorRow?.data['value']?.toString().trim() ?? '';
+        throw LocalizedDomainException(
+          'error_unified_batch_valuation_blocked',
+          values: <String, Object?>{'detail': detail},
+          fallback: detail.isEmpty
+              ? 'Unified Batch Phase 4 is blocked; inventory valuation is unavailable until reconciliation completes.'
+              : 'Unified Batch Phase 4 is blocked; inventory valuation is unavailable until reconciliation completes. $detail',
+        );
+      }
       final rows = await db.customSelect(r'''
         SELECT wi.product_id, p.name AS product_name, wi.warehouse_id,
                COALESCE(w.name, wi.warehouse_id) AS warehouse_name,
@@ -3921,6 +3958,8 @@ class AccountingService {
           FROM inventory_batch_balances bb
           INNER JOIN inventory_batches b ON b.id = bb.batch_id
             AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+          WHERE b.source_type <> 'inventory_deficit'
+            AND b.id NOT LIKE 'deficit:%'
           GROUP BY bb.store_id, bb.product_id, bb.warehouse_id
         ) batch ON batch.store_id = wi.store_id
           AND batch.product_id = wi.product_id

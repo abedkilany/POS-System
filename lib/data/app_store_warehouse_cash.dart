@@ -637,15 +637,17 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
               throw StateError('Transfer product ${original.productId} is missing.');
             }
             final product = _products[productIndex];
-            await batchService.adjustUnifiedBatchInTransaction(
+            await batchService.reverseUnifiedMovementEffectInTransaction(
               product: product,
               warehouseId: original.warehouseId,
               batchId: original.batchId,
-              quantityDelta: -original.quantity,
-              adjustedAt: now,
+              movementQuantity: original.quantity,
+              unitCost: original.unitCost,
+              reversedAt: now,
               storeId: original.storeId.isEmpty
                   ? appIdentity.storeId
                   : original.storeId,
+              branchId: appIdentity.branchId,
               deviceId: _deviceId,
             );
             reversals.add(original.copyWith(

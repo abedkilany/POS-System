@@ -1625,39 +1625,80 @@ Future<void> _applySyncChangePayload(SyncChange change) async {
         final movement = StockMovement.fromJson(p);
         if (_stockMovementIndexForId(movement.id) != -1) break;
         if (LocalDatabaseService.isSqliteAuthoritative &&
-            movement.batchId.trim().isEmpty &&
             movement.quantity.abs() > 0.000001) {
           final sqliteDb = SqliteMigrationManager.database;
           if (sqliteDb != null) {
-            final marker = await sqliteDb.customSelect(
+            final storeId = movement.storeId.trim().isEmpty
+                ? appIdentity.storeId
+                : movement.storeId.trim();
+            final productRow = await sqliteDb.customSelect(
               '''
-              SELECT p.name AS product_name
-              FROM unified_batch_cutovers uc
-              INNER JOIN products p ON p.id = uc.product_id
-                AND p.deleted_at = '' AND p.track_stock = 1
-              WHERE uc.store_id = ? AND uc.warehouse_id = ?
-                AND uc.product_id = ?
-                AND datetime(?) >= datetime(uc.cutover_at)
+              SELECT name, track_stock
+              FROM products
+              WHERE id = ? AND deleted_at = ''
               LIMIT 1
               ''',
               variables: <Variable<Object>>[
-                Variable<String>(movement.storeId.trim().isEmpty
-                    ? appIdentity.storeId
-                    : movement.storeId.trim()),
-                Variable<String>(movement.warehouseId),
                 Variable<String>(movement.productId),
-                Variable<String>(movement.date.toUtc().toIso8601String()),
               ],
             ).getSingleOrNull();
-            if (marker != null) {
+            final trackStock =
+                (productRow?.data['track_stock'] as num? ?? 0).toInt() == 1;
+            if (trackStock) {
               final productName =
-                  marker.data['product_name']?.toString() ?? movement.productName;
-              throw LocalizedDomainException(
-                'error_post_cutover_batch_required',
-                values: <String, Object?>{'product': productName},
-                fallback:
-                    'لا يمكن تسجيل حركة مخزون للمنتج $productName بعد تفعيل نظام الدُفعات دون تحديد الدفعة.',
-              );
+                  productRow?.data['name']?.toString().trim().isNotEmpty == true
+                      ? productRow!.data['name']!.toString()
+                      : movement.productName;
+              final phaseRow = await sqliteDb.customSelect(
+                '''
+                SELECT value FROM migration_meta
+                WHERE key = 'unified_batch_phase4_state'
+                LIMIT 1
+                ''',
+              ).getSingleOrNull();
+              final phaseState = phaseRow?.data['value']
+                      ?.toString()
+                      .trim()
+                      .toLowerCase() ??
+                  '';
+              if (phaseState == 'blocked') {
+                throw LocalizedDomainException(
+                  'error_unified_batch_phase4_blocked',
+                  values: <String, Object?>{'product': productName},
+                  fallback:
+                      'Unified Batch migration is blocked by an inventory reconciliation error. Repair inventory before applying synchronized stock movements.',
+                );
+              }
+              if (movement.batchId.trim().isEmpty) {
+                var requiresBatch = phaseState == 'completed';
+                if (!requiresBatch) {
+                  final marker = await sqliteDb.customSelect(
+                    '''
+                    SELECT 1
+                    FROM unified_batch_cutovers uc
+                    WHERE uc.store_id = ? AND uc.warehouse_id = ?
+                      AND uc.product_id = ?
+                      AND datetime(?) >= datetime(uc.cutover_at)
+                    LIMIT 1
+                    ''',
+                    variables: <Variable<Object>>[
+                      Variable<String>(storeId),
+                      Variable<String>(movement.warehouseId),
+                      Variable<String>(movement.productId),
+                      Variable<String>(movement.date.toUtc().toIso8601String()),
+                    ],
+                  ).getSingleOrNull();
+                  requiresBatch = marker != null;
+                }
+                if (requiresBatch) {
+                  throw LocalizedDomainException(
+                    'error_post_cutover_batch_required',
+                    values: <String, Object?>{'product': productName},
+                    fallback:
+                        'لا يمكن تسجيل حركة مخزون للمنتج $productName بعد تفعيل نظام الدُفعات دون تحديد الدفعة.',
+                  );
+                }
+              }
             }
           }
         }

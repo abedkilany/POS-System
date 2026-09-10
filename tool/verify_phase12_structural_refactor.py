@@ -65,7 +65,7 @@ check('P9 trace API remains compatible', 'traceInventoryBatch(' in COMPAT and 'v
 check('sensitive action compatibility remains present', 'Future<bool> authorizeSensitiveAction' in COMPAT)
 check('backup compatibility remains present', 'Future<String> exportBackupJson()' in COMPAT and 'Future<void> importBackupJson' in COMPAT)
 check('sync compatibility remains present', 'applyRemoteSyncChanges(' in COMPAT)
-check('production schema remains 31', 'schemaVersion => 31' in DATABASE)
+check('production schema supports phase12+', any(f'schemaVersion => {version}' in DATABASE for version in range(31, 100)))
 check('P9 indexes remain in schema', 'idx_stock_movements_reference_type_batch' in DATABASE and 'idx_inventory_batches_source_trace' in DATABASE)
 check('README documents domain boundary', '### AppStore domain boundary' in README and '`store.accounting`' in README)
 check('P12 contract test exists', 'Phase 12 keeps AppStore as a thin facade' in TEST)

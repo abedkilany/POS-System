@@ -1,6 +1,113 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitManufacturing on AppStore {
+Future<double> _estimatedUnifiedBatchUnitCostForProduct(
+    Product product, {
+    String warehouseId = '',
+    double requiredQuantity = 0,
+  }) async {
+    double fallback() {
+      final cost = productCostFor(product.id);
+      if (cost.averageCost > 0) return cost.averageCost;
+      if (cost.lastCost > 0) return cost.lastCost;
+      if (product.usdCost > 0) return product.usdCost;
+      if (product.cost > 0) return product.cost;
+      return 0;
+    }
+
+    if (!product.trackStock ||
+        !LocalDatabaseService.isSqliteAuthoritative ||
+        SqliteMigrationManager.database == null) {
+      return fallback();
+    }
+    final db = SqliteMigrationManager.database!;
+    final normalizedWarehouse = warehouseId.trim();
+    if (normalizedWarehouse.isNotEmpty && requiredQuantity > 0.000001) {
+      final preview = await BatchInventoryService(db)
+          .previewUnifiedAllocationInTransaction(
+        product: product,
+        warehouseId: normalizedWarehouse,
+        quantity: requiredQuantity,
+        movementDate: DateTime.now(),
+        storeId: appIdentity.storeId,
+      );
+      if (!preview.hasShortage && preview.physicalQuantity > 0.000001) {
+        return preview.unitCost;
+      }
+    }
+    final today = DateTime.now().toUtc();
+    final todayText =
+        '${today.year.toString().padLeft(4, '0')}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final expiryPredicate = product.expiryTrackingEnabled
+        ? "trim(b.expiration_date) <> '' AND substr(b.expiration_date, 1, 10) >= ?"
+        : "trim(b.expiration_date) = ''";
+    final warehousePredicate =
+        normalizedWarehouse.isEmpty ? '' : 'AND bb.warehouse_id = ?';
+    final row = await db.customSelect(
+      '''
+      SELECT
+        COALESCE(SUM((bb.quantity - bb.reserved_quantity) * b.unit_cost), 0)
+          AS carrying_value,
+        COALESCE(SUM(bb.quantity - bb.reserved_quantity), 0) AS quantity
+      FROM inventory_batch_balances bb
+      INNER JOIN inventory_batches b ON b.id = bb.batch_id
+        AND b.store_id = bb.store_id AND b.product_id = bb.product_id
+      WHERE bb.store_id = ? AND bb.product_id = ?
+        $warehousePredicate
+        AND b.status = 'active'
+        AND b.source_type <> 'inventory_deficit'
+        AND b.id NOT LIKE 'deficit:%'
+        AND (bb.quantity - bb.reserved_quantity) > 0.000001
+        AND $expiryPredicate
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(appIdentity.storeId),
+        Variable<String>(product.id),
+        if (normalizedWarehouse.isNotEmpty)
+          Variable<String>(normalizedWarehouse),
+        if (product.expiryTrackingEnabled) Variable<String>(todayText),
+      ],
+    ).getSingle();
+    final quantity = (row.data['quantity'] as num? ?? 0).toDouble();
+    final value = (row.data['carrying_value'] as num? ?? 0).toDouble();
+    if (quantity > 0.000001 && value >= 0) return value / quantity;
+    return fallback();
+  }
+
+Future<BillOfMaterials> estimateBillOfMaterialsSnapshot(
+    BillOfMaterials bom, {
+    String warehouseId = '',
+  }) async {
+    final components = <BillOfMaterialsLine>[];
+    for (final component in bom.components) {
+      final product = _findProductById(component.productId);
+      if (product == null) {
+        components.add(component);
+        continue;
+      }
+      final estimatedUnitCost = await _estimatedUnifiedBatchUnitCostForProduct(
+        product,
+        warehouseId: warehouseId,
+        requiredQuantity: component.quantity,
+      );
+      components.add(component.copyWith(
+        productName: product.name,
+        unitCost: estimatedUnitCost,
+      ));
+    }
+    return bom.copyWith(components: components);
+  }
+
+Future<double> estimateBillOfMaterialsUnitCost(
+    BillOfMaterials bom, {
+    String warehouseId = '',
+  }) async {
+    final estimated = await estimateBillOfMaterialsSnapshot(
+      bom,
+      warehouseId: warehouseId,
+    );
+    return estimated.unitCost;
+  }
 Future<BillOfMaterials> createBillOfMaterials({
     required String name,
     required String outputProductId,
@@ -35,7 +142,7 @@ Future<BillOfMaterials> createBillOfMaterials({
       cleanedComponents.add(
         component.copyWith(
           productName: product.name,
-          unitCost: _safeUsdCost(product),
+          unitCost: await _estimatedUnifiedBatchUnitCostForProduct(product),
         ),
       );
     }
@@ -139,7 +246,7 @@ Future<BillOfMaterials> updateBillOfMaterials({
       }
       cleanedComponents.add(component.copyWith(
         productName: product.name,
-        unitCost: _safeUsdCost(product),
+        unitCost: await _estimatedUnifiedBatchUnitCostForProduct(product),
       ));
     }
     final now = DateTime.now();
@@ -686,17 +793,18 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             warehouseId: rawWarehouse.id,
             at: now,
           );
-          final available = await stockService.getBalance(
-            storeId: appIdentity.storeId,
+          // Manufacturing is a physical transformation. A general store
+          // negative-stock policy may be used for sales timing differences,
+          // but raw materials must exist in real batches before they can be
+          // converted into a finished batch with a final cost.
+          await batchService.requirePhysicalUnifiedStockInTransaction(
+            product: product,
             warehouseId: rawWarehouse.id,
-            productId: component.productId,
+            quantity: usedQty,
+            movementDate: now,
+            storeId: appIdentity.storeId,
+            operation: 'manufacturing',
           );
-          if (!_storeProfile.allowNegativeStock &&
-              available + 0.000001 < usedQty) {
-            throw StateError(
-              'Insufficient stock in ${rawWarehouse.name} for ${product.name}. Required: $usedQty, available: $available.',
-            );
-          }
           final allocations = await batchService.allocateUnifiedInTransaction(
             product: product,
             warehouseId: rawWarehouse.id,
@@ -705,7 +813,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             storeId: appIdentity.storeId,
             deviceId: _deviceId,
             branchId: appIdentity.branchId,
-            allowNegativeStock: _storeProfile.allowNegativeStock,
+            allowNegativeStock: false,
           );
           final lineTotalCost = allocations.fold<double>(
             0,
@@ -1729,13 +1837,15 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
         if (product == null) {
           throw StateError('Product ${movement.productId} was not found.');
         }
-        await batchService.adjustUnifiedBatchInTransaction(
+        await batchService.reverseUnifiedMovementEffectInTransaction(
           product: product,
           warehouseId: movement.warehouseId,
           batchId: movement.batchId,
-          quantityDelta: -movement.quantity,
-          adjustedAt: now,
+          movementQuantity: movement.quantity,
+          unitCost: movement.unitCost,
+          reversedAt: now,
           storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
           deviceId: _deviceId,
         );
       }

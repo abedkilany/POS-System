@@ -1442,6 +1442,18 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     bool withinExistingTransaction = false,
   })  => _AppStoreSplitInventory(this as AppStore)._reconcileInventoryAccountsAfterBomChange(bom, database: database, withinExistingTransaction: withinExistingTransaction);
 
+  Future<BillOfMaterials> estimateBillOfMaterialsSnapshot(
+    BillOfMaterials bom, {
+    String warehouseId = '',
+  }) => _AppStoreSplitManufacturing(this as AppStore)
+      .estimateBillOfMaterialsSnapshot(bom, warehouseId: warehouseId);
+
+  Future<double> estimateBillOfMaterialsUnitCost(
+    BillOfMaterials bom, {
+    String warehouseId = '',
+  }) => _AppStoreSplitManufacturing(this as AppStore)
+      .estimateBillOfMaterialsUnitCost(bom, warehouseId: warehouseId);
+
   Future<BillOfMaterials> createBillOfMaterials({
     required String name,
     required String outputProductId,

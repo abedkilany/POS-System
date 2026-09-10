@@ -547,12 +547,12 @@ void main() {
     expect(restored?.taxProfileId, TaxProfile.zeroRatedId);
   });
 
-  test('schema 31 keeps product tax profile persistence column', () async {
+  test('schema 33 keeps product tax profile persistence column', () async {
     final db = VentioDriftDatabase(NativeDatabase.memory());
     await db.initializeFoundation();
     addTearDown(db.close);
 
-    expect(db.schemaVersion, 32);
+    expect(db.schemaVersion, 33);
     final columns = await db.customSelect("PRAGMA table_info('products')").get();
     expect(
       columns.map((row) => row.data['name']?.toString()).toSet(),

@@ -63,6 +63,26 @@ Future<void> _ensureUnifiedBatchCutoverForProductInTransaction(
     required String warehouseId,
     required DateTime at,
   }) async {
+    final phaseStateRow = await sqliteDb.customSelect(
+      '''
+      SELECT value FROM migration_meta
+      WHERE key = 'unified_batch_phase4_state'
+      LIMIT 1
+      ''',
+    ).getSingleOrNull();
+    final phaseState = phaseStateRow?.data['value']
+            ?.toString()
+            .trim()
+            .toLowerCase() ??
+        '';
+    if (phaseState == 'blocked') {
+      throw LocalizedDomainException(
+        'error_unified_batch_phase4_blocked',
+        values: <String, Object?>{'product': product.name},
+        fallback:
+            'Unified Batch migration is blocked by an inventory reconciliation error. Repair inventory before posting new stock movements.',
+      );
+    }
     final openingUnitCost = await _unifiedOpeningCostForProductInTransaction(
       sqliteDb,
       product: product,

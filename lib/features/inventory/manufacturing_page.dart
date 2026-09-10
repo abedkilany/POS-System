@@ -208,12 +208,19 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
               child: ListTile(
                 leading: const Icon(Icons.account_tree_outlined),
                 title: Text(bom.name),
-                subtitle: Text(_tf('bom_subtitle', {
-                  'product': bom.outputProductName,
-                  'output': bom.outputQuantity,
-                  'components': bom.components.length,
-                  'cost': bom.unitCost.toStringAsFixed(2),
-                })),
+                subtitle: FutureBuilder<double>(
+                  future: widget.store.estimateBillOfMaterialsUnitCost(bom),
+                  initialData: bom.unitCost,
+                  builder: (context, snapshot) {
+                    final estimatedCost = snapshot.data ?? bom.unitCost;
+                    return Text(_tf('bom_subtitle', {
+                      'product': bom.outputProductName,
+                      'output': bom.outputQuantity,
+                      'components': bom.components.length,
+                      'cost': estimatedCost.toStringAsFixed(2),
+                    }));
+                  },
+                ),
                 trailing: Wrap(
                   spacing: 4,
                   crossAxisAlignment: WrapCrossAlignment.center,
@@ -500,11 +507,14 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
   }
 
   Future<void> _printBom(BillOfMaterials bom) async {
+    final locale = Localizations.localeOf(context);
     try {
+      final estimatedBom =
+          await widget.store.estimateBillOfMaterialsSnapshot(bom);
       await ManufacturingPdfService.printBillOfMaterials(
-        bom: bom,
+        bom: estimatedBom,
         profile: widget.store.storeProfile,
-        locale: Localizations.localeOf(context),
+        locale: locale,
       );
     } catch (error) {
       if (!mounted) return;
@@ -1029,6 +1039,28 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                     ),
                     const SizedBox(height: 8),
                     ...componentAvailability.map(Text.new),
+                    const SizedBox(height: 12),
+                    FutureBuilder<double>(
+                      future: widget.store.estimateBillOfMaterialsUnitCost(
+                        bom,
+                        warehouseId: rawWarehouse.id,
+                      ),
+                      initialData: bom.unitCost,
+                      builder: (context, snapshot) {
+                        final cost = snapshot.data ?? bom.unitCost;
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _localizedText(
+                              ar: 'تكلفة الوحدة التقديرية من الدُفعات: ${cost.toStringAsFixed(2)} USD',
+                              en: 'Estimated unit cost from batches: ${cost.toStringAsFixed(2)} USD',
+                              fr: 'Coût unitaire estimé des lots : ${cost.toStringAsFixed(2)} USD',
+                            ),
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),

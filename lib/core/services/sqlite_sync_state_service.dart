@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 
+import '../localization/localized_domain_exception.dart';
 import 'local_database_service.dart';
 import 'batch_inventory_service.dart';
 import '../repositories/business_session_context.dart';
@@ -1992,6 +1993,22 @@ class SqliteSyncStateService {
     final warehouseId = movement.warehouseId.trim().isEmpty
         ? Warehouse.defaultId
         : movement.warehouseId.trim();
+    final normalizedType = movement.type.trim().toLowerCase();
+    if (BatchInventoryService.isDeficitBatchId(movement.batchId) &&
+        (normalizedType.startsWith('transfer_') ||
+            normalizedType.startsWith('manufacturing_'))) {
+      throw LocalizedDomainException(
+        'error_physical_batch_stock_required',
+        values: <String, Object?>{
+          'product': movement.productName,
+          'operation': normalizedType.startsWith('transfer_')
+              ? 'warehouse transfer'
+              : 'manufacturing',
+        },
+        fallback:
+            'Synchronized warehouse transfers and manufacturing operations cannot use virtual negative-stock deficit batches. Update the source device and retry with physical batch stock.',
+      );
+    }
     await BatchInventoryService(db).applySyncedBatchMovementInTransaction(
       productId: movement.productId,
       productName: movement.productName,

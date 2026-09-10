@@ -162,10 +162,10 @@ void main() {
     expect(orphanMovements.read<int>('count'), 0);
   });
 
-  test('schema 31 preserves manufacturing and reversal audit indexes', () async {
+  test('schema 33 preserves manufacturing and reversal audit indexes', () async {
     await support.readyPhase5SqliteStore();
     final db = SqliteMigrationManager.database!;
-    expect(db.schemaVersion, 32);
+    expect(db.schemaVersion, 33);
     final columns =
         await db.customSelect('PRAGMA table_info(manufacturing_orders)').get();
     final names = columns.map((row) => row.data['name']).toSet();
