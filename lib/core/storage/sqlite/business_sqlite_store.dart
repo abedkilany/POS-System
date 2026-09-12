@@ -59,6 +59,7 @@ class BusinessSqliteStore {
   static const String supplierProductPricesKey = 'supplier_product_prices_v1';
   static const String priceListsKey = 'price_lists_v1';
   static const String productPricesKey = 'product_prices_v1';
+  static const String productPriceHistoryKey = 'product_price_history_v1';
   static const String productPriceOverridesKey = 'product_price_overrides_v1';
   static const String productCostsKey = 'product_costs_v1';
   static const String costingMethodHistoryKey = 'costing_method_history_v1';
@@ -89,6 +90,7 @@ class BusinessSqliteStore {
     supplierProductPricesKey,
     priceListsKey,
     productPricesKey,
+    productPriceHistoryKey,
     productPriceOverridesKey,
     productCostsKey,
     costingMethodHistoryKey,
@@ -119,6 +121,7 @@ class BusinessSqliteStore {
     supplierProductPricesKey: 'supplier_product_prices',
     priceListsKey: 'price_lists',
     productPricesKey: 'product_prices',
+    productPriceHistoryKey: 'product_price_history',
     productPriceOverridesKey: 'product_price_overrides',
     productCostsKey: 'product_costs',
     costingMethodHistoryKey: 'costing_method_history',
@@ -149,6 +152,7 @@ class BusinessSqliteStore {
     supplierProductPricesKey: 'supplierProductPrice',
     priceListsKey: 'priceList',
     productPricesKey: 'productPrice',
+    productPriceHistoryKey: 'productPriceHistory',
     productPriceOverridesKey: 'productPriceOverride',
     productCostsKey: 'productCost',
     costingMethodHistoryKey: 'costingMethodHistory',
@@ -601,6 +605,9 @@ class BusinessSqliteStore {
         FROM inventory_batch_balances bb
         INNER JOIN inventory_batches b ON b.id = bb.batch_id
           AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+        WHERE bb.quantity > 0.000001
+          AND b.source_type <> 'inventory_deficit'
+          AND b.id NOT LIKE 'deficit:%'
         GROUP BY bb.store_id, bb.product_id
       )
       SELECT COALESCE(SUM(COALESCE(bv.carrying_value, 0)), 0)
@@ -1879,6 +1886,10 @@ class BusinessSqliteStore {
         return (await readProductPrices(db))
             .map((item) => item.toJson())
             .toList(growable: false);
+      case productPriceHistoryKey:
+        return (await readProductPriceHistory(db))
+            .map((item) => item.toJson())
+            .toList(growable: false);
       case productPriceOverridesKey:
         return (await readProductPriceOverrides(db))
             .map((item) => item.toJson())
@@ -2378,6 +2389,29 @@ class BusinessSqliteStore {
       data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
       return ProductPrice.fromJson(data);
     }).toList(growable: false);
+  }
+
+  static Future<List<ProductPriceHistoryEntry>> readProductPriceHistory(
+      VentioDriftDatabase db, {String productId = '', int limit = 200}) async {
+    final where = productId.trim().isEmpty ? '' : 'WHERE product_id = ?';
+    final rows = await db.customSelect('''
+      SELECT id, product_id AS productId, price_list_id AS priceListId,
+             unit_id AS unitId, currency_code AS currencyCode,
+             old_amount AS oldAmount, new_amount AS newAmount,
+             change_percent AS changePercent, change_type AS changeType,
+             source, batch_id AS batchId, user_id AS userId,
+             user_name AS userName, changed_at AS changedAt,
+             created_at AS createdAt, updated_at AS updatedAt
+      FROM product_price_history
+      $where
+      ORDER BY changed_at DESC, id DESC
+      LIMIT ?
+    ''', variables: <Variable<Object>>[
+      if (productId.trim().isNotEmpty) Variable<String>(productId.trim()),
+      Variable<int>(limit.clamp(1, 100000).toInt()),
+    ]).get();
+    return rows.map((row) => ProductPriceHistoryEntry.fromJson(
+      Map<String, dynamic>.from(row.data))).toList(growable: false);
   }
 
   static Future<List<ProductPriceOverride>> readProductPriceOverrides(
@@ -4338,6 +4372,29 @@ class BusinessSqliteStore {
                   _textValue(payload['baseCurrencyCode'], fallback: 'USD'),
               'base_amount': _doubleValue(payload['baseAmount']),
               'is_active': _boolValue(payload['isActive'], fallback: true),
+            },
+          );
+          continue;
+        }
+        if (key == productPriceHistoryKey) {
+          await _upsertTypedEntityRow(
+            db, table, entityType, payload,
+            id: id, payloadJson: payloadJson, createdAt: createdAt,
+            updatedAt: updatedAt, deletedAt: deletedAt, sortIndex: sortIndex ?? 0,
+            typedColumns: <String, Object?>{
+              'product_id': _textValue(payload['productId']),
+              'price_list_id': _textValue(payload['priceListId']),
+              'unit_id': _textValue(payload['unitId'], fallback: 'base'),
+              'currency_code': _textValue(payload['currencyCode'], fallback: 'USD'),
+              'old_amount': _doubleValue(payload['oldAmount']),
+              'new_amount': _doubleValue(payload['newAmount']),
+              'change_percent': _doubleValue(payload['changePercent']),
+              'change_type': _textValue(payload['changeType'], fallback: 'manual'),
+              'source': _textValue(payload['source'], fallback: 'manual'),
+              'batch_id': _textValue(payload['batchId']),
+              'user_id': _textValue(payload['userId']),
+              'user_name': _textValue(payload['userName']),
+              'changed_at': _dateString(payload['changedAt']) ?? createdAt,
             },
           );
           continue;

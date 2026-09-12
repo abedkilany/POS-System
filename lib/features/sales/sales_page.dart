@@ -103,6 +103,7 @@ class _SalesPageState extends State<SalesPage> {
   bool _scannerStartFailed = false;
   bool _manualBarcodeInput = false;
   bool _showInvoiceProfit = false;
+  double? _invoicePreviewBatchCostTotal;
   bool _quickGridEditMode = false;
   List<_QuickProductPage>? _quickPagesEditSnapshot;
   int _selectedQuickPageIndex = 0;
@@ -316,11 +317,33 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   double get _invoiceProfitAmount {
-    final cost = _cart.fold<double>(
+    final fallbackCost = _cart.fold<double>(
         0, (sum, item) => sum + item.baseQuantity * item.product.usdCost);
+    final cost = _invoicePreviewBatchCostTotal ?? fallbackCost;
     final revenueAfterDiscount =
         (_subtotal - _discount).clamp(0, double.infinity).toDouble();
     return revenueAfterDiscount - cost;
+  }
+
+  Future<void> _refreshInvoiceBatchCostPreview() async {
+    var totalCost = 0.0;
+    for (final item in _cart) {
+      var unitCost = item.product.usdCost;
+      if (item.product.trackStock && item.baseQuantity > 0.000001) {
+        try {
+          unitCost = await widget.store.estimatedUnifiedBatchUnitCostForProduct(
+            item.product,
+            warehouseId: _selectedWarehouseId,
+            requiredQuantity: item.baseQuantity,
+          );
+        } catch (_) {
+          // A preview failure must not block the sale. Final posting still
+          // resolves authoritative COGS from the consumed Unified Batches.
+        }
+      }
+      totalCost += item.baseQuantity * unitCost;
+    }
+    _invoicePreviewBatchCostTotal = totalCost;
   }
 
   String _stockAvailabilityLabel(Product product, AppLocalizations tr,
@@ -5125,6 +5148,8 @@ class _SalesPageState extends State<SalesPage> {
   Future<void> _openPaymentPage({required bool printAfterSave}) async {
     if (!widget.store.canSell) return;
     if (_cart.isEmpty) return;
+    await _refreshInvoiceBatchCostPreview();
+    if (!mounted) return;
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _discountCurrency = _invoiceCurrency;
     _syncDiscountPercentFromAmount();

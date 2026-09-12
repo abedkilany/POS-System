@@ -254,17 +254,11 @@ Future<void> _rebuildProductCostsFromUnifiedBatchesInTransaction(
       updatedAt: now,
     );
     rebuiltCosts.add(rebuiltCost);
-    final appliedCost =
-        _inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost
-            ? rebuiltCost.lastCost
-            : rebuiltCost.averageCost;
+    // Product.cost/originalCost/usdCost are the user-maintained reference cost.
+    // Unified Batch is authoritative for inventory valuation and must not
+    // overwrite that reference when receipts/returns rebuild stock.
     rebuiltProducts.add(product.copyWith(
       stock: max(0.0, stockQuantity),
-      cost: appliedCost,
-      usdCost: appliedCost,
-      originalCost: appliedCost,
-      costCurrency: 'USD',
-      costExchangeRateAtEntry: storeProfile.usdToLbpRate,
       updatedAt: now,
     ));
   }
@@ -735,17 +729,8 @@ Future<Purchase> createPurchase({
             updatedAt: now,
           );
           productCostPreviews[item.productId] = updatedCost;
-          final appliedCost =
-              _inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost
-                  ? updatedCost.lastCost
-                  : updatedCost.averageCost;
           productPreviews[item.productId] = product.copyWith(
             stock: stockAfter,
-            cost: appliedCost,
-            usdCost: appliedCost,
-            originalCost: appliedCost,
-            costCurrency: 'USD',
-            costExchangeRateAtEntry: storeProfile.usdToLbpRate,
             updatedAt: now,
           );
         }
@@ -1592,17 +1577,8 @@ Future<void> receivePurchase(
           updatedAt: now,
         );
         productCostPreviews[item.productId] = updatedCost;
-        final appliedCost =
-            _inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost
-                ? updatedCost.lastCost
-                : updatedCost.averageCost;
         productPreviews[item.productId] = product.copyWith(
           stock: stockAfter,
-          cost: appliedCost,
-          usdCost: appliedCost,
-          originalCost: appliedCost,
-          costCurrency: 'USD',
-          costExchangeRateAtEntry: storeProfile.usdToLbpRate,
           updatedAt: now,
         );
       }

@@ -284,6 +284,30 @@ class _ProductPurchaseMetrics {
   final int supplierCount;
 }
 
+class ProductCostSnapshot {
+  const ProductCostSnapshot({
+    required this.productId,
+    required this.currentInventoryUnitCost,
+    required this.inventoryQuantity,
+    required this.batchCount,
+    required this.referenceUnitCost,
+    this.lastPurchaseUnitCost,
+    this.warehouseId = '',
+  });
+
+  final String productId;
+  final double currentInventoryUnitCost;
+  final double inventoryQuantity;
+  final int batchCount;
+  final double? lastPurchaseUnitCost;
+  final double referenceUnitCost;
+  final String warehouseId;
+
+  bool get hasInventory => inventoryQuantity > 0.000001;
+  bool get hasCurrentInventoryCost =>
+      hasInventory && currentInventoryUnitCost >= 0;
+}
+
 class AppStoreActionException implements Exception {
   const AppStoreActionException(this.message);
 
@@ -341,6 +365,7 @@ class AppStore extends ChangeNotifier
   static const _supplierProductPricesKey = 'supplier_product_prices_v1';
   static const _priceListsKey = 'price_lists_v1';
   static const _productPricesKey = 'product_prices_v1';
+  static const _productPriceHistoryKey = 'product_price_history_v1';
   static const _productPriceOverridesKey = 'product_price_overrides_v1';
   static const _productCostsKey = 'product_costs_v1';
   static const _costingMethodHistoryKey = 'costing_method_history_v1';

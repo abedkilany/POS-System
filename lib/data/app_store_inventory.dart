@@ -2882,7 +2882,7 @@ void _applyPurchaseStock(Purchase purchase, DateTime now) {
       final receivedQty = item.baseQuantity;
       final newStock = product.stock + receivedQty;
       final baseUnitCost = item.unitCostPerBase;
-      final productCost = _upsertProductCostFromPurchase(
+      _upsertProductCostFromPurchase(
         product: product,
         receivedQty: receivedQty,
         baseUnitCost: baseUnitCost,
@@ -2896,19 +2896,8 @@ void _applyPurchaseStock(Purchase purchase, DateTime now) {
         unitCost: baseUnitCost,
         now: now,
       );
-      final appliedCost =
-          _inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost
-              ? productCost.lastCost
-              : productCost.averageCost;
       _products[index] = _withSyncMeta<Product>(
-        product.copyWith(
-          stock: newStock,
-          cost: appliedCost,
-          usdCost: appliedCost,
-          originalCost: appliedCost,
-          costCurrency: 'USD',
-          costExchangeRateAtEntry: storeProfile.usdToLbpRate,
-        ),
+        product.copyWith(stock: newStock),
         now,
       );
       _addStockMovement(

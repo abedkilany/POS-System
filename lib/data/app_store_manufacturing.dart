@@ -1,6 +1,17 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitManufacturing on AppStore {
+Future<double> estimatedUnifiedBatchUnitCostForProduct(
+    Product product, {
+    String warehouseId = '',
+    double requiredQuantity = 0,
+  }) =>
+      _estimatedUnifiedBatchUnitCostForProduct(
+        product,
+        warehouseId: warehouseId,
+        requiredQuantity: requiredQuantity,
+      );
+
 Future<double> _estimatedUnifiedBatchUnitCostForProduct(
     Product product, {
     String warehouseId = '',
@@ -1097,14 +1108,9 @@ Future<ManufacturingOrder> completeManufacturingOrder({
           <Map<String, dynamic>>[persistedOutputCost!.toJson()],
           sortIndices: const <int?>[0],
         );
-        final outputPreview = output.copyWith(
-          stock: stockAfter,
-          cost: nextAverageCost,
-          usdCost: nextAverageCost,
-          originalCost: nextAverageCost,
-          costCurrency: 'USD',
-          costExchangeRateAtEntry: storeProfile.usdToLbpRate,
-        );
+        // Finished-goods valuation lives in the produced Unified Batch.
+        // Keep the product reference cost user-maintained and independent.
+        final outputPreview = output.copyWith(stock: stockAfter);
         persistedOutputProduct = suppressPostCommitInternal
             ? outputPreview.copyWith(
                 updatedAt: now,
@@ -1265,14 +1271,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
         (quantity <= 0 ? 1 : quantity);
     if (outputIndex != null && output.trackStock) {
       _products[outputIndex] = _withSyncMeta<Product>(
-        output.copyWith(
-          stock: output.stock + quantity,
-          cost: producedCost,
-          usdCost: producedCost,
-          originalCost: producedCost,
-          costCurrency: 'USD',
-          costExchangeRateAtEntry: storeProfile.usdToLbpRate,
-        ),
+        output.copyWith(stock: output.stock + quantity),
         now,
       );
       _addInventoryCostLayerFromStockIncrease(
@@ -2021,18 +2020,8 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
           <Map<String, dynamic>>[reversedOutputCost!.toJson()],
           sortIndices: const <int?>[0],
         );
-        final appliedCost = unifiedBatchOrder
-            ? nextAverage
-            : _inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost
-                ? nextLast
-                : nextAverage;
         final reversedOutputPreview = outputProduct.copyWith(
           stock: stockAfter,
-          cost: appliedCost,
-          usdCost: appliedCost,
-          originalCost: appliedCost,
-          costCurrency: 'USD',
-          costExchangeRateAtEntry: storeProfile.usdToLbpRate,
           updatedAt: now,
         );
         reversedOutputProduct = suppressPostCommitInternal

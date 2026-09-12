@@ -349,6 +349,19 @@ Future<void> _replaceFromBackupMap(
     }
     if (users.isNotEmpty) _replaceUsersWithoutDuplicates(users);
     await _ensureDefaultAdminUser();
+    final productPriceHistoryRows =
+        (decoded['productPriceHistory'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+    await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
+      AppStore._productPriceHistoryKey,
+      productPriceHistoryRows,
+      sortIndices: List<int?>.generate(
+        productPriceHistoryRows.length,
+        (index) => index,
+      ),
+    );
     _invoiceCounter =
         (decoded['invoiceCounter'] as num?)?.toInt() ?? _invoiceCounter;
     _purchaseCounter =
@@ -1726,14 +1739,8 @@ Future<void> _applySyncChangePayload(SyncChange change) async {
               final at = movement.date;
               _products[index] = product.copyWith(
                 stock: product.stock + movement.quantity,
-                cost:
-                    movement.type == 'purchase_receive' && movement.unitCost > 0
-                        ? movement.unitCost
-                        : product.cost,
-                usdCost:
-                    movement.type == 'purchase_receive' && movement.unitCost > 0
-                        ? movement.unitCost
-                        : product.usdCost,
+                // Remote stock movements must not overwrite the user-maintained
+                // reference cost. Inventory valuation is carried by batches.
                 updatedAt:
                     at.isAfter(product.updatedAt) ? at : product.updatedAt,
                 syncStatus: 'synced',

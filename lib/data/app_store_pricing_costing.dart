@@ -120,93 +120,387 @@ void _ensureDefaultProductPriceEntries({Product? product}) {
     }
   }
 
-Future<void> setDefaultProductBasePrice(
-      {required String productId,
-      required String unitId,
-      required double amount,
-      required String currencyCode}) async {
-    final productExists = _products.any((item) => item.id == productId);
-    requirePermission(productExists
-        ? AppPermission.productsEdit
-        : AppPermission.productsCreate);
-    _ensureDefaultPriceLists();
-    final now = DateTime.now();
-    final priceListId = defaultPriceList.id;
-    final index = _productPrices.indexWhere((item) =>
-        item.productId == productId &&
-        item.priceListId == priceListId &&
-        item.unitId == unitId);
-    final price = ProductPrice(
-      id: index == -1
-          ? 'pp_${productId}_${priceListId}_${unitId}_${now.microsecondsSinceEpoch}'
-          : _productPrices[index].id,
-      productId: productId,
-      priceListId: priceListId,
-      unitId: unitId,
-      baseCurrencyCode: currencyCode.toUpperCase(),
-      baseAmount: amount,
-      createdAt: index == -1 ? now : _productPrices[index].createdAt,
-      updatedAt: now,
+Future<void> _persistProductPriceHistoryRows(
+    List<ProductPriceHistoryEntry> rows) async {
+  if (rows.isEmpty) return;
+  if (LocalDatabaseService.isSqliteAuthoritative) {
+    await _upsertSqliteBusinessRows(
+      AppStore._productPriceHistoryKey,
+      rows.map((item) => item.toJson()),
     );
-    if (index == -1) {
-      _productPrices.add(price);
-    } else {
-      _productPrices[index] = price;
-    }
-    _productPriceByLookupKey[
-        _productPriceLookupKey(productId, priceListId, unitId)] = price;
-    await Future.wait(<Future<void>>[
-      _upsertSqliteBusinessRows(
-        AppStore._priceListsKey,
-        _priceLists.map((item) => item.toJson()),
-      ),
-      _upsertSqliteBusinessRows(
-        AppStore._productPricesKey,
-        <Map<String, dynamic>>[price.toJson()],
-      ),
-    ]);
-    _touchDataRevisions(products: true);
-    _invalidateDerivedDataCaches();
-    notifyListeners();
+    return;
   }
+  final raw = LocalDatabaseService.getString(AppStore._productPriceHistoryKey);
+  final existing = <Map<String, dynamic>>[];
+  if (raw != null && raw.trim().isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        existing.addAll(decoded.whereType<Map>().map(
+            (item) => Map<String, dynamic>.from(item)));
+      }
+    } catch (_) {}
+  }
+  existing.addAll(rows.map((item) => item.toJson()));
+  await LocalDatabaseService.setString(
+    AppStore._productPriceHistoryKey,
+    jsonEncode(existing),
+  );
+}
 
-Future<void> setProductBasePriceForList({
-    required String productId,
-    required String priceListId,
-    required double amount,
-    required String currencyCode,
-    String unitId = 'base',
-  }) async {
-    requirePermission(AppPermission.productsEdit);
-    _ensureDefaultPriceLists();
-    final existing = productPriceFor(productId, priceListId, unitId: unitId);
-    final now = DateTime.now();
-    final price = ProductPrice(
-      id: existing?.id ?? 'pp_${productId}_${priceListId}_$unitId',
-      productId: productId,
-      priceListId: priceListId,
-      unitId: unitId,
-      baseCurrencyCode: currencyCode.toUpperCase(),
-      baseAmount: amount,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
+double _roundProductPriceAmount(double amount, String currencyCode) {
+  final decimals = storeProfile.currencyByCode(currencyCode).decimalPlaces;
+  final factor = pow(10, decimals.clamp(0, 6)).toDouble();
+  return (amount * factor).round() / factor;
+}
+
+ProductPriceHistoryEntry _buildProductPriceHistoryEntry({
+  required ProductPrice? previous,
+  required ProductPrice next,
+  required String source,
+  required String changeType,
+  required double changePercent,
+  required String batchId,
+  required DateTime changedAt,
+}) {
+  return ProductPriceHistoryEntry(
+    id: 'pph_${next.productId}_${next.priceListId}_${next.unitId}_${changedAt.microsecondsSinceEpoch}_${Random().nextInt(1 << 20)}',
+    productId: next.productId,
+    priceListId: next.priceListId,
+    unitId: next.unitId,
+    currencyCode: next.baseCurrencyCode,
+    oldAmount: previous?.baseAmount ?? 0,
+    newAmount: next.baseAmount,
+    changePercent: changePercent,
+    changeType: changeType,
+    source: source,
+    batchId: batchId,
+    userId: _activeUser?.id ?? '',
+    userName: _actorName(),
+    changedAt: changedAt,
+  );
+}
+
+Future<void> _setProductBasePriceWithHistory({
+  required String productId,
+  required String priceListId,
+  required double amount,
+  required String currencyCode,
+  String unitId = 'base',
+  String source = 'manual',
+  String changeType = 'manual',
+  double changePercent = 0,
+  String batchId = '',
+}) async {
+  _ensureDefaultPriceLists();
+  final normalizedCurrency = currencyCode.trim().toUpperCase();
+  if (normalizedCurrency.isEmpty || amount < 0 || !amount.isFinite) {
+    throw ArgumentError('A valid non-negative product price is required.');
+  }
+  final previous = productPriceFor(productId, priceListId, unitId: unitId);
+  final roundedAmount = _roundProductPriceAmount(amount, normalizedCurrency);
+  if (previous != null &&
+      previous.baseCurrencyCode.toUpperCase() == normalizedCurrency &&
+      (previous.baseAmount - roundedAmount).abs() < 0.0000001) {
+    return;
+  }
+  final now = DateTime.now();
+  final next = ProductPrice(
+    id: previous?.id ?? 'pp_${productId}_${priceListId}_$unitId',
+    productId: productId,
+    priceListId: priceListId,
+    unitId: unitId,
+    baseCurrencyCode: normalizedCurrency,
+    baseAmount: roundedAmount,
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+  );
+  final history = _buildProductPriceHistoryEntry(
+    previous: previous,
+    next: next,
+    source: source,
+    changeType: previous == null ? 'initial' : changeType,
+    changePercent: changePercent,
+    batchId: batchId,
+    changedAt: now,
+  );
+
+  await LocalDatabaseService.runSqliteAuthoritativeTransaction(() async {
+    await _upsertSqliteBusinessRows(
+      AppStore._priceListsKey,
+      _priceLists.map((item) => item.toJson()),
     );
-    final index = _productPrices.indexWhere((item) => item.id == price.id);
-    if (index == -1) {
-      _productPrices.add(price);
-    } else {
-      _productPrices[index] = price;
-    }
-    _productPriceByLookupKey[
-        _productPriceLookupKey(productId, priceListId, unitId)] = price;
     await _upsertSqliteBusinessRows(
       AppStore._productPricesKey,
-      <Map<String, dynamic>>[price.toJson()],
+      <Map<String, dynamic>>[next.toJson()],
     );
-    _touchDataRevisions(products: true);
-    _invalidateDerivedDataCaches();
-    notifyListeners();
+    await _persistProductPriceHistoryRows(<ProductPriceHistoryEntry>[history]);
+  });
+
+  final index = _productPrices.indexWhere((item) => item.id == next.id);
+  if (index == -1) {
+    _productPrices.add(next);
+  } else {
+    _productPrices[index] = next;
   }
+  _productPriceByLookupKey[
+      _productPriceLookupKey(productId, priceListId, unitId)] = next;
+  _touchDataRevisions(products: true);
+  _invalidateDerivedDataCaches();
+  unawaited(AuditLogger.record(
+    entityType: 'product_price',
+    entityId: next.id,
+    action: previous == null ? 'create' : 'update',
+    summary: 'Product price changed',
+    details: jsonEncode(history.toJson()),
+    userId: _activeUser?.id ?? '',
+    userName: _actorName(),
+    storeId: appIdentity.storeId,
+    branchId: appIdentity.branchId,
+    sessionId: _deviceId,
+    traceId: _deviceId,
+    deviceId: _deviceId,
+    sourceModule: 'products',
+    isImportant: true,
+  ));
+  notifyListeners();
+}
+
+Future<void> setDefaultProductBasePrice(
+    {required String productId,
+    required String unitId,
+    required double amount,
+    required String currencyCode}) async {
+  final productExists = _products.any((item) => item.id == productId);
+  requirePermission(productExists
+      ? AppPermission.productsEdit
+      : AppPermission.productsCreate);
+  _ensureDefaultPriceLists();
+  await _setProductBasePriceWithHistory(
+    productId: productId,
+    priceListId: defaultPriceList.id,
+    unitId: unitId,
+    amount: amount,
+    currencyCode: currencyCode,
+  );
+}
+
+Future<void> setProductBasePriceForList({
+  required String productId,
+  required String priceListId,
+  required double amount,
+  required String currencyCode,
+  String unitId = 'base',
+}) async {
+  requirePermission(AppPermission.productsEdit);
+  await _setProductBasePriceWithHistory(
+    productId: productId,
+    priceListId: priceListId,
+    amount: amount,
+    currencyCode: currencyCode,
+    unitId: unitId,
+  );
+}
+
+Future<BulkPriceAdjustmentResult> bulkAdjustProductPrices({
+  required Iterable<String> productIds,
+  required String priceListId,
+  required double percentage,
+  required bool increase,
+  String unitId = 'base',
+}) async {
+  requireAnyPermission(<String>{
+    AppPermission.productsManage,
+    AppPermission.productsEdit,
+  });
+  await ensureProductsLoaded();
+  await ensureProductPricesLoaded();
+  final normalizedList = priceListId.trim();
+  if (!const {'retail', 'wholesale', 'wholesale_bulk'}.contains(normalizedList)) {
+    throw ArgumentError('Unsupported price list.');
+  }
+  if (!percentage.isFinite || percentage <= 0 || (!increase && percentage > 100)) {
+    throw ArgumentError('Invalid percentage.');
+  }
+  final ids = productIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
+  if (ids.isEmpty) {
+    return const BulkPriceAdjustmentResult(
+      updatedCount: 0,
+      skippedMissingPriceCount: 0,
+      unchangedCount: 0,
+      batchId: '',
+    );
+  }
+
+  _ensureDefaultPriceLists();
+  _ensureProductPricingLookupCaches();
+  final now = DateTime.now();
+  final batchId = 'bulk_price_${now.microsecondsSinceEpoch}';
+  final changedPrices = <ProductPrice>[];
+  final histories = <ProductPriceHistoryEntry>[];
+  final changedProducts = <Product>[];
+  var missing = 0;
+  var unchanged = 0;
+
+  for (final productId in ids) {
+    final productIndex = _productIndexById[productId];
+    if (productIndex == null || productIndex < 0 || productIndex >= _products.length) {
+      missing += 1;
+      continue;
+    }
+    final product = _products[productIndex];
+    if (product.isDeleted) {
+      missing += 1;
+      continue;
+    }
+    final previous = productPriceFor(productId, normalizedList, unitId: unitId);
+    if (previous == null) {
+      missing += 1;
+      continue;
+    }
+    final factor = increase ? (1 + percentage / 100) : (1 - percentage / 100);
+    final rawNextAmount = previous.baseAmount * factor;
+    if (!rawNextAmount.isFinite || rawNextAmount < 0) {
+      throw ArgumentError('The requested price adjustment produces an invalid price.');
+    }
+    final nextAmount = _roundProductPriceAmount(
+      rawNextAmount,
+      previous.baseCurrencyCode,
+    );
+    if ((nextAmount - previous.baseAmount).abs() < 0.0000001) {
+      unchanged += 1;
+      continue;
+    }
+    final next = previous.copyWith(baseAmount: nextAmount, updatedAt: now);
+    changedPrices.add(next);
+    histories.add(_buildProductPriceHistoryEntry(
+      previous: previous,
+      next: next,
+      source: 'bulk',
+      changeType: increase ? 'increase' : 'decrease',
+      changePercent: percentage,
+      batchId: batchId,
+      changedAt: now,
+    ));
+    if (normalizedList == 'retail' && unitId == 'base') {
+      final usd = toUsdReferencePrice(
+        nextAmount,
+        next.baseCurrencyCode,
+        storeProfile,
+      );
+      changedProducts.add(product.copyWith(
+        price: usd,
+        originalPrice: nextAmount,
+        originalCurrency: next.baseCurrencyCode,
+        usdPrice: usd,
+        exchangeRateAtEntry: storeProfile.usdToLbpRate,
+        updatedAt: now,
+        version: product.version + 1,
+        lastModifiedByDeviceId: _deviceId,
+      ));
+    }
+  }
+
+  if (changedPrices.isEmpty) {
+    return BulkPriceAdjustmentResult(
+      updatedCount: 0,
+      skippedMissingPriceCount: missing,
+      unchangedCount: unchanged,
+      batchId: batchId,
+    );
+  }
+
+  await LocalDatabaseService.runSqliteAuthoritativeTransaction(() async {
+    await _upsertSqliteBusinessRows(
+      AppStore._productPricesKey,
+      changedPrices.map((item) => item.toJson()),
+    );
+    await _persistProductPriceHistoryRows(histories);
+    if (changedProducts.isNotEmpty) {
+      await _upsertSqliteBusinessRows(
+        AppStore._productsKey,
+        changedProducts.map((item) => item.toJson()),
+      );
+    }
+  });
+
+  for (final next in changedPrices) {
+    final index = _productPrices.indexWhere((item) => item.id == next.id);
+    if (index == -1) {
+      _productPrices.add(next);
+    } else {
+      _productPrices[index] = next;
+    }
+    _productPriceByLookupKey[
+      _productPriceLookupKey(next.productId, next.priceListId, next.unitId)] = next;
+  }
+  for (final product in changedProducts) {
+    final index = _productIndexById[product.id];
+    if (index != null && index >= 0 && index < _products.length) {
+      _products[index] = product;
+    }
+  }
+  _touchDataRevisions(products: true);
+  _invalidateDerivedDataCaches();
+  unawaited(AuditLogger.record(
+    entityType: 'product_price_batch',
+    entityId: batchId,
+    action: increase ? 'bulk_increase' : 'bulk_decrease',
+    summary: 'Bulk product price adjustment',
+    details: jsonEncode(<String, dynamic>{
+      'priceListId': normalizedList,
+      'unitId': unitId,
+      'percentage': percentage,
+      'updatedCount': changedPrices.length,
+      'skippedMissingPriceCount': missing,
+      'unchangedCount': unchanged,
+      'productIds': changedPrices.map((item) => item.productId).toList(),
+    }),
+    userId: _activeUser?.id ?? '',
+    userName: _actorName(),
+    storeId: appIdentity.storeId,
+    branchId: appIdentity.branchId,
+    sessionId: _deviceId,
+    traceId: _deviceId,
+    deviceId: _deviceId,
+    sourceModule: 'products',
+    isImportant: true,
+  ));
+  notifyListeners();
+  return BulkPriceAdjustmentResult(
+    updatedCount: changedPrices.length,
+    skippedMissingPriceCount: missing,
+    unchangedCount: unchanged,
+    batchId: batchId,
+  );
+}
+
+Future<List<ProductPriceHistoryEntry>> productPriceHistoryForProduct(
+  String productId, {
+  int limit = 200,
+}) async {
+  final sqliteRows = await LocalDatabaseService.getProductPriceHistoryFromSqlite(
+    productId: productId,
+    limit: limit,
+  );
+  if (sqliteRows != null) return sqliteRows;
+  final raw = LocalDatabaseService.getString(AppStore._productPriceHistoryKey);
+  if (raw == null || raw.trim().isEmpty) return const <ProductPriceHistoryEntry>[];
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return const <ProductPriceHistoryEntry>[];
+    final rows = decoded
+        .whereType<Map>()
+        .map((item) => ProductPriceHistoryEntry.fromJson(
+            Map<String, dynamic>.from(item)))
+        .where((item) => item.productId == productId)
+        .toList();
+    rows.sort((a, b) => b.changedAt.compareTo(a.changedAt));
+    return rows.take(limit.clamp(1, 2000).toInt()).toList(growable: false);
+  } catch (_) {
+    return const <ProductPriceHistoryEntry>[];
+  }
+}
 
 Future<void> setProductPriceOverride({
     required String productPriceId,
@@ -268,6 +562,189 @@ Future<void> removeProductPriceOverride(
     _touchDataRevisions(products: true);
     _invalidateDerivedDataCaches();
     notifyListeners();
+  }
+
+Future<Map<String, ProductCostSnapshot>> productCostSnapshotsForProducts(
+    Iterable<Product> products, {
+    String warehouseId = '',
+  }) async {
+    final productById = <String, Product>{
+      for (final product in products)
+        if (product.id.trim().isNotEmpty && !product.isDeleted)
+          product.id: product,
+    };
+    if (productById.isEmpty) return const <String, ProductCostSnapshot>{};
+
+    final normalizedWarehouse = warehouseId.trim();
+    final fallback = <String, ProductCostSnapshot>{};
+    for (final product in productById.values) {
+      final compatibilityCost = productCostFor(product.id);
+      final referenceCost = _safeUsdCost(product);
+      final currentCost = compatibilityCost.averageCost > 0
+          ? compatibilityCost.averageCost
+          : referenceCost;
+      fallback[product.id] = ProductCostSnapshot(
+        productId: product.id,
+        currentInventoryUnitCost: currentCost,
+        inventoryQuantity: product.trackStock ? max(0.0, product.stock) : 0,
+        batchCount: 0,
+        lastPurchaseUnitCost: lastPurchasePriceForProduct(product.id),
+        referenceUnitCost: referenceCost,
+        warehouseId: normalizedWarehouse,
+      );
+    }
+
+    if (!LocalDatabaseService.isSqliteAuthoritative ||
+        SqliteMigrationManager.database == null) {
+      return fallback;
+    }
+
+    final db = SqliteMigrationManager.database!;
+    final ids = productById.keys.toList(growable: false);
+    final inventoryByProduct = <String, (double, double, int)>{};
+    final lastPurchaseByProduct = <String, double>{};
+    const queryChunkSize = 400;
+    for (var offset = 0; offset < ids.length; offset += queryChunkSize) {
+      final chunk = ids.sublist(
+        offset,
+        min(ids.length, offset + queryChunkSize),
+      );
+      final placeholders = List.filled(chunk.length, '?').join(',');
+      final warehousePredicate =
+          normalizedWarehouse.isEmpty ? '' : 'AND bb.warehouse_id = ?';
+      final inventoryRows = await db.customSelect(
+        '''
+        SELECT bb.product_id,
+               COALESCE(SUM(bb.quantity), 0) AS quantity,
+               COALESCE(SUM(bb.quantity * b.unit_cost), 0) AS carrying_value,
+               COUNT(DISTINCT b.id) AS batch_count
+        FROM inventory_batch_balances bb
+        INNER JOIN inventory_batches b ON b.id = bb.batch_id
+          AND b.store_id = bb.store_id AND b.product_id = bb.product_id
+        WHERE bb.store_id = ?
+          AND bb.product_id IN ($placeholders)
+          $warehousePredicate
+          AND bb.quantity > 0.000001
+          AND b.source_type <> 'inventory_deficit'
+          AND b.id NOT LIKE 'deficit:%'
+        GROUP BY bb.product_id
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(appIdentity.storeId),
+          ...chunk.map<Variable<Object>>((id) => Variable<String>(id)),
+          if (normalizedWarehouse.isNotEmpty)
+            Variable<String>(normalizedWarehouse),
+        ],
+      ).get();
+      for (final row in inventoryRows) {
+        final productId = row.data['product_id']?.toString() ?? '';
+        if (productId.isEmpty) continue;
+        inventoryByProduct[productId] = (
+          (row.data['quantity'] as num? ?? 0).toDouble(),
+          (row.data['carrying_value'] as num? ?? 0).toDouble(),
+          (row.data['batch_count'] as num? ?? 0).toInt(),
+        );
+      }
+
+      final latestPurchaseRows = await db.customSelect(
+        '''
+        WITH effective_purchase AS (
+          SELECT b.product_id,
+                 b.unit_cost,
+                 b.received_at,
+                 b.created_at,
+                 b.updated_at,
+                 b.id,
+                 sm.movement_date
+          FROM inventory_batches b
+          INNER JOIN stock_movements sm ON sm.batch_id = b.id
+          WHERE b.store_id = ?
+            AND b.product_id IN ($placeholders)
+            AND b.source_type = 'purchase'
+            AND sm.movement_type = 'purchase_receive'
+            AND sm.deleted_at = ''
+            AND trim(sm.reversal_of_movement_id) = ''
+            AND ABS(
+              sm.quantity + COALESCE((
+                SELECT SUM(reversal.quantity)
+                FROM stock_movements reversal
+                WHERE reversal.reversal_of_movement_id = sm.id
+                  AND reversal.deleted_at = ''
+                  AND NOT EXISTS (
+                    SELECT 1 FROM stock_movements reversal_of_reversal
+                    WHERE reversal_of_reversal.reversal_of_movement_id = reversal.id
+                      AND reversal_of_reversal.deleted_at = ''
+                  )
+              ), 0)
+            ) > 0.000001
+        ), ranked AS (
+          SELECT product_id, unit_cost,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY product_id
+                   ORDER BY COALESCE(NULLIF(trim(received_at), ''), created_at) DESC,
+                            movement_date DESC,
+                            updated_at DESC,
+                            id DESC
+                 ) AS rn
+          FROM effective_purchase
+        )
+        SELECT product_id, unit_cost
+        FROM ranked
+        WHERE rn = 1
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(appIdentity.storeId),
+          ...chunk.map<Variable<Object>>((id) => Variable<String>(id)),
+        ],
+      ).get();
+      for (final row in latestPurchaseRows) {
+        final productId = row.data['product_id']?.toString() ?? '';
+        final unitCost = (row.data['unit_cost'] as num?)?.toDouble();
+        if (productId.isNotEmpty && unitCost != null && unitCost >= 0) {
+          lastPurchaseByProduct[productId] = unitCost;
+        }
+      }
+    }
+
+    final resolved = <String, ProductCostSnapshot>{};
+    for (final product in productById.values) {
+      final totals = inventoryByProduct[product.id];
+      final quantity = totals?.$1 ?? 0.0;
+      final carryingValue = totals?.$2 ?? 0.0;
+      final currentUnitCost = quantity > 0.000001
+          ? max(0.0, carryingValue) / quantity
+          : 0.0;
+      resolved[product.id] = ProductCostSnapshot(
+        productId: product.id,
+        currentInventoryUnitCost: currentUnitCost,
+        inventoryQuantity: quantity,
+        batchCount: totals?.$3 ?? 0,
+        lastPurchaseUnitCost: lastPurchaseByProduct[product.id],
+        referenceUnitCost: _safeUsdCost(product),
+        warehouseId: normalizedWarehouse,
+      );
+    }
+    return resolved;
+  }
+
+Future<ProductCostSnapshot> productCostSnapshotForProduct(
+    Product product, {
+    String warehouseId = '',
+  }) async {
+    final snapshots = await productCostSnapshotsForProducts(
+      <Product>[product],
+      warehouseId: warehouseId,
+    );
+    return snapshots[product.id] ??
+        ProductCostSnapshot(
+          productId: product.id,
+          currentInventoryUnitCost: 0,
+          inventoryQuantity: 0,
+          batchCount: 0,
+          lastPurchaseUnitCost: lastPurchasePriceForProduct(product.id),
+          referenceUnitCost: _safeUsdCost(product),
+          warehouseId: warehouseId.trim(),
+        );
   }
 
 void _ensureProductCostEntries({Product? product}) {

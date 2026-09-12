@@ -228,3 +228,88 @@ class ProductPriceOverride {
     );
   }
 }
+
+
+class ProductPriceHistoryEntry {
+  ProductPriceHistoryEntry({
+    required this.id,
+    required this.productId,
+    required this.priceListId,
+    required this.unitId,
+    required this.currencyCode,
+    required this.oldAmount,
+    required this.newAmount,
+    required this.changePercent,
+    required this.changeType,
+    required this.source,
+    required this.batchId,
+    required this.userId,
+    required this.userName,
+    required this.changedAt,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? changedAt,
+        updatedAt = updatedAt ?? changedAt;
+
+  final String id, productId, priceListId, unitId, currencyCode;
+  final double oldAmount, newAmount, changePercent;
+  final String changeType, source, batchId, userId, userName;
+  final DateTime changedAt, createdAt, updatedAt;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'productId': productId,
+        'priceListId': priceListId,
+        'unitId': unitId,
+        'currencyCode': currencyCode.toUpperCase(),
+        'oldAmount': oldAmount,
+        'newAmount': newAmount,
+        'changePercent': changePercent,
+        'changeType': changeType,
+        'source': source,
+        'batchId': batchId,
+        'userId': userId,
+        'userName': userName,
+        'changedAt': changedAt.toIso8601String(),
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+      };
+
+  factory ProductPriceHistoryEntry.fromJson(Map<String, dynamic> json) {
+    final changedAt = DateTime.tryParse(json['changedAt'] as String? ?? '') ??
+        DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+        DateTime.now();
+    return ProductPriceHistoryEntry(
+      id: json['id'] as String? ?? '',
+      productId: json['productId'] as String? ?? '',
+      priceListId: json['priceListId'] as String? ?? 'retail',
+      unitId: json['unitId'] as String? ?? 'base',
+      currencyCode: (json['currencyCode'] as String? ?? 'USD').toUpperCase(),
+      oldAmount: (json['oldAmount'] as num? ?? 0).toDouble(),
+      newAmount: (json['newAmount'] as num? ?? 0).toDouble(),
+      changePercent: (json['changePercent'] as num? ?? 0).toDouble(),
+      changeType: json['changeType'] as String? ?? 'manual',
+      source: json['source'] as String? ?? 'manual',
+      batchId: json['batchId'] as String? ?? '',
+      userId: json['userId'] as String? ?? '',
+      userName: json['userName'] as String? ?? '',
+      changedAt: changedAt,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? changedAt,
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? changedAt,
+    );
+  }
+}
+
+class BulkPriceAdjustmentResult {
+  const BulkPriceAdjustmentResult({
+    required this.updatedCount,
+    required this.skippedMissingPriceCount,
+    required this.unchangedCount,
+    required this.batchId,
+  });
+
+  final int updatedCount;
+  final int skippedMissingPriceCount;
+  final int unchangedCount;
+  final String batchId;
+}

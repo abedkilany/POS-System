@@ -134,6 +134,10 @@ Future<Map<String, dynamic>> _backupPayload({
         await LocalDatabaseService.getStockMovementsFromSqlite();
     final sqliteWarehouses =
         await LocalDatabaseService.getWarehousesFromSqlite();
+    final productPriceHistory =
+        await LocalDatabaseService.getProductPriceHistoryFromSqlite(
+      limit: 100000,
+    );
     final phase8AccountingRows =
         await LocalDatabaseService.getPhase8AccountingSnapshotRows();
     final exportWarehouses =
@@ -165,6 +169,9 @@ Future<Map<String, dynamic>> _backupPayload({
                 : _businessBackupJson(item),
           )
           .toList(),
+      'productPriceHistory': productPriceHistory == null
+          ? <dynamic>[]
+          : productPriceHistory.map((item) => item.toJson()).toList(),
       'customers': _customers
           .map(
             (item) => includeDeviceAndSyncState
@@ -438,6 +445,8 @@ Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
         await LocalDatabaseService.getWarehousesFromSqlite();
     final phase8AccountingRows =
         await LocalDatabaseService.getPhase8AccountingSnapshotRows();
+    final productPriceHistory =
+        await LocalDatabaseService.getProductPriceHistoryFromSqlite(limit: 100000);
     final exportWarehouses =
         sqliteWarehouses != null && sqliteWarehouses.isNotEmpty
             ? sqliteWarehouses
@@ -473,6 +482,9 @@ Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
           _supplierProductPrices.map((item) => item.toJson()).toList(),
       'priceLists': _priceLists.map((item) => item.toJson()).toList(),
       'productPrices': _productPrices.map((item) => item.toJson()).toList(),
+      'productPriceHistory': productPriceHistory == null
+          ? <dynamic>[]
+          : productPriceHistory.map((item) => item.toJson()).toList(),
       'productPriceOverrides':
           _productPriceOverrides.map((item) => item.toJson()).toList(),
       'productCosts': _productCosts.map((item) => item.toJson()).toList(),

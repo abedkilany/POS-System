@@ -39,6 +39,7 @@ class _ProductsPageState extends State<ProductsPage> {
   String query = '';
   String categoryFilter = 'All';
   final Set<String> _priceListViews = <String>{};
+  final Set<String> _selectedProductIds = <String>{};
   final TextEditingController _searchController = TextEditingController();
   Timer? _productRevealTimer;
   int _visibleProductCount = 100;
@@ -207,6 +208,7 @@ class _ProductsPageState extends State<ProductsPage> {
               products: result.items,
               totalCount: result.totalCount,
               categories: result.categories,
+              costSnapshots: result.costSnapshots,
               loading: snapshot.connectionState == ConnectionState.waiting &&
                   result.items.isEmpty,
               onLoadMore: result.hasMore
@@ -270,10 +272,13 @@ class _ProductsPageState extends State<ProductsPage> {
         final categories =
             await LocalDatabaseService.queryProductCategoriesFromSqlite() ??
                 const <String>[];
+        final costSnapshots = await widget.store
+            .productCostSnapshotsForProducts(page.items);
         return _ProductsQueryResult(
           items: page.items,
           totalCount: page.totalCount,
           categories: _categoryItemsForSql(categories),
+          costSnapshots: costSnapshots,
         );
       }();
     }
@@ -308,9 +313,15 @@ class _ProductsPageState extends State<ProductsPage> {
     required List<Product> products,
     required int totalCount,
     required List<String> categories,
+    Map<String, ProductCostSnapshot> costSnapshots =
+        const <String, ProductCostSnapshot>{},
     bool loading = false,
     VoidCallback? onLoadMore,
   }) {
+    final canBulkAdjustPrices = widget.store.hasAnyPermission(<String>{
+      AppPermission.productsManage,
+      AppPermission.productsEdit,
+    });
     final categoryItems = categories.contains(categoryFilter)
         ? categories
         : <String>[
@@ -337,6 +348,18 @@ class _ProductsPageState extends State<ProductsPage> {
                 PageDataLoadIndicator(
                   loadedCount: products.length,
                   totalCount: totalCount,
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: canBulkAdjustPrices &&
+                          _selectedProductIds.isNotEmpty
+                      ? () => _openBulkPriceAdjustment(context)
+                      : null,
+                  icon: const Icon(Icons.percent_outlined),
+                  label: Text(
+                    Localizations.localeOf(context).languageCode == 'ar'
+                        ? 'تعديل الأسعار (${_selectedProductIds.length})'
+                        : 'Adjust prices (${_selectedProductIds.length})',
+                  ),
                 ),
                 OutlinedButton.icon(
                   onPressed: () => _openPriceList(context),
@@ -425,7 +448,27 @@ class _ProductsPageState extends State<ProductsPage> {
               ]);
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          if (canBulkAdjustPrices)
+            _ProductSelectionBar(
+              selectedCount: _selectedProductIds.length,
+              visibleCount: products.length,
+              allVisibleSelected: products.isNotEmpty &&
+                  products.every((item) => _selectedProductIds.contains(item.id)),
+              someVisibleSelected: products.any(
+                  (item) => _selectedProductIds.contains(item.id)),
+              onToggleVisible: (selected) {
+                setState(() {
+                  if (selected) {
+                    _selectedProductIds.addAll(products.map((item) => item.id));
+                  } else {
+                    _selectedProductIds.removeAll(products.map((item) => item.id));
+                  }
+                });
+              },
+              onClear: () => setState(_selectedProductIds.clear),
+            ),
+          if (canBulkAdjustPrices) const SizedBox(height: 12),
           Expanded(
             child: loading
                 ? const Center(child: CircularProgressIndicator.adaptive())
@@ -459,12 +502,27 @@ class _ProductsPageState extends State<ProductsPage> {
                                 product,
                                 tr,
                                 localeTag,
+                                costSnapshot: costSnapshots[product.id],
                               );
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 10),
                                 child: _ProductTile(
                                   row: row,
                                   compact: constraints.maxWidth < 620,
+                                  selected: _selectedProductIds.contains(product.id),
+                                  onSelectedChanged: canBulkAdjustPrices
+                                      ? (value) => setState(() {
+                                            if (value == true) {
+                                              _selectedProductIds.add(product.id);
+                                            } else {
+                                              _selectedProductIds.remove(product.id);
+                                            }
+                                          })
+                                      : null,
+                                  onHistory: () => _openProductPriceHistory(
+                                    context,
+                                    row.product,
+                                  ),
                                   onEdit: widget.store.canManageProducts
                                       ? () => _openProductForm(context,
                                           product: row.product)
@@ -489,10 +547,349 @@ class _ProductsPageState extends State<ProductsPage> {
     );
   }
 
+  String _priceTypeLabel(String priceListId, bool isArabic) {
+    switch (priceListId) {
+      case 'wholesale':
+        return isArabic ? 'الجملة' : 'Wholesale';
+      case 'wholesale_bulk':
+        return isArabic ? 'جملة الجملة' : 'Wholesale bulk';
+      case 'retail':
+      default:
+        return isArabic ? 'المفرق' : 'Retail';
+    }
+  }
+
+  double _roundedPreviewPrice(double amount, String currencyCode) {
+    final decimals = widget.store.storeProfile
+        .currencyByCode(currencyCode)
+        .decimalPlaces
+        .clamp(0, 6);
+    final factor = math.pow(10, decimals).toDouble();
+    return (amount * factor).round() / factor;
+  }
+
+  Future<void> _openBulkPriceAdjustment(BuildContext context) async {
+    if (_selectedProductIds.isEmpty) return;
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    await widget.store.ensureProductsLoaded();
+    await widget.store.ensureProductPricesLoaded();
+    if (!context.mounted) return;
+    var priceListId = 'retail';
+    var increase = true;
+    final percentController = TextEditingController(text: '3');
+    var submitting = false;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final percentage =
+              double.tryParse(percentController.text.trim().replaceAll(',', '.')) ?? 0;
+          final selectedProducts = widget.store.products
+              .where((item) => _selectedProductIds.contains(item.id))
+              .toList(growable: false);
+          final previewRows = <String>[];
+          var missingCount = 0;
+          var adjustableCount = 0;
+          var unchangedPreviewCount = 0;
+          final validPercent = percentage > 0 &&
+              percentage.isFinite &&
+              (increase || percentage <= 100);
+          for (final product in selectedProducts) {
+            final price = widget.store.productPriceFor(
+              product.id,
+              priceListId,
+            );
+            if (price == null) {
+              missingCount += 1;
+              continue;
+            }
+            if (!validPercent) continue;
+            final factor = increase
+                ? 1 + percentage / 100
+                : 1 - percentage / 100;
+            final next = _roundedPreviewPrice(
+              price.baseAmount * factor,
+              price.baseCurrencyCode,
+            );
+            if ((next - price.baseAmount).abs() < 0.0000001) {
+              unchangedPreviewCount += 1;
+              continue;
+            }
+            adjustableCount += 1;
+            if (previewRows.length < 5) {
+              previewRows.add(
+                '${product.name}: ${price.baseAmount} ${price.baseCurrencyCode} → $next ${price.baseCurrencyCode}',
+              );
+            }
+          }
+          return AlertDialog(
+            title: Text(isArabic
+                ? 'تعديل الأسعار الجماعي'
+                : 'Bulk price adjustment'),
+            content: SizedBox(
+              width: 620,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      isArabic
+                          ? 'تم تحديد ${_selectedProductIds.length} منتج.'
+                          : '${_selectedProductIds.length} products selected.',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      initialValue: priceListId,
+                      decoration: InputDecoration(
+                        labelText: isArabic ? 'السعر المطلوب تعديله' : 'Price to adjust',
+                      ),
+                      items: <String>['retail', 'wholesale', 'wholesale_bulk']
+                          .map((id) => DropdownMenuItem(
+                                value: id,
+                                child: Text(_priceTypeLabel(id, isArabic)),
+                              ))
+                          .toList(),
+                      onChanged: submitting
+                          ? null
+                          : (value) => setDialogState(
+                                () => priceListId = value ?? 'retail',
+                              ),
+                    ),
+                    const SizedBox(height: 12),
+                    SegmentedButton<bool>(
+                      segments: [
+                        ButtonSegment<bool>(
+                          value: true,
+                          icon: const Icon(Icons.trending_up),
+                          label: Text(isArabic ? 'زيادة' : 'Increase'),
+                        ),
+                        ButtonSegment<bool>(
+                          value: false,
+                          icon: const Icon(Icons.trending_down),
+                          label: Text(isArabic ? 'إنقاص' : 'Decrease'),
+                        ),
+                      ],
+                      selected: <bool>{increase},
+                      onSelectionChanged: submitting
+                          ? null
+                          : (value) => setDialogState(
+                                () => increase = value.first,
+                              ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: percentController,
+                      enabled: !submitting,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+                      ],
+                      decoration: InputDecoration(
+                        labelText: isArabic ? 'النسبة %' : 'Percentage %',
+                        suffixText: '%',
+                        errorText: percentController.text.trim().isNotEmpty && !validPercent
+                            ? (isArabic
+                                ? 'أدخل نسبة صحيحة. الإنقاص لا يمكن أن يتجاوز 100%.'
+                                : 'Enter a valid percentage. Decrease cannot exceed 100%.')
+                            : null,
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isArabic
+                                ? 'سيتم تعديل $adjustableCount منتج.'
+                                : '$adjustableCount products will be updated.',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          if (missingCount > 0) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              isArabic
+                                  ? '$missingCount منتج لا يملك سعر ${_priceTypeLabel(priceListId, true)} وسيتم تجاهله.'
+                                  : '$missingCount products do not have a ${_priceTypeLabel(priceListId, false)} price and will be skipped.',
+                            ),
+                          ],
+                          if (unchangedPreviewCount > 0) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              isArabic
+                                  ? '$unchangedPreviewCount منتج لن يتغير سعره بعد التقريب.'
+                                  : '$unchangedPreviewCount products remain unchanged after rounding.',
+                            ),
+                          ],
+                          if (previewRows.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Text(isArabic ? 'معاينة:' : 'Preview:'),
+                            const SizedBox(height: 4),
+                            ...previewRows.map((line) => Padding(
+                                  padding: const EdgeInsets.only(top: 3),
+                                  child: Text(line),
+                                )),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: submitting
+                    ? null
+                    : () => Navigator.pop(dialogContext, false),
+                child: Text(isArabic ? 'إلغاء' : 'Cancel'),
+              ),
+              FilledButton.icon(
+                icon: submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check),
+                label: Text(isArabic ? 'تحديث الأسعار' : 'Update prices'),
+                onPressed: submitting || !validPercent || adjustableCount == 0
+                    ? null
+                    : () async {
+                        setDialogState(() => submitting = true);
+                        try {
+                          final result = await widget.store.bulkAdjustProductPrices(
+                            productIds: _selectedProductIds,
+                            priceListId: priceListId,
+                            percentage: percentage,
+                            increase: increase,
+                          );
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext, true);
+                          if (!mounted) return;
+                          setState(() {
+                            _selectedProductIds.clear();
+                            _invalidateProductViewCaches();
+                          });
+                          ScaffoldMessenger.of(this.context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                isArabic
+                                    ? 'تم تحديث ${result.updatedCount} سعر بنجاح${result.skippedMissingPriceCount > 0 ? '، وتجاهل ${result.skippedMissingPriceCount} بدون سعر' : ''}${result.unchangedCount > 0 ? '، و${result.unchangedCount} بدون تغيير بعد التقريب' : ''}.'
+                                    : '${result.updatedCount} prices updated successfully${result.skippedMissingPriceCount > 0 ? '; ${result.skippedMissingPriceCount} missing prices skipped' : ''}${result.unchangedCount > 0 ? '; ${result.unchangedCount} unchanged after rounding' : ''}.',
+                              ),
+                            ),
+                          );
+                        } catch (error) {
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() => submitting = false);
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            SnackBar(content: Text(error.toString())),
+                          );
+                        }
+                      },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    percentController.dispose();
+    if (confirmed == true && mounted) setState(() {});
+  }
+
+  String _formatHistoryDate(DateTime value) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    final local = value.toLocal();
+    return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  Future<void> _openProductPriceHistory(
+    BuildContext context,
+    Product product,
+  ) async {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(isArabic
+            ? 'سجل أسعار ${product.name}'
+            : 'Price history — ${product.name}'),
+        content: SizedBox(
+          width: 760,
+          height: 520,
+          child: FutureBuilder<List<ProductPriceHistoryEntry>>(
+            future: widget.store.productPriceHistoryForProduct(product.id),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator.adaptive());
+              }
+              final rows = snapshot.data ?? const <ProductPriceHistoryEntry>[];
+              if (rows.isEmpty) {
+                return Center(
+                  child: Text(isArabic
+                      ? 'لا يوجد سجل تغييرات أسعار لهذا المنتج بعد.'
+                      : 'No price changes have been recorded for this product yet.'),
+                );
+              }
+              return ListView.separated(
+                itemCount: rows.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final row = rows[index];
+                  final sign = row.newAmount > row.oldAmount ? '+' :
+                      row.newAmount < row.oldAmount ? '−' : '';
+                  final percentText = row.changePercent > 0
+                      ? ' • $sign${row.changePercent.toStringAsFixed(row.changePercent % 1 == 0 ? 0 : 2)}%'
+                      : '';
+                  final source = row.source == 'bulk'
+                      ? (isArabic ? 'تعديل جماعي' : 'Bulk adjustment')
+                      : (isArabic ? 'تعديل يدوي' : 'Manual change');
+                  return ListTile(
+                    leading: Icon(row.newAmount >= row.oldAmount
+                        ? Icons.trending_up
+                        : Icons.trending_down),
+                    title: Text(
+                      '${_priceTypeLabel(row.priceListId, isArabic)}: '
+                      '${row.oldAmount} → ${row.newAmount} ${row.currencyCode}$percentText',
+                    ),
+                    subtitle: Text(
+                      '${_formatHistoryDate(row.changedAt)} • $source'
+                      '${row.userName.trim().isNotEmpty ? ' • ${row.userName}' : ''}',
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(isArabic ? 'إغلاق' : 'Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openPriceList(BuildContext context) async {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     final products = _filteredProducts(widget.store.products);
     if (products.isEmpty) return;
-    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     final priceListTitle = isArabic ? 'بيانات المنتج' : 'Product data';
     final cancelText = isArabic ? 'إلغاء' : 'Cancel';
     final printText = isArabic ? 'طباعة' : 'Print';
@@ -910,10 +1307,15 @@ class _ProductsPageState extends State<ProductsPage> {
   _ProductRowData _rowDataFor(
     Product product,
     AppLocalizations tr,
-    String localeTag,
-  ) {
+    String localeTag, {
+    ProductCostSnapshot? costSnapshot,
+  }) {
     final cacheKey = product.id;
-    final signature = '${widget.store.productsPageRevision}|$localeTag';
+    final costSignature = costSnapshot == null
+        ? 'fallback'
+        : '${costSnapshot.currentInventoryUnitCost}|${costSnapshot.inventoryQuantity}|${costSnapshot.batchCount}|${costSnapshot.lastPurchaseUnitCost}|${costSnapshot.referenceUnitCost}';
+    final signature =
+        '${widget.store.productsPageRevision}|$localeTag|$costSignature';
     final cached = _rowCache[cacheKey];
     if (cached != null && cached.signature == signature) {
       return cached.row;
@@ -927,6 +1329,7 @@ class _ProductsPageState extends State<ProductsPage> {
       widget.store,
       widget.store.storeProfile,
       tr,
+      costSnapshot: costSnapshot,
     );
     _rowCache[cacheKey] = _RowCacheEntry(signature, row);
     if (kDebugMode) {
@@ -1103,11 +1506,13 @@ class _ProductsQueryResult {
     required this.items,
     required this.totalCount,
     required this.categories,
+    this.costSnapshots = const <String, ProductCostSnapshot>{},
   });
 
   final List<Product> items;
   final int totalCount;
   final List<String> categories;
+  final Map<String, ProductCostSnapshot> costSnapshots;
 
   bool get hasMore => items.length < totalCount;
 }
@@ -1150,18 +1555,89 @@ class _PermissionDeniedScaffold extends StatelessWidget {
   }
 }
 
+class _ProductSelectionBar extends StatelessWidget {
+  const _ProductSelectionBar({
+    required this.selectedCount,
+    required this.visibleCount,
+    required this.allVisibleSelected,
+    required this.someVisibleSelected,
+    required this.onToggleVisible,
+    required this.onClear,
+  });
+
+  final int selectedCount;
+  final int visibleCount;
+  final bool allVisibleSelected;
+  final bool someVisibleSelected;
+  final ValueChanged<bool> onToggleVisible;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: Row(
+          children: [
+            Checkbox(
+              tristate: true,
+              value: allVisibleSelected
+                  ? true
+                  : (someVisibleSelected ? null : false),
+              onChanged: (_) => onToggleVisible(!allVisibleSelected),
+            ),
+            Expanded(
+              child: Text(
+                isArabic
+                    ? 'تحديد المعروض ($visibleCount) • المحدد: $selectedCount'
+                    : 'Select displayed ($visibleCount) • Selected: $selectedCount',
+              ),
+            ),
+            if (selectedCount > 0)
+              TextButton.icon(
+                onPressed: onClear,
+                icon: const Icon(Icons.clear),
+                label: Text(isArabic ? 'إلغاء التحديد' : 'Clear selection'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ProductTile extends StatelessWidget {
-  const _ProductTile(
-      {required this.row, required this.compact, this.onEdit, this.onDelete});
+  const _ProductTile({
+    required this.row,
+    required this.compact,
+    this.selected = false,
+    this.onSelectedChanged,
+    this.onEdit,
+    this.onDelete,
+    this.onHistory,
+  });
 
   final _ProductRowData row;
   final bool compact;
+  final bool selected;
+  final ValueChanged<bool?>? onSelectedChanged;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+  final VoidCallback? onHistory;
 
   @override
   Widget build(BuildContext context) {
     final product = row.product;
+    final historyButton = IconButton(
+      onPressed: onHistory,
+      icon: const Icon(Icons.history_outlined),
+      tooltip: Localizations.localeOf(context).languageCode == 'ar'
+          ? 'سجل الأسعار'
+          : 'Price history',
+    );
     return Card(
       child: compact
           ? Padding(
@@ -1169,6 +1645,8 @@ class _ProductTile extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (onSelectedChanged != null)
+                    Checkbox(value: selected, onChanged: onSelectedChanged),
                   CircleAvatar(
                       child: Icon(product.isActive
                           ? Icons.inventory_2_outlined
@@ -1203,6 +1681,7 @@ class _ProductTile extends StatelessWidget {
                         const Spacer(),
                         Row(
                           children: [
+                            historyButton,
                             IconButton(
                                 onPressed: onEdit,
                                 icon: const Icon(Icons.edit_outlined),
@@ -1222,10 +1701,17 @@ class _ProductTile extends StatelessWidget {
               ),
             )
           : ListTile(
-              leading: CircleAvatar(
-                  child: Icon(product.isActive
-                      ? Icons.inventory_2_outlined
-                      : Icons.block_outlined)),
+              leading: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onSelectedChanged != null)
+                    Checkbox(value: selected, onChanged: onSelectedChanged),
+                  CircleAvatar(
+                      child: Icon(product.isActive
+                          ? Icons.inventory_2_outlined
+                          : Icons.block_outlined)),
+                ],
+              ),
               title: Text(product.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1244,6 +1730,7 @@ class _ProductTile extends StatelessWidget {
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
                     child: Text(row.meta),
                   ),
+                  historyButton,
                   IconButton(
                       onPressed: onEdit, icon: const Icon(Icons.edit_outlined)),
                   IconButton(
@@ -1269,26 +1756,45 @@ class _ProductRowData {
   final String meta;
   final String purchaseMeta;
 
-  factory _ProductRowData.fromStore(Product product, AppStore store,
-      StoreProfile storeProfile, AppLocalizations tr) {
+  factory _ProductRowData.fromStore(
+    Product product,
+    AppStore store,
+    StoreProfile storeProfile,
+    AppLocalizations tr, {
+    ProductCostSnapshot? costSnapshot,
+  }) {
     final subtitle = [
       product.code,
       product.barcode,
       product.category,
       product.brand
     ].where((e) => e.trim().isNotEmpty).join(' • ');
-    final lastPurchase = store.lastPurchasePriceForProduct(product.id);
-    final avgPurchase = store.averagePurchaseCostForProduct(product.id);
+    final compatibilityCost = store.productCostFor(product.id);
+    final fallbackReference =
+        product.usdCost > 0 ? product.usdCost : product.cost;
+    final snapshot = costSnapshot ??
+        ProductCostSnapshot(
+          productId: product.id,
+          currentInventoryUnitCost: compatibilityCost.averageCost > 0
+              ? compatibilityCost.averageCost
+              : fallbackReference,
+          inventoryQuantity: product.trackStock ? product.stock : 0,
+          batchCount: 0,
+          lastPurchaseUnitCost: store.lastPurchasePriceForProduct(product.id),
+          referenceUnitCost: fallbackReference,
+        );
     final supplierCount = store.supplierCountForProduct(product.id);
     final displayPrice = store.defaultProductUsdPrice(product);
     final meta = product.trackStock
         ? '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}'
         : '${tr.text('quantity_type_service')} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}';
     final purchaseMeta = [
-      if (lastPurchase != null)
-        '${tr.text('last_cost')}: ${formatUsdReferenceAmount(lastPurchase, storeProfile)}',
-      if (avgPurchase > 0)
-        '${tr.text('average_cost')}: ${formatUsdReferenceAmount(avgPurchase, storeProfile)}',
+      if (product.trackStock && snapshot.hasInventory)
+        '${tr.text('current_inventory_cost')}: ${formatUsdReferenceAmount(snapshot.currentInventoryUnitCost, storeProfile)}${snapshot.batchCount > 0 ? ' (${snapshot.batchCount} ${tr.text('batches_label')})' : ''}',
+      if (snapshot.lastPurchaseUnitCost != null)
+        '${tr.text('last_purchase_cost_label')}: ${formatUsdReferenceAmount(snapshot.lastPurchaseUnitCost!, storeProfile)}',
+      if (snapshot.referenceUnitCost > 0)
+        '${tr.text('reference_cost')}: ${formatUsdReferenceAmount(snapshot.referenceUnitCost, storeProfile)}',
       if (supplierCount > 0)
         tr.format('suppliers_count', {'count': supplierCount}),
     ].join(' • ');
@@ -1365,12 +1871,17 @@ class _ProductDialogState extends State<_ProductDialog> {
   late List<SupplierProductPrice> supplierPriceDrafts;
   late List<_CurrencyPriceOverrideDraft> priceOverrideDrafts;
   List<Supplier> _supplierOptions = const <Supplier>[];
+  Future<ProductCostSnapshot>? _costSnapshotFuture;
 
   @override
   void initState() {
     super.initState();
     final tr = AppLocalizations.of(context);
     final product = widget.product;
+    if (product != null && product.trackStock) {
+      _costSnapshotFuture =
+          widget.store.productCostSnapshotForProduct(product);
+    }
     _productId =
         product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
     supplierPriceDrafts = product == null
@@ -1737,6 +2248,48 @@ class _ProductDialogState extends State<_ProductDialog> {
                   icon: Icons.payments_outlined,
                   title: tr.text('pricing'),
                   children: [
+                    if (_costSnapshotFuture != null) ...[
+                      FutureBuilder<ProductCostSnapshot>(
+                        future: _costSnapshotFuture,
+                        builder: (context, snapshot) {
+                          final value = snapshot.data;
+                          if (value == null) {
+                            return const LinearProgressIndicator(minHeight: 2);
+                          }
+                          return Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Wrap(
+                              spacing: 18,
+                              runSpacing: 8,
+                              children: [
+                                Text(
+                                  value.hasInventory
+                                      ? '${tr.text('current_inventory_cost')}: ${formatUsdReferenceAmount(value.currentInventoryUnitCost, widget.store.storeProfile)} (${value.batchCount} ${tr.text('batches_label')})'
+                                      : '${tr.text('current_inventory_cost')}: —',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700),
+                                ),
+                                Text(
+                                  '${tr.text('last_purchase_cost_label')}: ${value.lastPurchaseUnitCost == null ? '—' : formatUsdReferenceAmount(value.lastPurchaseUnitCost!, widget.store.storeProfile)}',
+                                ),
+                                Text(
+                                  '${tr.text('reference_cost')}: ${formatUsdReferenceAmount(value.referenceUnitCost, widget.store.storeProfile)}',
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     _ResponsiveFields(children: [
                       _MoneyField(
                           controller: priceController,
@@ -1751,7 +2304,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _MoneyField(
                           controller: costController,
                           currency: costCurrency,
-                          label: tr.text('cost_price'),
+                          label: tr.text('reference_cost'),
                           currencyLabel: tr.text('cost_currency'),
                           validator: _nonNegativeNumber,
                           onChanged: (_) => setState(_syncAllMargins),

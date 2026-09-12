@@ -1345,6 +1345,17 @@ class LocalDatabaseService {
     return InventoryRepository.getProductPrices();
   }
 
+  static Future<List<ProductPriceHistoryEntry>?> getProductPriceHistoryFromSqlite({
+    String productId = '',
+    int limit = 200,
+  }) async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) return null;
+    return InventoryRepository.getProductPriceHistory(
+      productId: productId,
+      limit: limit,
+    );
+  }
+
   static Future<List<ProductPriceOverride>?>
       getProductPriceOverridesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {

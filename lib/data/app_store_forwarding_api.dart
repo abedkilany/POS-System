@@ -80,6 +80,33 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
 
   ProductCost productCostFor(String productId) => _AppStoreSplitCoreLoading(this as AppStore).productCostFor(productId);
 
+  Future<Map<String, ProductCostSnapshot>> productCostSnapshotsForProducts(
+    Iterable<Product> products, {
+    String warehouseId = '',
+  }) =>
+      _AppStoreSplitPricingCosting(this as AppStore)
+          .productCostSnapshotsForProducts(products, warehouseId: warehouseId);
+
+  Future<ProductCostSnapshot> productCostSnapshotForProduct(
+    Product product, {
+    String warehouseId = '',
+  }) =>
+      _AppStoreSplitPricingCosting(this as AppStore)
+          .productCostSnapshotForProduct(product, warehouseId: warehouseId);
+
+  Future<double> estimatedUnifiedBatchUnitCostForProduct(
+    Product product, {
+    String warehouseId = '',
+    double requiredQuantity = 0,
+  }) =>
+      _AppStoreSplitManufacturing(this as AppStore)
+          .estimatedUnifiedBatchUnitCostForProduct(
+            product,
+            warehouseId: warehouseId,
+            requiredQuantity: requiredQuantity,
+          );
+
+
   PriceList get defaultPriceList => _AppStoreSplitCoreLoading(this as AppStore).defaultPriceList;
 
   ProductPrice? defaultProductPriceFor(String productId,
@@ -838,6 +865,26 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     required String currencyCode,
     String unitId = 'base',
   })  => _AppStoreSplitPricingCosting(this as AppStore).setProductBasePriceForList(productId: productId, priceListId: priceListId, amount: amount, currencyCode: currencyCode, unitId: unitId);
+
+  Future<BulkPriceAdjustmentResult> bulkAdjustProductPrices({
+    required Iterable<String> productIds,
+    required String priceListId,
+    required double percentage,
+    required bool increase,
+    String unitId = 'base',
+  }) => _AppStoreSplitPricingCosting(this as AppStore).bulkAdjustProductPrices(
+        productIds: productIds,
+        priceListId: priceListId,
+        percentage: percentage,
+        increase: increase,
+        unitId: unitId,
+      );
+
+  Future<List<ProductPriceHistoryEntry>> productPriceHistoryForProduct(
+    String productId, {
+    int limit = 200,
+  }) => _AppStoreSplitPricingCosting(this as AppStore)
+      .productPriceHistoryForProduct(productId, limit: limit);
 
   Future<void> setProductPriceOverride({
     required String productPriceId,

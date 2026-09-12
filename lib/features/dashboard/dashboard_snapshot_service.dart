@@ -695,6 +695,16 @@ class DashboardSnapshotService {
     var totalPurchasesAmount = 0.0;
     var totalExpensesAmount = 0.0;
     var inventoryCostValue = 0.0;
+    Map<String, ProductCostSnapshot> inventoryCostSnapshots =
+        const <String, ProductCostSnapshot>{};
+    try {
+      inventoryCostSnapshots = await store.productCostSnapshotsForProducts(
+        products.where((product) => product.trackStock && !product.isDeleted),
+      );
+    } catch (_) {
+      // Keep the in-memory fallback available if SQLite valuation is
+      // temporarily unavailable. The DB-first dashboard path remains primary.
+    }
     var lowStockCount = 0;
     var pendingSyncCount = 0;
     var todayExpenseTotal = 0.0;
@@ -712,7 +722,11 @@ class DashboardSnapshotService {
       }
       if (!product.trackStock) continue;
       final stock = product.stock;
-      inventoryCostValue += product.usdCost * stock;
+      final costSnapshot = inventoryCostSnapshots[product.id];
+      inventoryCostValue += costSnapshot != null && costSnapshot.hasInventory
+          ? costSnapshot.currentInventoryUnitCost *
+              costSnapshot.inventoryQuantity
+          : product.usdCost * stock;
       if (stock <= product.lowStockThreshold) {
         lowStockCount += 1;
         final name =

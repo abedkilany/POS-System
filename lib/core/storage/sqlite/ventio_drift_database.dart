@@ -18,7 +18,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 33;
+  int get schemaVersion => 34;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -123,6 +123,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       'supplier_product_prices',
       'price_lists',
       'product_prices',
+      'product_price_history',
       'product_price_overrides',
       'product_costs',
       'costing_method_history',
@@ -464,6 +465,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       'supplier_product_prices',
       'price_lists',
       'product_prices',
+      'product_price_history',
       'product_price_overrides',
       'product_costs',
       'costing_method_history',
@@ -551,6 +553,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureCatalogColumns('catalog_units');
     await _ensurePriceListColumns();
     await _ensureProductPriceColumns();
+    await _ensureProductPriceHistoryColumns();
     await _ensureProductPriceOverrideColumns();
     await _ensureProductCostColumns();
     await _ensureCostingMethodHistoryColumns();
@@ -669,6 +672,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       'supplier_product_prices',
       'price_lists',
       'product_prices',
+      'product_price_history',
       'product_price_overrides',
       'product_costs',
       'costing_method_history',
@@ -1873,6 +1877,24 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'product_prices', 'base_amount', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
         'product_prices', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  Future<void> _ensureProductPriceHistoryColumns() async {
+    await _ensureColumn('product_price_history', 'product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('product_price_history', 'price_list_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('product_price_history', 'unit_id', "TEXT NOT NULL DEFAULT 'base'");
+    await _ensureColumn('product_price_history', 'currency_code', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn('product_price_history', 'old_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('product_price_history', 'new_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('product_price_history', 'change_percent', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('product_price_history', 'change_type', "TEXT NOT NULL DEFAULT 'manual'");
+    await _ensureColumn('product_price_history', 'source', "TEXT NOT NULL DEFAULT 'manual'");
+    await _ensureColumn('product_price_history', 'batch_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('product_price_history', 'user_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('product_price_history', 'user_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('product_price_history', 'changed_at', "TEXT NOT NULL DEFAULT ''");
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_product_price_history_product_changed ON product_price_history(product_id, changed_at DESC);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_product_price_history_batch ON product_price_history(batch_id);');
   }
 
   Future<void> _ensureProductPriceOverrideColumns() async {

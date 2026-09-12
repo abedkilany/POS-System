@@ -431,6 +431,19 @@ class InventoryRepository {
     return BusinessSqliteStore.readProductPrices(db);
   }
 
+  static Future<List<ProductPriceHistoryEntry>?> getProductPriceHistory({
+    String productId = '',
+    int limit = 200,
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.readProductPriceHistory(
+      db,
+      productId: productId,
+      limit: limit,
+    );
+  }
+
   static Future<List<ProductPriceOverride>?> getProductPriceOverrides() async {
     final db = _businessDb();
     if (db == null) return null;

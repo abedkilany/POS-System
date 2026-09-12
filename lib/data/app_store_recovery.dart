@@ -155,6 +155,11 @@ class AppStoreRecoveryService {
             'productPrices',
           );
           await replaceSection(
+            'productPriceHistory',
+            AppStore._productPriceHistoryKey,
+            'productPriceHistory',
+          );
+          await replaceSection(
             'productPriceOverrides',
             AppStore._productPriceOverridesKey,
             'productPriceOverrides',
@@ -503,6 +508,10 @@ class AppStoreRecoveryService {
           await mergeRows(AppStore._productPricesKey,
               _snapshotListMaps(decoded, 'productPrices'));
           await mergeRows(
+            AppStore._productPriceHistoryKey,
+            _snapshotListMaps(decoded, 'productPriceHistory'),
+          );
+          await mergeRows(
             AppStore._productPriceOverridesKey,
             _snapshotListMaps(decoded, 'productPriceOverrides'),
           );
@@ -786,6 +795,10 @@ class AppStoreRecoveryService {
                 _snapshotListMaps(decoded, 'priceLists')),
             replaceRows(AppStore._productPricesKey,
                 _snapshotListMaps(decoded, 'productPrices')),
+            replaceRows(
+              AppStore._productPriceHistoryKey,
+              _snapshotListMaps(decoded, 'productPriceHistory'),
+            ),
             replaceRows(
               AppStore._productPriceOverridesKey,
               _snapshotListMaps(decoded, 'productPriceOverrides'),

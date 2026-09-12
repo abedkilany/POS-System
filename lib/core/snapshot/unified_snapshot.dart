@@ -88,6 +88,7 @@ class UnifiedSnapshotCatalog {
       'supplierProductPrices',
       'priceLists',
       'productPrices',
+      'productPriceHistory',
       'productPriceOverrides',
       'productCosts',
     ],
