@@ -2758,5 +2758,7 @@
   "edit_sale": "تعديل الفاتورة",
   "invoice_edited_successfully": "تم تعديل الفاتورة بنجاح",
   "product_not_found_named": "المنتج غير موجود: {product}",
-  "invalid_sale_item_values": "قيم بند المبيعات غير صالحة."
+  "invalid_sale_item_values": "قيم بند المبيعات غير صالحة.",
+  "error_manufacturing_provisional_cost_missing": "لا يمكن إكمال التصنيع بالمخزون السالب للمنتج {product} لأنه لا توجد تكلفة مرجعية صالحة. حدّد تكلفة للمنتج أو استلم دفعة ذات تكلفة أولاً.",
+  "error_manufacturing_material_cost_missing": "لا يمكن إكمال التصنيع لأن تكلفة المادة {product} غير متوفرة أو تساوي صفراً. صحّح تكلفة الدفعة أو التكلفة المرجعية أولاً."
 }

@@ -14,6 +14,7 @@ class UnifiedBatchCostPreview {
     required this.totalCost,
     required this.unitCost,
     required this.usesProvisionalCost,
+    required this.provisionalUnitCost,
   });
 
   final double requestedQuantity;
@@ -22,6 +23,7 @@ class UnifiedBatchCostPreview {
   final double totalCost;
   final double unitCost;
   final bool usesProvisionalCost;
+  final double provisionalUnitCost;
 
   bool get hasShortage => shortageQuantity > 0.000001;
 }
@@ -1108,6 +1110,27 @@ class BatchInventoryService {
     ).getSingleOrNull();
     final batchCost = (row?.data['unit_cost'] as num?)?.toDouble() ?? 0.0;
     if (batchCost > 0) return batchCost;
+
+    // ProductCost is the authoritative current reference-cost snapshot used by
+    // the rest of Ventio. Negative-stock flows need the same fallback so a
+    // temporary shortage does not silently become a zero-cost deficit merely
+    // because Product.usdCost was not populated.
+    final productCostRow = await db.customSelect(
+      '''
+      SELECT average_cost, last_cost
+      FROM product_costs
+      WHERE product_id = ? AND deleted_at = ''
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(product.id)],
+    ).getSingleOrNull();
+    final averageCost =
+        (productCostRow?.data['average_cost'] as num?)?.toDouble() ?? 0.0;
+    if (averageCost > 0) return averageCost;
+    final lastCost =
+        (productCostRow?.data['last_cost'] as num?)?.toDouble() ?? 0.0;
+    if (lastCost > 0) return lastCost;
     if (product.usdCost > 0) return product.usdCost;
     if (product.cost > 0) return product.cost;
     return 0.0;
@@ -1129,6 +1152,7 @@ class BatchInventoryService {
         totalCost: 0,
         unitCost: 0,
         usesProvisionalCost: false,
+        provisionalUnitCost: 0,
       );
     }
     final startOfMovementDay = _calendarDateText(movementDate);
@@ -1179,13 +1203,14 @@ class BatchInventoryService {
       remaining -= used;
     }
     var usesProvisionalCost = false;
+    var provisionalUnitCost = 0.0;
     if (remaining > 0.000001 && includeProvisionalShortage) {
-      final provisional = await _provisionalDeficitUnitCostInTransaction(
+      provisionalUnitCost = await _provisionalDeficitUnitCostInTransaction(
         product: product,
         warehouseId: warehouseId,
         storeId: storeId,
       );
-      totalCost += remaining * provisional;
+      totalCost += remaining * provisionalUnitCost;
       usesProvisionalCost = true;
     }
     final unitCost = quantity <= 0.000001 ? 0.0 : totalCost / quantity;
@@ -1196,6 +1221,7 @@ class BatchInventoryService {
       totalCost: totalCost,
       unitCost: unitCost,
       usesProvisionalCost: usesProvisionalCost,
+      provisionalUnitCost: provisionalUnitCost,
     );
   }
 

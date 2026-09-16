@@ -1996,17 +1996,17 @@ class SqliteSyncStateService {
     final normalizedType = movement.type.trim().toLowerCase();
     if (BatchInventoryService.isDeficitBatchId(movement.batchId) &&
         (normalizedType.startsWith('transfer_') ||
-            normalizedType.startsWith('manufacturing_'))) {
+            normalizedType.startsWith('manufacturing_produce'))) {
       throw LocalizedDomainException(
         'error_physical_batch_stock_required',
         values: <String, Object?>{
           'product': movement.productName,
           'operation': normalizedType.startsWith('transfer_')
               ? 'warehouse transfer'
-              : 'manufacturing',
+              : 'manufacturing output',
         },
         fallback:
-            'Synchronized warehouse transfers and manufacturing operations cannot use virtual negative-stock deficit batches. Update the source device and retry with physical batch stock.',
+            'A transfer or manufacturing output cannot use a virtual negative-stock deficit batch. Manufacturing input deficits are allowed only when they represent an actual raw-material shortage.',
       );
     }
     await BatchInventoryService(db).applySyncedBatchMovementInTransaction(

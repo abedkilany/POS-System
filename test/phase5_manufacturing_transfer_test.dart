@@ -249,6 +249,104 @@ void main() {
       );
     });
 
+    test(
+        'manufacturing uses physical batches then a costed deficit when negative stock is allowed',
+        () async {
+      final store = await readyPhase5SqliteStore();
+      await store.updateStoreProfile(
+        store.storeProfile.copyWith(allowNegativeStock: true),
+      );
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'raw-neg', code: 'RAW-NEG', stock: 0, cost: 2),
+      );
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'fg-neg', code: 'FG-NEG', stock: 0, cost: 0),
+      );
+      final rawWarehouse =
+          await store.createWarehouse(name: 'Raw Negative', code: 'RAWN');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final finishedWarehouse =
+          await store.createWarehouse(name: 'Finished Negative', code: 'FINN');
+      final bom = await store.createBillOfMaterials(
+        name: 'BOM Negative FG',
+        outputProductId: 'fg-neg',
+        outputQuantity: 1,
+        components: const [
+          BillOfMaterialsLine(
+            productId: 'raw-neg',
+            productName: 'Raw Negative',
+            quantity: 5.1,
+            unitCost: 2,
+          ),
+        ],
+      );
+
+      await store.adjustStock(
+        productId: 'raw-neg',
+        warehouseId: rawWarehouse.id,
+        quantityDelta: 5,
+        reason: 'seed partial raw stock',
+      );
+
+      final order = await store.completeManufacturingOrder(
+        bomId: bom.id,
+        quantity: 1,
+        rawMaterialsWarehouseId: rawWarehouse.id,
+        rawMaterialsWarehouseName: rawWarehouse.name,
+        finishedGoodsWarehouseId: finishedWarehouse.id,
+        finishedGoodsWarehouseName: finishedWarehouse.name,
+      );
+
+      expect(order.totalMaterialCost, closeTo(10.2, 0.000001));
+      expect(order.actualUnitCost, closeTo(10.2, 0.000001));
+      expect(
+        await sqliteWarehouseQuantity(
+          productId: 'raw-neg',
+          warehouseId: rawWarehouse.id,
+          storeId: store.appIdentity.storeId,
+        ),
+        closeTo(-0.1, 0.000001),
+      );
+      expect(
+        await sqliteWarehouseQuantity(
+          productId: 'fg-neg',
+          warehouseId: finishedWarehouse.id,
+          storeId: store.appIdentity.storeId,
+        ),
+        closeTo(1, 0.000001),
+      );
+      final db = SqliteMigrationManager.database!;
+      final deficit = await db.customSelect(
+        '''
+        SELECT quantity_open, provisional_unit_cost
+        FROM inventory_stock_deficits
+        WHERE store_id = ? AND warehouse_id = ? AND product_id = ?
+          AND status = 'open'
+        LIMIT 1
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(store.appIdentity.storeId),
+          Variable<String>(rawWarehouse.id),
+          const Variable<String>('raw-neg'),
+        ],
+      ).getSingle();
+      expect(
+        (deficit.data['quantity_open'] as num).toDouble(),
+        closeTo(0.1, 0.000001),
+      );
+      expect(
+        (deficit.data['provisional_unit_cost'] as num).toDouble(),
+        closeTo(2, 0.000001),
+      );
+      final deficitMovement = store.stockMovements.firstWhere(
+        (movement) =>
+            movement.movementGroupId == order.id &&
+            movement.type == 'manufacturing_consume' &&
+            movement.batchId.startsWith('deficit:'),
+      );
+      expect(deficitMovement.batchId, startsWith('deficit:'));
+    });
+
     test('transfer moves stock once and keeps total quantity stable', () async {
       final store = await readyPhase5SqliteStore();
       await store.addOrUpdateProduct(

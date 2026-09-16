@@ -2758,5 +2758,7 @@
   "edit_sale": "Edit sale",
   "invoice_edited_successfully": "Invoice updated successfully",
   "product_not_found_named": "Product not found: {product}",
-  "invalid_sale_item_values": "Invalid sale item values."
+  "invalid_sale_item_values": "Invalid sale item values.",
+  "error_manufacturing_provisional_cost_missing": "Manufacturing cannot use negative stock for {product} because no valid reference cost is available. Set a cost or receive a costed batch first.",
+  "error_manufacturing_material_cost_missing": "Manufacturing cannot be completed because the cost of {product} is missing or zero. Correct the batch or reference cost first."
 }

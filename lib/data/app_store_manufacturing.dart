@@ -41,8 +41,12 @@ Future<double> _estimatedUnifiedBatchUnitCostForProduct(
         quantity: requiredQuantity,
         movementDate: DateTime.now(),
         storeId: appIdentity.storeId,
+        includeProvisionalShortage: _storeProfile.allowNegativeStock,
       );
-      if (!preview.hasShortage && preview.physicalQuantity > 0.000001) {
+      if ((!preview.hasShortage && preview.physicalQuantity > 0.000001) ||
+          (_storeProfile.allowNegativeStock &&
+              preview.usesProvisionalCost &&
+              preview.provisionalUnitCost > 0.000001)) {
         return preview.unitCost;
       }
     }
@@ -804,18 +808,43 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             warehouseId: rawWarehouse.id,
             at: now,
           );
-          // Manufacturing is a physical transformation. A general store
-          // negative-stock policy may be used for sales timing differences,
-          // but raw materials must exist in real batches before they can be
-          // converted into a finished batch with a final cost.
-          await batchService.requirePhysicalUnifiedStockInTransaction(
-            product: product,
-            warehouseId: rawWarehouse.id,
-            quantity: usedQty,
-            movementDate: now,
-            storeId: appIdentity.storeId,
-            operation: 'manufacturing',
-          );
+          // Manufacturing follows the store-wide negative-stock policy.
+          // When negative stock is disabled we keep the strict physical-batch
+          // guard. When it is enabled, Unified Batch consumes real batches
+          // first and creates a tracked deficit only for the shortage. The
+          // deficit carries a provisional reference cost and is reconciled by
+          // the existing deficit-settlement variance journal when real stock
+          // arrives later.
+          if (!_storeProfile.allowNegativeStock) {
+            await batchService.requirePhysicalUnifiedStockInTransaction(
+              product: product,
+              warehouseId: rawWarehouse.id,
+              quantity: usedQty,
+              movementDate: now,
+              storeId: appIdentity.storeId,
+              operation: 'manufacturing',
+            );
+          } else {
+            final preview =
+                await batchService.previewUnifiedAllocationInTransaction(
+              product: product,
+              warehouseId: rawWarehouse.id,
+              quantity: usedQty,
+              movementDate: now,
+              storeId: appIdentity.storeId,
+              includeProvisionalShortage: true,
+            );
+            if (preview.hasShortage &&
+                (!preview.usesProvisionalCost ||
+                    preview.provisionalUnitCost <= 0.000001)) {
+              throw LocalizedDomainException(
+                'error_manufacturing_provisional_cost_missing',
+                values: <String, Object?>{'product': product.name},
+                fallback:
+                    'Manufacturing cannot use negative stock for ${product.name} because no valid reference cost is available. Set a cost or receive a costed batch first.',
+              );
+            }
+          }
           final allocations = await batchService.allocateUnifiedInTransaction(
             product: product,
             warehouseId: rawWarehouse.id,
@@ -824,7 +853,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             storeId: appIdentity.storeId,
             deviceId: _deviceId,
             branchId: appIdentity.branchId,
-            allowNegativeStock: false,
+            allowNegativeStock: _storeProfile.allowNegativeStock,
           );
           final lineTotalCost = allocations.fold<double>(
             0,
@@ -832,6 +861,14 @@ Future<ManufacturingOrder> completeManufacturingOrder({
                 sum + (allocation.quantity * allocation.unitCost),
           );
           final lineUnitCost = usedQty <= 0 ? 0.0 : lineTotalCost / usedQty;
+          if (lineUnitCost <= 0.000001) {
+            throw LocalizedDomainException(
+              'error_manufacturing_material_cost_missing',
+              values: <String, Object?>{'product': product.name},
+              fallback:
+                  'Manufacturing cost is missing for ${product.name}. Set a valid batch/reference cost before completing the order.',
+            );
+          }
           consumedCost += lineTotalCost;
           final requestedWaste = wasteQuantities[component.productId] ?? 0;
           if (requestedWaste < 0 || requestedWaste > usedQty + 0.000001) {
