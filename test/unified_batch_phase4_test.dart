@@ -104,6 +104,94 @@ void main() {
 
 
 
+  test('phase 4 repairs duplicate post-cutover costing rows idempotently',
+      () async {
+    final db = VentioDriftDatabase(NativeDatabase.memory());
+    await db.initializeFoundation();
+    addTearDown(db.close);
+    final product = _product(id: 'phase4-history-repair', expiry: false);
+    await _persistProduct(db, product);
+    await _warehouseQty(db, product, 5);
+
+    final service = UnifiedBatchPhase4ClosureService(db);
+    final closedAt = DateTime.utc(2026, 8, 29, 1);
+    await service.close(
+      storeId: 'store-1',
+      branchId: 'main',
+      deviceId: 'device-1',
+      closedAt: closedAt,
+    );
+
+    const openBugAt = '2026-08-30T01:00:00.000Z';
+    await db.customStatement(
+      '''
+      INSERT INTO costing_method_history
+        (id, entity_type, created_at, updated_at, deleted_at, device_id,
+         sync_status, store_id, branch_id, version, last_modified_by_device_id,
+         sort_index, method, effective_from, effective_to, reason)
+      VALUES ('costing_lazy_bug', 'costing_method_history', ?, ?, '',
+              'device-1', 'pending', 'store-1', 'main', 1, 'device-1', 0,
+              'batch', ?, '', 'Initial costing method')
+      ''',
+      <Object?>[openBugAt, openBugAt, openBugAt],
+    );
+
+    // Simulate an older repair that produced an impossible negative interval.
+    await db.customStatement(
+      '''
+      INSERT INTO costing_method_history
+        (id, entity_type, created_at, updated_at, deleted_at, device_id,
+         sync_status, store_id, branch_id, version, last_modified_by_device_id,
+         sort_index, method, effective_from, effective_to, reason)
+      VALUES ('costing_bad_interval', 'costing_method_history', ?, ?, '',
+              'device-1', 'pending', 'store-1', 'main', 1, 'device-1', 0,
+              'batch', ?, '2026-08-29T01:00:00.000Z',
+              'Initial costing method')
+      ''',
+      <Object?>[openBugAt, openBugAt, openBugAt],
+    );
+
+    await service.markBlocked(
+      error: StateError('simulated duplicate costing history id'),
+      blockedAt: DateTime.utc(2026, 8, 30, 2),
+    );
+
+    final retry = await service.close(
+      storeId: 'store-1',
+      branchId: 'main',
+      deviceId: 'device-1',
+      closedAt: DateTime.utc(2026, 8, 30, 3),
+    );
+
+    expect(retry.closedAt, closedAt);
+    final openRows = await db.customSelect(
+      "SELECT id, method FROM costing_method_history WHERE deleted_at = '' AND trim(effective_to) = ''",
+    ).get();
+    expect(openRows, hasLength(1));
+    expect(
+      openRows.single.data['id'],
+      'unified_batch_phase4_${closedAt.microsecondsSinceEpoch}',
+    );
+    expect(openRows.single.data['method'], 'batch');
+
+    final repaired = await db.customSelect(
+      "SELECT id, effective_from, effective_to FROM costing_method_history WHERE id IN ('costing_lazy_bug', 'costing_bad_interval') ORDER BY id",
+    ).get();
+    expect(repaired, hasLength(2));
+    for (final row in repaired) {
+      expect(row.data['effective_to'], row.data['effective_from']);
+    }
+
+    final state = await db.customSelect(
+      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_state'",
+    ).getSingle();
+    expect(state.data['value'], 'completed');
+    final error = await db.customSelect(
+      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_error'",
+    ).getSingle();
+    expect(error.data['value'], '');
+  });
+
   test('phase 4 converts allowed negative warehouse stock into a tracked deficit',
       () async {
     final db = VentioDriftDatabase(NativeDatabase.memory());
@@ -238,6 +326,37 @@ void main() {
       "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
     ).getSingleOrNull();
     expect(meta, isNull);
+  });
+
+  test('product-only lazy loading cannot seed duplicate costing history', () {
+    final orchestration =
+        File('lib/data/app_store_orchestration.dart').readAsStringSync();
+    final catalog = File('lib/data/app_store_catalog_parties_expenses.dart')
+        .readAsStringSync();
+    final persistence = File('lib/data/app_store_persistence_sync_core.dart')
+        .readAsStringSync();
+
+    final productsStart = orchestration.indexOf(
+      'Future<void> ensureProductsLoaded()',
+    );
+    final customersStart = orchestration.indexOf(
+      'Future<void> ensureCustomersLoaded()',
+      productsStart,
+    );
+    expect(productsStart, greaterThanOrEqualTo(0));
+    expect(customersStart, greaterThan(productsStart));
+    final productLoadBlock =
+        orchestration.substring(productsStart, customersStart);
+    expect(productLoadBlock, isNot(contains('_ensureCostingMethodHistory();')));
+
+    expect(
+      catalog,
+      contains('await ensureCostingMethodHistoryLoaded();'),
+    );
+    expect(
+      persistence,
+      contains('await ensureCostingMethodHistoryLoaded();'),
+    );
   });
 
   test('phase 4 production source locks costing and values inventory by batch',

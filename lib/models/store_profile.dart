@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 import 'tax_profile.dart';
 
 String _safeCurrencyRoundingMethod(String? value) {
@@ -367,6 +371,8 @@ class StoreProfile {
     this.website = '',
     this.logoPath = '',
     this.logoDataBase64 = '',
+    this.logoAssetId = '',
+    this.historicalLogoAssetsBase64 = const <String, String>{},
     this.logoFileName = '',
     this.logoMimeType = '',
     this.vatNumber = '',
@@ -412,6 +418,16 @@ class StoreProfile {
 
   /// Logo contents persisted inside the SQLite-backed store profile.
   final String logoDataBase64;
+
+  /// Stable content-addressed id for the current logo. Posted documents freeze
+  /// only this lightweight id instead of duplicating the base64 image.
+  final String logoAssetId;
+
+  /// Historical logo payloads keyed by [logoAssetId]. The current logo stays in
+  /// [logoDataBase64], so each unique logo is persisted only once in the store
+  /// profile while old posted documents can still render their original logo.
+  final Map<String, String> historicalLogoAssetsBase64;
+
   final String logoFileName;
   final String logoMimeType;
   final String vatNumber;
@@ -606,6 +622,8 @@ class StoreProfile {
     String? website,
     String? logoPath,
     String? logoDataBase64,
+    String? logoAssetId,
+    Map<String, String>? historicalLogoAssetsBase64,
     String? logoFileName,
     String? logoMimeType,
     String? vatNumber,
@@ -642,6 +660,33 @@ class StoreProfile {
     final nextCurrencies = currencies ?? this.currencies;
     final nextBaseCurrency =
         (baseCurrency ?? this.baseCurrency).trim().toUpperCase();
+
+    final nextHistoricalLogoAssets = <String, String>{
+      ...this.historicalLogoAssetsBase64,
+      ...?historicalLogoAssetsBase64,
+    };
+    final logoWasExplicitlyChanged = logoDataBase64 != null &&
+        logoDataBase64 != this.logoDataBase64;
+    final nextLogoData = logoDataBase64 ?? this.logoDataBase64;
+    var nextLogoAssetId = logoAssetId ?? this.logoAssetId;
+    if (logoWasExplicitlyChanged) {
+      final currentAssetId = this.logoAssetId.isNotEmpty
+          ? this.logoAssetId
+          : logoAssetIdForData(this.logoDataBase64);
+      if (this.logoDataBase64.isNotEmpty && currentAssetId.isNotEmpty) {
+        nextHistoricalLogoAssets[currentAssetId] = this.logoDataBase64;
+      }
+      nextLogoAssetId = nextLogoData.isEmpty
+          ? ''
+          : logoAssetIdForData(nextLogoData);
+    } else if (nextLogoData.isNotEmpty && nextLogoAssetId.isEmpty) {
+      nextLogoAssetId = logoAssetIdForData(nextLogoData);
+    }
+    if (nextLogoAssetId.isNotEmpty) {
+      // The active logo lives in logoDataBase64, never duplicate it in history.
+      nextHistoricalLogoAssets.remove(nextLogoAssetId);
+    }
+
     return StoreProfile(
       name: name ?? this.name,
       phone: phone ?? this.phone,
@@ -651,7 +696,10 @@ class StoreProfile {
       email: email ?? this.email,
       website: website ?? this.website,
       logoPath: logoPath ?? this.logoPath,
-      logoDataBase64: logoDataBase64 ?? this.logoDataBase64,
+      logoDataBase64: nextLogoData,
+      logoAssetId: nextLogoAssetId,
+      historicalLogoAssetsBase64:
+          Map<String, String>.unmodifiable(nextHistoricalLogoAssets),
       logoFileName: logoFileName ?? this.logoFileName,
       logoMimeType: logoMimeType ?? this.logoMimeType,
       vatNumber: vatNumber ?? this.vatNumber,
@@ -708,6 +756,55 @@ class StoreProfile {
     );
   }
 
+  /// Returns a deterministic content-addressed id for a logo payload.
+  static String logoAssetIdForData(String rawBase64) {
+    final normalized = rawBase64.trim();
+    if (normalized.isEmpty) return '';
+    try {
+      final bytes = base64Decode(base64.normalize(normalized));
+      return 'logo_${sha256.convert(bytes)}';
+    } catch (_) {
+      // Preserve compatibility with malformed legacy payloads while still
+      // producing a stable id that can be referenced by historical snapshots.
+      return 'logo_${sha256.convert(utf8.encode(normalized))}';
+    }
+  }
+
+  String logoDataForAsset(String assetId) {
+    final normalized = assetId.trim();
+    if (normalized.isEmpty) return '';
+    final currentAssetId = logoAssetId.isNotEmpty
+        ? logoAssetId
+        : logoAssetIdForData(logoDataBase64);
+    if (normalized == currentAssetId && logoDataBase64.isNotEmpty) {
+      return logoDataBase64;
+    }
+    return historicalLogoAssetsBase64[normalized] ?? '';
+  }
+
+  /// Keeps historical logo assets when a profile arrives from settings, sync,
+  /// or another replacement path. This prevents an old posted document from
+  /// losing access to the exact logo it froze by content id.
+  StoreProfile withMergedLogoAssetsFrom(StoreProfile source) {
+    final merged = <String, String>{
+      ...source.historicalLogoAssetsBase64,
+      ...historicalLogoAssetsBase64,
+    };
+    final sourceAssetId = source.logoAssetId.isNotEmpty
+        ? source.logoAssetId
+        : logoAssetIdForData(source.logoDataBase64);
+    if (source.logoDataBase64.isNotEmpty &&
+        sourceAssetId.isNotEmpty &&
+        sourceAssetId != logoAssetId) {
+      merged[sourceAssetId] = source.logoDataBase64;
+    }
+    if (logoAssetId.isNotEmpty) merged.remove(logoAssetId);
+    return copyWith(
+      logoAssetId: logoAssetId,
+      historicalLogoAssetsBase64: merged,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'name': name,
         'phone': phone,
@@ -718,6 +815,8 @@ class StoreProfile {
         'website': website,
         'logoPath': logoPath,
         'logoDataBase64': logoDataBase64,
+        'logoAssetId': logoAssetId,
+        'historicalLogoAssetsBase64': historicalLogoAssetsBase64,
         'logoFileName': logoFileName,
         'logoMimeType': logoMimeType,
         'vatNumber': vatNumber,
@@ -888,6 +987,26 @@ class StoreProfile {
     final taxConfigurationVersion =
         (json['taxConfigurationVersion'] as num? ?? 0).toInt().clamp(0, 1).toInt();
 
+    final logoDataBase64 = json['logoDataBase64'] as String? ?? '';
+    final rawLogoAssetId = json['logoAssetId']?.toString().trim() ?? '';
+    final logoAssetId = logoDataBase64.isNotEmpty
+        ? StoreProfile.logoAssetIdForData(logoDataBase64)
+        : rawLogoAssetId;
+    final historicalLogoAssetsBase64 = <String, String>{};
+    final rawHistoricalLogoAssets = json['historicalLogoAssetsBase64'];
+    if (rawHistoricalLogoAssets is Map) {
+      for (final entry in rawHistoricalLogoAssets.entries) {
+        final id = entry.key.toString().trim();
+        final data = entry.value?.toString() ?? '';
+        if (id.isNotEmpty && data.isNotEmpty) {
+          historicalLogoAssetsBase64[id] = data;
+        }
+      }
+    }
+    if (logoAssetId.isNotEmpty) {
+      historicalLogoAssetsBase64.remove(logoAssetId);
+    }
+
     return StoreProfile(
       name: json['name'] as String? ?? 'Ventio',
       phone: json['phone'] as String? ?? '',
@@ -897,7 +1016,10 @@ class StoreProfile {
       email: json['email'] as String? ?? '',
       website: json['website'] as String? ?? '',
       logoPath: json['logoPath'] as String? ?? '',
-      logoDataBase64: json['logoDataBase64'] as String? ?? '',
+      logoDataBase64: logoDataBase64,
+      logoAssetId: logoAssetId,
+      historicalLogoAssetsBase64:
+          Map<String, String>.unmodifiable(historicalLogoAssetsBase64),
       logoFileName: json['logoFileName'] as String? ?? '',
       logoMimeType: json['logoMimeType'] as String? ?? '',
       vatNumber: json['vatNumber'] as String? ?? '',

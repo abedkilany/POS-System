@@ -130,6 +130,7 @@ class UnifiedBatchPhase4ClosureService {
         branchId: branchId,
         deviceId: deviceId,
         at: now,
+        repairAt: requestedAt,
       );
       await _writeMeta(closureMetaKey, nowText, nowText);
       await _writeMeta(closureStateMetaKey, 'completed', nowText);
@@ -388,8 +389,10 @@ class UnifiedBatchPhase4ClosureService {
     required String branchId,
     required String deviceId,
     required DateTime at,
+    required DateTime repairAt,
   }) async {
     final atText = at.toUtc().toIso8601String();
+    final repairText = repairAt.toUtc().toIso8601String();
     await _db.customStatement(
       '''
       INSERT OR REPLACE INTO settings (key, value, updated_at)
@@ -397,6 +400,84 @@ class UnifiedBatchPhase4ClosureService {
       ''',
       <Object?>[costingSettingKey, atText],
     );
+
+    final canonicalId = 'unified_batch_phase4_${at.microsecondsSinceEpoch}';
+    final canonical = await _db.customSelect(
+      r'''
+      SELECT id, method, effective_from, effective_to, reason
+      FROM costing_method_history
+      WHERE id = ? AND deleted_at = ''
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(canonicalId)],
+    ).getSingleOrNull();
+
+    if (canonical != null) {
+      final canonicalMethod =
+          canonical.data['method']?.toString().trim().toLowerCase() ?? '';
+      if (!const <String>{'batch', 'unified_batch'}
+          .contains(canonicalMethod)) {
+        throw StateError(
+          'Unified Batch Phase 4 history id collision: $canonicalId is not a batch costing row.',
+        );
+      }
+
+      // A completed Phase 4 owns the only open costing interval forever.
+      // Older builds could lazily seed additional "Initial costing method"
+      // rows after the cutover. Keep those rows as evidence but make them
+      // zero-duration instead of deleting them or moving the cutover boundary.
+      await _db.customStatement(
+        '''
+        UPDATE costing_method_history
+        SET effective_to = effective_from, updated_at = ?,
+            sync_status = 'pending', last_modified_by_device_id = ?
+        WHERE deleted_at = '' AND trim(effective_to) = '' AND id <> ?
+        ''',
+        <Object?>[repairText, deviceId, canonicalId],
+      );
+
+      // Also normalize any previously-created impossible interval (effective_to
+      // before effective_from) left by an older manual/automatic repair.
+      await _db.customStatement(
+        '''
+        UPDATE costing_method_history
+        SET effective_to = effective_from, updated_at = ?,
+            sync_status = 'pending', last_modified_by_device_id = ?
+        WHERE deleted_at = '' AND trim(effective_to) <> ''
+          AND julianday(effective_to) < julianday(effective_from)
+        ''',
+        <Object?>[repairText, deviceId],
+      );
+
+      // If an older repair accidentally closed or altered the canonical row,
+      // restore the permanent Phase 4 boundary in place. Do not INSERT it again.
+      await _db.customStatement(
+        '''
+        UPDATE costing_method_history
+        SET method = 'batch', effective_from = ?, effective_to = '',
+            reason = 'Unified Batch Phase 4 production cutover',
+            updated_at = ?, sync_status = 'pending',
+            last_modified_by_device_id = ?,
+            store_id = CASE WHEN trim(store_id) = '' THEN ? ELSE store_id END,
+            branch_id = CASE WHEN trim(branch_id) = '' THEN ? ELSE branch_id END
+        WHERE id = ? AND deleted_at = ''
+          AND (lower(trim(method)) NOT IN ('batch', 'unified_batch')
+            OR trim(effective_from) <> ? OR trim(effective_to) <> ''
+            OR reason <> 'Unified Batch Phase 4 production cutover'
+            OR trim(store_id) = '' OR trim(branch_id) = '')
+        ''',
+        <Object?>[
+          atText,
+          repairText,
+          deviceId,
+          storeId,
+          branchId,
+          canonicalId,
+          atText,
+        ],
+      );
+      return;
+    }
 
     final openRows = await _db.customSelect(
       r'''
@@ -419,9 +500,18 @@ class UnifiedBatchPhase4ClosureService {
           last_modified_by_device_id = ?
       WHERE deleted_at = '' AND trim(effective_to) = ''
       ''',
-      <Object?>[atText, atText, deviceId],
+      <Object?>[atText, repairText, deviceId],
     );
-    final id = 'unified_batch_phase4_${at.microsecondsSinceEpoch}';
+    await _db.customStatement(
+      '''
+      UPDATE costing_method_history
+      SET effective_to = effective_from, updated_at = ?,
+          sync_status = 'pending', last_modified_by_device_id = ?
+      WHERE deleted_at = '' AND trim(effective_to) <> ''
+        AND julianday(effective_to) < julianday(effective_from)
+      ''',
+      <Object?>[repairText, deviceId],
+    );
     await _db.customStatement(
       '''
       INSERT INTO costing_method_history
@@ -432,9 +522,9 @@ class UnifiedBatchPhase4ClosureService {
               0, 'batch', ?, '', 'Unified Batch Phase 4 production cutover')
       ''',
       <Object?>[
-        id,
+        canonicalId,
         atText,
-        atText,
+        repairText,
         deviceId,
         storeId,
         branchId,

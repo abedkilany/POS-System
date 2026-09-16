@@ -29,7 +29,7 @@ class PostedDocumentSnapshot {
     this.extra = const <String, dynamic>{},
   });
 
-  static const int currentSchemaVersion = 2;
+  static const int currentSchemaVersion = 3;
 
   final int schemaVersion;
   final String documentType;
@@ -121,14 +121,29 @@ class PostedDocumentSnapshot {
 class PostedStoreProfileSnapshot {
   const PostedStoreProfileSnapshot({required this.profileJson});
 
-  /// Full StoreProfile JSON is frozen intentionally. This preserves the legal
-  /// identity, logo/footer, currency definitions, exchange-rate history and
-  /// rounding/display rules that the renderer used when the document posted.
+  /// Rendering/accounting-relevant StoreProfile JSON is frozen intentionally.
+  /// The heavy logo bytes are content-addressed separately; this snapshot keeps
+  /// only logoAssetId plus the small logo metadata so historical rendering stays
+  /// immutable without duplicating the same image in every document.
   final Map<String, dynamic> profileJson;
 
-  StoreProfile toStoreProfile() => StoreProfile.fromJson(
-        Map<String, dynamic>.from(profileJson),
-      );
+  String get logoAssetId => profileJson['logoAssetId']?.toString() ?? '';
+
+  StoreProfile toStoreProfile({StoreProfile? logoAssetSource}) {
+    var profile = StoreProfile.fromJson(
+      Map<String, dynamic>.from(profileJson),
+    );
+    if (profile.logoDataBase64.isEmpty && logoAssetId.isNotEmpty) {
+      final resolved = logoAssetSource?.logoDataForAsset(logoAssetId) ?? '';
+      if (resolved.isNotEmpty) {
+        profile = profile.copyWith(
+          logoDataBase64: resolved,
+          logoAssetId: logoAssetId,
+        );
+      }
+    }
+    return profile;
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'profileJson': profileJson,

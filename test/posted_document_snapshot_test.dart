@@ -208,4 +208,90 @@ void main() {
     expect(restored.lines.single.taxMode, 'none');
     expect(restored.frozenStoreProfile.name, 'Legacy Store');
   });
+  test('posted snapshots reference logo assets without duplicating base64', () {
+    const firstLogo = 'AQIDBAUGBwgJ';
+    const secondLogo = 'CQgHBgUEAwIB';
+    const historicalProfile = StoreProfile(
+      name: 'Logo Store',
+      phone: '',
+      address: '',
+      currency: 'USD',
+      footerNote: '',
+      logoDataBase64: firstLogo,
+      logoFileName: 'logo.png',
+      logoMimeType: 'image/png',
+    );
+    final sale = Sale(
+      id: 'logo-sale-1',
+      invoiceNo: 'LOGO-1',
+      customerName: 'Customer',
+      date: DateTime.utc(2026, 9, 16),
+      status: 'Paid',
+      items: const <SaleItem>[
+        SaleItem(
+          productId: 'p1',
+          productName: 'Product',
+          unitPrice: 1,
+          quantity: 1,
+        ),
+      ],
+      discount: 0,
+    );
+    final snapshot = PostedDocumentSnapshotService.forSale(
+      sale: sale,
+      profile: historicalProfile,
+    );
+    final encoded = snapshot.toJson();
+    final frozenProfileJson = Map<String, dynamic>.from(
+      encoded['storeProfile'] as Map,
+    );
+    final rawProfileJson = Map<String, dynamic>.from(
+      frozenProfileJson['profileJson'] as Map,
+    );
+    final firstAssetId = StoreProfile.logoAssetIdForData(firstLogo);
+
+    expect(rawProfileJson['logoAssetId'], firstAssetId);
+    expect(rawProfileJson.containsKey('logoDataBase64'), isFalse);
+    expect(rawProfileJson.containsKey('historicalLogoAssetsBase64'), isFalse);
+
+    final currentProfile = historicalProfile.copyWith(
+      logoDataBase64: secondLogo,
+      logoFileName: 'new-logo.png',
+    );
+    expect(currentProfile.historicalLogoAssetsBase64[firstAssetId], firstLogo);
+
+    final postedSale = sale.copyWith(postedSnapshot: snapshot);
+    final resolved = PostedDocumentSnapshotService.profileForSale(
+      postedSale,
+      currentProfile,
+    );
+    expect(resolved.logoDataBase64, firstLogo);
+    expect(resolved.logoAssetId, firstAssetId);
+  });
+
+  test('logo history keeps one copy per unique historical logo', () {
+    const firstLogo = 'AQIDBAUG';
+    const secondLogo = 'BwgJCgsM';
+    const profile = StoreProfile(
+      name: 'Store',
+      phone: '',
+      address: '',
+      currency: 'USD',
+      footerNote: '',
+      logoDataBase64: firstLogo,
+    );
+    final firstAssetId = StoreProfile.logoAssetIdForData(firstLogo);
+    final secondAssetId = StoreProfile.logoAssetIdForData(secondLogo);
+
+    final changed = profile.copyWith(logoDataBase64: secondLogo);
+    expect(changed.logoAssetId, secondAssetId);
+    expect(changed.historicalLogoAssetsBase64[firstAssetId], firstLogo);
+    expect(changed.historicalLogoAssetsBase64.containsKey(secondAssetId), isFalse);
+
+    final restored = changed.copyWith(logoDataBase64: firstLogo);
+    expect(restored.logoAssetId, firstAssetId);
+    expect(restored.historicalLogoAssetsBase64[secondAssetId], secondLogo);
+    expect(restored.historicalLogoAssetsBase64.containsKey(firstAssetId), isFalse);
+  });
+
 }

@@ -30,6 +30,7 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
         // and restore the current session. Large business lists hydrate lazily
         // through the existing ensure*Loaded() entry points.
         _storeProfile = _loadStoreProfile();
+        await _compactPostedSnapshotLogosIfNeeded();
         AccountingService.configureMoneyPolicy(_storeProfile);
         final rolesFuture = _loadRoles();
         final usersFuture = _loadUsers();
@@ -286,6 +287,228 @@ Future<List<AccountTransaction>> _loadAccountTransactionsForStartup() async {
     );
   }
 
+
+Future<void> _compactPostedSnapshotLogosIfNeeded() async {
+    if (kIsWeb || !LocalDatabaseService.isSqliteAuthoritative) return;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return;
+
+    final historicalAssets = <String, String>{
+      ..._storeProfile.historicalLogoAssetsBase64,
+    };
+    final currentLogoAssetId = _storeProfile.logoAssetId.isNotEmpty
+        ? _storeProfile.logoAssetId
+        : StoreProfile.logoAssetIdForData(_storeProfile.logoDataBase64);
+
+    var rowsChanged = 0;
+    var bytesRemoved = 0;
+    var storeProfileUpdated = false;
+
+    void rememberAsset(String assetId, String data) {
+      if (assetId.isEmpty || data.isEmpty) return;
+      if (assetId == currentLogoAssetId &&
+          data == _storeProfile.logoDataBase64) {
+        return;
+      }
+      historicalAssets.putIfAbsent(assetId, () => data);
+    }
+
+    bool compactSnapshotMap(Map<String, dynamic> snapshot) {
+      final rawStoreProfile = snapshot['storeProfile'];
+      if (rawStoreProfile is! Map) return false;
+      final storeProfile = Map<String, dynamic>.from(rawStoreProfile);
+      final rawProfileJson = storeProfile['profileJson'];
+      if (rawProfileJson is! Map) return false;
+      final profileJson = Map<String, dynamic>.from(rawProfileJson);
+      var changed = false;
+
+      final rawHistory = profileJson['historicalLogoAssetsBase64'];
+      if (rawHistory is Map) {
+        for (final entry in rawHistory.entries) {
+          final assetId = entry.key.toString().trim();
+          final data = entry.value?.toString() ?? '';
+          rememberAsset(assetId, data);
+        }
+        profileJson.remove('historicalLogoAssetsBase64');
+        changed = true;
+      }
+
+      if (profileJson.containsKey('logoDataBase64')) {
+        final logoData = profileJson['logoDataBase64']?.toString() ?? '';
+        var assetId = profileJson['logoAssetId']?.toString().trim() ?? '';
+        if (logoData.isNotEmpty) {
+          if (assetId.isEmpty) {
+            assetId = StoreProfile.logoAssetIdForData(logoData);
+          }
+          rememberAsset(assetId, logoData);
+          if (assetId.isNotEmpty) profileJson['logoAssetId'] = assetId;
+        }
+        profileJson.remove('logoDataBase64');
+        changed = true;
+      }
+
+      final schemaVersion = (snapshot['schemaVersion'] as num? ?? 1).toInt();
+      if (schemaVersion < PostedDocumentSnapshot.currentSchemaVersion) {
+        snapshot['schemaVersion'] = PostedDocumentSnapshot.currentSchemaVersion;
+        changed = true;
+      }
+
+      if (!changed) return false;
+      storeProfile['profileJson'] = profileJson;
+      snapshot['storeProfile'] = storeProfile;
+      return true;
+    }
+
+    String compactSnapshotJson(String raw) {
+      if (raw.trim().isEmpty || !raw.contains('logoDataBase64')) return raw;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map) return raw;
+        final snapshot = Map<String, dynamic>.from(decoded);
+        if (!compactSnapshotMap(snapshot)) return raw;
+        return jsonEncode(snapshot);
+      } catch (_) {
+        return raw;
+      }
+    }
+
+    String compactCreditNotesJson(String raw) {
+      if (raw.trim().isEmpty || !raw.contains('logoDataBase64')) return raw;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! List) return raw;
+        var changed = false;
+        final notes = <Object?>[];
+        for (final item in decoded) {
+          if (item is! Map) {
+            notes.add(item);
+            continue;
+          }
+          final note = Map<String, dynamic>.from(item);
+          final rawSnapshot = note['postedSnapshot'];
+          if (rawSnapshot is Map) {
+            final snapshot = Map<String, dynamic>.from(rawSnapshot);
+            if (compactSnapshotMap(snapshot)) {
+              note['postedSnapshot'] = snapshot;
+              changed = true;
+            }
+          }
+          notes.add(note);
+        }
+        return changed ? jsonEncode(notes) : raw;
+      } catch (_) {
+        return raw;
+      }
+    }
+
+    try {
+      await db.transaction(() async {
+        for (final table in const <String>['sales', 'purchases']) {
+          final rows = await db.customSelect(
+            "SELECT id, posted_snapshot_json FROM $table "
+            "WHERE posted_snapshot_json <> '' "
+            "AND instr(posted_snapshot_json, 'logoDataBase64') > 0",
+          ).get();
+          for (final row in rows) {
+            final id = row.data['id']?.toString() ?? '';
+            final before = row.data['posted_snapshot_json']?.toString() ?? '';
+            final after = compactSnapshotJson(before);
+            if (id.isEmpty || after == before) continue;
+            await db.customUpdate(
+              'UPDATE $table SET posted_snapshot_json = ? WHERE id = ?',
+              variables: <Variable<Object>>[
+                Variable<String>(after),
+                Variable<String>(id),
+              ],
+            );
+            rowsChanged += 1;
+            bytesRemoved += before.length - after.length;
+          }
+        }
+
+        final creditRows = await db.customSelect(
+          "SELECT value FROM settings WHERE key = 'credit_notes_v1' LIMIT 1",
+        ).get();
+        if (creditRows.isNotEmpty) {
+          final before = creditRows.first.data['value']?.toString() ?? '';
+          final after = compactCreditNotesJson(before);
+          if (after != before) {
+            final now = DateTime.now().toUtc().toIso8601String();
+            await db.customUpdate(
+              "UPDATE settings SET value = ?, updated_at = ? WHERE key = 'credit_notes_v1'",
+              variables: <Variable<Object>>[
+                Variable<String>(after),
+                Variable<String>(now),
+              ],
+            );
+            await db.customUpdate(
+              "UPDATE local_key_values SET value = ?, updated_at = ? WHERE key = 'credit_notes_v1'",
+              variables: <Variable<Object>>[
+                Variable<String>(after),
+                Variable<String>(now),
+              ],
+            );
+            rowsChanged += 1;
+            bytesRemoved += (before.length - after.length) * 2;
+          }
+        }
+
+        final normalizedProfile = _storeProfile.copyWith(
+          logoAssetId: currentLogoAssetId,
+          historicalLogoAssetsBase64: historicalAssets,
+        );
+        final beforeProfileJson = jsonEncode(_storeProfile.toJson());
+        final afterProfileJson = jsonEncode(normalizedProfile.toJson());
+        if (afterProfileJson != beforeProfileJson) {
+          final now = DateTime.now().toUtc().toIso8601String();
+          await db.customInsert(
+            'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+            variables: <Variable<Object>>[
+              Variable<String>(AppStore._storeProfileKey),
+              Variable<String>(afterProfileJson),
+              Variable<String>(now),
+            ],
+          );
+          await db.customInsert(
+            'INSERT OR REPLACE INTO local_key_values (key, value, updated_at) VALUES (?, ?, ?)',
+            variables: <Variable<Object>>[
+              Variable<String>(AppStore._storeProfileKey),
+              Variable<String>(afterProfileJson),
+              Variable<String>(now),
+            ],
+          );
+          _storeProfile = normalizedProfile;
+          storeProfileUpdated = true;
+        }
+      });
+
+      if (storeProfileUpdated) {
+        // Keep LocalDatabaseService's SQLite mirror aligned with the direct
+        // transactional update above. The persisted value is identical.
+        await LocalDatabaseService.setString(
+          AppStore._storeProfileKey,
+          jsonEncode(_storeProfile.toJson()),
+        );
+      }
+
+      if (rowsChanged > 0) {
+        debugPrint(
+          'Logo asset compaction migrated $rowsChanged row(s), removed approximately $bytesRemoved JSON character(s).',
+        );
+        if (bytesRemoved > 1024 * 1024) {
+          try {
+            await db.customStatement('PRAGMA wal_checkpoint(TRUNCATE)');
+            await db.customStatement('VACUUM');
+          } catch (error) {
+            debugPrint('Logo compaction VACUUM deferred: $error');
+          }
+        }
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Posted logo asset compaction skipped: $error');
+      debugPrint('$stackTrace');
+    }
+  }
 
 Future<void> _backfillPostedDocumentSnapshotsIfNeeded() async {
     if (!LocalDatabaseService.isSqliteAuthoritative) return;

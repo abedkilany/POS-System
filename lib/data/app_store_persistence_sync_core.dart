@@ -1429,6 +1429,9 @@ Future<BusinessDataIntegrityRepairResult> repairMissingProductReferences({
     bool createArchivedProducts = false,
   }) async {
     requirePermission(AppPermission.productsEdit);
+    // This repair can persist products without going through addOrUpdateProduct.
+    // Hydrate costing history first for the same lazy-loading safety invariant.
+    await ensureCostingMethodHistoryLoaded();
 
     final activeIds = _products
         .where((product) => !product.isDeleted)
@@ -1535,15 +1538,16 @@ Future<BusinessDataIntegrityRepairResult> repairMissingProductReferences({
 
 Future<void> updateStoreProfile(StoreProfile profile) async {
     requirePermission(AppPermission.settingsManage);
+    final normalizedProfile = profile.withMergedLogoAssetsFrom(_storeProfile);
     if (wants('storeProfile')) {
-      _storeProfile = profile;
+      _storeProfile = normalizedProfile;
       AccountingService.configureMoneyPolicy(_storeProfile);
     }
     _recordSyncChange(
       entityType: 'store_profile',
       entityId: 'store',
       operation: 'update',
-      payload: profile.toJson(),
+      payload: normalizedProfile.toJson(),
     );
     await _saveDirty(storeProfile: true, sync: true);
     notifyListeners();

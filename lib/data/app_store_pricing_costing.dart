@@ -783,6 +783,9 @@ InventoryCostingMethod _runtimeInventoryCostingMethod(
   }
 
 void _ensureCostingMethodHistory() {
+    // IMPORTANT: callers must first hydrate the costing-history deferred group.
+    // An empty in-memory list before hydration is not evidence that SQLite has
+    // no history (and seeding at that point creates duplicate open rows).
     if (_costingMethodHistory.isNotEmpty) return;
     final now = DateTime.now();
     _costingMethodHistory.add(CostingMethodHistory(

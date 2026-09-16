@@ -70,6 +70,7 @@ import '../models/app_identity.dart';
 import '../models/payment_allocation.dart';
 import '../models/receipt_voucher.dart';
 import '../models/payment_voucher.dart';
+import '../models/posted_document_snapshot.dart';
 
 part 'app_store_backup.dart';
 part 'app_store_purchase_insights.dart';

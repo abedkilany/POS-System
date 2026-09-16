@@ -324,7 +324,7 @@ Future<void> _replaceFromBackupMap(
     _syncQueue.clear();
     if (!preserveLocalIdentityForLanClient) _syncQueue.addAll(syncQueue);
     if (wants('storeProfile')) {
-      _storeProfile = profile;
+      _storeProfile = profile.withMergedLogoAssetsFrom(_storeProfile);
       AccountingService.configureMoneyPolicy(_storeProfile);
     }
     if (preserveLocalIdentityForLanClient) {
@@ -1351,7 +1351,8 @@ Future<void> _applySyncChangePayload(SyncChange change) async {
         }
         break;
       case 'store_profile':
-        _storeProfile = StoreProfile.fromJson(p);
+        _storeProfile = StoreProfile.fromJson(p)
+            .withMergedLogoAssetsFrom(_storeProfile);
         AccountingService.configureMoneyPolicy(_storeProfile);
         break;
       case 'app_identity':

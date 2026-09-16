@@ -21,7 +21,9 @@ class PostedDocumentSnapshotService {
     Sale sale,
     StoreProfile currentProfile,
   ) =>
-      sale.postedSnapshot?.frozenStoreProfile ?? currentProfile;
+      sale.postedSnapshot?.storeProfile
+              .toStoreProfile(logoAssetSource: currentProfile) ??
+          currentProfile;
 
   static Sale saleView(Sale sale) {
     final snapshot = sale.postedSnapshot;
@@ -95,7 +97,9 @@ class PostedDocumentSnapshotService {
     Purchase purchase,
     StoreProfile currentProfile,
   ) =>
-      purchase.postedSnapshot?.frozenStoreProfile ?? currentProfile;
+      purchase.postedSnapshot?.storeProfile
+              .toStoreProfile(logoAssetSource: currentProfile) ??
+          currentProfile;
 
   static Purchase purchaseView(Purchase purchase) {
     final snapshot = purchase.postedSnapshot;
@@ -640,10 +644,23 @@ class PostedDocumentSnapshotService {
     return (value * factor).roundToDouble() / factor;
   }
 
-  static PostedStoreProfileSnapshot _profile(StoreProfile profile) =>
-      PostedStoreProfileSnapshot(
-        profileJson: Map<String, dynamic>.from(profile.toJson()),
-      );
+  static PostedStoreProfileSnapshot _profile(StoreProfile profile) {
+    final profileJson = Map<String, dynamic>.from(profile.toJson());
+
+    // The logo image is content-addressed in StoreProfile and must never be
+    // duplicated into each immutable posted snapshot. Keep only the stable id
+    // plus the small file metadata; rendering resolves the original bytes from
+    // the store profile's current/historical logo asset registry.
+    profileJson.remove('logoDataBase64');
+    profileJson.remove('historicalLogoAssetsBase64');
+    if ((profileJson['logoAssetId']?.toString() ?? '').isEmpty &&
+        profile.logoDataBase64.isNotEmpty) {
+      profileJson['logoAssetId'] =
+          StoreProfile.logoAssetIdForData(profile.logoDataBase64);
+    }
+
+    return PostedStoreProfileSnapshot(profileJson: profileJson);
+  }
 
   static PostedDocumentAuditSnapshot _audit({
     AppUser? user,

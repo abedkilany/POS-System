@@ -126,7 +126,10 @@ mixin _AppStoreOrchestration
           _ensureDefaultPriceLists();
           _ensureDefaultProductPriceEntries();
           _ensureProductCostEntries();
-          _ensureCostingMethodHistory();
+          // Costing history is a separate deferred group. Never seed it from
+          // product-only hydration because an empty in-memory list does not
+          // mean SQLite has no history. Product mutations explicitly load the
+          // history before they can persist product-derived data.
           _touchDataRevisions(products: true);
         },
       );

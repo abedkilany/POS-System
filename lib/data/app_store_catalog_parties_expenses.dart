@@ -83,6 +83,10 @@ Future<void> addOrUpdateProduct(Product product) async {
       AppPermission.productsManage,
       exists ? AppPermission.productsEdit : AppPermission.productsCreate,
     });
+    // Product saves also flush product-derived data. Load costing history from
+    // its authoritative source first so an unloaded cache can never be
+    // mistaken for an empty history and seeded with a bogus Initial row.
+    await ensureCostingMethodHistoryLoaded();
     final now = DateTime.now();
     final isCreate = index == null;
     final existingIndex = index ?? -1;
@@ -235,6 +239,8 @@ Future<void> addOrUpdateProductsBulk(List<Product> products) async {
         AppPermission.productsEdit,
       });
     }
+    // See addOrUpdateProduct: bulk saves flush the same derived-data group.
+    await ensureCostingMethodHistoryLoaded();
     final section = 'product.addOrUpdateBulk';
     final now = DateTime.now();
     final seenCodes = <String>{};
