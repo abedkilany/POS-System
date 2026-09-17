@@ -6857,6 +6857,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       ),
     );
     if (confirmed != true || assetAccount == null) return;
+    if (!mounted) return;
     try {
       final paidFromCashDrawer = paymentMode == 'cash_drawer';
       if (paidFromCashDrawer) {
