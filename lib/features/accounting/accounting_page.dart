@@ -6682,18 +6682,32 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     final usefulLifeMonths = TextEditingController(text: '0');
     final notes = TextEditingController();
     final accounts = (await AccountingService.listAccounts())
-        .where((account) => account.isPostable)
+        .where((account) => account.isPostable && account.isActive)
         .toList();
-    final assetAccounts = accounts.where((a) => a.type == 'asset').toList();
+    final assetAccounts = accounts
+        .where((a) =>
+            a.type == 'asset' &&
+            (a.subtype == 'fixed_assets' || a.subtype.startsWith('fixed_')))
+        .toList();
     if (assetAccounts.isEmpty) return;
     AccountingAccount? assetAccount = assetAccounts.firstWhere(
       (a) => a.subtype == 'fixed_assets',
       orElse: () => assetAccounts.first,
     );
-    AccountingAccount? paymentAccount = assetAccounts.firstWhere(
-      (a) => a.subtype == 'cash',
-      orElse: () => assetAccounts.first,
-    );
+    final counterpartAccounts = accounts
+        .where((a) => a.id != assetAccount?.id)
+        .toList(growable: false);
+    AccountingAccount? paymentAccount;
+    for (final account in counterpartAccounts) {
+      if (account.subtype == 'cash') {
+        paymentAccount = account;
+        break;
+      }
+    }
+    paymentAccount ??=
+        counterpartAccounts.isEmpty ? null : counterpartAccounts.first;
+    var paymentMode = 'cash_drawer';
+    var acquisitionDate = DateTime.now();
     if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -6713,7 +6727,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   decoration: InputDecoration(labelText: tr.text('category'))),
               TextField(
                   controller: purchaseValue,
-                  keyboardType: TextInputType.number,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   decoration:
                       InputDecoration(labelText: tr.text('purchase_value'))),
               TextField(
@@ -6721,6 +6736,26 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(
                       labelText: tr.text('useful_life_months'))),
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_accountingUiText(context, 'تاريخ الاقتناء',
+                    'Acquisition date', 'Date d’acquisition')),
+                subtitle: Text(
+                    '${acquisitionDate.year}-${acquisitionDate.month.toString().padLeft(2, '0')}-${acquisitionDate.day.toString().padLeft(2, '0')}'),
+                trailing: const Icon(Icons.calendar_month_outlined),
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: acquisitionDate,
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime.now(),
+                  );
+                  if (picked != null) {
+                    setDialogState(() => acquisitionDate = picked);
+                  }
+                },
+              ),
               const SizedBox(height: 8),
               DropdownButtonFormField<AccountingAccount>(
                 initialValue: assetAccount,
@@ -6734,25 +6769,77 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                         child: Text(
                             '${a.code} - ${_localizedAccountingName(a.name, tr)}'))
                 ],
-                onChanged: (value) =>
-                    setDialogState(() => assetAccount = value),
+                onChanged: (value) => setDialogState(() {
+                  assetAccount = value;
+                  if (paymentAccount?.id == value?.id) {
+                    paymentAccount = null;
+                  }
+                }),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<AccountingAccount>(
-                initialValue: paymentAccount,
+              DropdownButtonFormField<String>(
+                initialValue: paymentMode,
                 isExpanded: true,
-                decoration:
-                    InputDecoration(labelText: tr.text('payment_account')),
+                decoration: InputDecoration(
+                  labelText: _accountingUiText(context, 'طريقة الدفع',
+                      'Payment method', 'Mode de paiement'),
+                ),
                 items: [
-                  for (final a in assetAccounts)
-                    DropdownMenuItem(
-                        value: a,
-                        child: Text(
-                            '${a.code} - ${_localizedAccountingName(a.name, tr)}'))
+                  DropdownMenuItem(
+                    value: 'cash_drawer',
+                    child: Text(_accountingUiText(
+                      context,
+                      'نقداً من صندوق الجهاز الحالي',
+                      'Cash from current drawer',
+                      'Espèces depuis la caisse actuelle',
+                    )),
+                  ),
+                  DropdownMenuItem(
+                    value: 'account',
+                    child: Text(_accountingUiText(
+                      context,
+                      'حساب محاسبي آخر',
+                      'Other accounting account',
+                      'Autre compte comptable',
+                    )),
+                  ),
                 ],
-                onChanged: (value) =>
-                    setDialogState(() => paymentAccount = value),
+                onChanged: (value) => setDialogState(
+                    () => paymentMode = value ?? paymentMode),
               ),
+              if (paymentMode == 'cash_drawer') ...[
+                const SizedBox(height: 8),
+                Text(
+                  _accountingUiText(
+                    context,
+                    'سيتم تسجيل سحب نقدي فعلي من وردية صندوق هذا الجهاز وتخفيض رصيده تلقائياً.',
+                    'A real cash withdrawal will be posted to this device drawer and its balance will be reduced automatically.',
+                    'Un retrait réel sera enregistré dans la caisse de cet appareil et son solde sera réduit automatiquement.',
+                  ),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ] else if (counterpartAccounts.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<AccountingAccount>(
+                  initialValue: paymentAccount,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: _accountingUiText(context, 'الحساب المقابل',
+                        'Counterpart account', 'Compte de contrepartie'),
+                  ),
+                  items: [
+                    for (final a in counterpartAccounts)
+                      if (a.id != assetAccount?.id)
+                        DropdownMenuItem(
+                          value: a,
+                          child: Text(
+                              '${a.code} - ${_localizedAccountingName(a.name, tr)}'))
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => paymentAccount = value),
+                ),
+              ],
+              const SizedBox(height: 8),
               TextField(
                   controller: notes,
                   decoration: InputDecoration(labelText: tr.text('notes'))),
@@ -6769,19 +6856,64 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         ),
       ),
     );
-    if (confirmed == true && assetAccount != null && paymentAccount != null) {
+    if (confirmed != true || assetAccount == null) return;
+    try {
+      final paidFromCashDrawer = paymentMode == 'cash_drawer';
+      if (paidFromCashDrawer) {
+        widget.store.requirePermission(AppPermission.cashBoxManage);
+      }
+      if (!paidFromCashDrawer && paymentAccount == null) {
+        throw StateError(_accountingUiText(
+          context,
+          'يجب تحديد الحساب المقابل.',
+          'A counterpart account is required.',
+          'Un compte de contrepartie est requis.',
+        ));
+      }
+      final user = widget.store.activeUser;
+      final actor = user?.fullName.trim().isNotEmpty == true
+          ? user!.fullName.trim()
+          : widget.store.currentRole;
       await AccountingService.createFixedAsset(
         code: code.text,
         name: name.text,
         category: category.text,
-        acquisitionDate: DateTime.now(),
+        acquisitionDate: acquisitionDate,
         purchaseValue: double.tryParse(purchaseValue.text) ?? 0,
         usefulLifeMonths: int.tryParse(usefulLifeMonths.text) ?? 0,
         assetAccountId: assetAccount!.id,
-        paymentAccountId: paymentAccount!.id,
+        paymentAccountId: paidFromCashDrawer ? '' : paymentAccount!.id,
+        paidFromCashDrawer: paidFromCashDrawer,
         notes: notes.text,
+        createdBy: actor,
+        createdByUserId: user?.id ?? '',
+        deviceId: widget.store.appIdentity.deviceId,
+        storeId: widget.store.appIdentity.storeId,
+        branchId: widget.store.appIdentity.branchId,
       );
-      if (mounted) _refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_accountingUiText(
+            context,
+            paidFromCashDrawer
+                ? 'تم إنشاء الأصل وتسجيل السحب من الصندوق بنجاح.'
+                : 'تم إنشاء الأصل والقيد المحاسبي بنجاح.',
+            paidFromCashDrawer
+                ? 'Asset created and cash drawer withdrawal posted successfully.'
+                : 'Asset and journal entry created successfully.',
+            paidFromCashDrawer
+                ? 'Immobilisation créée et retrait de caisse enregistré avec succès.'
+                : 'Immobilisation et écriture comptable créées avec succès.',
+          )),
+        ),
+      );
+      _refresh(force: true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Bad state: ', ''))),
+      );
     }
   }
 

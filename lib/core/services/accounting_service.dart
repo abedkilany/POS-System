@@ -4971,8 +4971,12 @@ class AccountingService {
     int usefulLifeMonths = 0,
     String assetAccountId = '',
     String paymentAccountId = '',
+    bool paidFromCashDrawer = false,
+    String currency = 'USD',
     String notes = '',
     String createdBy = '',
+    String createdByUserId = '',
+    String deviceId = '',
     String storeId = '',
     String branchId = '',
   }) async {
@@ -4983,20 +4987,65 @@ class AccountingService {
     final fixedAssetAccountId = assetAccountId.trim().isNotEmpty
         ? assetAccountId.trim()
         : _requiredAccount(accounts, 'default_fixed_assets_account_id');
-    final paymentAccount = paymentAccountId.trim().isNotEmpty
-        ? paymentAccountId.trim()
-        : _requiredAccount(accounts, 'default_cash_account_id');
+    final legacyPaymentAccount = paidFromCashDrawer
+        ? ''
+        : (paymentAccountId.trim().isNotEmpty
+            ? paymentAccountId.trim()
+            : _requiredAccount(accounts, 'default_cash_account_id'));
     await _accountSnapshot(_db, fixedAssetAccountId);
-    await _accountSnapshot(_db, paymentAccount);
+    if (!paidFromCashDrawer) {
+      await _accountSnapshot(_db, legacyPaymentAccount);
+    }
 
-    final now = DateTime.now().toUtc().toIso8601String();
+    final nowDate = DateTime.now().toUtc();
+    final now = nowDate.toIso8601String();
     final assetId = _newId('asset');
     final normalizedCode = code.trim().isEmpty
         ? 'FA-${DateTime.now().millisecondsSinceEpoch}'
         : code.trim().toUpperCase();
     final normalizedName = name.trim().isEmpty ? 'أصل ثابت' : name.trim();
+    final normalizedCurrency =
+        currency.trim().isEmpty ? 'USD' : currency.trim().toUpperCase();
 
     await _db.transaction(() async {
+      _CashLocationSnapshot? cashDrawer;
+      var cashDrawerSessionId = '';
+      var creditAccountId = legacyPaymentAccount;
+
+      if (paidFromCashDrawer) {
+        cashDrawer = await _openCashDrawerLocationForDevice(
+          deviceId: deviceId,
+          branchId: branchId,
+          database: _db,
+        );
+        if (cashDrawer == null || cashDrawer.accountId.trim().isEmpty) {
+          throw StateError(
+            'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل شراء أصل نقداً.',
+          );
+        }
+        final sessionRow = await _db.customSelect(
+          "SELECT id FROM cash_drawer_sessions WHERE cash_location_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 1",
+          variables: <Variable<Object>>[Variable<String>(cashDrawer.id)],
+        ).getSingleOrNull();
+        cashDrawerSessionId =
+            sessionRow?.data['id']?.toString().trim() ?? '';
+        if (cashDrawerSessionId.isEmpty) {
+          throw StateError(
+            'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل شراء أصل نقداً.',
+          );
+        }
+        await ensureCashOutflowAllowed(
+          cashLocationId: cashDrawer.id,
+          amount: amount,
+          database: _db,
+        );
+        creditAccountId = cashDrawer.accountId.trim();
+        await _accountSnapshot(_db, creditAccountId);
+      }
+      if (creditAccountId == fixedAssetAccountId) {
+        throw StateError('حساب الدفع لا يمكن أن يكون نفس حساب الأصل الثابت.');
+      }
+
       await _db.customInsert(
         '''
         INSERT INTO fixed_assets
@@ -5027,6 +5076,7 @@ class AccountingService {
           referenceId: assetId,
           referenceNo: normalizedCode,
           description: 'اقتناء أصل ثابت: $normalizedName',
+          source: 'system',
           createdBy: createdBy,
           storeId: storeId,
           branchId: branchId,
@@ -5038,10 +5088,12 @@ class AccountingService {
               memo: 'اقتناء أصل ثابت $normalizedCode',
             ),
             JournalLineDraft(
-              accountId: paymentAccount,
+              accountId: creditAccountId,
               debit: 0,
               credit: amount,
-              memo: 'دفعة أصل ثابت $normalizedCode',
+              memo: paidFromCashDrawer
+                  ? 'دفعة نقدية لشراء أصل ثابت $normalizedCode'
+                  : 'دفعة أصل ثابت $normalizedCode',
             ),
           ],
         ),
@@ -5051,6 +5103,95 @@ class AccountingService {
       if (entryId.isEmpty) {
         throw StateError('Fixed asset journal entry was not persisted.');
       }
+
+      if (paidFromCashDrawer && cashDrawer != null) {
+        final idempotencyKey = 'fixed-asset-cash:$assetId';
+        final operationId = 'cashop_fixed_asset_$assetId';
+        final operationNo = 'FA-CW-${nowDate.microsecondsSinceEpoch}';
+        final cashNotes = notes.trim().isEmpty
+            ? 'شراء أصل ثابت: $normalizedCode - $normalizedName'
+            : 'شراء أصل ثابت: $normalizedCode - $normalizedName • ${notes.trim()}';
+        await _db.customInsert(
+          '''
+          INSERT INTO cash_operations
+            (id, operation_no, operation_type, operation_date, cash_location_id,
+             cash_drawer_session_id, amount, currency, journal_entry_id, notes,
+             created_by, created_by_user_id, device_id, store_id, branch_id,
+             idempotency_key, created_at, updated_at, last_modified_by_device_id)
+          VALUES (?, ?, 'cash_withdrawal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ''',
+          variables: <Variable<Object>>[
+            Variable<String>(operationId),
+            Variable<String>(operationNo),
+            Variable<String>(acquisitionDate.toUtc().toIso8601String()),
+            Variable<String>(cashDrawer.id),
+            Variable<String>(cashDrawerSessionId),
+            Variable<double>(_roundMoney(amount)),
+            Variable<String>(normalizedCurrency),
+            Variable<String>(entryId),
+            Variable<String>(cashNotes),
+            Variable<String>(createdBy.trim()),
+            Variable<String>(createdByUserId.trim()),
+            Variable<String>(deviceId.trim()),
+            Variable<String>(storeId.trim()),
+            Variable<String>(branchId.trim()),
+            Variable<String>(idempotencyKey),
+            Variable<String>(now),
+            Variable<String>(now),
+            Variable<String>(deviceId.trim()),
+          ],
+        );
+
+        final ledger = CashLedgerService(_db);
+        await ledger.appendInExistingTransaction(CashLedgerTransaction(
+          id: 'cashledger_fixed_asset_$assetId',
+          type: 'cash_withdrawal',
+          direction: 'out',
+          amount: _roundMoney(amount),
+          currency: normalizedCurrency,
+          cashLocationId: cashDrawer.id,
+          cashDrawerSessionId: cashDrawerSessionId,
+          referenceType: 'fixed_asset',
+          referenceId: assetId,
+          referenceNumber: normalizedCode,
+          paymentMethod: 'Cash',
+          createdBy: createdBy.trim(),
+          createdByUserId: createdByUserId.trim(),
+          deviceId: deviceId.trim(),
+          branchId: branchId.trim(),
+          storeId: storeId.trim(),
+          notes: cashNotes,
+          idempotencyKey: '$idempotencyKey:ledger',
+          occurredAt: acquisitionDate.toUtc(),
+          createdAt: nowDate,
+          updatedAt: nowDate,
+          lastModifiedByDeviceId: deviceId.trim(),
+        ));
+
+        await applyCashLocationDelta(
+          cashLocationId: cashDrawer.id,
+          delta: -_roundMoney(amount),
+          updatedAt: now,
+          database: _db,
+        );
+
+        final expectedCash = _roundMoney(
+          await calculateCashDrawerExpectedCash(cashDrawerSessionId),
+        );
+        await _db.customUpdate(
+          '''
+          UPDATE cash_drawer_sessions
+          SET expected_cash = ?, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND status = 'open'
+          ''',
+          variables: <Variable<Object>>[
+            Variable<double>(expectedCash),
+            Variable<String>(now),
+            Variable<String>(cashDrawerSessionId),
+          ],
+        );
+      }
+
       await _writeAuditLogInTransaction(
         _db,
         action: 'create_fixed_asset',
@@ -5058,7 +5199,9 @@ class AccountingService {
         entityId: assetId,
         referenceType: 'fixed_asset',
         referenceId: assetId,
-        details: '$normalizedCode - $normalizedName',
+        details: paidFromCashDrawer
+            ? '$normalizedCode - $normalizedName - cash drawer purchase'
+            : '$normalizedCode - $normalizedName',
         createdBy: createdBy,
         storeId: storeId,
         branchId: branchId,
