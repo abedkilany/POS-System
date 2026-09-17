@@ -89,6 +89,212 @@ Future<double> _estimatedUnifiedBatchUnitCostForProduct(
     return fallback();
   }
 
+Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
+    VentioDriftDatabase sqliteDb, {
+    required BatchInventoryService batchService,
+    required Product product,
+    required String warehouseId,
+    required double requiredQuantity,
+    required DateTime repairedAt,
+    required String referenceId,
+    required String referenceNo,
+  }) async {
+    if (!product.trackStock || requiredQuantity <= 0.000001) return;
+    final startOfMovementDay =
+        '${repairedAt.year.toString().padLeft(4, '0')}-${repairedAt.month.toString().padLeft(2, '0')}-${repairedAt.day.toString().padLeft(2, '0')}';
+    final expiryPredicate = product.expiryTrackingEnabled
+        ? "trim(b.expiration_date) <> '' AND substr(b.expiration_date, 1, 10) >= ?"
+        : "trim(b.expiration_date) = ''";
+    final ordering = product.expiryTrackingEnabled
+        ? '''substr(b.expiration_date, 1, 10) ASC,
+             CASE WHEN trim(b.received_at) = '' THEN b.created_at ELSE b.received_at END ASC,
+             b.id ASC'''
+        : '''CASE WHEN trim(b.received_at) = '' THEN b.created_at ELSE b.received_at END ASC,
+             b.id ASC''';
+    final rows = await sqliteDb.customSelect(
+      '''
+      SELECT b.id AS batch_id, b.source_type, b.source_id, b.unit_cost,
+             bb.quantity, bb.reserved_quantity
+      FROM inventory_batch_balances bb
+      JOIN inventory_batches b ON b.id = bb.batch_id
+        AND b.product_id = bb.product_id AND b.store_id = bb.store_id
+      WHERE bb.store_id = ? AND bb.warehouse_id = ? AND bb.product_id = ?
+        AND b.status = 'active'
+        AND b.source_type <> 'inventory_deficit'
+        AND b.id NOT LIKE 'deficit:%'
+        AND (bb.quantity - bb.reserved_quantity) > 0.000001
+        AND $expiryPredicate
+      ORDER BY $ordering
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(appIdentity.storeId),
+        Variable<String>(warehouseId),
+        Variable<String>(product.id),
+        if (product.expiryTrackingEnabled)
+          Variable<String>(startOfMovementDay),
+      ],
+    ).get();
+
+    var remaining = requiredQuantity;
+    for (final row in rows) {
+      if (remaining <= 0.000001) break;
+      final available =
+          row.read<double>('quantity') - row.read<double>('reserved_quantity');
+      final used = available < remaining ? available : remaining;
+      if (used <= 0) continue;
+      remaining -= used;
+      final existingUnitCost = row.read<double>('unit_cost');
+      if (existingUnitCost > 0.000001) continue;
+
+      final batchId = row.read<String>('batch_id');
+      final sourceType = row.read<String>('source_type').trim().toLowerCase();
+      if (sourceType != 'inventory_count') {
+        throw LocalizedDomainException(
+          'error_manufacturing_zero_cost_physical_batch',
+          values: <String, Object?>{
+            'product': product.name,
+            'batch': batchId,
+          },
+          fallback:
+              'Manufacturing cannot consume zero-cost physical batch $batchId for ${product.name}. Revalue or correct that batch first.',
+        );
+      }
+
+      // Automatic repair is safe only while no historical outbound movement
+      // has already consumed this zero-cost count batch. Otherwise a repair of
+      // the remaining stock alone would leave past COGS/manufacturing history
+      // at zero and silently rewrite only part of the lineage.
+      final priorOutbound = await sqliteDb.customSelect(
+        '''
+        SELECT COUNT(*) AS c
+        FROM stock_movements
+        WHERE store_id = ? AND product_id = ? AND warehouse_id = ?
+          AND batch_id = ? AND deleted_at = '' AND quantity < -0.000001
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(appIdentity.storeId),
+          Variable<String>(product.id),
+          Variable<String>(warehouseId),
+          Variable<String>(batchId),
+        ],
+      ).getSingle();
+      final outboundCount =
+          (priorOutbound.data['c'] as num? ?? 0).toInt();
+      if (outboundCount > 0) {
+        throw LocalizedDomainException(
+          'error_manufacturing_zero_cost_batch_already_consumed',
+          values: <String, Object?>{
+            'product': product.name,
+            'batch': batchId,
+          },
+          fallback:
+              'Zero-cost batch $batchId for ${product.name} has already been consumed by another movement. Run an explicit stock-cost repair before manufacturing.',
+        );
+      }
+
+      // If the count movement itself carried a positive cost, GL already
+      // contains that value and only the Batch row is stale/corrupt. In that
+      // case restore the Batch cost without posting another gain. Otherwise
+      // this was a true zero-value count overage and the repair must add both
+      // Batch carrying value and the matching inventory revaluation journal.
+      final sourceValueRow = await sqliteDb.customSelect(
+        '''
+        SELECT COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0)
+                 AS source_quantity,
+               COALESCE(SUM(CASE WHEN quantity > 0
+                                 THEN quantity * unit_cost ELSE 0 END), 0)
+                 AS source_value
+        FROM stock_movements
+        WHERE store_id = ? AND product_id = ? AND warehouse_id = ?
+          AND batch_id = ? AND deleted_at = ''
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(appIdentity.storeId),
+          Variable<String>(product.id),
+          Variable<String>(warehouseId),
+          Variable<String>(batchId),
+        ],
+      ).getSingle();
+      final sourceQuantity =
+          (sourceValueRow.data['source_quantity'] as num? ?? 0).toDouble();
+      final sourceValue =
+          (sourceValueRow.data['source_value'] as num? ?? 0).toDouble();
+      final sourceUnitCost = sourceQuantity <= 0.000001
+          ? 0.0
+          : sourceValue / sourceQuantity;
+      final referenceUnitCost = sourceUnitCost > 0.000001
+          ? sourceUnitCost
+          : await batchService.resolveReferenceUnitCostInTransaction(
+              product: product,
+              warehouseId: warehouseId,
+              storeId: appIdentity.storeId,
+            );
+      if (referenceUnitCost <= 0.000001) {
+        throw LocalizedDomainException(
+          'error_manufacturing_material_cost_missing',
+          values: <String, Object?>{'product': product.name},
+          fallback:
+              'Manufacturing cost is missing for ${product.name}. Set a valid reference cost or receive a costed batch first.',
+        );
+      }
+
+      final currentBatchQuantity = row.read<double>('quantity');
+      final revaluationValue = sourceUnitCost > 0.000001
+          ? 0.0
+          : currentBatchQuantity * referenceUnitCost;
+      final updated = await sqliteDb.customUpdate(
+        '''
+        UPDATE inventory_batches
+        SET unit_cost = ?, cost_currency = 'USD', exchange_rate = 1,
+            updated_at = ?, device_id = ?, last_modified_by_device_id = ?,
+            sync_status = 'pending', version = version + 1
+        WHERE id = ? AND store_id = ? AND product_id = ?
+          AND unit_cost <= 0.000001
+        ''',
+        variables: <Variable<Object>>[
+          Variable<double>(referenceUnitCost),
+          Variable<String>(repairedAt.toUtc().toIso8601String()),
+          Variable<String>(_deviceId),
+          Variable<String>(_deviceId),
+          Variable<String>(batchId),
+          Variable<String>(appIdentity.storeId),
+          Variable<String>(product.id),
+        ],
+        updates: const {},
+      );
+      if (updated != 1) {
+        throw const LocalizedDomainException(
+          'error_batch_concurrent_change',
+          fallback: 'Batch cost changed while repairing manufacturing input.',
+        );
+      }
+
+      if (revaluationValue > 0.000001) {
+        final journalId =
+            await AccountingService.recordInventoryBatchRevaluationInTransaction(
+          database: sqliteDb,
+          entryDate: repairedAt,
+          referenceId: '$referenceId:batch-cost-repair:$batchId',
+          referenceNo: referenceNo,
+          productId: product.id,
+          productName: product.name,
+          batchId: batchId,
+          valueDelta: revaluationValue,
+          createdBy: _activeUser?.fullName ?? _deviceId,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          reason:
+              'Automatic repair of zero-cost inventory-count batch before manufacturing.',
+        );
+        if (journalId.trim().isEmpty) {
+          throw StateError(
+            'Zero-cost Batch repair requires a posted inventory revaluation journal.',
+          );
+        }
+      }
+    }
+  }
+
 Future<BillOfMaterials> estimateBillOfMaterialsSnapshot(
     BillOfMaterials bom, {
     String warehouseId = '',
@@ -807,6 +1013,16 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             product: product,
             warehouseId: rawWarehouse.id,
             at: now,
+          );
+          await _repairZeroCostManufacturingInputBatchesInTransaction(
+            sqliteDb,
+            batchService: batchService,
+            product: product,
+            warehouseId: rawWarehouse.id,
+            requiredQuantity: usedQty,
+            repairedAt: now,
+            referenceId: technicalReferenceId,
+            referenceNo: order.orderNo,
           );
           // Manufacturing follows the store-wide negative-stock policy.
           // When negative stock is disabled we keep the strict physical-batch

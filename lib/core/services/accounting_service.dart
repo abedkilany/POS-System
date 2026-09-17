@@ -5704,6 +5704,84 @@ class AccountingService {
     );
   }
 
+  /// Revalues an already-existing physical Batch when its persisted carrying
+  /// cost is missing/zero but a positive reference cost can be proven. No
+  /// quantity changes here: only the inventory asset value changes. This is
+  /// intentionally separate from manufacturing so the raw-to-finished transfer
+  /// remains value-neutral after the repair.
+  static Future<String> recordInventoryBatchRevaluationInTransaction({
+    required VentioDriftDatabase database,
+    required DateTime entryDate,
+    required String referenceId,
+    required String referenceNo,
+    required String productId,
+    required String productName,
+    required String batchId,
+    required double valueDelta,
+    String createdBy = '',
+    String storeId = '',
+    String branchId = '',
+    String reason = '',
+  }) async {
+    final roundedDelta = _roundMoney(valueDelta);
+    if (roundedDelta.abs() <= 0.000001) return '';
+    final inventoryAccount =
+        await _inventoryAccountForProduct(database, productId);
+    final lines = <JournalLineDraft>[];
+    if (roundedDelta > 0) {
+      final gainAccount =
+          await _resolveAccountRoleForDatabase(database, 'inventory_count_gain');
+      lines
+        ..add(JournalLineDraft(
+          accountId: inventoryAccount,
+          debit: roundedDelta,
+          credit: 0,
+          memo: 'Batch cost revaluation - $productName ($batchId)',
+        ))
+        ..add(JournalLineDraft(
+          accountId: gainAccount,
+          debit: 0,
+          credit: roundedDelta,
+          memo: 'Batch cost revaluation gain - $productName ($batchId)',
+        ));
+    } else {
+      final lossAccount =
+          await _resolveAccountRoleForDatabase(database, 'inventory_count_loss');
+      final amount = roundedDelta.abs();
+      lines
+        ..add(JournalLineDraft(
+          accountId: lossAccount,
+          debit: amount,
+          credit: 0,
+          memo: 'Batch cost revaluation loss - $productName ($batchId)',
+        ))
+        ..add(JournalLineDraft(
+          accountId: inventoryAccount,
+          debit: 0,
+          credit: amount,
+          memo: 'Batch cost revaluation - $productName ($batchId)',
+        ));
+    }
+    return createPostedEntry(
+      JournalEntryDraft(
+        entryDate: entryDate,
+        referenceType: 'inventory_batch_revaluation',
+        referenceId: referenceId,
+        referenceNo: referenceNo,
+        description: reason.trim().isEmpty
+            ? 'Inventory Batch cost revaluation - $productName'
+            : reason.trim(),
+        source: 'system',
+        createdBy: createdBy,
+        storeId: storeId,
+        branchId: branchId,
+        lines: lines,
+      ),
+      database: database,
+      withinExistingTransaction: true,
+    );
+  }
+
   /// Posts the financial side of a manual stock adjustment. The caller owns
   /// the SQLite transaction together with stock/cost-layer mutations.
   static Future<String> recordManualInventoryAdjustmentInTransaction({

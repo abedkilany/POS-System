@@ -2760,5 +2760,7 @@
   "product_not_found_named": "Produit introuvable : {product}",
   "invalid_sale_item_values": "Valeurs de ligne de vente invalides.",
   "error_manufacturing_provisional_cost_missing": "La fabrication ne peut pas utiliser un stock négatif pour {product} car aucun coût de référence valide n’est disponible. Définissez un coût ou réceptionnez d’abord un lot valorisé.",
-  "error_manufacturing_material_cost_missing": "La fabrication ne peut pas être terminée car le coût de {product} est manquant ou nul. Corrigez d’abord le coût du lot ou le coût de référence."
+  "error_manufacturing_material_cost_missing": "La fabrication ne peut pas être terminée car le coût de {product} est manquant ou nul. Corrigez d’abord le coût du lot ou le coût de référence.",
+  "error_manufacturing_zero_cost_physical_batch": "La fabrication ne peut pas consommer le lot physique {batch} à coût nul pour {product}. Réévaluez ou corrigez d’abord le coût du lot.",
+  "error_manufacturing_zero_cost_batch_already_consumed": "Le lot {batch} à coût nul pour {product} a déjà été partiellement consommé. Une réparation explicite du coût du stock est requise avant de poursuivre la fabrication."
 }

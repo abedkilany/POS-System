@@ -347,6 +347,179 @@ void main() {
       expect(deficitMovement.batchId, startsWith('deficit:'));
     });
 
+    test(
+        'manufacturing repairs an untouched zero-cost inventory-count batch before consumption',
+        () async {
+      final store = await readyPhase5SqliteStore();
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'raw-zero-count', code: 'RAW-ZC', stock: 0, cost: 2),
+      );
+      await store.addOrUpdateProduct(
+        phase5Product(id: 'fg-zero-count', code: 'FG-ZC', stock: 0, cost: 0),
+      );
+      final rawWarehouse =
+          await store.createWarehouse(name: 'Raw Zero Count', code: 'RZC');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final finishedWarehouse =
+          await store.createWarehouse(name: 'Finished Zero Count', code: 'FZC');
+      final bom = await store.createBillOfMaterials(
+        name: 'BOM Zero Count Repair',
+        outputProductId: 'fg-zero-count',
+        outputQuantity: 1,
+        components: const [
+          BillOfMaterialsLine(
+            productId: 'raw-zero-count',
+            productName: 'Raw Zero Count',
+            quantity: 0.48,
+            unitCost: 0,
+          ),
+        ],
+      );
+
+      // Simulate a historical inventory-count overage that was posted while no
+      // cost reference existed. The Product reference cost (2.00) represents a
+      // later user correction, exactly like the production regression.
+      final db = SqliteMigrationManager.database!;
+      final now = DateTime.utc(2026, 9, 16, 8);
+      final nowText = now.toIso8601String();
+      final storeId = store.appIdentity.storeId;
+      final branchId = store.appIdentity.branchId;
+      const batchId = 'count-zero-batch';
+      await db.transaction(() async {
+        await db.customStatement(
+          '''
+          INSERT INTO warehouse_inventory
+            (id, store_id, branch_id, warehouse_id, product_id, quantity,
+             version, created_at, updated_at, device_id, sync_status,
+             last_modified_by_device_id)
+          VALUES (?, ?, ?, ?, ?, 0.5, 1, ?, ?, 'test', 'pending', 'test')
+          ''',
+          <Object?>[
+            'wi-zero-count',
+            storeId,
+            branchId,
+            rawWarehouse.id,
+            'raw-zero-count',
+            nowText,
+            nowText,
+          ],
+        );
+        await db.customStatement(
+          '''
+          INSERT INTO inventory_batches
+            (id, product_id, product_name, status, source_type, source_id,
+             store_id, branch_id, created_at, updated_at, device_id,
+             last_modified_by_device_id, sync_status, version, source_line_id,
+             unit_cost, initial_quantity, cost_currency, exchange_rate,
+             received_at)
+          VALUES (?, 'raw-zero-count', 'Raw Zero Count', 'active',
+                  'inventory_count', 'count-zero', ?, ?, ?, ?, 'test', 'test',
+                  'pending', 1, 'count-zero:line', 0, 0.5, 'USD', 1, ?)
+          ''',
+          <Object?>[batchId, storeId, branchId, nowText, nowText, nowText],
+        );
+        await db.customStatement(
+          '''
+          INSERT INTO inventory_batch_balances
+            (id, batch_id, product_id, warehouse_id, store_id, branch_id,
+             quantity, reserved_quantity, version, created_at, updated_at,
+             device_id, last_modified_by_device_id, sync_status)
+          VALUES (?, ?, 'raw-zero-count', ?, ?, ?, 0.5, 0, 1, ?, ?,
+                  'test', 'test', 'pending')
+          ''',
+          <Object?>[
+            'bb-zero-count',
+            batchId,
+            rawWarehouse.id,
+            storeId,
+            branchId,
+            nowText,
+            nowText,
+          ],
+        );
+        await db.customStatement(
+          '''
+          INSERT INTO unified_batch_cutovers
+            (id, store_id, warehouse_id, product_id, cutover_at,
+             opening_batch_id, opening_quantity, opening_unit_cost,
+             created_at, device_id)
+          VALUES (?, ?, ?, 'raw-zero-count', ?, '', 0, 0, ?, 'test')
+          ''',
+          <Object?>[
+            '$storeId::${rawWarehouse.id}::raw-zero-count',
+            storeId,
+            rawWarehouse.id,
+            nowText,
+            nowText,
+          ],
+        );
+        await db.customStatement(
+          '''
+          INSERT INTO stock_movements
+            (id, entity_type, created_at, updated_at, store_id, branch_id,
+             product_id, product_name, movement_type, quantity, movement_date,
+             reference_id, reference_no, reason, adjustment_category,
+             warehouse_id, warehouse_name, movement_group_id, document_line_id,
+             idempotency_key, unit_cost, batch_id)
+          VALUES ('count-zero-movement', 'stockMovement', ?, ?, ?, ?,
+                  'raw-zero-count', 'Raw Zero Count', 'count_adjustment', 0.5,
+                  ?, 'count-zero', 'COUNT-ZERO', 'Inventory count adjustment',
+                  'stock_count_overage', ?, ?, 'count-zero', 'count-zero:line',
+                  'count-zero:line', 0, ?)
+          ''',
+          <Object?>[
+            nowText,
+            nowText,
+            storeId,
+            branchId,
+            nowText,
+            rawWarehouse.id,
+            rawWarehouse.name,
+            batchId,
+          ],
+        );
+      });
+
+      final order = await store.completeManufacturingOrder(
+        bomId: bom.id,
+        quantity: 1,
+        rawMaterialsWarehouseId: rawWarehouse.id,
+        rawMaterialsWarehouseName: rawWarehouse.name,
+        finishedGoodsWarehouseId: finishedWarehouse.id,
+        finishedGoodsWarehouseName: finishedWarehouse.name,
+      );
+
+      expect(order.totalMaterialCost, closeTo(0.96, 0.000001));
+      final repairedBatch = await db.customSelect(
+        'SELECT unit_cost FROM inventory_batches WHERE id = ?',
+        variables: const <Variable<Object>>[Variable<String>(batchId)],
+      ).getSingle();
+      expect(
+        (repairedBatch.data['unit_cost'] as num).toDouble(),
+        closeTo(2, 0.000001),
+      );
+      final revaluation = await db.customSelect(
+        '''
+        SELECT COUNT(*) AS c
+        FROM journal_entries
+        WHERE reference_type = 'inventory_batch_revaluation'
+          AND reference_id LIKE ?
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>('%batch-cost-repair:$batchId'),
+        ],
+      ).getSingle();
+      expect((revaluation.data['c'] as num).toInt(), 1);
+      expect(
+        await sqliteWarehouseQuantity(
+          productId: 'raw-zero-count',
+          warehouseId: rawWarehouse.id,
+          storeId: storeId,
+        ),
+        closeTo(0.02, 0.000001),
+      );
+    });
+
     test('transfer moves stock once and keeps total quantity stable', () async {
       final store = await readyPhase5SqliteStore();
       await store.addOrUpdateProduct(

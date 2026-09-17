@@ -2760,5 +2760,7 @@
   "product_not_found_named": "Product not found: {product}",
   "invalid_sale_item_values": "Invalid sale item values.",
   "error_manufacturing_provisional_cost_missing": "Manufacturing cannot use negative stock for {product} because no valid reference cost is available. Set a cost or receive a costed batch first.",
-  "error_manufacturing_material_cost_missing": "Manufacturing cannot be completed because the cost of {product} is missing or zero. Correct the batch or reference cost first."
+  "error_manufacturing_material_cost_missing": "Manufacturing cannot be completed because the cost of {product} is missing or zero. Correct the batch or reference cost first.",
+  "error_manufacturing_zero_cost_physical_batch": "Manufacturing cannot consume zero-cost physical batch {batch} for {product}. Revalue or correct the batch cost first.",
+  "error_manufacturing_zero_cost_batch_already_consumed": "Zero-cost batch {batch} for {product} has already been partially consumed. An explicit stock-cost repair is required before manufacturing can continue."
 }

@@ -47,8 +47,23 @@ Future<double> _unifiedOpeningCostForProductInTransaction(
         movementCount > 0 &&
         (movementQuantity - warehouseQuantity).abs() <= tolerance &&
         carryingValue >= -tolerance) {
-      return max(0.0, carryingValue) / warehouseQuantity;
+      final movementUnitCost = max(0.0, carryingValue) / warehouseQuantity;
+      if (movementUnitCost > tolerance) return movementUnitCost;
     }
+
+    // A stock count can add quantity after the current warehouse reached zero.
+    // In that case the movement aggregate above can legitimately be zero even
+    // though this product has a reliable historical Unified Batch cost. Prefer
+    // that real carrying-cost history before falling back to editable Product
+    // reference fields so new count-overage batches never become zero-cost just
+    // because ProductCost was empty at the moment of counting.
+    final batchReferenceCost =
+        await BatchInventoryService(sqliteDb).resolveReferenceUnitCostInTransaction(
+      product: product,
+      warehouseId: warehouseId,
+      storeId: appIdentity.storeId,
+    );
+    if (batchReferenceCost > tolerance) return batchReferenceCost;
 
     final cost = productCostFor(product.id);
     if (cost.averageCost > 0) return cost.averageCost;

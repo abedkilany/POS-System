@@ -1081,6 +1081,25 @@ class BatchInventoryService {
   static bool isDeficitBatchId(String batchId) =>
       batchId.trim().startsWith('deficit:');
 
+  /// Resolves the best known positive reference cost for a stock-tracked
+  /// product without changing inventory. The resolution order intentionally
+  /// mirrors negative-stock provisional costing: latest real Batch cost first,
+  /// then ProductCost, then the user-maintained Product reference cost.
+  ///
+  /// Manufacturing and inventory-count repair use this when a legacy/current
+  /// physical Batch exists with a zero carrying cost. Keeping the resolver in
+  /// one place prevents those flows from inventing a different valuation rule.
+  Future<double> resolveReferenceUnitCostInTransaction({
+    required Product product,
+    required String warehouseId,
+    required String storeId,
+  }) =>
+      _provisionalDeficitUnitCostInTransaction(
+        product: product,
+        warehouseId: warehouseId,
+        storeId: storeId,
+      );
+
   Future<double> _provisionalDeficitUnitCostInTransaction({
     required Product product,
     required String warehouseId,
