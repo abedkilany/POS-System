@@ -739,6 +739,75 @@ void main() {
     expect((supplierMovement!.data['debit'] as num).toDouble(), 15);
   });
 
+  test('multi-invoice receipt splits compatibility account movements', () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedDrawer(db);
+    await _seedSale(db,
+        id: 'sale-split-1',
+        invoiceNo: 'INV-SPLIT-1',
+        customerId: 'cust-split',
+        total: 10);
+    await _seedSale(db,
+        id: 'sale-split-2',
+        invoiceNo: 'INV-SPLIT-2',
+        customerId: 'cust-split',
+        total: 30);
+    final service = PaymentVoucherService(db);
+
+    await service.createReceipt(
+      id: 'receipt-split',
+      voucherNo: 'RC-SPLIT',
+      customerId: 'cust-split',
+      customerName: 'Customer',
+      amount: 25,
+      cashLocationId: 'drawer-1',
+      cashDrawerSessionId: 'shift-1',
+      deviceId: 'dev-1',
+      storeId: 'store-1',
+      branchId: 'main',
+      allocations: const <PaymentAllocationDraft>[
+        PaymentAllocationDraft(
+          referenceId: 'sale-split-1',
+          referenceNumber: 'INV-SPLIT-1',
+          amount: 10,
+        ),
+        PaymentAllocationDraft(
+          referenceId: 'sale-split-2',
+          referenceNumber: 'INV-SPLIT-2',
+          amount: 15,
+        ),
+      ],
+    );
+
+    final rows = await db.customSelect(
+      '''
+      SELECT id, reference_id, reference_no, credit
+      FROM account_transactions
+      WHERE id LIKE 'receipt-split-customer-payment%'
+        AND deleted_at = ''
+      ORDER BY id
+      ''',
+    ).get();
+    expect(rows, hasLength(2));
+    expect(rows[0].data['reference_id'], 'sale-split-1');
+    expect(rows[0].data['reference_no'], 'INV-SPLIT-1');
+    expect((rows[0].data['credit'] as num).toDouble(), 10);
+    expect(rows[1].data['reference_id'], 'sale-split-2');
+    expect(rows[1].data['reference_no'], 'INV-SPLIT-2');
+    expect((rows[1].data['credit'] as num).toDouble(), 15);
+
+    final total = await db.customSelect(
+      '''
+      SELECT COALESCE(SUM(credit - debit), 0) AS total
+      FROM account_transactions
+      WHERE id LIKE 'receipt-split-customer-payment%'
+        AND deleted_at = ''
+      ''',
+    ).getSingle();
+    expect((total.data['total'] as num).toDouble(), 25);
+  });
+
   test('Phase 9 voucher reversal persists matching account-ledger reversal',
       () async {
     final db = await _openDb();

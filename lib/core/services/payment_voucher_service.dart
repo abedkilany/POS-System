@@ -2271,64 +2271,106 @@ class PaymentVoucherService {
     if (voucherId.trim().isEmpty || partyId.trim().isEmpty || amount <= 0) {
       return;
     }
-    final first = allocations.isEmpty ? null : allocations.first;
-    final baseMovementId = first == null
-        ? '$voucherId-${isReceipt ? 'customer' : 'supplier'}-account-payment'
-        : '$voucherId-${isReceipt ? 'customer-payment' : 'supplier-payment'}';
-    final movementId = movementVersionSuffix.trim().isEmpty
-        ? baseMovementId
-        : '$baseMovementId-${movementVersionSuffix.trim()}';
-    final referenceId = first?.referenceId ?? voucherId;
-    final referenceNo = (first?.referenceNumber.trim().isNotEmpty ?? false)
-        ? first!.referenceNumber.trim()
-        : voucherNo.trim();
-    final existing = await _db.customSelect(
-      "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
-      variables: <Variable<Object>>[Variable<String>(movementId)],
-    ).getSingleOrNull();
-    if (existing != null) return;
-    final nextSort = await _db
-        .customSelect(
-          'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
-        )
-        .getSingle();
-    final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
-    final iso = occurredAt.toUtc().toIso8601String();
-    await _db.customInsert(
-      '''
-      INSERT OR IGNORE INTO account_transactions
-        (id, entity_type, created_at, updated_at, deleted_at, device_id,
-         sync_status, store_id, branch_id, version, sort_index, account_type,
-         account_id, account_name, transaction_date, transaction_type,
-         reference_id, reference_no, debit, credit, currency, payment_method,
-         note, last_modified_by_device_id)
-      VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ''',
-      variables: <Variable<Object>>[
-        Variable<String>(movementId),
-        Variable<String>(iso),
-        Variable<String>(iso),
-        Variable<String>(deviceId.trim()),
-        Variable<String>(storeId.trim()),
-        Variable<String>(branchId.trim()),
-        Variable<int>(sortIndex),
-        Variable<String>(isReceipt ? 'customer' : 'supplier'),
-        Variable<String>(partyId.trim()),
-        Variable<String>(partyName.trim()),
-        Variable<String>(iso),
-        Variable<String>(isReceipt ? 'paymentReceived' : 'paymentPaid'),
-        Variable<String>(referenceId.trim()),
-        Variable<String>(referenceNo),
-        Variable<double>(isReceipt ? 0 : _money(amount)),
-        Variable<double>(isReceipt ? _money(amount) : 0),
-        Variable<String>(_currency(currency)),
-        Variable<String>(paymentMethod.trim()),
-        Variable<String>(notes.trim().isEmpty
-            ? (isReceipt ? 'Receipt $voucherNo' : 'Payment $voucherNo')
-            : notes.trim()),
-        Variable<String>(deviceId.trim()),
-      ],
-    );
+
+    final primaryBase =
+        '$voucherId-${isReceipt ? 'customer-payment' : 'supplier-payment'}';
+    final accountBase =
+        '$voucherId-${isReceipt ? 'customer' : 'supplier'}-account-payment';
+    final suffix = movementVersionSuffix.trim();
+
+    String versioned(String base) => suffix.isEmpty ? base : '$base-$suffix';
+
+    Future<void> insertMovement({
+      required String id,
+      required String referenceId,
+      required String referenceNo,
+      required double movementAmount,
+    }) async {
+      if (movementAmount <= _epsilon) return;
+      final existing = await _db.customSelect(
+        "SELECT id FROM account_transactions WHERE id = ? AND deleted_at = '' LIMIT 1",
+        variables: <Variable<Object>>[Variable<String>(id)],
+      ).getSingleOrNull();
+      if (existing != null) return;
+
+      final nextSort = await _db
+          .customSelect(
+            'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+          )
+          .getSingle();
+      final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
+      final iso = occurredAt.toUtc().toIso8601String();
+
+      await _db.customInsert(
+        '''
+        INSERT OR IGNORE INTO account_transactions
+          (id, entity_type, created_at, updated_at, deleted_at, device_id,
+           sync_status, store_id, branch_id, version, sort_index, account_type,
+           account_id, account_name, transaction_date, transaction_type,
+           reference_id, reference_no, debit, credit, currency, payment_method,
+           note, last_modified_by_device_id)
+        VALUES (?, 'accountTransaction', ?, ?, '', ?, 'pending', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(id),
+          Variable<String>(iso),
+          Variable<String>(iso),
+          Variable<String>(deviceId.trim()),
+          Variable<String>(storeId.trim()),
+          Variable<String>(branchId.trim()),
+          Variable<int>(sortIndex),
+          Variable<String>(isReceipt ? 'customer' : 'supplier'),
+          Variable<String>(partyId.trim()),
+          Variable<String>(partyName.trim()),
+          Variable<String>(iso),
+          Variable<String>(isReceipt ? 'paymentReceived' : 'paymentPaid'),
+          Variable<String>(referenceId.trim()),
+          Variable<String>(referenceNo.trim()),
+          Variable<double>(isReceipt ? 0 : _money(movementAmount)),
+          Variable<double>(isReceipt ? _money(movementAmount) : 0),
+          Variable<String>(_currency(currency)),
+          Variable<String>(paymentMethod.trim()),
+          Variable<String>(
+            notes.trim().isEmpty
+                ? (isReceipt ? 'Receipt $voucherNo' : 'Payment $voucherNo')
+                : notes.trim(),
+          ),
+          Variable<String>(deviceId.trim()),
+        ],
+      );
+    }
+
+    var allocated = 0.0;
+    for (var index = 0; index < allocations.length; index++) {
+      final allocation = allocations[index];
+      final allocationAmount = _money(allocation.amount);
+      if (allocationAmount <= _epsilon) continue;
+      allocated = _money(allocated + allocationAmount);
+
+      final baseId =
+          index == 0 ? primaryBase : '$primaryBase-${index + 1}';
+      final movementId = versioned(baseId);
+      final referenceNo = allocation.referenceNumber.trim().isNotEmpty
+          ? allocation.referenceNumber.trim()
+          : voucherNo.trim();
+
+      await insertMovement(
+        id: movementId,
+        referenceId: allocation.referenceId,
+        referenceNo: referenceNo,
+        movementAmount: allocationAmount,
+      );
+    }
+
+    final unallocated = _money(amount - allocated);
+    if (unallocated > _epsilon || allocations.isEmpty) {
+      await insertMovement(
+        id: versioned(accountBase),
+        referenceId: voucherId,
+        referenceNo: voucherNo,
+        movementAmount: allocations.isEmpty ? _money(amount) : unallocated,
+      );
+    }
   }
 
   Future<void> _reverseCompatibilityAccountMovements({
@@ -2539,6 +2581,119 @@ class PaymentVoucherService {
     }
   }
 
+  Future<void> _repairSplitCompatibilityAccountMovements() async {
+    Future<void> repair({required bool isReceipt}) async {
+      final voucherTable = isReceipt ? 'receipt_vouchers' : 'payment_vouchers';
+      final voucherType = isReceipt ? 'receipt' : 'payment';
+      final partyIdColumn = isReceipt ? 'customer_id' : 'supplier_id';
+      final partyNameColumn = isReceipt ? 'customer_name' : 'supplier_name';
+      final primarySuffix = isReceipt ? 'customer-payment' : 'supplier-payment';
+      final movementType = isReceipt ? 'paymentReceived' : 'paymentPaid';
+      final amountColumn = isReceipt ? 'credit' : 'debit';
+
+      final rows = await _db.customSelect(
+        '''
+        SELECT v.id, v.voucher_no, v.$partyIdColumn AS party_id,
+               v.$partyNameColumn AS party_name, v.amount, v.currency,
+               v.payment_method, v.notes, v.device_id, v.branch_id, v.store_id,
+               v.voucher_date, v.unallocated_amount
+        FROM $voucherTable v
+        WHERE v.deleted_at = ''
+          AND v.status = 'posted'
+          AND v.version = 1
+          AND EXISTS (
+            SELECT 1 FROM payment_allocations pa
+            WHERE pa.voucher_type = ?
+              AND pa.voucher_id = v.id
+              AND pa.deleted_at = ''
+              AND pa.status = 'active'
+          )
+          AND (
+            v.unallocated_amount > ?
+            OR (
+              SELECT COUNT(*) FROM payment_allocations pa
+              WHERE pa.voucher_type = ?
+                AND pa.voucher_id = v.id
+                AND pa.deleted_at = ''
+                AND pa.status = 'active'
+            ) > 1
+          )
+          AND EXISTS (
+            SELECT 1 FROM account_transactions at
+            WHERE at.id = v.id || '-$primarySuffix'
+              AND at.deleted_at = ''
+              AND at.transaction_type = ?
+              AND ABS(at.$amountColumn - v.amount) <= ?
+          )
+        ORDER BY v.voucher_date, v.created_at, v.id
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(voucherType),
+          Variable<double>(_epsilon),
+          Variable<String>(voucherType),
+          Variable<String>(movementType),
+          Variable<double>(_epsilon),
+        ],
+      ).get();
+
+      for (final row in rows) {
+        final voucherId = row.data['id']?.toString() ?? '';
+        if (voucherId.isEmpty) continue;
+        final allocations = await allocationsFor(voucherType, voucherId);
+        if (allocations.isEmpty) continue;
+        final first = allocations.first;
+        final firstAmount = _money(first.amount);
+        final firstReferenceNo = first.referenceNumber.trim().isNotEmpty
+            ? first.referenceNumber.trim()
+            : (row.data['voucher_no']?.toString() ?? '');
+        final nowIso = DateTime.now().toUtc().toIso8601String();
+
+        await _db.customUpdate(
+          '''
+          UPDATE account_transactions
+          SET reference_id = ?, reference_no = ?,
+              debit = ?, credit = ?, updated_at = ?,
+              sync_status = 'pending', version = version + 1
+          WHERE id = ? AND deleted_at = '' AND transaction_type = ?
+          ''',
+          variables: <Variable<Object>>[
+            Variable<String>(first.referenceId),
+            Variable<String>(firstReferenceNo),
+            Variable<double>(isReceipt ? 0 : firstAmount),
+            Variable<double>(isReceipt ? firstAmount : 0),
+            Variable<String>(nowIso),
+            Variable<String>('$voucherId-$primarySuffix'),
+            Variable<String>(movementType),
+          ],
+        );
+
+        final occurredAt = DateTime.tryParse(
+              row.data['voucher_date']?.toString() ?? '',
+            ) ??
+            DateTime.now().toUtc();
+        await _insertCompatibilityAccountMovement(
+          voucherType: voucherType,
+          voucherId: voucherId,
+          voucherNo: row.data['voucher_no']?.toString() ?? '',
+          partyId: row.data['party_id']?.toString() ?? '',
+          partyName: row.data['party_name']?.toString() ?? '',
+          amount: _number(row.data['amount']),
+          currency: row.data['currency']?.toString() ?? 'USD',
+          paymentMethod: row.data['payment_method']?.toString() ?? 'Cash',
+          allocations: allocations,
+          notes: row.data['notes']?.toString() ?? '',
+          deviceId: row.data['device_id']?.toString() ?? '',
+          branchId: row.data['branch_id']?.toString() ?? '',
+          storeId: row.data['store_id']?.toString() ?? '',
+          occurredAt: occurredAt,
+        );
+      }
+    }
+
+    await repair(isReceipt: true);
+    await repair(isReceipt: false);
+  }
+
   /// Backfills Cash Ledger rows for legacy cash receipt/payment vouchers that
   /// pre-date ledger routing. This is history-only and deliberately does not
   /// mutate cash_locations.current_balance because the legacy voucher already
@@ -2547,6 +2702,7 @@ class PaymentVoucherService {
   /// Safe to run repeatedly: existing voucher references are skipped.
   Future<void> backfillLegacyCashLedger() async {
     await _db.transaction(() async {
+      await _repairSplitCompatibilityAccountMovements();
       // Repair rows created by the old backfill bug: modern voucher-backed
       // compatibility account movements (notably *-account-payment) were
       // mistaken for pre-voucher legacy payments and copied into Cash Ledger
