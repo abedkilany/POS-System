@@ -2762,5 +2762,17 @@
   "error_manufacturing_provisional_cost_missing": "Manufacturing cannot use negative stock for {product} because no valid reference cost is available. Set a cost or receive a costed batch first.",
   "error_manufacturing_material_cost_missing": "Manufacturing cannot be completed because the cost of {product} is missing or zero. Correct the batch or reference cost first.",
   "error_manufacturing_zero_cost_physical_batch": "Manufacturing cannot consume zero-cost physical batch {batch} for {product}. Revalue or correct the batch cost first.",
-  "error_manufacturing_zero_cost_batch_already_consumed": "Zero-cost batch {batch} for {product} has already been partially consumed. An explicit stock-cost repair is required before manufacturing can continue."
+  "error_manufacturing_zero_cost_batch_already_consumed": "Zero-cost batch {batch} for {product} has already been partially consumed. An explicit stock-cost repair is required before manufacturing can continue.",
+  "allocate_to_invoices": "Allocate to invoices",
+  "payment_on_account": "Payment on account",
+  "no_open_customer_invoices": "No open invoices are available for this customer. The payment can be recorded on account.",
+  "open_customer_invoices": "Open invoices",
+  "select_all": "Select all",
+  "selected_invoices": "Selected invoices",
+  "selected_balance": "Selected balance",
+  "unallocated_payment_warning": "This payment will remain on the customer account without being assigned to a specific invoice.",
+  "missing_exchange_rate_for_allocation": "Exchange rate is not configured",
+  "select_invoice_or_on_account": "Select at least one invoice or choose Payment on account.",
+  "payment_exceeds_selected_invoices": "Payment amount cannot exceed the remaining balance of the selected invoices.",
+  "payment_allocation_summary": "Amount allocated to selected invoices"
 }

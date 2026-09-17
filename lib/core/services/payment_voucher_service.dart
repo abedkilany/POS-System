@@ -2547,6 +2547,58 @@ class PaymentVoucherService {
   /// Safe to run repeatedly: existing voucher references are skipped.
   Future<void> backfillLegacyCashLedger() async {
     await _db.transaction(() async {
+      // Repair rows created by the old backfill bug: modern voucher-backed
+      // compatibility account movements (notably *-account-payment) were
+      // mistaken for pre-voucher legacy payments and copied into Cash Ledger
+      // a second time. These historical backfill rows never moved the live
+      // cash-location balance, so soft-deleting only the derived duplicate is
+      // safe and keeps the authoritative voucher movement intact.
+      await _db.customStatement(r'''
+        UPDATE cash_ledger_transactions
+        SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            sync_status = 'pending',
+            version = version + 1
+        WHERE cash_ledger_transactions.deleted_at = ''
+          AND cash_ledger_transactions.reference_type = 'legacy_account_transaction'
+          AND cash_ledger_transactions.id = 'legacy_account_payment_' || cash_ledger_transactions.reference_id
+          AND EXISTS (
+            SELECT 1
+            FROM account_transactions at
+            WHERE at.id = cash_ledger_transactions.reference_id
+              AND at.deleted_at = ''
+              AND (
+                (
+                  at.transaction_type = 'paymentReceived'
+                  AND EXISTS (
+                    SELECT 1 FROM receipt_vouchers rv
+                    WHERE rv.deleted_at = ''
+                      AND (
+                        at.id = rv.id || '-customer-payment'
+                        OR at.id LIKE rv.id || '-customer-payment-%'
+                        OR at.id = rv.id || '-customer-account-payment'
+                        OR at.id LIKE rv.id || '-customer-account-payment-%'
+                      )
+                  )
+                )
+                OR
+                (
+                  at.transaction_type = 'paymentPaid'
+                  AND EXISTS (
+                    SELECT 1 FROM payment_vouchers pv
+                    WHERE pv.deleted_at = ''
+                      AND (
+                        at.id = pv.id || '-supplier-payment'
+                        OR at.id LIKE pv.id || '-supplier-payment-%'
+                        OR at.id = pv.id || '-supplier-account-payment'
+                        OR at.id LIKE pv.id || '-supplier-account-payment-%'
+                      )
+                  )
+                )
+              )
+          );
+      ''');
+
       await _db.customStatement(r'''
         INSERT OR IGNORE INTO cash_ledger_transactions (
           id, type, direction, amount, currency, cash_location_id,
@@ -2727,10 +2779,16 @@ class PaymentVoucherService {
           AND NOT EXISTS (
             SELECT 1 FROM receipt_vouchers rv
             WHERE at.id = rv.id || '-customer-payment'
+               OR at.id LIKE rv.id || '-customer-payment-%'
+               OR at.id = rv.id || '-customer-account-payment'
+               OR at.id LIKE rv.id || '-customer-account-payment-%'
           )
           AND NOT EXISTS (
             SELECT 1 FROM payment_vouchers pv
             WHERE at.id = pv.id || '-supplier-payment'
+               OR at.id LIKE pv.id || '-supplier-payment-%'
+               OR at.id = pv.id || '-supplier-account-payment'
+               OR at.id LIKE pv.id || '-supplier-account-payment-%'
           )
           AND NOT EXISTS (
             SELECT 1 FROM receipt_vouchers rv

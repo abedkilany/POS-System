@@ -2762,5 +2762,17 @@
   "error_manufacturing_provisional_cost_missing": "La fabrication ne peut pas utiliser un stock négatif pour {product} car aucun coût de référence valide n’est disponible. Définissez un coût ou réceptionnez d’abord un lot valorisé.",
   "error_manufacturing_material_cost_missing": "La fabrication ne peut pas être terminée car le coût de {product} est manquant ou nul. Corrigez d’abord le coût du lot ou le coût de référence.",
   "error_manufacturing_zero_cost_physical_batch": "La fabrication ne peut pas consommer le lot physique {batch} à coût nul pour {product}. Réévaluez ou corrigez d’abord le coût du lot.",
-  "error_manufacturing_zero_cost_batch_already_consumed": "Le lot {batch} à coût nul pour {product} a déjà été partiellement consommé. Une réparation explicite du coût du stock est requise avant de poursuivre la fabrication."
+  "error_manufacturing_zero_cost_batch_already_consumed": "Le lot {batch} à coût nul pour {product} a déjà été partiellement consommé. Une réparation explicite du coût du stock est requise avant de poursuivre la fabrication.",
+  "allocate_to_invoices": "Affecter aux factures",
+  "payment_on_account": "Paiement sur compte",
+  "no_open_customer_invoices": "Aucune facture ouverte pour ce client. Le paiement peut être enregistré sur le compte.",
+  "open_customer_invoices": "Factures ouvertes",
+  "select_all": "Tout sélectionner",
+  "selected_invoices": "Factures sélectionnées",
+  "selected_balance": "Solde sélectionné",
+  "unallocated_payment_warning": "Ce paiement restera sur le compte client sans être affecté à une facture précise.",
+  "missing_exchange_rate_for_allocation": "Taux de change non configuré",
+  "select_invoice_or_on_account": "Sélectionnez au moins une facture ou choisissez Paiement sur compte.",
+  "payment_exceeds_selected_invoices": "Le montant du paiement ne peut pas dépasser le solde restant des factures sélectionnées.",
+  "payment_allocation_summary": "Montant affecté aux factures sélectionnées"
 }

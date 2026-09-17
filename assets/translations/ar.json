@@ -2762,5 +2762,17 @@
   "error_manufacturing_provisional_cost_missing": "لا يمكن إكمال التصنيع بالمخزون السالب للمنتج {product} لأنه لا توجد تكلفة مرجعية صالحة. حدّد تكلفة للمنتج أو استلم دفعة ذات تكلفة أولاً.",
   "error_manufacturing_material_cost_missing": "لا يمكن إكمال التصنيع لأن تكلفة المادة {product} غير متوفرة أو تساوي صفراً. صحّح تكلفة الدفعة أو التكلفة المرجعية أولاً.",
   "error_manufacturing_zero_cost_physical_batch": "لا يمكن للتصنيع استهلاك الدفعة الفعلية صفرية التكلفة {batch} للمادة {product}. أعد تقييم تكلفة الدفعة أو صحّحها أولاً.",
-  "error_manufacturing_zero_cost_batch_already_consumed": "الدفعة صفرية التكلفة {batch} للمادة {product} استُهلك جزء منها سابقاً. يلزم إصلاح تكلفة مخزون صريح قبل متابعة التصنيع."
+  "error_manufacturing_zero_cost_batch_already_consumed": "الدفعة صفرية التكلفة {batch} للمادة {product} استُهلك جزء منها سابقاً. يلزم إصلاح تكلفة مخزون صريح قبل متابعة التصنيع.",
+  "allocate_to_invoices": "تخصيص على الفواتير",
+  "payment_on_account": "دفعة على الحساب",
+  "no_open_customer_invoices": "لا توجد فواتير مفتوحة لهذا العميل. يمكن تسجيل الدفعة على الحساب.",
+  "open_customer_invoices": "الفواتير المفتوحة",
+  "select_all": "تحديد الكل",
+  "selected_invoices": "الفواتير المحددة",
+  "selected_balance": "رصيد الفواتير المحددة",
+  "unallocated_payment_warning": "سيتم تسجيل هذه الدفعة على حساب العميل بدون ربطها بفاتورة محددة.",
+  "missing_exchange_rate_for_allocation": "سعر الصرف غير مضبوط",
+  "select_invoice_or_on_account": "حدد فاتورة واحدة على الأقل أو اختر دفعة على الحساب.",
+  "payment_exceeds_selected_invoices": "لا يمكن أن يتجاوز مبلغ القبض الرصيد المتبقي للفواتير المحددة.",
+  "payment_allocation_summary": "المبلغ الذي سيُوزع على الفواتير المحددة"
 }

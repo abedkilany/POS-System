@@ -11,6 +11,8 @@ import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/account_transaction.dart';
 import '../../models/cash_ledger_transaction.dart';
+import '../../models/payment_allocation.dart';
+import '../../models/sale.dart';
 
 String accountBalanceText(BuildContext context, AppStore store,
     String accountType, String accountId) {
@@ -64,10 +66,28 @@ Future<void> showAccountPaymentDialog({
   required String accountId,
   required String accountName,
 }) async {
+  final normalizedAccountId = accountId.trim();
+  final customerInvoices = accountType == 'customer'
+      ? store.sales
+          .where((sale) =>
+              !sale.isCancelled &&
+              sale.balanceDue > 0.000001 &&
+              sale.customerId.trim() == normalizedAccountId)
+          .toList()
+      : <Sale>[];
+  customerInvoices.sort((a, b) {
+    final byDate = a.date.compareTo(b.date);
+    return byDate != 0 ? byDate : a.invoiceNo.compareTo(b.invoiceNo);
+  });
+
   final result = await showDialog<_PaymentDraft>(
     context: context,
-    builder: (_) =>
-        _PaymentDialog(accountType: accountType, accountName: accountName),
+    builder: (_) => _PaymentDialog(
+      store: store,
+      accountType: accountType,
+      accountName: accountName,
+      customerInvoices: customerInvoices,
+    ),
   );
   if (result == null) return;
   if (accountType == 'supplier' &&
@@ -93,6 +113,7 @@ Future<void> showAccountPaymentDialog({
       paymentMethod: result.paymentMethod,
       referenceNo: result.referenceNo,
       notes: result.note,
+      allocations: result.allocations,
     );
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -269,19 +290,29 @@ class _TransactionTile extends StatelessWidget {
     }
   }
 
+  String? _voucherIdFromCompatibilityMovement() {
+    final suffixes = transaction.type == 'paymentReceived'
+        ? const <String>['-customer-payment', '-customer-account-payment']
+        : const <String>['-supplier-payment', '-supplier-account-payment'];
+    for (final suffix in suffixes) {
+      final index = transaction.id.indexOf(suffix);
+      if (index <= 0) continue;
+      final trailing = transaction.id.substring(index + suffix.length);
+      if (trailing.isEmpty || trailing.startsWith('-')) {
+        return transaction.id.substring(0, index);
+      }
+    }
+    return null;
+  }
+
   Future<CashLedgerTransaction> _resolvePrintableReceipt() async {
     final db = SqliteMigrationManager.database;
     if (db != null) {
       final ledger = CashLedgerService(db);
       CashLedgerTransaction? found;
 
-      final suffix = transaction.type == 'paymentReceived'
-          ? '-customer-payment'
-          : '-supplier-payment';
-      if (transaction.id.endsWith(suffix) &&
-          transaction.id.length > suffix.length) {
-        final voucherId =
-            transaction.id.substring(0, transaction.id.length - suffix.length);
+      final voucherId = _voucherIdFromCompatibilityMovement();
+      if (voucherId != null) {
         final rows = await ledger.list(
           referenceType: transaction.type == 'paymentReceived'
               ? 'receipt_voucher'
@@ -304,13 +335,8 @@ class _TransactionTile extends StatelessWidget {
       if (found == null) {
         await PaymentVoucherService(db).backfillLegacyCashLedger();
 
-        final suffix = transaction.type == 'paymentReceived'
-            ? '-customer-payment'
-            : '-supplier-payment';
-        if (transaction.id.endsWith(suffix) &&
-            transaction.id.length > suffix.length) {
-          final voucherId = transaction.id
-              .substring(0, transaction.id.length - suffix.length);
+        final voucherId = _voucherIdFromCompatibilityMovement();
+        if (voucherId != null) {
           final rows = await ledger.list(
             referenceType: transaction.type == 'paymentReceived'
                 ? 'receipt_voucher'
@@ -409,20 +435,32 @@ class _TransactionTile extends StatelessWidget {
 }
 
 class _PaymentDraft {
-  const _PaymentDraft(
-      {required this.amount,
-      required this.note,
-      required this.referenceNo,
-      required this.paymentMethod});
+  const _PaymentDraft({
+    required this.amount,
+    required this.note,
+    required this.referenceNo,
+    required this.paymentMethod,
+    required this.allocations,
+  });
+
   final double amount;
   final String note;
   final String referenceNo;
   final String paymentMethod;
+  final List<PaymentAllocationDraft> allocations;
 }
 
 class _PaymentDialog extends StatefulWidget {
-  const _PaymentDialog({required this.accountType, required this.accountName});
+  const _PaymentDialog({
+    required this.store,
+    required this.accountType,
+    required this.accountName,
+    required this.customerInvoices,
+  });
+
+  final AppStore store;
   final String accountType, accountName;
+  final List<Sale> customerInvoices;
 
   @override
   State<_PaymentDialog> createState() => _PaymentDialogState();
@@ -433,7 +471,21 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   final amountController = TextEditingController();
   final referenceController = TextEditingController();
   final noteController = TextEditingController();
+  final Set<String> selectedInvoiceIds = <String>{};
   String paymentMethod = 'Cash';
+  late String allocationMode;
+  String submitError = '';
+
+  bool get _isCustomer => widget.accountType == 'customer';
+  bool get _hasOpenInvoices => _isCustomer && widget.customerInvoices.isNotEmpty;
+  String get _voucherCurrency =>
+      widget.store.storeProfile.baseCurrency.toUpperCase();
+
+  @override
+  void initState() {
+    super.initState();
+    allocationMode = _hasOpenInvoices ? 'invoices' : 'account';
+  }
 
   @override
   void dispose() {
@@ -443,93 +495,419 @@ class _PaymentDialogState extends State<_PaymentDialog> {
     super.dispose();
   }
 
+  double? _invoiceDueInVoucherCurrency(Sale sale) {
+    try {
+      return convertCurrency(
+        sale.balanceDue,
+        sale.invoiceCurrency,
+        _voucherCurrency,
+        widget.store.storeProfile,
+        effectiveAt: DateTime.now(),
+        normalizeResult: false,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<Sale> get _selectedInvoices => widget.customerInvoices
+      .where((sale) => selectedInvoiceIds.contains(sale.id))
+      .toList(growable: false);
+
+  double get _selectedTotal {
+    var total = 0.0;
+    for (final sale in _selectedInvoices) {
+      final due = _invoiceDueInVoucherCurrency(sale);
+      if (due != null) total += due;
+    }
+    return normalizeAccountingAmount(
+      total,
+      _voucherCurrency,
+      widget.store.storeProfile,
+    );
+  }
+
+  String _amountText(double value) {
+    final decimals = accountingDecimalsForCurrency(
+      _voucherCurrency,
+      widget.store.storeProfile,
+    );
+    return normalizeAccountingAmount(
+      value,
+      _voucherCurrency,
+      widget.store.storeProfile,
+    ).toStringAsFixed(decimals);
+  }
+
+  void _syncAmountToSelection() {
+    amountController.text = _amountText(_selectedTotal);
+  }
+
+  void _toggleInvoice(Sale sale, bool selected) {
+    if (_invoiceDueInVoucherCurrency(sale) == null) return;
+    setState(() {
+      submitError = '';
+      if (selected) {
+        selectedInvoiceIds.add(sale.id);
+      } else {
+        selectedInvoiceIds.remove(sale.id);
+      }
+      _syncAmountToSelection();
+    });
+  }
+
+  void _selectAllInvoices() {
+    setState(() {
+      submitError = '';
+      selectedInvoiceIds
+        ..clear()
+        ..addAll(widget.customerInvoices
+            .where((sale) => _invoiceDueInVoucherCurrency(sale) != null)
+            .map((sale) => sale.id));
+      _syncAmountToSelection();
+    });
+  }
+
+  void _selectOldestFirst() {
+    final requested = double.tryParse(amountController.text.trim()) ?? 0;
+    final chosen = <String>{};
+    var covered = 0.0;
+    for (final sale in widget.customerInvoices) {
+      final due = _invoiceDueInVoucherCurrency(sale);
+      if (due == null) continue;
+      chosen.add(sale.id);
+      covered += due;
+      if (requested <= 0 || covered + 0.000001 >= requested) break;
+    }
+    setState(() {
+      submitError = '';
+      selectedInvoiceIds
+        ..clear()
+        ..addAll(chosen);
+      if (requested <= 0) _syncAmountToSelection();
+    });
+  }
+
+  List<PaymentAllocationDraft> _buildAllocations(double amount) {
+    if (!_isCustomer || allocationMode != 'invoices') {
+      return const <PaymentAllocationDraft>[];
+    }
+    var remaining = normalizeAccountingAmount(
+      amount,
+      _voucherCurrency,
+      widget.store.storeProfile,
+    );
+    final drafts = <PaymentAllocationDraft>[];
+    for (final sale in _selectedInvoices) {
+      if (remaining <= 0.000001) break;
+      final dueInVoucher = _invoiceDueInVoucherCurrency(sale);
+      if (dueInVoucher == null) {
+        throw StateError('Missing exchange rate for ${sale.invoiceCurrency}.');
+      }
+      final take = remaining < dueInVoucher ? remaining : dueInVoucher;
+      if (take <= 0.000001) continue;
+      var referenceAmount = sale.invoiceCurrency.toUpperCase() == _voucherCurrency
+          ? take
+          : convertCurrency(
+              take,
+              _voucherCurrency,
+              sale.invoiceCurrency,
+              widget.store.storeProfile,
+              effectiveAt: DateTime.now(),
+            );
+      if (referenceAmount > sale.balanceDue) {
+        referenceAmount = sale.balanceDue;
+      }
+      final exchange = take <= 0
+          ? 1.0
+          : referenceAmount / take;
+      drafts.add(
+        PaymentAllocationDraft(
+          referenceId: sale.id,
+          referenceNumber: sale.invoiceNo,
+          amount: take,
+          referenceAmount: referenceAmount,
+          referenceCurrency: sale.invoiceCurrency,
+          exchangeRate: exchange,
+        ),
+      );
+      remaining = normalizeAccountingAmount(
+        remaining - take,
+        _voucherCurrency,
+        widget.store.storeProfile,
+      );
+    }
+    if (remaining > 0.000001) {
+      throw StateError('Payment amount exceeds selected invoice balances.');
+    }
+    return drafts;
+  }
+
+  String _dateText(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isCustomer = widget.accountType == 'customer';
-    final dialogWidth = VentioResponsive.modalMaxWidth(context, 600);
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 720);
+    final selectedTotal = _selectedTotal;
+    final enteredAmount = double.tryParse(amountController.text.trim()) ?? 0;
+
     return AlertDialog(
       insetPadding: EdgeInsets.symmetric(
         horizontal: VentioResponsive.pagePadding(context),
         vertical: 24,
       ),
       constraints: BoxConstraints(maxWidth: dialogWidth),
-      title: Text(
-          isCustomer ? tr.text('receive_payment') : tr.text('pay_supplier')),
+      title: Text(_isCustomer
+          ? tr.text('receive_payment')
+          : tr.text('pay_supplier')),
       content: SizedBox(
         width: dialogWidth,
         child: ResponsiveDialogBox(
           maxWidth: dialogWidth,
           child: Form(
             key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: Text(widget.accountName,
-                        style: Theme.of(context).textTheme.titleMedium)),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: amountController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(labelText: tr.text('amount')),
-                  validator: (value) {
-                    final amount = double.tryParse((value ?? '').trim());
-                    if (amount == null || amount <= 0) {
-                      return tr.text('enter_valid_amount');
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: paymentMethod,
-                  decoration:
-                      InputDecoration(labelText: tr.text('payment_method')),
-                  items: [
-                    DropdownMenuItem(
-                        value: 'Cash', child: Text(tr.text('payment_cash'))),
-                    DropdownMenuItem(
-                        value: 'Card', child: Text(tr.text('payment_card'))),
-                    DropdownMenuItem(
-                        value: 'Wish', child: Text(tr.text('payment_wish'))),
-                    DropdownMenuItem(
-                        value: 'Check', child: Text(tr.text('payment_check'))),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    widget.accountName,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (_isCustomer) ...[
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: Text(tr.text('allocate_to_invoices')),
+                          selected: allocationMode == 'invoices',
+                          onSelected: _hasOpenInvoices
+                              ? (_) => setState(() {
+                                    allocationMode = 'invoices';
+                                    submitError = '';
+                                  })
+                              : null,
+                        ),
+                        ChoiceChip(
+                          label: Text(tr.text('payment_on_account')),
+                          selected: allocationMode == 'account',
+                          onSelected: (_) => setState(() {
+                            allocationMode = 'account';
+                            selectedInvoiceIds.clear();
+                            submitError = '';
+                          }),
+                        ),
+                      ],
+                    ),
+                    if (!_hasOpenInvoices) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        tr.text('no_open_customer_invoices'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    if (allocationMode == 'invoices' && _hasOpenInvoices) ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              tr.text('open_customer_invoices'),
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _selectOldestFirst,
+                            child: Text(tr.text('oldest_first')),
+                          ),
+                          TextButton(
+                            onPressed: _selectAllInvoices,
+                            child: Text(tr.text('select_all')),
+                          ),
+                        ],
+                      ),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 270),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: widget.customerInvoices.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final sale = widget.customerInvoices[index];
+                            final dueInVoucher =
+                                _invoiceDueInVoucherCurrency(sale);
+                            final canAllocate = dueInVoucher != null;
+                            final invoiceDue = formatCurrency(
+                              sale.balanceDue,
+                              currency: sale.invoiceCurrency,
+                              profile: widget.store.storeProfile,
+                            );
+                            final convertedDue = canAllocate &&
+                                    sale.invoiceCurrency.toUpperCase() !=
+                                        _voucherCurrency
+                                ? ' • ${formatCurrency(dueInVoucher, currency: _voucherCurrency, profile: widget.store.storeProfile)}'
+                                : '';
+                            return CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              value: selectedInvoiceIds.contains(sale.id),
+                              enabled: canAllocate,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              onChanged: canAllocate
+                                  ? (value) =>
+                                      _toggleInvoice(sale, value ?? false)
+                                  : null,
+                              title: Text(
+                                '${sale.invoiceNo} • ${_dateText(sale.date)}',
+                              ),
+                              subtitle: Text(
+                                canAllocate
+                                    ? '${tr.text('remaining_debt')}: $invoiceDue$convertedDue'
+                                    : '${tr.text('remaining_debt')}: $invoiceDue • ${tr.text('missing_exchange_rate_for_allocation')}',
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      if (selectedInvoiceIds.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Card(
+                          margin: EdgeInsets.zero,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Text(
+                              '${tr.text('selected_invoices')}: ${selectedInvoiceIds.length} • '
+                              '${tr.text('selected_balance')}: ${formatCurrency(selectedTotal, currency: _voucherCurrency, profile: widget.store.storeProfile)}',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                    if (allocationMode == 'account') ...[
+                      const SizedBox(height: 10),
+                      Card(
+                        margin: EdgeInsets.zero,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Text(tr.text('unallocated_payment_warning')),
+                        ),
+                      ),
+                    ],
                   ],
-                  onChanged: (value) =>
-                      setState(() => paymentMethod = value ?? 'Cash'),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: amountController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: '${tr.text('amount')} ($_voucherCurrency)',
+                    ),
+                    onChanged: (_) {
+                      if (submitError.isNotEmpty) {
+                        setState(() => submitError = '');
+                      } else if (allocationMode == 'invoices') {
+                        setState(() {});
+                      }
+                    },
+                    validator: (value) {
+                      final amount = double.tryParse((value ?? '').trim());
+                      if (amount == null || amount <= 0) {
+                        return tr.text('enter_valid_amount');
+                      }
+                      if (_isCustomer && allocationMode == 'invoices') {
+                        if (selectedInvoiceIds.isEmpty) {
+                          return tr.text('select_invoice_or_on_account');
+                        }
+                        if (amount - selectedTotal > 0.000001) {
+                          return tr.text('payment_exceeds_selected_invoices');
+                        }
+                      }
+                      return null;
+                    },
+                  ),
+                  if (_isCustomer &&
+                      allocationMode == 'invoices' &&
+                      selectedInvoiceIds.isNotEmpty &&
+                      enteredAmount > 0) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '${tr.text('payment_allocation_summary')}: '
+                      '${formatCurrency(enteredAmount > selectedTotal ? selectedTotal : enteredAmount, currency: _voucherCurrency, profile: widget.store.storeProfile)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: paymentMethod,
+                    decoration:
+                        InputDecoration(labelText: tr.text('payment_method')),
+                    items: [
+                      DropdownMenuItem(
+                          value: 'Cash', child: Text(tr.text('payment_cash'))),
+                      DropdownMenuItem(
+                          value: 'Card', child: Text(tr.text('payment_card'))),
+                      DropdownMenuItem(
+                          value: 'Wish', child: Text(tr.text('payment_wish'))),
+                      DropdownMenuItem(
+                          value: 'Check', child: Text(tr.text('payment_check'))),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => paymentMethod = value ?? 'Cash'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
                     controller: referenceController,
                     decoration: InputDecoration(
-                        labelText: tr.text('reference_no_optional'))),
-                const SizedBox(height: 12),
-                TextFormField(
+                        labelText: tr.text('reference_no_optional')),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
                     controller: noteController,
                     decoration: InputDecoration(labelText: tr.text('notes')),
-                    maxLines: 3),
-              ],
+                    maxLines: 3,
+                  ),
+                  if (submitError.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      submitError,
+                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(tr.text('cancel'))),
+          onPressed: () => Navigator.pop(context),
+          child: Text(tr.text('cancel')),
+        ),
         FilledButton(
           onPressed: () {
             if (!formKey.currentState!.validate()) return;
-            Navigator.pop(
+            final amount = double.parse(amountController.text.trim());
+            try {
+              final allocations = _buildAllocations(amount);
+              Navigator.pop(
                 context,
                 _PaymentDraft(
-                    amount: double.parse(amountController.text.trim()),
-                    referenceNo: referenceController.text.trim(),
-                    note: noteController.text.trim(),
-                    paymentMethod: paymentMethod));
+                  amount: amount,
+                  referenceNo: referenceController.text.trim(),
+                  note: noteController.text.trim(),
+                  paymentMethod: paymentMethod,
+                  allocations: allocations,
+                ),
+              );
+            } catch (error) {
+              setState(() => submitError = error.toString());
+            }
           },
           child: Text(tr.text('save')),
         ),

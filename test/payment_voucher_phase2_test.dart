@@ -516,6 +516,101 @@ void main() {
         reason: 'historical backfill must not move the live cash balance');
   });
 
+  test(
+      'modern account-level receipt is not legacy-backfilled and stale duplicate is healed',
+      () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedDrawer(db);
+
+    final service = PaymentVoucherService(db);
+    await service.createReceipt(
+      id: 'receipt-account-1',
+      voucherNo: 'RC-ACCOUNT-1',
+      customerId: 'cust-account',
+      customerName: 'Account Customer',
+      amount: 25,
+      cashLocationId: 'drawer-1',
+      cashDrawerSessionId: 'shift-1',
+      deviceId: 'dev-1',
+      storeId: 'store-1',
+      branchId: 'main',
+      idempotencyKey: 'receipt-account-1-key',
+    );
+
+    final compatibility = await db.customSelect(
+      "SELECT id FROM account_transactions WHERE id = 'receipt-account-1-customer-account-payment' AND deleted_at = ''",
+    ).getSingleOrNull();
+    expect(compatibility, isNotNull);
+
+    await service.backfillLegacyCashLedger();
+    await service.backfillLegacyCashLedger();
+
+    var activeLegacy = await db.customSelect(
+      "SELECT id FROM cash_ledger_transactions WHERE reference_type = 'legacy_account_transaction' AND reference_id = 'receipt-account-1-customer-account-payment' AND deleted_at = ''",
+    ).get();
+    expect(activeLegacy, isEmpty,
+        reason: 'voucher-backed account payments are not legacy history');
+
+    const duplicateId =
+        'legacy_account_payment_receipt-account-1-customer-account-payment';
+    const now = '2026-08-18T12:30:00.000Z';
+    await db.customInsert(
+      r'''
+      INSERT INTO cash_ledger_transactions
+        (id, type, direction, amount, currency, cash_location_id,
+         cash_drawer_session_id, reference_type, reference_id, reference_number,
+         party_type, party_id, party_name, payment_method, device_id, branch_id,
+         store_id, idempotency_key, occurred_at, created_at, updated_at,
+         deleted_at, sync_status, version, last_modified_by_device_id)
+      VALUES (?, 'receipt', 'in', 25, 'USD', 'drawer-1', 'shift-1',
+              'legacy_account_transaction',
+              'receipt-account-1-customer-account-payment', 'RC-ACCOUNT-1',
+              'customer', 'cust-account', 'Account Customer', 'Cash', 'dev-1',
+              'main', 'store-1', ?, ?, ?, ?, '', 'synced', 1, 'dev-1')
+      ''',
+      variables: const <Variable<Object>>[
+        Variable<String>(duplicateId),
+        Variable<String>(
+            'legacy_account_payment:receipt-account-1-customer-account-payment'),
+        Variable<String>(now),
+        Variable<String>(now),
+        Variable<String>(now),
+      ],
+    );
+
+    await service.backfillLegacyCashLedger();
+
+    activeLegacy = await db.customSelect(
+      "SELECT id FROM cash_ledger_transactions WHERE id = ? AND deleted_at = ''",
+      variables: const <Variable<Object>>[Variable<String>(duplicateId)],
+    ).get();
+    expect(activeLegacy, isEmpty,
+        reason: 'old derived duplicate must be soft-deleted');
+
+    final repaired = await db.customSelect(
+      'SELECT deleted_at, sync_status, version FROM cash_ledger_transactions WHERE id = ?',
+      variables: const <Variable<Object>>[Variable<String>(duplicateId)],
+    ).getSingle();
+    expect(repaired.data['deleted_at'].toString(), isNotEmpty);
+    expect(repaired.data['sync_status'], 'pending');
+    expect((repaired.data['version'] as num).toInt(), 2);
+
+    final voucherLedger = await CashLedgerService(db).list(
+      referenceType: 'receipt_voucher',
+      referenceId: 'receipt-account-1',
+    );
+    expect(voucherLedger, hasLength(1));
+
+    final balance = await db
+        .customSelect(
+          "SELECT current_balance FROM cash_locations WHERE id = 'drawer-1'",
+        )
+        .getSingle();
+    expect((balance.data['current_balance'] as num).toDouble(), 125,
+        reason: 'healing derived history must not move the live balance');
+  });
+
   test('pre-voucher legacy account payments are backfilled into Cash Ledger',
       () async {
     final db = await _openDb();

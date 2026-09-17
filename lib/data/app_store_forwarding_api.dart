@@ -1151,10 +1151,11 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     String notes = '',
   })  => _AppStoreSplitWarehouseCash(this as AppStore).refundExpenseCash(expenseId: expenseId, amount: amount, notes: notes);
 
-  /// Records a customer receipt or supplier payment at account level without
-  /// allocating it to a specific invoice. Cash payments must always go through
-  /// the voucher + open-drawer path so the account ledger, journal and cash
-  /// ledger cannot diverge.
+  /// Records a customer receipt or supplier payment at account level. The
+  /// payment can optionally be allocated to one or more open documents; an
+  /// empty allocation list keeps the amount as an unallocated account payment.
+  /// Cash payments always go through the voucher + open-drawer path so the
+  /// account ledger, journal and cash ledger cannot diverge.
   Future<void> settleAccountPayment({
     required String accountType,
     required String accountId,
@@ -1163,9 +1164,10 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     String paymentMethod = 'Cash',
     String referenceNo = '',
     String notes = '',
+    List<PaymentAllocationDraft> allocations = const <PaymentAllocationDraft>[],
     String idempotencyKey = '',
     DateTime? date,
-  })  => _AppStoreSplitWarehouseCash(this as AppStore).settleAccountPayment(accountType: accountType, accountId: accountId, accountName: accountName, amount: amount, paymentMethod: paymentMethod, referenceNo: referenceNo, notes: notes, idempotencyKey: idempotencyKey, date: date);
+  })  => _AppStoreSplitWarehouseCash(this as AppStore).settleAccountPayment(accountType: accountType, accountId: accountId, accountName: accountName, amount: amount, paymentMethod: paymentMethod, referenceNo: referenceNo, notes: notes, allocations: allocations, idempotencyKey: idempotencyKey, date: date);
 
   Future<ReceiptVoucher> editReceiptVoucher({
     required String voucherId,
