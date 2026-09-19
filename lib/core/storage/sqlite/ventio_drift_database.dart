@@ -1006,6 +1006,12 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('purchases', 'warehouse_name',
         "TEXT NOT NULL DEFAULT 'Main warehouse'");
     await _ensureColumn(
+        'purchases', 'document_type', "TEXT NOT NULL DEFAULT 'purchase'");
+    await _ensureColumn(
+        'purchases', 'source_purchase_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'source_purchase_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
         'purchases', 'cancel_reason', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'purchases', 'cancelled_by_device_id', "TEXT NOT NULL DEFAULT ''");
@@ -1043,6 +1049,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     ''');
     await _ensureColumn('purchase_items', 'requested_supplier_batch_number',
         "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchase_items', 'source_line_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('purchase_items', 'requested_manufacturing_date',
         "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('purchase_items', 'requested_expiration_date',
@@ -1880,21 +1888,36 @@ class VentioDriftDatabase extends GeneratedDatabase {
   }
 
   Future<void> _ensureProductPriceHistoryColumns() async {
-    await _ensureColumn('product_price_history', 'product_id', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('product_price_history', 'price_list_id', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('product_price_history', 'unit_id', "TEXT NOT NULL DEFAULT 'base'");
-    await _ensureColumn('product_price_history', 'currency_code', "TEXT NOT NULL DEFAULT 'USD'");
-    await _ensureColumn('product_price_history', 'old_amount', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('product_price_history', 'new_amount', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('product_price_history', 'change_percent', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('product_price_history', 'change_type', "TEXT NOT NULL DEFAULT 'manual'");
-    await _ensureColumn('product_price_history', 'source', "TEXT NOT NULL DEFAULT 'manual'");
-    await _ensureColumn('product_price_history', 'batch_id', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('product_price_history', 'user_id', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('product_price_history', 'user_name', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('product_price_history', 'changed_at', "TEXT NOT NULL DEFAULT ''");
-    await customStatement('CREATE INDEX IF NOT EXISTS idx_product_price_history_product_changed ON product_price_history(product_id, changed_at DESC);');
-    await customStatement('CREATE INDEX IF NOT EXISTS idx_product_price_history_batch ON product_price_history(batch_id);');
+    await _ensureColumn(
+        'product_price_history', 'product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_price_history', 'price_list_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_price_history', 'unit_id', "TEXT NOT NULL DEFAULT 'base'");
+    await _ensureColumn('product_price_history', 'currency_code',
+        "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'product_price_history', 'old_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'product_price_history', 'new_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'product_price_history', 'change_percent', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn('product_price_history', 'change_type',
+        "TEXT NOT NULL DEFAULT 'manual'");
+    await _ensureColumn(
+        'product_price_history', 'source', "TEXT NOT NULL DEFAULT 'manual'");
+    await _ensureColumn(
+        'product_price_history', 'batch_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_price_history', 'user_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_price_history', 'user_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'product_price_history', 'changed_at', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_price_history_product_changed ON product_price_history(product_id, changed_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_price_history_batch ON product_price_history(batch_id);');
   }
 
   Future<void> _ensureProductPriceOverrideColumns() async {

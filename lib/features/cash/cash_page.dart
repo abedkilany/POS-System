@@ -5,6 +5,7 @@ import '../../core/services/accounting_service.dart';
 import '../../core/services/cash_operation_service.dart';
 import '../../core/services/cash_ledger_service.dart';
 import '../../core/services/cash_shift_report_pdf_service.dart';
+import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
@@ -33,6 +34,13 @@ class _CashPageState extends State<CashPage> {
 
   String get _deviceId => widget.store.appIdentity.deviceId.trim();
   String get _branchId => widget.store.appIdentity.branchId.trim();
+
+  Future<List<Purchase>> _cashPurchasesSnapshot() async {
+    final sqlitePurchases = await LocalDatabaseService.getPurchasesFromSqlite();
+    return (sqlitePurchases ?? widget.store.purchases)
+        .where((purchase) => !purchase.isDeleted)
+        .toList(growable: false);
+  }
 
   Future<void> _settleSaleInvoiceDialog(
       AdvancedAccountingItem currentDrawer) async {
@@ -154,9 +162,12 @@ class _CashPageState extends State<CashPage> {
   Future<void> _settlePurchaseInvoiceDialog(
       AdvancedAccountingItem currentDrawer) async {
     final tr = AppLocalizations.of(context);
-    final openPurchases = widget.store.purchases
+    final purchases = await _cashPurchasesSnapshot();
+    if (!mounted) return;
+    final openPurchases = purchases
         .where((purchase) =>
             !purchase.isCancelled &&
+            !purchase.isPurchaseReturn &&
             purchase.balanceDue > 0 &&
             purchase.isReceived)
         .toList(growable: false);
@@ -273,8 +284,180 @@ class _CashPageState extends State<CashPage> {
 
   String _l(AppLocalizations tr, String en, String ar) => tr.isArabic ? ar : en;
 
+  Future<void> _refundPurchaseReturnDialog() async {
+    final tr = AppLocalizations.of(context);
+    await widget.store.ensurePurchasesPageDataLoaded();
+    if (!mounted) return;
+    final purchases = await _cashPurchasesSnapshot();
+    if (!mounted) return;
+    final returns = <Map<String, Object>>[];
+    for (final purchase in purchases.where((item) =>
+        !item.isDeleted && !item.isCancelled && item.isPurchaseReturn)) {
+      try {
+        final available =
+            await widget.store.refundablePurchaseReturnCashAmount(purchase.id);
+        if (available > 0.000001) {
+          returns.add(<String, Object>{
+            'purchase': purchase,
+            'amount': available,
+          });
+        }
+      } catch (_) {
+        // A single stale return must not hide other eligible refunds.
+      }
+    }
+    if (!mounted) return;
+    if (returns.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_l(
+            tr,
+            'No purchase return has a cash amount available for refund.',
+            'لا يوجد مرتجع شراء لديه مبلغ نقدي متاح للاسترداد.',
+          )),
+        ),
+      );
+      return;
+    }
+    var selected = returns.first;
+    final amountController = TextEditingController(
+      text: (selected['amount'] as double).toStringAsFixed(2),
+    );
+    final notesController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final purchase = selected['purchase'] as Purchase;
+          final available = selected['amount'] as double;
+          return AlertDialog(
+            title: Text(_l(
+              tr,
+              'Purchase return refund',
+              'استرداد مرتجع شراء',
+            )),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: purchase.id,
+                    decoration: InputDecoration(
+                      labelText: _l(tr, 'Purchase return', 'مرتجع الشراء'),
+                    ),
+                    items: returns.map((item) {
+                      final itemPurchase = item['purchase'] as Purchase;
+                      final itemAmount = item['amount'] as double;
+                      return DropdownMenuItem<String>(
+                        value: itemPurchase.id,
+                        child: Text(
+                          '${itemPurchase.purchaseNo} • ${itemPurchase.supplierName} • ${formatUsdReferenceAmount(itemAmount, widget.store.storeProfile)}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(growable: false),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      final found = returns.where(
+                        (item) => (item['purchase'] as Purchase).id == value,
+                      );
+                      if (found.isEmpty) return;
+                      setDialogState(() {
+                        selected = found.first;
+                        amountController.text =
+                            (selected['amount'] as double).toStringAsFixed(2);
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amountController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: tr.text('amount'),
+                      helperText:
+                          '${_l(tr, 'Available', 'المتاح')}: ${formatUsdReferenceAmount(available, widget.store.storeProfile)}',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: notesController,
+                    decoration: InputDecoration(labelText: tr.text('notes')),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(tr.text('cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(_l(tr, 'Post refund', 'تسجيل الاسترداد')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (confirmed != true) {
+      amountController.dispose();
+      notesController.dispose();
+      return;
+    }
+    if (!mounted) {
+      amountController.dispose();
+      notesController.dispose();
+      return;
+    }
+    final normalizedAmount = amountController.text
+        .trim()
+        .replaceAll('٫', '.')
+        .replaceAll('٬', '')
+        .replaceAll(',', '.');
+    final amount = double.tryParse(normalizedAmount) ?? 0;
+    final available = selected['amount'] as double;
+    if (amount <= 0 || amount > available + 0.005001) {
+      amountController.dispose();
+      notesController.dispose();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('invalid_paid_amount'))),
+      );
+      return;
+    }
+    try {
+      final purchase = selected['purchase'] as Purchase;
+      final refunded = await widget.store.refundPurchaseReturnCash(
+        purchaseReturnId: purchase.id,
+        amount: amount,
+        notes: notesController.text.trim(),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${_l(tr, 'Refund posted', 'تم تسجيل الاسترداد')}: ${formatUsdReferenceAmount(refunded, widget.store.storeProfile)}',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+      );
+    } finally {
+      amountController.dispose();
+      notesController.dispose();
+    }
+    _refresh();
+  }
+
   Future<void> _refundDialog() async {
     final tr = AppLocalizations.of(context);
+    await widget.store.ensurePurchasesPageDataLoaded();
+    if (!mounted) return;
     try {
       await widget.store.normalizeRefundAllocations();
     } catch (error) {
@@ -285,6 +468,8 @@ class _CashPageState extends State<CashPage> {
       return;
     }
     final options = <Map<String, Object>>[];
+    final purchases = await _cashPurchasesSnapshot();
+    if (!mounted) return;
 
     if (widget.store.canDeleteOrCancel) {
       for (final sale in widget.store.sales.where((item) => !item.isDeleted)) {
@@ -306,8 +491,8 @@ class _CashPageState extends State<CashPage> {
     }
 
     if (widget.store.canManageSupplierPayments) {
-      for (final purchase
-          in widget.store.purchases.where((item) => !item.isDeleted)) {
+      for (final purchase in purchases
+          .where((item) => !item.isDeleted && !item.isPurchaseReturn)) {
         try {
           final available =
               await widget.store.refundablePurchaseCashAmount(purchase.id);
@@ -321,6 +506,23 @@ class _CashPageState extends State<CashPage> {
           }
         } catch (_) {
           // A single stale invoice must not prevent other valid refunds.
+        }
+      }
+      for (final purchase in purchases.where((item) =>
+          !item.isDeleted && !item.isCancelled && item.isPurchaseReturn)) {
+        try {
+          final available = await widget.store
+              .refundablePurchaseReturnCashAmount(purchase.id);
+          if (available > 0.000001) {
+            options.add(<String, Object>{
+              'kind': 'purchase_return',
+              'id': purchase.id,
+              'label': '${purchase.purchaseNo} • ${purchase.supplierName}',
+              'amount': available,
+            });
+          }
+        } catch (_) {
+          // A single stale return must not prevent other valid refunds.
         }
       }
     }
@@ -382,7 +584,8 @@ class _CashPageState extends State<CashPage> {
                   ),
                   items: options.map((item) {
                     final kind = item['kind'] as String;
-                    final direction = kind == 'purchase'
+                    final direction = kind == 'purchase' ||
+                            kind == 'purchase_return'
                         ? _l(tr, 'Supplier → Cash', 'من المورد إلى الصندوق')
                         : kind == 'expense'
                             ? _l(tr, 'Expense → Cash', 'استرداد زائد المصروف')
@@ -492,23 +695,29 @@ class _CashPageState extends State<CashPage> {
     try {
       final kind = selected['kind'] as String;
       final id = selected['id'] as String;
-      final refunded = kind == 'purchase'
-          ? await widget.store.refundPurchaseCash(
-              purchaseId: id,
+      final refunded = kind == 'purchase_return'
+          ? await widget.store.refundPurchaseReturnCash(
+              purchaseReturnId: id,
               amount: amount,
               notes: notesController.text.trim(),
             )
-          : kind == 'expense'
-              ? await widget.store.refundExpenseCash(
-                  expenseId: id,
+          : kind == 'purchase'
+              ? await widget.store.refundPurchaseCash(
+                  purchaseId: id,
                   amount: amount,
                   notes: notesController.text.trim(),
                 )
-              : await widget.store.refundSaleCash(
-                  saleId: id,
-                  amount: amount,
-                  notes: notesController.text.trim(),
-                );
+              : kind == 'expense'
+                  ? await widget.store.refundExpenseCash(
+                      expenseId: id,
+                      amount: amount,
+                      notes: notesController.text.trim(),
+                    )
+                  : await widget.store.refundSaleCash(
+                      saleId: id,
+                      amount: amount,
+                      notes: notesController.text.trim(),
+                    );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -650,7 +859,8 @@ class _CashPageState extends State<CashPage> {
         );
       }
       final user = widget.store.activeUser;
-      await CashOperationService.current(authorization: widget.store).withdrawal(
+      await CashOperationService.current(authorization: widget.store)
+          .withdrawal(
         cashLocationId: currentDrawer.id,
         cashDrawerSessionId: currentSession.id,
         counterpartAccountId: payableAccountId,
@@ -1780,6 +1990,17 @@ class _CashPageState extends State<CashPage> {
                       : null,
                   icon: const Icon(Icons.arrow_upward_rounded),
                   label: Text(_l(tr, 'Payment', 'دفع')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: enabled && widget.store.canManageSupplierPayments
+                      ? _refundPurchaseReturnDialog
+                      : null,
+                  icon: const Icon(Icons.assignment_return_outlined),
+                  label: Text(_l(
+                    tr,
+                    'Purchase return refund',
+                    'استرداد مرتجع',
+                  )),
                 ),
                 OutlinedButton.icon(
                   onPressed: enabled &&

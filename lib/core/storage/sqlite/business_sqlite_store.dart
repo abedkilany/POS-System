@@ -1189,7 +1189,11 @@ class BusinessSqliteStore {
   static const String _purchaseTotalsCte = '''
       WITH purchase_totals AS (
         SELECT p.id, p.purchase_no, p.supplier_name, p.document_date, p.status,
-                COALESCE(SUM(pi.quantity * pi.unit_cost), 0) AS subtotal
+                p.document_type,
+                CASE WHEN p.document_type = 'purchase_return'
+                     THEN -COALESCE(SUM(pi.quantity * pi.unit_cost), 0)
+                     ELSE COALESCE(SUM(pi.quantity * pi.unit_cost), 0)
+                END AS subtotal
         FROM purchases p
         LEFT JOIN purchase_items pi ON pi.purchase_id = p.id
         WHERE p.deleted_at = ''
@@ -1254,7 +1258,10 @@ class BusinessSqliteStore {
       ),
       purchase_totals AS (
         SELECT p.id, p.purchase_no, p.supplier_name, p.document_date,
-               COALESCE(SUM(pi.quantity * pi.unit_cost), 0) AS subtotal
+               CASE WHEN p.document_type = 'purchase_return'
+                    THEN -COALESCE(SUM(pi.quantity * pi.unit_cost), 0)
+                    ELSE COALESCE(SUM(pi.quantity * pi.unit_cost), 0)
+               END AS subtotal
         FROM purchases p
         LEFT JOIN purchase_items pi ON pi.purchase_id = p.id
         WHERE p.deleted_at = ''
@@ -2392,7 +2399,9 @@ class BusinessSqliteStore {
   }
 
   static Future<List<ProductPriceHistoryEntry>> readProductPriceHistory(
-      VentioDriftDatabase db, {String productId = '', int limit = 200}) async {
+      VentioDriftDatabase db,
+      {String productId = '',
+      int limit = 200}) async {
     final where = productId.trim().isEmpty ? '' : 'WHERE product_id = ?';
     final rows = await db.customSelect('''
       SELECT id, product_id AS productId, price_list_id AS priceListId,
@@ -2410,8 +2419,10 @@ class BusinessSqliteStore {
       if (productId.trim().isNotEmpty) Variable<String>(productId.trim()),
       Variable<int>(limit.clamp(1, 100000).toInt()),
     ]).get();
-    return rows.map((row) => ProductPriceHistoryEntry.fromJson(
-      Map<String, dynamic>.from(row.data))).toList(growable: false);
+    return rows
+        .map((row) => ProductPriceHistoryEntry.fromJson(
+            Map<String, dynamic>.from(row.data)))
+        .toList(growable: false);
   }
 
   static Future<List<ProductPriceOverride>> readProductPriceOverrides(
@@ -2864,7 +2875,8 @@ class BusinessSqliteStore {
 
     return saleRows.map((row) {
       final data = Map<String, dynamic>.from(row.data);
-      final postedSnapshotRaw = data.remove('postedSnapshotJson')?.toString() ?? '';
+      final postedSnapshotRaw =
+          data.remove('postedSnapshotJson')?.toString() ?? '';
       if (postedSnapshotRaw.trim().isNotEmpty) {
         try {
           final decodedSnapshot = jsonDecode(postedSnapshotRaw);
@@ -3035,7 +3047,8 @@ class BusinessSqliteStore {
     final salesById = <String, Sale>{};
     for (final row in saleRows) {
       final data = Map<String, dynamic>.from(row.data);
-      final postedSnapshotRaw = data.remove('postedSnapshotJson')?.toString() ?? '';
+      final postedSnapshotRaw =
+          data.remove('postedSnapshotJson')?.toString() ?? '';
       if (postedSnapshotRaw.trim().isNotEmpty) {
         try {
           final decodedSnapshot = jsonDecode(postedSnapshotRaw);
@@ -3305,6 +3318,9 @@ class BusinessSqliteStore {
              status, note, payment_status AS paymentStatus,
              payment_method AS paymentMethod,
              paid_amount AS paidAmount,
+             document_type AS documentType,
+             source_purchase_id AS sourcePurchaseId,
+             source_purchase_no AS sourcePurchaseNo,
              cancel_reason AS cancelReason,
              cancelled_by_device_id AS cancelledByDeviceId,
              CASE WHEN reversal_applied = 1 THEN 1 ELSE 0 END AS reversalApplied,
@@ -3321,6 +3337,7 @@ class BusinessSqliteStore {
     final itemRows = await db.customSelect('''
       SELECT id, purchase_id AS purchaseId, line_no AS lineNo,
              product_id AS productId, product_name AS productName,
+             source_line_id AS sourceLineId,
              quantity, unit_cost AS unitCost,
              purchase_unit_id AS purchaseUnitId,
              purchase_unit_name AS purchaseUnitName,
@@ -3364,9 +3381,15 @@ class BusinessSqliteStore {
           batchAllocationsByItem[itemId] ?? const <Map<String, dynamic>>[];
       if (persistedBatches.isNotEmpty) {
         data['batchAllocations'] = persistedBatches;
-      } else if ((data['requestedExpirationDate']?.toString().trim().isNotEmpty ?? false) ||
-          (data['requestedSupplierBatchNumber']?.toString().trim().isNotEmpty ?? false) ||
-          (data['requestedManufacturingDate']?.toString().trim().isNotEmpty ?? false)) {
+      } else if ((data['requestedExpirationDate']
+                  ?.toString()
+                  .trim()
+                  .isNotEmpty ??
+              false) ||
+          (data['requestedSupplierBatchNumber']?.toString().trim().isNotEmpty ??
+              false) ||
+          (data['requestedManufacturingDate']?.toString().trim().isNotEmpty ??
+              false)) {
         data['batchAllocations'] = <Map<String, dynamic>>[
           <String, dynamic>{
             'batchId': '',
@@ -3392,7 +3415,8 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       data['reversalApplied'] =
           data['reversalApplied'] == 1 || data['reversalApplied'] == true;
-      final postedSnapshotRaw = data.remove('postedSnapshotJson')?.toString() ?? '';
+      final postedSnapshotRaw =
+          data.remove('postedSnapshotJson')?.toString() ?? '';
       if (postedSnapshotRaw.trim().isNotEmpty) {
         try {
           final decodedSnapshot = jsonDecode(postedSnapshotRaw);
@@ -3454,6 +3478,9 @@ class BusinessSqliteStore {
              status, note, payment_status AS paymentStatus,
              payment_method AS paymentMethod,
              paid_amount AS paidAmount,
+             document_type AS documentType,
+             source_purchase_id AS sourcePurchaseId,
+             source_purchase_no AS sourcePurchaseNo,
              cancel_reason AS cancelReason,
              cancelled_by_device_id AS cancelledByDeviceId,
              CASE WHEN reversal_applied = 1 THEN 1 ELSE 0 END AS reversalApplied,
@@ -3471,6 +3498,7 @@ class BusinessSqliteStore {
     final itemRows = await db.customSelect('''
       SELECT id, purchase_id AS purchaseId, line_no AS lineNo,
              product_id AS productId, product_name AS productName,
+             source_line_id AS sourceLineId,
              quantity, unit_cost AS unitCost,
              purchase_unit_id AS purchaseUnitId,
              purchase_unit_name AS purchaseUnitName,
@@ -3517,9 +3545,15 @@ class BusinessSqliteStore {
           batchAllocationsByItem[itemId] ?? const <Map<String, dynamic>>[];
       if (persistedBatches.isNotEmpty) {
         data['batchAllocations'] = persistedBatches;
-      } else if ((data['requestedExpirationDate']?.toString().trim().isNotEmpty ?? false) ||
-          (data['requestedSupplierBatchNumber']?.toString().trim().isNotEmpty ?? false) ||
-          (data['requestedManufacturingDate']?.toString().trim().isNotEmpty ?? false)) {
+      } else if ((data['requestedExpirationDate']
+                  ?.toString()
+                  .trim()
+                  .isNotEmpty ??
+              false) ||
+          (data['requestedSupplierBatchNumber']?.toString().trim().isNotEmpty ??
+              false) ||
+          (data['requestedManufacturingDate']?.toString().trim().isNotEmpty ??
+              false)) {
         data['batchAllocations'] = <Map<String, dynamic>>[
           <String, dynamic>{
             'batchId': '',
@@ -3543,7 +3577,8 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       data['reversalApplied'] =
           data['reversalApplied'] == 1 || data['reversalApplied'] == true;
-      final postedSnapshotRaw = data.remove('postedSnapshotJson')?.toString() ?? '';
+      final postedSnapshotRaw =
+          data.remove('postedSnapshotJson')?.toString() ?? '';
       if (postedSnapshotRaw.trim().isNotEmpty) {
         try {
           final decodedSnapshot = jsonDecode(postedSnapshotRaw);
@@ -3615,7 +3650,7 @@ class BusinessSqliteStore {
         '''(
           lower(purchase_no) LIKE ? OR lower(supplier_name) LIKE ? OR
           lower(payment_method) LIKE ? OR lower(payment_status) LIKE ? OR
-          lower(status) LIKE ? OR
+          lower(status) LIKE ? OR lower(source_purchase_no) LIKE ? OR
           EXISTS (
             SELECT 1 FROM purchase_items
             WHERE purchase_items.purchase_id = purchases.id
@@ -3624,7 +3659,7 @@ class BusinessSqliteStore {
         )''',
       );
       final pattern = _likePattern(normalized);
-      for (var i = 0; i < 6; i += 1) {
+      for (var i = 0; i < 7; i += 1) {
         variables.add(Variable<String>(pattern));
       }
     }
@@ -3780,7 +3815,8 @@ class BusinessSqliteStore {
         COALESCE(
           SUM(
             CASE
-              WHEN document_date >= ? AND document_date < ? THEN 1
+              WHEN document_date >= ? AND document_date < ?
+                   AND document_type <> 'purchase_return' THEN 1
               ELSE 0
             END
           ),
@@ -3797,7 +3833,8 @@ class BusinessSqliteStore {
         ) AS draftTotal,
         (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'draft')
           AS draftCount,
-        (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'received')
+        (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'received'
+          AND document_type <> 'purchase_return')
           AS receivedCount,
         (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'returned')
           AS returnedCount,
@@ -4378,18 +4415,27 @@ class BusinessSqliteStore {
         }
         if (key == productPriceHistoryKey) {
           await _upsertTypedEntityRow(
-            db, table, entityType, payload,
-            id: id, payloadJson: payloadJson, createdAt: createdAt,
-            updatedAt: updatedAt, deletedAt: deletedAt, sortIndex: sortIndex ?? 0,
+            db,
+            table,
+            entityType,
+            payload,
+            id: id,
+            payloadJson: payloadJson,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt,
+            sortIndex: sortIndex ?? 0,
             typedColumns: <String, Object?>{
               'product_id': _textValue(payload['productId']),
               'price_list_id': _textValue(payload['priceListId']),
               'unit_id': _textValue(payload['unitId'], fallback: 'base'),
-              'currency_code': _textValue(payload['currencyCode'], fallback: 'USD'),
+              'currency_code':
+                  _textValue(payload['currencyCode'], fallback: 'USD'),
               'old_amount': _doubleValue(payload['oldAmount']),
               'new_amount': _doubleValue(payload['newAmount']),
               'change_percent': _doubleValue(payload['changePercent']),
-              'change_type': _textValue(payload['changeType'], fallback: 'manual'),
+              'change_type':
+                  _textValue(payload['changeType'], fallback: 'manual'),
               'source': _textValue(payload['source'], fallback: 'manual'),
               'batch_id': _textValue(payload['batchId']),
               'user_id': _textValue(payload['userId']),
@@ -5454,6 +5500,10 @@ class BusinessSqliteStore {
         'payment_method':
             _textValue(payload['paymentMethod'], fallback: 'Cash'),
         'paid_amount': _doubleValue(payload['paidAmount']),
+        'document_type':
+            _textValue(payload['documentType'], fallback: 'purchase'),
+        'source_purchase_id': _textValue(payload['sourcePurchaseId']),
+        'source_purchase_no': _textValue(payload['sourcePurchaseNo']),
         if (hasWarehouseColumns) ...{
           'warehouse_id': _textValue(payload['warehouseId'], fallback: 'main'),
           'warehouse_name': _textValue(
@@ -5920,9 +5970,10 @@ class BusinessSqliteStore {
           (id, purchase_id, line_no, product_id, product_name, quantity,
            unit_cost, purchase_unit_id, purchase_unit_name, conversion_to_base,
            original_unit_cost, unit_cost_currency, exchange_rate_at_entry,
+           source_line_id,
            requested_supplier_batch_number, requested_manufacturing_date,
            requested_expiration_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         variables: <Variable<Object>>[
           Variable<String>(stableLineId),
@@ -5944,9 +5995,13 @@ class BusinessSqliteStore {
             _textValue(item['unitCostCurrency'], fallback: 'USD'),
           ),
           Variable<double>(_doubleValue(item['exchangeRateAtEntry'])),
-          Variable<String>(_textValue(requestedAllocation?['supplierBatchNumber'])),
-          Variable<String>(_dateString(requestedAllocation?['manufacturingDate']) ?? ''),
-          Variable<String>(_dateString(requestedAllocation?['expirationDate']) ?? ''),
+          Variable<String>(_textValue(item['sourceLineId'])),
+          Variable<String>(
+              _textValue(requestedAllocation?['supplierBatchNumber'])),
+          Variable<String>(
+              _dateString(requestedAllocation?['manufacturingDate']) ?? ''),
+          Variable<String>(
+              _dateString(requestedAllocation?['expirationDate']) ?? ''),
         ],
       );
       for (var batchIndex = 0;

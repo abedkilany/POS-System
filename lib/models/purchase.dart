@@ -16,6 +16,9 @@ class Purchase {
     this.paidAmount = 0,
     this.warehouseId = 'main',
     this.warehouseName = 'Main warehouse',
+    this.documentType = 'purchase',
+    this.sourcePurchaseId = '',
+    this.sourcePurchaseNo = '',
     this.cancelReason = '',
     this.cancelledByDeviceId = '',
     this.reversalApplied = false,
@@ -57,6 +60,9 @@ class Purchase {
       paymentMethod,
       warehouseId,
       warehouseName,
+      documentType,
+      sourcePurchaseId,
+      sourcePurchaseNo,
       cancelReason,
       cancelledByDeviceId;
   final DateTime date, createdAt, updatedAt;
@@ -75,6 +81,7 @@ class Purchase {
   bool get isDraft => status.toLowerCase() == 'draft';
   bool get isReceived => status.toLowerCase() == 'received';
   bool get isReturned => status.toLowerCase() == 'returned';
+  bool get isPurchaseReturn => documentType.toLowerCase() == 'purchase_return';
   bool get isCancelled => status.toLowerCase() == 'cancelled' || isReturned;
   double get balanceDue =>
       (subtotal - paidAmount).clamp(0, double.infinity).toDouble();
@@ -83,14 +90,13 @@ class Purchase {
       ? 0
       : (postedSnapshot == null
           ? subtotal
-          : postedSnapshot!.lines.fold<double>(
-              0, (sum, line) => sum + line.taxableBase));
+          : postedSnapshot!.lines
+              .fold<double>(0, (sum, line) => sum + line.taxableBase));
   bool get hasTaxBreakdown =>
       postedSnapshot != null &&
       !postedSnapshot!.legacyBackfill &&
       postedSnapshot!.currency.taxSchemaVersion >= 2 &&
       postedSnapshot!.lines.any((line) => line.taxMode != 'none');
-
 
   static double _computeSubtotal(String status, List<PurchaseItem> items) {
     if (status.toLowerCase() == 'cancelled' ||
@@ -145,6 +151,9 @@ class Purchase {
           double? paidAmount,
           String? warehouseId,
           String? warehouseName,
+          String? documentType,
+          String? sourcePurchaseId,
+          String? sourcePurchaseNo,
           String? cancelReason,
           String? cancelledByDeviceId,
           bool? reversalApplied,
@@ -178,6 +187,9 @@ class Purchase {
         paidAmount: paidAmount ?? this.paidAmount,
         warehouseId: warehouseId ?? this.warehouseId,
         warehouseName: warehouseName ?? this.warehouseName,
+        documentType: documentType ?? this.documentType,
+        sourcePurchaseId: sourcePurchaseId ?? this.sourcePurchaseId,
+        sourcePurchaseNo: sourcePurchaseNo ?? this.sourcePurchaseNo,
         cancelReason:
             clearCancelReason ? '' : (cancelReason ?? this.cancelReason),
         cancelledByDeviceId: clearCancelledByDeviceId
@@ -215,6 +227,9 @@ class Purchase {
         'paidAmount': paidAmount,
         'warehouseId': warehouseId,
         'warehouseName': warehouseName,
+        'documentType': documentType,
+        'sourcePurchaseId': sourcePurchaseId,
+        'sourcePurchaseNo': sourcePurchaseNo,
         'cancelReason': cancelReason,
         'cancelledByDeviceId': cancelledByDeviceId,
         'reversalApplied': reversalApplied,
@@ -255,6 +270,9 @@ class Purchase {
       warehouseName: json['warehouseName']?.toString().isNotEmpty == true
           ? json['warehouseName']!.toString()
           : 'Main warehouse',
+      documentType: json['documentType']?.toString() ?? 'purchase',
+      sourcePurchaseId: json['sourcePurchaseId']?.toString() ?? '',
+      sourcePurchaseNo: json['sourcePurchaseNo']?.toString() ?? '',
       cancelReason: json['cancelReason']?.toString() ?? '',
       cancelledByDeviceId: json['cancelledByDeviceId']?.toString() ?? '',
       reversalApplied: json['reversalApplied'] == true,

@@ -1,5 +1,11 @@
+import 'dart:ui' as ui;
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 import '../../core/accounting/accounting_account_role.dart';
 import '../../core/localization/app_localizations.dart';
@@ -97,8 +103,12 @@ class _AccountingPageState extends State<AccountingPage>
       return const Center(child: CircularProgressIndicator.adaptive());
     }
 
+    final pageInsets = VentioResponsive.isDesktop(context)
+        ? const EdgeInsets.fromLTRB(16, 10, 16, 10)
+        : VentioResponsive.pageInsets(context);
+
     return Padding(
-      padding: VentioResponsive.pageInsets(context),
+      padding: pageInsets,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -107,11 +117,9 @@ class _AccountingPageState extends State<AccountingPage>
             subtitle: _topSectionSubtitle(context, _tabController.index),
             onRefresh: () => setState(() {}),
           ),
-          const SizedBox(height: 12),
-          _AccountingSummaryStripLoader(store: widget.store),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           _AccountingTabs(controller: _tabController),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           if (_tabController.index <= 2) ...[
             _AccountingSearchField(
                 controller: _searchController, query: _query),
@@ -216,16 +224,20 @@ class _AccountingHeader extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
+              Text(
+                title,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 20,
+                    ),
+              ),
+              const SizedBox(height: 1),
               Text(
                 subtitle,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      fontSize: 11,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
               ),
             ],
           ),
@@ -233,6 +245,8 @@ class _AccountingHeader extends StatelessWidget {
         IconButton.filledTonal(
           tooltip: AppLocalizations.of(context).text('refresh'),
           onPressed: onRefresh,
+          visualDensity: VisualDensity.compact,
+          iconSize: 20,
           icon: const Icon(Icons.refresh),
         ),
       ],
@@ -580,39 +594,63 @@ class _AccountingTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tabs = <({IconData icon, String label})>[
+      (
+        icon: Icons.people_alt_outlined,
+        label: _accountingUiText(
+            context, 'الحسابات المساعدة', 'Subledgers', 'Comptes auxiliaires'),
+      ),
+      (
+        icon: Icons.menu_book_outlined,
+        label: _accountingUiText(context, 'العمليات المحاسبية',
+            'Accounting operations', 'Opérations comptables'),
+      ),
+      (
+        icon: Icons.account_balance_wallet_outlined,
+        label: _accountingUiText(
+            context, 'النقد والبنوك', 'Cash & banks', 'Trésorerie et banques'),
+      ),
+      (
+        icon: Icons.assessment_outlined,
+        label: _accountingUiText(context, 'التقارير المالية',
+            'Financial reports', 'Rapports financiers'),
+      ),
+      (
+        icon: Icons.admin_panel_settings_outlined,
+        label: _accountingUiText(
+            context, 'الإدارة', 'Administration', 'Administration'),
+      ),
+    ];
+
     return Card(
       elevation: 0,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: TabBar(
           controller: controller,
           isScrollable: true,
+          labelStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+          unselectedLabelStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 12),
           tabs: [
-            Tab(
-              icon: const Icon(Icons.people_alt_outlined),
-              text: _accountingUiText(context, 'الحسابات المساعدة',
-                  'Subledgers', 'Comptes auxiliaires'),
-            ),
-            Tab(
-              icon: const Icon(Icons.menu_book_outlined),
-              text: _accountingUiText(context, 'العمليات المحاسبية',
-                  'Accounting operations', 'Opérations comptables'),
-            ),
-            Tab(
-              icon: const Icon(Icons.account_balance_wallet_outlined),
-              text: _accountingUiText(context, 'النقد والبنوك',
-                  'Cash & banks', 'Trésorerie et banques'),
-            ),
-            Tab(
-              icon: const Icon(Icons.assessment_outlined),
-              text: _accountingUiText(context, 'التقارير المالية',
-                  'Financial reports', 'Rapports financiers'),
-            ),
-            Tab(
-              icon: const Icon(Icons.admin_panel_settings_outlined),
-              text: _accountingUiText(
-                  context, 'الإدارة', 'Administration', 'Administration'),
-            ),
+            for (final item in tabs)
+              Tab(
+                height: 40,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(item.icon, size: 18),
+                    const SizedBox(width: 6),
+                    Text(item.label),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
@@ -660,34 +698,45 @@ class _AccountsAccountingGroup extends StatelessWidget {
                     _LazyTabPane(
                       controller: controller,
                       index: 0,
-                      builder: (_) => _AccountsTab(
-                        store: store,
-                        query: query,
-                        accountType: 'customer',
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('customers'),
+                        child: _AccountsTab(
+                          store: store,
+                          query: query,
+                          accountType: 'customer',
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 1,
-                      builder: (_) => _AccountsTab(
-                        store: store,
-                        query: query,
-                        accountType: 'supplier',
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('suppliers'),
+                        child: _AccountsTab(
+                          store: store,
+                          query: query,
+                          accountType: 'supplier',
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 2,
-                      builder: (_) =>
-                          _AgingReportsTab(store: store, query: query),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('aging_reports'),
+                        child: _AgingReportsTab(store: store, query: query),
+                      ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 3,
-                      builder: (_) => _TransactionsTab(
-                        store: store,
-                        query: query,
-                        cashOnly: false,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('recent_transactions'),
+                        child: _TransactionsTab(
+                          store: store,
+                          query: query,
+                          cashOnly: false,
+                        ),
                       ),
                     ),
                   ],
@@ -740,19 +789,27 @@ class _OperationsAccountingGroup extends StatelessWidget {
                     _LazyTabPane(
                       controller: controller,
                       index: 0,
-                      builder: (_) =>
-                          _JournalEntriesTab(store: store, query: query),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: _accountingUiText(context, 'القيود اليومية',
+                            'Journal entries', 'Écritures'),
+                        child: _JournalEntriesTab(store: store, query: query),
+                      ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 1,
-                      builder: (_) =>
-                          _GeneralLedgerTab(store: store, query: query),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('general_ledger'),
+                        child: _GeneralLedgerTab(store: store, query: query),
+                      ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 2,
-                      builder: (_) => _ChartOfAccountsTab(store: store, query: query),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('chart_of_accounts'),
+                        child: _ChartOfAccountsTab(store: store, query: query),
+                      ),
                     ),
                   ],
                 );
@@ -1240,23 +1297,33 @@ class _CashAccountingGroup extends StatelessWidget {
                     _LazyTabPane(
                       controller: controller,
                       index: 0,
-                      builder: (_) => _CashLedgerTransactionsTab(
-                        store: store,
-                        query: query,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('cash_movement'),
+                        child: _CashLedgerTransactionsTab(
+                          store: store,
+                          query: query,
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 1,
-                      builder: (_) => _AdvancedAccountingTab(
-                        store: store,
-                        cashOnly: true,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: _accountingUiText(context, 'رقابة النقد',
+                            'Cash control', 'Contrôle de caisse'),
+                        child: _AdvancedAccountingTab(
+                          store: store,
+                          cashOnly: true,
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 2,
-                      builder: (_) => _CashBankReportTab(store: store),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('cash_bank'),
+                        child: _CashBankReportTab(store: store),
+                      ),
                     ),
                   ],
                 );
@@ -1516,57 +1583,76 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
                       controller: controller,
                       index: 0,
                       cacheToken: 'trial|$rangeToken',
-                      builder: (_) => _TrialBalanceTab(
-                        store: widget.store,
-                        query: widget.query,
-                        from: range.from,
-                        to: range.to,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('trial_balance'),
+                        child: _TrialBalanceTab(
+                          store: widget.store,
+                          query: widget.query,
+                          from: range.from,
+                          to: range.to,
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 1,
                       cacheToken: 'income|$rangeToken',
-                      builder: (_) => _IncomeStatementTab(
-                        store: widget.store,
-                        from: range.from,
-                        to: range.to,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('income_statement'),
+                        child: _IncomeStatementTab(
+                          store: widget.store,
+                          from: range.from,
+                          to: range.to,
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 2,
                       cacheToken: 'balance|$rangeToken',
-                      builder: (_) => _BalanceSheetTab(
-                        store: widget.store,
-                        asOf: range.to,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('balance_sheet'),
+                        child: _BalanceSheetTab(
+                          store: widget.store,
+                          asOf: range.to,
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 3,
                       cacheToken: 'cashflow|$rangeToken',
-                      builder: (_) => _CashFlowStatementTab(
-                        store: widget.store,
-                        from: range.from,
-                        to: range.to,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('cash_flow_statement'),
+                        child: _CashFlowStatementTab(
+                          store: widget.store,
+                          from: range.from,
+                          to: range.to,
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 4,
                       cacheToken: 'tax|$rangeToken',
-                      builder: (_) => _TaxReportTab(
-                        store: widget.store,
-                        from: range.from,
-                        to: range.to,
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('tax_report'),
+                        child: _TaxReportTab(
+                          store: widget.store,
+                          from: range.from,
+                          to: range.to,
+                        ),
                       ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 5,
-                      builder: (_) =>
-                          _InventoryManufacturingReportsTab(store: widget.store),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('inventory'),
+                        child: _InventoryManufacturingReportsTab(
+                          store: widget.store,
+                        ),
+                      ),
                     ),
                   ],
                 );
@@ -1680,8 +1766,10 @@ class _AccountingReportRangeBar extends StatelessWidget {
     return Card(
       elevation: 0,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: LayoutBuilder(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        child: DefaultTextStyle.merge(
+          style: const TextStyle(fontSize: 12),
+          child: LayoutBuilder(
           builder: (context, constraints) {
             final details = Row(
               mainAxisSize: MainAxisSize.min,
@@ -1740,6 +1828,7 @@ class _AccountingReportRangeBar extends StatelessWidget {
               ],
             );
           },
+          ),
         ),
       ),
     );
@@ -1833,17 +1922,32 @@ class _SettingsAccountingGroup extends StatelessWidget {
                     _LazyTabPane(
                       controller: controller,
                       index: 0,
-                      builder: (_) => _AdvancedAccountingTab(store: store),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: _accountingUiText(
+                          context,
+                          'الإدارة المحاسبية',
+                          'Accounting administration',
+                          'Administration comptable',
+                        ),
+                        child: _AdvancedAccountingTab(store: store),
+                      ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 1,
-                      builder: (_) => _AccountingRolesTab(store: store),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: _accountingUiText(context, 'ربط الحسابات',
+                            'Account mapping', 'Rattachement des comptes'),
+                        child: _AccountingRolesTab(store: store),
+                      ),
                     ),
                     _LazyTabPane(
                       controller: controller,
                       index: 2,
-                      builder: (_) => _AccountingSettingsTab(store: store),
+                      builder: (_) => _AccountingPrintablePage(
+                        title: tr.text('settings'),
+                        child: _AccountingSettingsTab(store: store),
+                      ),
                     ),
                   ],
                 );
@@ -1861,15 +1965,44 @@ class _AccountingGroupTabs extends StatelessWidget {
 
   final List<Widget> tabs;
 
+  Widget _compactTab(Widget tab) {
+    if (tab is! Tab || tab.text == null) return tab;
+    return Tab(
+      height: 38,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (tab.icon != null) ...[
+            IconTheme(
+              data: const IconThemeData(size: 17),
+              child: tab.icon!,
+            ),
+            const SizedBox(width: 5),
+          ],
+          Text(tab.text!),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
       elevation: 0,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: TabBar(
           isScrollable: true,
-          tabs: tabs,
+          labelStyle: const TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+          ),
+          unselectedLabelStyle: const TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w500,
+          ),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+          tabs: tabs.map(_compactTab).toList(growable: false),
         ),
       ),
     );
@@ -1932,6 +2065,119 @@ class _LazyTabPaneState extends State<_LazyTabPane> {
       _builtChild = widget.builder(context);
     }
     return _builtChild ?? const SizedBox.expand();
+  }
+}
+
+
+class _AccountingPrintablePage extends StatefulWidget {
+  const _AccountingPrintablePage({
+    required this.title,
+    required this.child,
+  });
+
+  final String title;
+  final Widget child;
+
+  @override
+  State<_AccountingPrintablePage> createState() =>
+      _AccountingPrintablePageState();
+}
+
+class _AccountingPrintablePageState extends State<_AccountingPrintablePage> {
+  final GlobalKey _printBoundaryKey = GlobalKey();
+  bool _printing = false;
+
+  Future<void> _printCurrentPage() async {
+    if (_printing) return;
+    setState(() => _printing = true);
+    try {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      final boundary = _printBoundaryKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) {
+        throw StateError('Accounting page is not ready for printing.');
+      }
+      final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+      final captureRatio = devicePixelRatio.clamp(1.0, 2.0).toDouble();
+      final image = await boundary.toImage(pixelRatio: captureRatio);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        throw StateError('Could not capture the accounting page.');
+      }
+      final imageBytes = byteData.buffer.asUint8List(
+        byteData.offsetInBytes,
+        byteData.lengthInBytes,
+      );
+      final pdf = pw.Document();
+      final pageFormat = image.width >= image.height
+          ? PdfPageFormat.a4.landscape
+          : PdfPageFormat.a4;
+      final pdfImage = pw.MemoryImage(Uint8List.fromList(imageBytes));
+      pdf.addPage(
+        pw.Page(
+          pageFormat: pageFormat,
+          margin: const pw.EdgeInsets.all(18),
+          build: (_) => pw.Center(
+            child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
+          ),
+        ),
+      );
+      final bytes = await pdf.save();
+      await Printing.layoutPdf(
+        name: widget.title.trim().isEmpty ? 'accounting' : widget.title.trim(),
+        onLayout: (_) async => Uint8List.fromList(bytes),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _accountingUiText(
+              context,
+              'تعذر تجهيز الصفحة للطباعة: $error',
+              'Could not prepare this page for printing: $error',
+              'Impossible de préparer cette page pour l’impression : $error',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          key: _printBoundaryKey,
+          child: widget.child,
+        ),
+        PositionedDirectional(
+          top: 4,
+          end: 4,
+          child: Material(
+            color: Colors.transparent,
+            child: IconButton.filledTonal(
+              tooltip: AppLocalizations.of(context).text('print'),
+              onPressed: _printing ? null : _printCurrentPage,
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+              icon: _printing
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.print_outlined),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -6675,9 +6921,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   Future<void> _createFixedAssetDialog() async {
     widget.store.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
-    final code = TextEditingController();
     final name = TextEditingController();
-    final category = TextEditingController(text: tr.text('equipment'));
     final purchaseValue = TextEditingController(text: '0');
     final usefulLifeMonths = TextEditingController(text: '0');
     final notes = TextEditingController();
@@ -6687,11 +6931,33 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     final assetAccounts = accounts
         .where((a) =>
             a.type == 'asset' &&
-            (a.subtype == 'fixed_assets' || a.subtype.startsWith('fixed_')))
+            a.subtype.startsWith('fixed_') &&
+            a.subtype != 'fixed_assets')
         .toList();
     if (assetAccounts.isEmpty) return;
+
+    String fixedAssetTypeLabel(AccountingAccount account) {
+      return switch (account.subtype) {
+        'fixed_equipment' => _accountingUiText(
+            context, 'معدات وآلات', 'Equipment & machinery',
+            'Équipements et machines'),
+        'fixed_furniture' => _accountingUiText(
+            context, 'أثاث وتجهيزات', 'Furniture & fixtures',
+            'Mobilier et agencements'),
+        'fixed_computers' => _accountingUiText(
+            context, 'أجهزة وحواسيب', 'Devices & computers',
+            'Appareils et ordinateurs'),
+        'fixed_vehicles' => _accountingUiText(
+            context, 'سيارات', 'Vehicles', 'Véhicules'),
+        'fixed_other' => _accountingUiText(
+            context, 'أصول ثابتة أخرى', 'Other fixed assets',
+            'Autres immobilisations'),
+        _ => _localizedAccountingName(account.name, tr),
+      };
+    }
+
     AccountingAccount? assetAccount = assetAccounts.firstWhere(
-      (a) => a.subtype == 'fixed_assets',
+      (a) => a.subtype == 'fixed_equipment',
       orElse: () => assetAccounts.first,
     );
     final counterpartAccounts = accounts
@@ -6717,14 +6983,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               TextField(
-                  controller: code,
-                  decoration: InputDecoration(labelText: tr.text('code'))),
-              TextField(
                   controller: name,
                   decoration: InputDecoration(labelText: tr.text('name'))),
-              TextField(
-                  controller: category,
-                  decoration: InputDecoration(labelText: tr.text('category'))),
               TextField(
                   controller: purchaseValue,
                   keyboardType:
@@ -6760,14 +7020,20 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
               DropdownButtonFormField<AccountingAccount>(
                 initialValue: assetAccount,
                 isExpanded: true,
-                decoration:
-                    InputDecoration(labelText: tr.text('fixed_assets_account')),
+                decoration: InputDecoration(
+                  labelText: _accountingUiText(
+                    context,
+                    'نوع الأصل',
+                    'Asset type',
+                    'Type d’immobilisation',
+                  ),
+                ),
                 items: [
                   for (final a in assetAccounts)
                     DropdownMenuItem(
-                        value: a,
-                        child: Text(
-                            '${a.code} - ${_localizedAccountingName(a.name, tr)}'))
+                      value: a,
+                      child: Text(fixedAssetTypeLabel(a)),
+                    )
                 ],
                 onChanged: (value) => setDialogState(() {
                   assetAccount = value;
@@ -6776,6 +7042,24 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   }
                 }),
               ),
+              if (assetAccount != null) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text(
+                    _accountingUiText(
+                      context,
+                      'سيتم التسجيل تلقائياً في الحساب: '
+                          '${assetAccount!.code} - ${_localizedAccountingName(assetAccount!.name, tr)}',
+                      'Will be posted automatically to: '
+                          '${assetAccount!.code} - ${_localizedAccountingName(assetAccount!.name, tr)}',
+                      'Sera comptabilisé automatiquement dans : '
+                          '${assetAccount!.code} - ${_localizedAccountingName(assetAccount!.name, tr)}',
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 initialValue: paymentMode,
@@ -6876,9 +7160,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
           ? user!.fullName.trim()
           : widget.store.currentRole;
       await AccountingService.createFixedAsset(
-        code: code.text,
+        code: '',
         name: name.text,
-        category: category.text,
+        category: assetAccount!.name,
         acquisitionDate: acquisitionDate,
         purchaseValue: double.tryParse(purchaseValue.text) ?? 0,
         usefulLifeMonths: int.tryParse(usefulLifeMonths.text) ?? 0,

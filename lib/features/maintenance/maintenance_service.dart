@@ -12,6 +12,7 @@ import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../data/app_store.dart';
 import 'maintenance_models.dart';
 import 'phase10_health_service.dart';
+import 'product_cost_repair_service.dart';
 
 class MaintenanceService {
   const MaintenanceService(this.store);
@@ -128,6 +129,14 @@ class MaintenanceService {
           title: 'Database re-check completed',
           message: 'No data was changed. The health check was refreshed only.',
         );
+      case MaintenanceRepairAction.repairProductCosts:
+        final result = await ProductCostRepairService(store).repair();
+        return MaintenanceRepairResult(
+          title: 'Product costs repaired',
+          message:
+              'Repaired ${result.repairedBatches} batches and rebuilt ${result.rebuiltProducts} product costs.',
+          changedRecords: result.changedRecords,
+        );
     }
   }
 
@@ -231,6 +240,9 @@ class MaintenanceService {
         severity: zeroCostProducts == 0
             ? MaintenanceSeverity.ok
             : MaintenanceSeverity.info,
+        repairAction: zeroCostProducts == 0
+            ? null
+            : MaintenanceRepairAction.repairProductCosts,
         message: zeroCostProducts == 0
             ? 'No active products with zero cost.'
             : '$zeroCostProducts active products have zero cost.',

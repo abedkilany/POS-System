@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/windows_release_catalog.dart';
@@ -15,6 +16,7 @@ import 'diagnostics_page.dart';
 import 'disaster_recovery_service.dart';
 import 'maintenance_models.dart';
 import 'maintenance_service.dart';
+import 'product_cost_repair_service.dart';
 
 class MaintenancePage extends StatefulWidget {
   const MaintenancePage({super.key, required this.store});
@@ -36,6 +38,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   bool _stressLabButtonHidden = false;
   bool _phase7Running = false;
   bool _recoveryRunning = false;
+  bool _costRepairRunning = false;
   Timer? _stressLabHideTimer;
   bool get _showAdvancedTools =>
       kDebugMode || widget.store.canManageMaintenance;
@@ -83,7 +86,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${tr.text('recovery_checkpoint_failed')}: $error')),
+        SnackBar(
+            content: Text('${tr.text('recovery_checkpoint_failed')}: $error')),
       );
     } finally {
       if (mounted) setState(() => _recoveryRunning = false);
@@ -120,11 +124,112 @@ class _MaintenancePageState extends State<MaintenancePage> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${tr.text('recovery_restore_drill_failed')}: $error')),
+        SnackBar(
+            content:
+                Text('${tr.text('recovery_restore_drill_failed')}: $error')),
       );
     } finally {
       if (mounted) setState(() => _recoveryRunning = false);
     }
+  }
+
+  Future<void> _repairProductCosts() async {
+    if (_costRepairRunning || !widget.store.canManageMaintenance) return;
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('repair_product_costs_title')),
+        content: Text(tr.text('repair_product_costs_desc')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(tr.text('repair_product_costs_confirm')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _costRepairRunning = true);
+    try {
+      final result = await ProductCostRepairService(widget.store).repair();
+      if (!mounted) return;
+      await _refresh(deep: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tr.format('repair_product_costs_done', {
+            'batches': result.repairedBatches,
+            'products': result.rebuiltProducts,
+            'unresolved': result.unresolvedBatches,
+          })),
+        ),
+      );
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      await _showCostRepairError(error, stackTrace);
+    } finally {
+      if (mounted) setState(() => _costRepairRunning = false);
+    }
+  }
+
+  Future<void> _showCostRepairError(Object error, StackTrace stackTrace) async {
+    if (!mounted) return;
+    final tr = AppLocalizations.of(context);
+    final details = <String>[
+      'Ventio product cost repair failure',
+      'Time: ${DateTime.now().toUtc().toIso8601String()}',
+      '${tr.text('error_type')}: ${error.runtimeType}',
+      '${tr.text('error_message')}: $error',
+      '${tr.text('stack_trace')}:',
+      stackTrace.toString(),
+    ].join('\n');
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Text(tr.text('repair_product_costs_error_details'))),
+          ],
+        ),
+        content: SizedBox(
+          width: 760,
+          height: 430,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              details,
+              textDirection: TextDirection.ltr,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: details));
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(tr.text('diagnostic_report_copied'))),
+              );
+            },
+            icon: const Icon(Icons.copy_outlined),
+            label: Text(tr.text('copy')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(tr.text('close')),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showRecoveryReadiness() async {
@@ -179,7 +284,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${tr.text('disaster_recovery_readiness')}: $error')),
+        SnackBar(
+            content: Text('${tr.text('disaster_recovery_readiness')}: $error')),
       );
     } finally {
       if (mounted) setState(() => _recoveryRunning = false);
@@ -470,7 +576,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
             .whereType<MaintenanceRepairAction>()
             .toSet() ??
         const <MaintenanceRepairAction>{};
-
     if (_showDatabaseExplorer) {
       return Column(
         children: [
@@ -656,6 +761,9 @@ class _MaintenancePageState extends State<MaintenancePage> {
     MaintenanceSummary? summary,
     Set<MaintenanceRepairAction> availableRepairActions,
   ) {
+    final canRepairProductCosts = availableRepairActions
+            .contains(MaintenanceRepairAction.repairProductCosts) ||
+        widget.store.stockTrackedProducts.isNotEmpty;
     return _SectionCard(
       title: tr.text('maintenance_actions'),
       icon: Icons.build_outlined,
@@ -678,10 +786,27 @@ class _MaintenancePageState extends State<MaintenancePage> {
               icon: const Icon(Icons.fact_check_outlined),
               label: Text(tr.text('run_deep_diagnostics')),
             ),
-            OutlinedButton.icon(
-              onPressed: (!_recoveryRunning && widget.store.canManageMaintenance)
-                  ? _showRecoveryReadiness
+            FilledButton.icon(
+              onPressed: (!_loading &&
+                      !_costRepairRunning &&
+                      widget.store.canManageMaintenance &&
+                      canRepairProductCosts)
+                  ? _repairProductCosts
                   : null,
+              icon: _costRepairRunning
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.price_check_outlined),
+              label: Text(tr.text('repair_product_costs')),
+            ),
+            OutlinedButton.icon(
+              onPressed:
+                  (!_recoveryRunning && widget.store.canManageMaintenance)
+                      ? _showRecoveryReadiness
+                      : null,
               icon: const Icon(Icons.health_and_safety_outlined),
               label: Text(tr.text('disaster_recovery_readiness')),
             ),
@@ -1001,8 +1126,8 @@ class _MaintenanceDashboard extends StatelessWidget {
               tr.text('critical'), '${summary.counts['phase10Critical'] ?? 0}'),
           _DashboardMetric(
               tr.text('warnings'), '${summary.counts['phase10Warnings'] ?? 0}'),
-          _DashboardMetric(
-              tr.text('healthy'), '${summary.counts['phase10HealthyChecks'] ?? 0}'),
+          _DashboardMetric(tr.text('healthy'),
+              '${summary.counts['phase10HealthyChecks'] ?? 0}'),
         ],
       ),
       _DashboardCardData(

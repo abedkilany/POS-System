@@ -1,6 +1,6 @@
 enum MaintenanceSeverity { ok, info, warning, critical }
 
-enum MaintenanceRepairAction { refreshOnly }
+enum MaintenanceRepairAction { refreshOnly, repairProductCosts }
 
 class MaintenanceIssue {
   const MaintenanceIssue({

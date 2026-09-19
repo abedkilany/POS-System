@@ -168,6 +168,15 @@ class AccountingService {
     return _resolveAccountRoleForDatabase(database, roleKey);
   }
 
+  /// Resolves the postable inventory account for a product while keeping the
+  /// caller's transaction/database context. Purchase and sale reversals must
+  /// use the same product classification as the original posting.
+  static Future<String> resolveInventoryAccountForProductForDatabase(
+    VentioDriftDatabase database,
+    String productId,
+  ) =>
+      _inventoryAccountForProduct(database, productId);
+
   /// Groups inventory value by semantic inventory account and makes the final
   /// rounded allocation equal [targetAmount]. This avoids one-cent imbalances
   /// when VAT-inclusive purchase values are split across product classes.
@@ -249,14 +258,15 @@ class AccountingService {
     final wip = await _resolveAccountRoleForDatabase(database, 'inventory_wip');
     final finished =
         await _resolveAccountRoleForDatabase(database, 'inventory_finished');
-    final merchandise = await _resolveAccountRoleForDatabase(
-        database, 'inventory_merchandise');
+    final merchandise =
+        await _resolveAccountRoleForDatabase(database, 'inventory_merchandise');
     final specialized = <String>{raw, wip, finished, merchandise};
     if (general.isEmpty || specialized.contains(general)) {
       return false;
     }
 
-    final accountIds = <String>{general, ...specialized}.toList(growable: false);
+    final accountIds =
+        <String>{general, ...specialized}.toList(growable: false);
     final placeholders = List.filled(accountIds.length, '?').join(',');
     final balanceRows = await database.customSelect(
       '''
@@ -386,9 +396,8 @@ class AccountingService {
     if (specializedNetAdjustment.abs() > 0.005) {
       lines.add(JournalLineDraft(
         accountId: general,
-        debit: specializedNetAdjustment < 0
-            ? specializedNetAdjustment.abs()
-            : 0,
+        debit:
+            specializedNetAdjustment < 0 ? specializedNetAdjustment.abs() : 0,
         credit: specializedNetAdjustment > 0 ? specializedNetAdjustment : 0,
         memo: 'Clear legacy general inventory into semantic classes',
       ));
@@ -447,8 +456,7 @@ class AccountingService {
   }) async {
     if (database == null && !isAvailable) return false;
     final db = database ?? _db;
-    final general =
-        await _resolveAccountRoleForDatabase(db, 'inventory_asset');
+    final general = await _resolveAccountRoleForDatabase(db, 'inventory_asset');
     final raw = await _resolveAccountRoleForDatabase(db, 'inventory_raw');
     final wip = await _resolveAccountRoleForDatabase(db, 'inventory_wip');
     final finished =
@@ -549,16 +557,12 @@ class AccountingService {
         memo: 'Unified Batch inventory account classification reconciliation',
       ));
     }
-    if (general.trim().isNotEmpty &&
-        specializedNetAdjustment.abs() > 0.005) {
+    if (general.trim().isNotEmpty && specializedNetAdjustment.abs() > 0.005) {
       lines.add(JournalLineDraft(
         accountId: general,
-        debit: specializedNetAdjustment < 0
-            ? specializedNetAdjustment.abs()
-            : 0,
-        credit: specializedNetAdjustment > 0
-            ? specializedNetAdjustment
-            : 0,
+        debit:
+            specializedNetAdjustment < 0 ? specializedNetAdjustment.abs() : 0,
+        credit: specializedNetAdjustment > 0 ? specializedNetAdjustment : 0,
         memo: 'Clear general inventory into semantic inventory accounts',
       ));
     }
@@ -1232,14 +1236,12 @@ class AccountingService {
       sale.postedSnapshot,
       currency: accountingCurrency,
     );
-    final legacyGrossTax = frozenTax == null
-        ? await _taxBreakdown(grossSubtotal)
-        : null;
-    final legacyNetSaleTax = frozenTax == null
-        ? await _taxBreakdown(saleTotal)
-        : null;
-    final revenueBeforeDiscount = frozenTax?.grossNetBeforeDiscount ??
-        legacyGrossTax!.netAmount;
+    final legacyGrossTax =
+        frozenTax == null ? await _taxBreakdown(grossSubtotal) : null;
+    final legacyNetSaleTax =
+        frozenTax == null ? await _taxBreakdown(saleTotal) : null;
+    final revenueBeforeDiscount =
+        frozenTax?.grossNetBeforeDiscount ?? legacyGrossTax!.netAmount;
     final finalNetRevenue = frozenTax?.netAmount ?? legacyNetSaleTax!.netAmount;
     final salesDiscountNet = discountGross <= 0
         ? 0.0
@@ -1514,11 +1516,12 @@ class AccountingService {
       purchase.postedSnapshot,
       currency: accountingCurrency,
     );
-    final legacyPurchaseTax = frozenPurchaseTax == null
-        ? await _taxBreakdown(total)
-        : null;
-    final purchaseNet = frozenPurchaseTax?.netAmount ?? legacyPurchaseTax!.netAmount;
-    final inputTax = frozenPurchaseTax?.taxAmount ?? legacyPurchaseTax!.taxAmount;
+    final legacyPurchaseTax =
+        frozenPurchaseTax == null ? await _taxBreakdown(total) : null;
+    final purchaseNet =
+        frozenPurchaseTax?.netAmount ?? legacyPurchaseTax!.netAmount;
+    final inputTax =
+        frozenPurchaseTax?.taxAmount ?? legacyPurchaseTax!.taxAmount;
     final paid = paymentPostedSeparately
         ? 0.0
         : min(
@@ -2020,8 +2023,8 @@ class AccountingService {
         : '-${movementVersionSuffix.trim()}';
     await insertMovement('${expense.id}-expense-debit$suffix', 'expense',
         expense.amount, 0, '', 'Expense ${expense.title}');
-    await insertMovement('${expense.id}-expense-credit$suffix', 'paymentPaid', 0,
-        expense.amount, 'Cash', 'Expense settlement ${expense.title}');
+    await insertMovement('${expense.id}-expense-credit$suffix', 'paymentPaid',
+        0, expense.amount, 'Cash', 'Expense settlement ${expense.title}');
   }
 
   static Future<void>
@@ -2501,8 +2504,7 @@ class AccountingService {
           await _resolveAccountRoleForDatabase(db, 'accounts_payable');
       final isCustomerPayment =
           transaction.isCustomer && transaction.credit > 0;
-      final isSupplierPayment =
-          transaction.isSupplier && transaction.debit > 0;
+      final isSupplierPayment = transaction.isSupplier && transaction.debit > 0;
       if (!isCustomerPayment && !isSupplierPayment) return false;
       final amount = _cleanAmount(
           isCustomerPayment ? transaction.credit : transaction.debit);
@@ -2699,8 +2701,7 @@ class AccountingService {
         ''',
         variables: <Variable<Object>>[Variable<String>(entryId)],
       ).getSingleOrNull();
-      final lineCount =
-          (persisted?.data['line_count'] as num?)?.toInt() ?? 0;
+      final lineCount = (persisted?.data['line_count'] as num?)?.toInt() ?? 0;
       final debit = _num(persisted?.data['total_debit']);
       final credit = _num(persisted?.data['total_credit']);
       if (persisted == null ||
@@ -2727,7 +2728,6 @@ class AccountingService {
       return true;
     }
 
-
     final inserted = withinExistingTransaction
         ? await persistEntry()
         : await db.transaction(persistEntry);
@@ -2752,7 +2752,9 @@ class AccountingService {
     if (snapshot.documentNumber.trim() != sale.invoiceNo.trim()) {
       mismatch('document number');
     }
-    if (snapshot.party.id.trim() != sale.customerId.trim()) mismatch('customer');
+    if (snapshot.party.id.trim() != sale.customerId.trim()) {
+      mismatch('customer');
+    }
     if (snapshot.warehouseId.trim() != sale.warehouseId.trim()) {
       mismatch('warehouse');
     }
@@ -2861,7 +2863,6 @@ class AccountingService {
       }
     }
   }
-
 
   static Future<int> countPostedJournalEntriesForReferences({
     required String referenceType,
@@ -3059,7 +3060,8 @@ class AccountingService {
                                 ? '$normalizedReferenceId:inventory_adjustment_edit:'
                                 : normalizedReferenceType == 'sale_return'
                                     ? '$normalizedReferenceId:sale_return_edit:'
-                                    : normalizedReferenceType == 'manufacturing_order'
+                                    : normalizedReferenceType ==
+                                            'manufacturing_order'
                                         ? '$normalizedReferenceId:manufacturing_edit:'
                                         : '';
     final hasEditFamily = editFamilyPrefix.isNotEmpty;
@@ -3418,7 +3420,8 @@ class AccountingService {
         variables.add(Variable<String>('${normalizedReferenceType}_reversal'));
       }
       if (normalizedReferenceId.isNotEmpty) {
-        conditions.add('(je.reference_id = ? OR instr(je.reference_id, ?) = 1)');
+        conditions
+            .add('(je.reference_id = ? OR instr(je.reference_id, ?) = 1)');
         variables.add(Variable<String>(normalizedReferenceId));
         variables.add(Variable<String>('$normalizedReferenceId:'));
       }
@@ -3817,10 +3820,12 @@ class AccountingService {
           subtype.startsWith('fixed_') ||
           subtype == 'accumulated_depreciation';
     }
+
     bool isNonCurrentLiability(TrialBalanceRowReport row) {
       final subtype = row.accountSubtype.trim().toLowerCase();
       return subtype == 'long_term_loans' || subtype.startsWith('long_term_');
     }
+
     final currentAssetLines = rows
         .where((row) => row.accountType == 'asset' && !isNonCurrentAsset(row))
         .map((row) => statementLine(row, row.debit - row.credit))
@@ -3882,9 +3887,11 @@ class AccountingService {
         await _resolveAccountRoleForDatabase(db, 'inventory_finished');
     final tradingAccount =
         await _resolveAccountRoleForDatabase(db, 'inventory_merchandise');
-    final methodRow = await db.customSelect(
-      "SELECT value FROM settings WHERE key = 'inventory_costing_method_v1' LIMIT 1",
-    ).getSingleOrNull();
+    final methodRow = await db
+        .customSelect(
+          "SELECT value FROM settings WHERE key = 'inventory_costing_method_v1' LIMIT 1",
+        )
+        .getSingleOrNull();
     final costingMethod =
         methodRow?.data['value']?.toString().trim().toLowerCase() ?? 'batch';
     final useBatch =
@@ -3916,8 +3923,7 @@ class AccountingService {
             ),
           ],
         ).getSingleOrNull();
-        final detail =
-            phase4ErrorRow?.data['value']?.toString().trim() ?? '';
+        final detail = phase4ErrorRow?.data['value']?.toString().trim() ?? '';
         throw LocalizedDomainException(
           'error_unified_batch_valuation_blocked',
           values: <String, Object?>{'detail': detail},
@@ -3981,11 +3987,10 @@ class AccountingService {
         final quantity = _num(row.data['quantity']);
         final batchQuantity = _num(row.data['batch_qty']);
         final batchValue = _num(row.data['batch_value']);
-        final unitCost = batchQuantity.abs() <= 0.000001
-            ? 0.0
-            : batchValue / batchQuantity;
-        final category = row.data['inventory_category']?.toString() ??
-            'merchandise';
+        final unitCost =
+            batchQuantity.abs() <= 0.000001 ? 0.0 : batchValue / batchQuantity;
+        final category =
+            row.data['inventory_category']?.toString() ?? 'merchandise';
         final accountId = switch (category) {
           'finished_goods' => finishedAccount,
           'raw_materials' => rawAccount,
@@ -4055,8 +4060,8 @@ class AccountingService {
     return rows.map((row) {
       final quantity = _num(row.data['quantity']);
       final unitCost = _num(row.data['unit_cost']);
-      final category = row.data['inventory_category']?.toString() ??
-          'merchandise';
+      final category =
+          row.data['inventory_category']?.toString() ?? 'merchandise';
       final accountId = switch (category) {
         'finished_goods' => finishedAccount,
         'raw_materials' => rawAccount,
@@ -4900,7 +4905,8 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
-  static Future<List<AdvancedAccountingItem>> listGeneralLedgerBranches() async {
+  static Future<List<AdvancedAccountingItem>>
+      listGeneralLedgerBranches() async {
     if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       r'''
@@ -4992,7 +4998,15 @@ class AccountingService {
         : (paymentAccountId.trim().isNotEmpty
             ? paymentAccountId.trim()
             : _requiredAccount(accounts, 'default_cash_account_id'));
-    await _accountSnapshot(_db, fixedAssetAccountId);
+    final fixedAssetAccount = await _accountSnapshot(_db, fixedAssetAccountId);
+    if (fixedAssetAccount.type != 'asset' ||
+        !fixedAssetAccount.isPostable ||
+        !fixedAssetAccount.subtype.startsWith('fixed_') ||
+        fixedAssetAccount.subtype == 'fixed_assets') {
+      throw StateError(
+        'يجب تسجيل الأصل الثابت في حساب تفصيلي مثل السيارات أو المعدات، وليس في حساب الأصول الثابتة الرئيسي.',
+      );
+    }
     if (!paidFromCashDrawer) {
       await _accountSnapshot(_db, legacyPaymentAccount);
     }
@@ -5001,7 +5015,7 @@ class AccountingService {
     final now = nowDate.toIso8601String();
     final assetId = _newId('asset');
     final normalizedCode = code.trim().isEmpty
-        ? 'FA-${DateTime.now().millisecondsSinceEpoch}'
+        ? 'FA-${DateTime.now().toUtc().microsecondsSinceEpoch}'
         : code.trim().toUpperCase();
     final normalizedName = name.trim().isEmpty ? 'أصل ثابت' : name.trim();
     final normalizedCurrency =
@@ -5027,8 +5041,7 @@ class AccountingService {
           "SELECT id FROM cash_drawer_sessions WHERE cash_location_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 1",
           variables: <Variable<Object>>[Variable<String>(cashDrawer.id)],
         ).getSingleOrNull();
-        cashDrawerSessionId =
-            sessionRow?.data['id']?.toString().trim() ?? '';
+        cashDrawerSessionId = sessionRow?.data['id']?.toString().trim() ?? '';
         if (cashDrawerSessionId.isEmpty) {
           throw StateError(
             'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل شراء أصل نقداً.',
@@ -5433,7 +5446,6 @@ class AccountingService {
     _notifyMutation();
   }
 
-
   /// Safely edits an already-posted manual journal. System-generated journal
   /// entries are intentionally excluded: they must be edited from their
   /// owning business document so operational and accounting state stay aligned.
@@ -5536,8 +5548,10 @@ class AccountingService {
               'Only manual journal entries can be edited directly. Edit system journals from their source document.',
             );
           }
-          if (current.status != 'posted' || current.reversedByEntryId.isNotEmpty) {
-            throw StateError('Only an active posted manual journal can be edited.');
+          if (current.status != 'posted' ||
+              current.reversedByEntryId.isNotEmpty) {
+            throw StateError(
+                'Only an active posted manual journal can be edited.');
           }
         },
         validateVersion: (current) async {
@@ -5621,8 +5635,10 @@ class AccountingService {
             variables: <Variable<Object>>[Variable<String>(current.id)],
           ).getSingleOrNull();
           if (reversed?.data['status']?.toString() != 'reversed' ||
-              (reversed?.data['reversed_by_entry_id']?.toString() ?? '').isEmpty) {
-            throw StateError('Previous manual journal version was not reversed.');
+              (reversed?.data['reversed_by_entry_id']?.toString() ?? '')
+                  .isEmpty) {
+            throw StateError(
+                'Previous manual journal version was not reversed.');
           }
         },
         applyChanges: (current) async => current,
@@ -5674,9 +5690,13 @@ class AccountingService {
           if (row == null ||
               row.data['status']?.toString() != 'posted' ||
               row.data['reference_id']?.toString() != nextReferenceId ||
-              ((row.data['line_count'] as num?)?.toInt() ?? 0) != lines.length ||
-              (_num(row.data['total_debit']) - _num(row.data['total_credit'])).abs() > 0.005) {
-            throw StateError('Edited manual journal failed integrity verification.');
+              ((row.data['line_count'] as num?)?.toInt() ?? 0) !=
+                  lines.length ||
+              (_num(row.data['total_debit']) - _num(row.data['total_credit']))
+                      .abs() >
+                  0.005) {
+            throw StateError(
+                'Edited manual journal failed integrity verification.');
           }
         },
       ).execute();
@@ -5753,8 +5773,7 @@ class AccountingService {
         referenceNo: sourceReferenceNo.trim().isEmpty
             ? sourceReferenceId
             : sourceReferenceNo.trim(),
-        description:
-            'Negative-stock cost reconciliation - $productName',
+        description: 'Negative-stock cost reconciliation - $productName',
         source: 'system',
         createdBy: createdBy,
         storeId: storeId,
@@ -5872,35 +5891,35 @@ class AccountingService {
         await _inventoryAccountForProduct(database, productId);
     final lines = <JournalLineDraft>[];
     if (roundedDelta > 0) {
-      final gainAccount =
-          await _resolveAccountRoleForDatabase(database, 'inventory_count_gain');
+      final gainAccount = await _resolveAccountRoleForDatabase(
+          database, 'inventory_count_gain');
       lines
         ..add(JournalLineDraft(
           accountId: inventoryAccount,
           debit: roundedDelta,
-          credit: 0,
+          credit: 0.0,
           memo: 'Batch cost revaluation - $productName ($batchId)',
         ))
         ..add(JournalLineDraft(
           accountId: gainAccount,
-          debit: 0,
+          debit: 0.0,
           credit: roundedDelta,
           memo: 'Batch cost revaluation gain - $productName ($batchId)',
         ));
     } else {
-      final lossAccount =
-          await _resolveAccountRoleForDatabase(database, 'inventory_count_loss');
+      final lossAccount = await _resolveAccountRoleForDatabase(
+          database, 'inventory_count_loss');
       final amount = roundedDelta.abs();
       lines
         ..add(JournalLineDraft(
           accountId: lossAccount,
           debit: amount,
-          credit: 0,
+          credit: 0.0,
           memo: 'Batch cost revaluation loss - $productName ($batchId)',
         ))
         ..add(JournalLineDraft(
           accountId: inventoryAccount,
-          debit: 0,
+          debit: 0.0,
           credit: amount,
           memo: 'Batch cost revaluation - $productName ($batchId)',
         ));
@@ -5949,8 +5968,8 @@ class AccountingService {
     final category = adjustmentCategory.trim().toLowerCase();
     final lines = <JournalLineDraft>[];
     if (quantityDelta > 0) {
-      final gainAccount =
-          await _resolveAccountRoleForDatabase(database, 'inventory_count_gain');
+      final gainAccount = await _resolveAccountRoleForDatabase(
+          database, 'inventory_count_gain');
       lines
         ..add(JournalLineDraft(
           accountId: inventoryAccount,

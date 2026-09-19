@@ -422,12 +422,26 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             Text(tr.text('purchases_desc')),
                           ],
                         );
-                        final button = FilledButton.icon(
-                          onPressed: widget.store.canManagePurchases
-                              ? () => _openPurchaseDialog(context)
-                              : null,
-                          icon: const Icon(Icons.add_shopping_cart),
-                          label: Text(tr.text('new_purchase')),
+                        final button = Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton.icon(
+                              onPressed: widget.store.canManagePurchases
+                                  ? () => _openPurchaseDialog(context)
+                                  : null,
+                              icon: const Icon(Icons.add_shopping_cart),
+                              label: Text(tr.text('new_purchase')),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: widget.store.canManagePurchases
+                                  ? () => _openPurchaseReturnDialog(context)
+                                  : null,
+                              icon:
+                                  const Icon(Icons.assignment_return_outlined),
+                              label: Text(tr.text('new_purchase_return')),
+                            ),
+                          ],
                         );
                         return compact
                             ? Column(
@@ -624,9 +638,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                   ? () => _receivePurchase(context, purchase.id)
                                   : null)
                               : null,
-                          onCancel: purchase.isReceived && !purchase.isReturned
+                          onCancel: purchase.isReceived &&
+                                  !purchase.isReturned &&
+                                  !purchase.isPurchaseReturn
                               ? (widget.store.hasPermission(
-                                          AppPermission.purchasesCancel)
+                                      AppPermission.purchasesCancel)
                                   ? () => _returnPurchase(context, purchase.id)
                                   : null)
                               : null,
@@ -636,13 +652,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
                               ? () => _deleteDraftPurchase(context, purchase.id)
                               : null,
                           onPermanentDelete: null,
-                          onDuplicate: widget.store.canManagePurchases
+                          onDuplicate: widget.store.canManagePurchases &&
+                                  !purchase.isPurchaseReturn
                               ? () => _openPurchaseDialog(context,
                                   template: purchase)
                               : null,
                           onEdit: ((purchase.isDraft || purchase.isReceived) &&
                                       !purchase.isCancelled &&
                                       !purchase.isReturned &&
+                                      !purchase.isPurchaseReturn &&
                                       widget.store.canManagePurchases) ||
                                   (purchase.isReturned &&
                                       widget.store.canManagePurchases &&
@@ -778,12 +796,25 @@ class _PurchasesPageState extends State<PurchasesPage> {
                 Text(tr.text('purchases_desc')),
               ],
             );
-            final button = FilledButton.icon(
-              onPressed: widget.store.canManagePurchases
-                  ? () => _openPurchaseDialog(context)
-                  : null,
-              icon: const Icon(Icons.add_shopping_cart),
-              label: Text(tr.text('new_purchase')),
+            final button = Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: widget.store.canManagePurchases
+                      ? () => _openPurchaseDialog(context)
+                      : null,
+                  icon: const Icon(Icons.add_shopping_cart),
+                  label: Text(tr.text('new_purchase')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: widget.store.canManagePurchases
+                      ? () => _openPurchaseReturnDialog(context)
+                      : null,
+                  icon: const Icon(Icons.assignment_return_outlined),
+                  label: Text(tr.text('new_purchase_return')),
+                ),
+              ],
             );
             return compact
                 ? Column(
@@ -958,9 +989,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                 ? () => _receivePurchase(context, purchase.id)
                                 : null)
                             : null,
-                        onCancel: purchase.isReceived && !purchase.isReturned
+                        onCancel: purchase.isReceived &&
+                                !purchase.isReturned &&
+                                !purchase.isPurchaseReturn
                             ? (widget.store.hasPermission(
-                                        AppPermission.purchasesCancel)
+                                    AppPermission.purchasesCancel)
                                 ? () => _returnPurchase(context, purchase.id)
                                 : null)
                             : null,
@@ -970,13 +1003,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             ? () => _deleteDraftPurchase(context, purchase.id)
                             : null,
                         onPermanentDelete: null,
-                        onDuplicate: widget.store.canManagePurchases
+                        onDuplicate: widget.store.canManagePurchases &&
+                                !purchase.isPurchaseReturn
                             ? () =>
                                 _openPurchaseDialog(context, template: purchase)
                             : null,
                         onEdit: ((purchase.isDraft || purchase.isReceived) &&
                                     !purchase.isCancelled &&
                                     !purchase.isReturned &&
+                                    !purchase.isPurchaseReturn &&
                                     widget.store.canManagePurchases) ||
                                 (purchase.isReturned &&
                                     widget.store.canManagePurchases &&
@@ -1084,7 +1119,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('${tr.text('batch_quantity')}: ${_formatQuantity(quantity)}'),
+              Text(
+                  '${tr.text('batch_quantity')}: ${_formatQuantity(quantity)}'),
               const SizedBox(height: 12),
               TextField(
                 controller: batchNumberController,
@@ -1174,8 +1210,17 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
   }
 
-
   Future<void> _returnPurchase(BuildContext context, String id) async {
+    // Purchase managers should always use the independent partial-return
+    // document. Keep the legacy full-reversal flow only for cancellation-only
+    // roles that do not have permission to create purchase documents.
+    if (widget.store.canManagePurchases) {
+      await _openPurchaseReturnDialog(
+        context,
+        sourcePurchaseId: id,
+      );
+      return;
+    }
     if (!widget.store.hasAnyPermission(<String>{
       AppPermission.purchasesCancel,
       AppPermission.purchasesManage,
@@ -1241,24 +1286,254 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
   }
 
+  Future<void> _openPurchaseReturnDialog(
+    BuildContext context, {
+    String? sourcePurchaseId,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    final sources = widget.store.purchases
+        .where((purchase) =>
+            purchase.isReceived &&
+            !purchase.isCancelled &&
+            !purchase.isPurchaseReturn)
+        .toList(growable: false);
+    if (sources.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('no_purchase_return_sources'))),
+      );
+      return;
+    }
+    Purchase? selected;
+    if (sourcePurchaseId != null) {
+      for (final purchase in sources) {
+        if (purchase.id == sourcePurchaseId) {
+          selected = purchase;
+          break;
+        }
+      }
+    }
+    final reasonController = TextEditingController();
+    final quantityControllers = <String, TextEditingController>{};
+    String? dialogError;
+    ({String sourceId, List<PurchaseItem> items, String reason})? result;
+    result = await showDialog<
+        ({String sourceId, List<PurchaseItem> items, String reason})>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final source = selected;
+          final sourceItems = source?.items ?? const <PurchaseItem>[];
+          final content = <Widget>[
+            DropdownButtonFormField<Purchase>(
+              initialValue: selected,
+              decoration: InputDecoration(
+                  labelText: tr.text('source_purchase_invoice')),
+              isExpanded: true,
+              items: sources
+                  .map((purchase) => DropdownMenuItem<Purchase>(
+                        value: purchase,
+                        child: Text(
+                            '${purchase.purchaseNo} — ${purchase.supplierName}'),
+                      ))
+                  .toList(growable: false),
+              onChanged: (value) {
+                for (final controller in quantityControllers.values) {
+                  controller.dispose();
+                }
+                quantityControllers.clear();
+                setDialogState(() {
+                  selected = value;
+                  dialogError = null;
+                });
+              },
+            ),
+            if (source != null) ...[
+              const SizedBox(height: 14),
+              Text(tr.text('select_return_items'),
+                  style: Theme.of(dialogContext).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              ...sourceItems.indexed.map((entry) {
+                final index = entry.$1;
+                final item = entry.$2;
+                final lineId = item.lineId.trim().isEmpty
+                    ? '${source.id}:line:$index'
+                    : item.lineId;
+                final controller = quantityControllers.putIfAbsent(
+                    lineId, TextEditingController.new);
+                final alreadyReturned = widget.store.purchases
+                    .where((purchase) =>
+                        purchase.isPurchaseReturn &&
+                        purchase.sourcePurchaseId == source.id)
+                    .expand((purchase) => purchase.items)
+                    .where((returnItem) => returnItem.sourceLineId == lineId)
+                    .fold<double>(0, (sum, item) => sum + item.baseQuantity);
+                final available = ((item.baseQuantity - alreadyReturned) /
+                        (item.conversionToBase <= 0
+                            ? 1
+                            : item.conversionToBase))
+                    .clamp(0, double.infinity)
+                    .toDouble();
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(item.productName),
+                              Text(
+                                '${tr.text('available_for_return')}: ${_formatQuantity(available)} ${item.purchaseUnitName}',
+                                style:
+                                    Theme.of(dialogContext).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 110,
+                          child: TextField(
+                            controller: controller,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration: InputDecoration(
+                                labelText: tr.text('return_quantity')),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 8),
+              TextField(
+                controller: reasonController,
+                maxLines: 2,
+                decoration: InputDecoration(
+                    labelText: tr.text('return_reason_optional')),
+              ),
+            ],
+            if (dialogError != null) ...[
+              const SizedBox(height: 8),
+              Text(dialogError!,
+                  style: TextStyle(
+                      color: Theme.of(dialogContext).colorScheme.error)),
+            ],
+          ];
+          return AlertDialog(
+            title: Text(tr.text('new_purchase_return')),
+            content: SizedBox(
+              width: 620,
+              child: SingleChildScrollView(child: Column(children: content)),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(tr.text('cancel'))),
+              FilledButton(
+                onPressed: source == null
+                    ? null
+                    : () {
+                        final selectedItems = <PurchaseItem>[];
+                        for (final entry in source.items.indexed) {
+                          final item = entry.$2;
+                          final lineId = item.lineId.trim().isEmpty
+                              ? '${source.id}:line:${entry.$1}'
+                              : item.lineId;
+                          final quantity = double.tryParse(
+                                  quantityControllers[lineId]?.text.trim() ??
+                                      '') ??
+                              0;
+                          if (quantity <= 0) continue;
+                          selectedItems.add(PurchaseItem(
+                            sourceLineId: lineId,
+                            productId: item.productId,
+                            productName: item.productName,
+                            quantity: quantity,
+                            unitCost: item.unitCost,
+                            purchaseUnitId: item.purchaseUnitId,
+                            purchaseUnitName: item.purchaseUnitName,
+                            conversionToBase: item.conversionToBase,
+                            originalUnitCost: item.originalUnitCost,
+                            unitCostCurrency: item.unitCostCurrency,
+                            exchangeRateAtEntry: item.exchangeRateAtEntry,
+                            batchAllocations: item.batchAllocations,
+                          ));
+                        }
+                        if (selectedItems.isEmpty) {
+                          setDialogState(() =>
+                              dialogError = tr.text('select_return_items'));
+                          return;
+                        }
+                        Navigator.pop(dialogContext, (
+                          sourceId: source.id,
+                          items: selectedItems,
+                          reason: reasonController.text.trim(),
+                        ));
+                      },
+                child: Text(tr.text('confirm')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    for (final controller in quantityControllers.values) {
+      controller.dispose();
+    }
+    reasonController.dispose();
+    if (result == null || !context.mounted) return;
+    final selection = result;
+    if (!await requestSensitiveActionAuthorization(
+      context,
+      widget.store,
+      action: SensitiveAction.purchaseReverse,
+    )) {
+      return;
+    }
+    try {
+      await widget.store.createPurchaseReturn(
+        sourcePurchaseId: selection.sourceId,
+        items: selection.items,
+        reason: selection.reason,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('purchase_return_created'))),
+      );
+      setState(() {});
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizedErrorText(tr, error))),
+      );
+    }
+  }
+
   Future<void> _showPurchaseDetails(
       BuildContext context, Purchase purchase) async {
     final parentContext = context;
     final tr = AppLocalizations.of(parentContext);
-    final statusText = purchase.isReturned
-        ? tr.text('returned')
-        : purchase.status.toLowerCase() == 'cancelled'
-            ? tr.text('cancelled')
-            : purchase.isReceived
-                ? tr.text('received')
-                : tr.text('draft');
-    final statusColor = purchase.isReturned
+    final statusText = purchase.isPurchaseReturn
+        ? tr.text('purchase_return')
+        : purchase.isReturned
+            ? tr.text('returned')
+            : purchase.status.toLowerCase() == 'cancelled'
+                ? tr.text('cancelled')
+                : purchase.isReceived
+                    ? tr.text('received')
+                    : tr.text('draft');
+    final statusColor = purchase.isPurchaseReturn
         ? Colors.blueGrey
-        : purchase.status.toLowerCase() == 'cancelled'
-            ? Colors.red
-            : purchase.isReceived
-                ? Colors.green
-                : Colors.orange;
+        : purchase.isReturned
+            ? Colors.blueGrey
+            : purchase.status.toLowerCase() == 'cancelled'
+                ? Colors.red
+                : purchase.isReceived
+                    ? Colors.green
+                    : Colors.orange;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1319,6 +1594,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         _DetailRow(
                             label: tr.text('date'),
                             value: _formatShortDate(purchase.date)),
+                        if (purchase.isPurchaseReturn &&
+                            purchase.sourcePurchaseNo.trim().isNotEmpty)
+                          _DetailRow(
+                              label: tr.text('source_purchase_invoice'),
+                              value: purchase.sourcePurchaseNo),
                         if (purchase.cancelledAt != null)
                           _DetailRow(
                               label: tr.text('cancelled_at'),
@@ -1383,11 +1663,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
                     if (((purchase.isDraft || purchase.isReceived) &&
                             !purchase.isCancelled &&
                             !purchase.isReturned &&
+                            !purchase.isPurchaseReturn &&
                             widget.store.canManagePurchases) ||
                         (purchase.isReturned &&
                             widget.store.canManagePurchases &&
-                            widget.store.hasPermission(
-                                AppPermission.purchasesCancel)))
+                            widget.store
+                                .hasPermission(AppPermission.purchasesCancel)))
                       FilledButton.icon(
                         onPressed: () {
                           Navigator.pop(sheetContext);
@@ -1408,7 +1689,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         icon: const Icon(Icons.download_done),
                         label: Text(tr.text('receive')),
                       ),
-                    if (purchase.isReceived && !purchase.isReturned)
+                    if (purchase.isReceived &&
+                        !purchase.isReturned &&
+                        !purchase.isPurchaseReturn)
                       OutlinedButton.icon(
                         onPressed: () {
                           Navigator.pop(sheetContext);
@@ -2060,7 +2343,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                         qty % 1 != 0) {
                                       return;
                                     }
-                                    if (product?.expiryTrackingEnabled == true &&
+                                    if (product?.expiryTrackingEnabled ==
+                                            true &&
                                         editExpiry == null) {
                                       return;
                                     }
@@ -2083,20 +2367,39 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                           unitCostCurrency: editCurrency,
                                           exchangeRateAtEntry: widget
                                               .store.storeProfile.usdToLbpRate,
-                                          batchAllocations: product?.expiryTrackingEnabled == true
-                                              ? <BatchAllocation>[BatchAllocation(
-                                                  batchId: item.batchAllocations.isNotEmpty
-                                                      ? item.batchAllocations.first.batchId
-                                                      : '',
-                                                  quantity: qty * editUnit.conversionToBase,
-                                                  expirationDate: editExpiry,
-                                                  supplierBatchNumber: item.batchAllocations.isNotEmpty
-                                                      ? item.batchAllocations.first.supplierBatchNumber
-                                                      : '',
-                                                  manufacturingDate: item.batchAllocations.isNotEmpty
-                                                      ? item.batchAllocations.first.manufacturingDate
-                                                      : null,
-                                                )]
+                                          batchAllocations: product
+                                                      ?.expiryTrackingEnabled ==
+                                                  true
+                                              ? <BatchAllocation>[
+                                                  BatchAllocation(
+                                                    batchId: item
+                                                            .batchAllocations
+                                                            .isNotEmpty
+                                                        ? item.batchAllocations
+                                                            .first.batchId
+                                                        : '',
+                                                    quantity: qty *
+                                                        editUnit
+                                                            .conversionToBase,
+                                                    expirationDate: editExpiry,
+                                                    supplierBatchNumber: item
+                                                            .batchAllocations
+                                                            .isNotEmpty
+                                                        ? item
+                                                            .batchAllocations
+                                                            .first
+                                                            .supplierBatchNumber
+                                                        : '',
+                                                    manufacturingDate: item
+                                                            .batchAllocations
+                                                            .isNotEmpty
+                                                        ? item
+                                                            .batchAllocations
+                                                            .first
+                                                            .manufacturingDate
+                                                        : null,
+                                                  )
+                                                ]
                                               : const <BatchAllocation>[],
                                         ));
                                   },
@@ -2217,7 +2520,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       final cost =
           toUsdReferencePrice(enteredCost, currency, widget.store.storeProfile);
       items.add(PurchaseItem(
-        lineId: 'purchase_line_${DateTime.now().microsecondsSinceEpoch}_${items.length}',
+        lineId:
+            'purchase_line_${DateTime.now().microsecondsSinceEpoch}_${items.length}',
         productId: product.id,
         productName: product.name,
         quantity: qty,
@@ -2303,8 +2607,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
         selectedUnit = match.unit;
         selectedExpiryDate = match.product.expiryTrackingEnabled &&
                 match.product.defaultShelfLifeDays > 0
-            ? DateTime.now().add(
-                Duration(days: match.product.defaultShelfLifeDays))
+            ? DateTime.now()
+                .add(Duration(days: match.product.defaultShelfLifeDays))
             : null;
         productSearchController.text = match.product.name;
         applySuggestedSupplierPrice();
@@ -2479,8 +2783,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       selectedUnit = picked.unit;
       selectedExpiryDate = picked.product.expiryTrackingEnabled &&
               picked.product.defaultShelfLifeDays > 0
-          ? DateTime.now().add(
-              Duration(days: picked.product.defaultShelfLifeDays))
+          ? DateTime.now()
+              .add(Duration(days: picked.product.defaultShelfLifeDays))
           : null;
       productSearchController.text = picked.product.name;
       applySuggestedSupplierPrice();
@@ -2521,7 +2825,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
           continue;
         }
         final existing = item.batchAllocations.length == 1 &&
-                (item.batchAllocations.first.quantity - item.baseQuantity).abs() <=
+                (item.batchAllocations.first.quantity - item.baseQuantity)
+                        .abs() <=
                     0.000001 &&
                 item.batchAllocations.first.expirationDate != null
             ? item.batchAllocations.first
@@ -3296,7 +3601,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                                 dialogContext,
                                                             initialDate:
                                                                 selectedExpiryDate ??
-                                                                    DateTime.now(),
+                                                                    DateTime
+                                                                        .now(),
                                                             firstDate:
                                                                 DateTime.now(),
                                                             lastDate: DateTime
@@ -3316,9 +3622,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                       : selectedExpiryDate ==
                                                               null
                                                           ? '${tr.text('expiration_date')} *'
-                                                          : MaterialLocalizations
-                                                                  .of(
-                                                                      dialogContext)
+                                                          : MaterialLocalizations.of(
+                                                                  dialogContext)
                                                               .formatMediumDate(
                                                                   selectedExpiryDate!)),
                                                 );
@@ -3833,27 +4138,33 @@ class _PurchaseTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final isCompact = MediaQuery.sizeOf(context).width < 520;
-    final statusText = purchase.isReturned
-        ? tr.text('returned')
-        : purchase.status.toLowerCase() == 'cancelled'
-            ? tr.text('cancelled')
-            : purchase.isReceived
-                ? tr.text('received')
-                : tr.text('draft');
-    final statusColor = purchase.isReturned
+    final statusText = purchase.isPurchaseReturn
+        ? tr.text('purchase_return')
+        : purchase.isReturned
+            ? tr.text('returned')
+            : purchase.status.toLowerCase() == 'cancelled'
+                ? tr.text('cancelled')
+                : purchase.isReceived
+                    ? tr.text('received')
+                    : tr.text('draft');
+    final statusColor = purchase.isPurchaseReturn
         ? Colors.blueGrey
-        : purchase.status.toLowerCase() == 'cancelled'
-            ? Colors.red
-            : purchase.isReceived
-                ? Colors.green
-                : Colors.orange;
-    final statusIcon = purchase.isReturned
+        : purchase.isReturned
+            ? Colors.blueGrey
+            : purchase.status.toLowerCase() == 'cancelled'
+                ? Colors.red
+                : purchase.isReceived
+                    ? Colors.green
+                    : Colors.orange;
+    final statusIcon = purchase.isPurchaseReturn
         ? Icons.assignment_return_outlined
-        : purchase.status.toLowerCase() == 'cancelled'
-            ? Icons.cancel_outlined
-            : purchase.isReceived
-                ? Icons.inventory_2_outlined
-                : Icons.pending_actions;
+        : purchase.isReturned
+            ? Icons.assignment_return_outlined
+            : purchase.status.toLowerCase() == 'cancelled'
+                ? Icons.cancel_outlined
+                : purchase.isReceived
+                    ? Icons.inventory_2_outlined
+                    : Icons.pending_actions;
     final amount = formatUsdReferenceAmount(purchase.subtotal, storeProfile);
     final supplier = purchase.supplierName.trim().isEmpty
         ? '-'

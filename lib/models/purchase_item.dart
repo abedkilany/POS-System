@@ -3,6 +3,7 @@ import 'inventory_batch.dart';
 class PurchaseItem {
   const PurchaseItem({
     this.lineId = '',
+    this.sourceLineId = '',
     required this.productId,
     required this.productName,
     required this.quantity,
@@ -17,6 +18,7 @@ class PurchaseItem {
   });
 
   final String lineId;
+  final String sourceLineId;
   final String productId;
   final String productName;
 
@@ -42,6 +44,7 @@ class PurchaseItem {
 
   Map<String, dynamic> toJson() => {
         'lineId': lineId,
+        'sourceLineId': sourceLineId,
         'productId': productId,
         'productName': productName,
         'quantity': quantity,
@@ -65,6 +68,7 @@ class PurchaseItem {
     final unitCost = (json['unitCost'] as num? ?? 0).toDouble();
     return PurchaseItem(
       lineId: json['lineId']?.toString() ?? json['id']?.toString() ?? '',
+      sourceLineId: json['sourceLineId']?.toString() ?? '',
       productId: json['productId']?.toString() ?? '',
       productName: json['productName']?.toString() ?? '',
       quantity: (json['quantity'] as num? ?? 0).toDouble(),

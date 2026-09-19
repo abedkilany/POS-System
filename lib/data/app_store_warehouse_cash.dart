@@ -1,12 +1,12 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitWarehouseCash on AppStore {
-int _loadPurchaseCounter() {
+  int _loadPurchaseCounter() {
     final raw = LocalDatabaseService.getString(AppStore._purchaseCounterKey);
     return int.tryParse(raw ?? '') ?? 0;
   }
 
-Future<Warehouse> createWarehouse({
+  Future<Warehouse> createWarehouse({
     required String name,
     String code = '',
     String location = '',
@@ -48,7 +48,8 @@ Future<Warehouse> createWarehouse({
       lastModifiedByDeviceId: _deviceId,
     );
     _warehouses.add(warehouse);
-    _rememberSqliteDirtyBusinessRow(AppStore._warehousesKey, warehouse.toJson());
+    _rememberSqliteDirtyBusinessRow(
+        AppStore._warehousesKey, warehouse.toJson());
     _recordSyncChange(
       entityType: 'warehouse',
       entityId: warehouse.id,
@@ -96,7 +97,7 @@ Future<Warehouse> createWarehouse({
     return warehouse;
   }
 
-Future<List<WarehouseTransferOrder>> recentWarehouseTransferOrders({
+  Future<List<WarehouseTransferOrder>> recentWarehouseTransferOrders({
     int limit = 100,
   }) async {
     final db = SqliteMigrationManager.database;
@@ -106,7 +107,7 @@ Future<List<WarehouseTransferOrder>> recentWarehouseTransferOrders({
     return const <WarehouseTransferOrder>[];
   }
 
-Future<WarehouseTransferOrder> createWarehouseTransferOrder({
+  Future<WarehouseTransferOrder> createWarehouseTransferOrder({
     required String fromWarehouseId,
     required String toWarehouseId,
     required List<WarehouseTransferOrderItem> items,
@@ -395,7 +396,7 @@ Future<WarehouseTransferOrder> createWarehouseTransferOrder({
     return order;
   }
 
-Future<WarehouseTransferOrder> editWarehouseTransferOrder({
+  Future<WarehouseTransferOrder> editWarehouseTransferOrder({
     required String orderId,
     required int expectedVersion,
     required String fromWarehouseId,
@@ -444,7 +445,8 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
       if (row == null) throw StateError('Warehouse transfer order not found.');
       final data = Map<String, dynamic>.from(row.data);
       try {
-        data['items'] = jsonDecode(data.remove('itemsJson')?.toString() ?? '[]');
+        data['items'] =
+            jsonDecode(data.remove('itemsJson')?.toString() ?? '[]');
       } catch (_) {
         data['items'] = const <dynamic>[];
       }
@@ -540,12 +542,15 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
         },
         validateDependencies: (current) async {
           fromWarehouse = _warehouses.firstWhere(
-            (item) => item.id == fromWarehouseId && !item.isDeleted && item.isActive,
+            (item) =>
+                item.id == fromWarehouseId && !item.isDeleted && item.isActive,
             orElse: () => throw ArgumentError('Source warehouse not found.'),
           );
           toWarehouse = _warehouses.firstWhere(
-            (item) => item.id == toWarehouseId && !item.isDeleted && item.isActive,
-            orElse: () => throw ArgumentError('Destination warehouse not found.'),
+            (item) =>
+                item.id == toWarehouseId && !item.isDeleted && item.isActive,
+            orElse: () =>
+                throw ArgumentError('Destination warehouse not found.'),
           );
           normalizedItems = <WarehouseTransferOrderItem>[];
           final seenProductIds = <String>{};
@@ -610,7 +615,9 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
               LIMIT 1
               ''',
               variables: <Variable<Object>>[
-                Variable<String>(movement.storeId.isEmpty ? appIdentity.storeId : movement.storeId),
+                Variable<String>(movement.storeId.isEmpty
+                    ? appIdentity.storeId
+                    : movement.storeId),
                 Variable<String>(movement.warehouseId),
                 Variable<String>(movement.productId),
                 Variable<String>(movement.batchId),
@@ -634,7 +641,8 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
           for (final original in oldActiveMovements) {
             final productIndex = _productIndexById[original.productId];
             if (productIndex == null) {
-              throw StateError('Transfer product ${original.productId} is missing.');
+              throw StateError(
+                  'Transfer product ${original.productId} is missing.');
             }
             final product = _products[productIndex];
             await batchService.reverseUnifiedMovementEffectInTransaction(
@@ -713,9 +721,11 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
             updatedAt: now,
             deviceId: _deviceId,
             syncStatus: 'pending',
-            storeId: current.storeId.isEmpty ? appIdentity.storeId : current.storeId,
-            branchId:
-                current.branchId.isEmpty ? appIdentity.branchId : current.branchId,
+            storeId:
+                current.storeId.isEmpty ? appIdentity.storeId : current.storeId,
+            branchId: current.branchId.isEmpty
+                ? appIdentity.branchId
+                : current.branchId,
             version: current.version + 1,
             lastModifiedByDeviceId: _deviceId,
           );
@@ -754,8 +764,7 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
           return next;
         },
         rebuildOperationalEffects: (updated) async {
-          final groupId =
-              '${updated.id}:transfer_edit:v${updated.version}';
+          final groupId = '${updated.id}:transfer_edit:v${updated.version}';
           final movements = <StockMovement>[];
           final movementTime = DateTime.now().toUtc();
           for (var lineIndex = 0;
@@ -764,7 +773,8 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
             final item = updated.items[lineIndex];
             final productIndex = _productIndexById[item.productId];
             if (productIndex == null) {
-              throw StateError('Transfer product ${item.productId} is missing.');
+              throw StateError(
+                  'Transfer product ${item.productId} is missing.');
             }
             final product = _products[productIndex];
             await _ensureUnifiedBatchCutoverForProductInTransaction(
@@ -830,7 +840,8 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
                   date: updated.date,
                   referenceId: updated.id,
                   referenceNo: updated.orderNo,
-                  reason: 'Warehouse transfer from ${updated.fromWarehouseName}',
+                  reason:
+                      'Warehouse transfer from ${updated.fromWarehouseName}',
                   notes: updated.notes,
                   warehouseId: updated.toWarehouseId,
                   warehouseName: updated.toWarehouseName,
@@ -914,7 +925,8 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
           if (activeRows.length != 1 ||
               activeRows.single.data['movement_group_id']?.toString() !=
                   expectedGroup ||
-              ((activeRows.single.data['movement_count'] as num?)?.toInt() ?? 0) <=
+              ((activeRows.single.data['movement_count'] as num?)?.toInt() ??
+                      0) <=
                   0) {
             throw StateError(
               'Transfer edit left more than one active movement version.',
@@ -963,7 +975,7 @@ Future<WarehouseTransferOrder> editWarehouseTransferOrder({
     return edited;
   }
 
-Future<void> transferStock({
+  Future<void> transferStock({
     required String productId,
     required String fromWarehouseId,
     required String toWarehouseId,
@@ -1306,7 +1318,7 @@ Future<void> transferStock({
     notifyListeners();
   }
 
-Future<Map<String, String>> _openCashVoucherContext() async {
+  Future<Map<String, String>> _openCashVoucherContext() async {
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
       throw StateError(
@@ -1345,7 +1357,7 @@ Future<Map<String, String>> _openCashVoucherContext() async {
     };
   }
 
-Future<double> _saleReturnEntitlementFromSqlite(String saleId) async {
+  Future<double> _saleReturnEntitlementFromSqlite(String saleId) async {
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
       return 0;
@@ -1366,7 +1378,7 @@ Future<double> _saleReturnEntitlementFromSqlite(String saleId) async {
         .toDouble();
   }
 
-Future<double> refundableSaleCashAmount(String saleId) async {
+  Future<double> refundableSaleCashAmount(String saleId) async {
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
       throw StateError('Cash refunds require the SQLite authoritative store.');
@@ -1402,7 +1414,7 @@ Future<double> refundableSaleCashAmount(String saleId) async {
     );
   }
 
-Future<void> normalizeRefundAllocations() async {
+  Future<void> normalizeRefundAllocations() async {
     requirePermission(AppPermission.cashBoxManage);
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
@@ -1414,7 +1426,7 @@ Future<void> normalizeRefundAllocations() async {
     await refreshAfterDatabaseChange(AppStore._purchasesKey);
   }
 
-Future<double> refundablePurchaseCashAmount(String purchaseId) async {
+  Future<double> refundablePurchaseCashAmount(String purchaseId) async {
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
       throw StateError('Cash refunds require the SQLite authoritative store.');
@@ -1442,7 +1454,7 @@ Future<double> refundablePurchaseCashAmount(String purchaseId) async {
     );
   }
 
-Future<double> refundSaleCash({
+  Future<double> refundSaleCash({
     required String saleId,
     double? amount,
     String notes = '',
@@ -1521,7 +1533,7 @@ Future<double> refundSaleCash({
     return refunded;
   }
 
-Future<double> refundPurchaseCash({
+  Future<double> refundPurchaseCash({
     required String purchaseId,
     double? amount,
     String notes = '',
@@ -1591,7 +1603,80 @@ Future<double> refundPurchaseCash({
     return refunded;
   }
 
-Future<double> refundableExpenseCashAmount(String expenseId) async {
+  Future<double> refundablePurchaseReturnCashAmount(
+      String purchaseReturnId) async {
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Cash refunds require the SQLite authoritative store.');
+    }
+    final returned = await _purchaseByIdFromSqlite(purchaseReturnId);
+    if (returned == null || returned.isDeleted || !returned.isPurchaseReturn) {
+      return 0;
+    }
+    final service = PaymentVoucherService(sqliteDb);
+    await service.ensurePurchaseReturnJournal(
+      purchaseReturnId: returned.id,
+      purchaseReturnNo: returned.purchaseNo,
+      supplierId: returned.supplierId,
+      supplierName: returned.supplierName,
+      returnDate: returned.date,
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
+      deviceId: _deviceId,
+    );
+    return service.refundableCashForPurchaseReturn(returned.id);
+  }
+
+  Future<double> refundPurchaseReturnCash({
+    required String purchaseReturnId,
+    double? amount,
+    String notes = '',
+    String idempotencyKey = '',
+    DateTime? date,
+  }) async {
+    requirePermission(AppPermission.suppliersPaymentManage);
+    final sqliteDb = SqliteMigrationManager.database;
+    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
+      throw StateError('Cash refunds require the SQLite authoritative store.');
+    }
+    final returned = await _purchaseByIdFromSqlite(purchaseReturnId);
+    if (returned == null || returned.isDeleted || !returned.isPurchaseReturn) {
+      throw StateError('Purchase return is not available for refund.');
+    }
+    final refundable = await refundablePurchaseReturnCashAmount(returned.id);
+    if (refundable <= 0.000001) return 0;
+    final context = await _openCashVoucherContext();
+    final refundKey = idempotencyKey.trim().isEmpty
+        ? 'manual:${DateTime.now().microsecondsSinceEpoch}:$_deviceId'
+        : idempotencyKey.trim();
+    final refunded =
+        await PaymentVoucherService(sqliteDb).refundPurchaseReturnCash(
+      purchaseReturnId: returned.id,
+      purchaseReturnNo: returned.purchaseNo,
+      supplierId: returned.supplierId,
+      supplierName: returned.supplierName,
+      cashLocationId: context['cashLocationId'] ?? '',
+      cashDrawerSessionId: context['sessionId'] ?? '',
+      requestedAmount: amount,
+      currency: storeProfile.baseCurrency,
+      notes: notes.trim().isEmpty
+          ? 'Cash refund for purchase return ${returned.purchaseNo}'
+          : notes.trim(),
+      createdBy: _actorName(),
+      createdByUserId: _activeUser?.id ?? '',
+      deviceId: _deviceId,
+      branchId: appIdentity.branchId,
+      storeId: appIdentity.storeId,
+      refundKey: refundKey,
+      date: date,
+    );
+    if (refunded <= 0.000001) return 0;
+    await refreshAccountTransactionsFromSqlite();
+    await refreshAfterDatabaseChange(AppStore._purchasesKey);
+    return refunded;
+  }
+
+  Future<double> refundableExpenseCashAmount(String expenseId) async {
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
       throw StateError('Cash refunds require the SQLite authoritative store.');
@@ -1607,7 +1692,7 @@ Future<double> refundableExpenseCashAmount(String expenseId) async {
     );
   }
 
-Future<double> refundExpenseCash({
+  Future<double> refundExpenseCash({
     required String expenseId,
     double? amount,
     String notes = '',
@@ -1655,7 +1740,7 @@ Future<double> refundExpenseCash({
     return refunded;
   }
 
-Future<void> settleAccountPayment({
+  Future<void> settleAccountPayment({
     required String accountType,
     required String accountId,
     required String accountName,
@@ -1746,7 +1831,7 @@ Future<void> settleAccountPayment({
     notifyListeners();
   }
 
-Future<ReceiptVoucher> editReceiptVoucher({
+  Future<ReceiptVoucher> editReceiptVoucher({
     required String voucherId,
     required int expectedVersion,
     String? customerId,
@@ -1763,7 +1848,8 @@ Future<ReceiptVoucher> editReceiptVoucher({
     requirePermission(AppPermission.customersPaymentManage);
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
-      throw StateError('Receipt editing requires the SQLite authoritative store.');
+      throw StateError(
+          'Receipt editing requires the SQLite authoritative store.');
     }
     final service = PaymentVoucherService(sqliteDb);
     final current = await service.findReceiptById(voucherId);
@@ -1805,7 +1891,7 @@ Future<ReceiptVoucher> editReceiptVoucher({
     return edited;
   }
 
-Future<PaymentVoucher> editPaymentVoucher({
+  Future<PaymentVoucher> editPaymentVoucher({
     required String voucherId,
     required int expectedVersion,
     String? supplierId,
@@ -1822,7 +1908,8 @@ Future<PaymentVoucher> editPaymentVoucher({
     requirePermission(AppPermission.suppliersPaymentManage);
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
-      throw StateError('Payment editing requires the SQLite authoritative store.');
+      throw StateError(
+          'Payment editing requires the SQLite authoritative store.');
     }
     final service = PaymentVoucherService(sqliteDb);
     final current = await service.findPaymentById(voucherId);
@@ -1864,7 +1951,7 @@ Future<PaymentVoucher> editPaymentVoucher({
     return edited;
   }
 
-Future<Sale> settleSalePayment({
+  Future<Sale> settleSalePayment({
     required String saleId,
     required double amount,
     String paymentMethod = 'Cash',
@@ -1883,7 +1970,7 @@ Future<Sale> settleSalePayment({
     );
   }
 
-Future<Sale> _settleSalePaymentInternal({
+  Future<Sale> _settleSalePaymentInternal({
     required String saleId,
     required double amount,
     String paymentMethod = 'Cash',
@@ -1961,7 +2048,7 @@ Future<Sale> _settleSalePaymentInternal({
     return updated;
   }
 
-Future<Purchase> settlePurchasePayment({
+  Future<Purchase> settlePurchasePayment({
     required String purchaseId,
     required double amount,
     String paymentMethod = 'Cash',
@@ -1981,6 +2068,10 @@ Future<Purchase> settlePurchasePayment({
     final current = await _purchaseByIdFromSqlite(purchaseId);
     if (current == null || current.isCancelled || !current.isReceived) {
       throw StateError('Purchase is not available for payment.');
+    }
+    if (current.isPurchaseReturn) {
+      throw StateError(
+          'Purchase returns are settled through the purchase return refund action.');
     }
     if (amount > current.balanceDue + 0.000001) {
       throw StateError('Payment exceeds the remaining purchase balance.');
@@ -2043,13 +2134,14 @@ Future<Purchase> settlePurchasePayment({
     return updated;
   }
 
-PurchaseItem _copyPurchaseItemWith({
+  PurchaseItem _copyPurchaseItemWith({
     required PurchaseItem item,
     String? lineId,
     List<BatchAllocation>? batchAllocations,
   }) {
     return PurchaseItem(
       lineId: lineId ?? item.lineId,
+      sourceLineId: item.sourceLineId,
       productId: item.productId,
       productName: item.productName,
       quantity: item.quantity,
@@ -2063,5 +2155,4 @@ PurchaseItem _copyPurchaseItemWith({
       batchAllocations: batchAllocations ?? item.batchAllocations,
     );
   }
-
 }

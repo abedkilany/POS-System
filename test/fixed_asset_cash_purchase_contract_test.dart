@@ -31,6 +31,8 @@ void main() {
     expect(body, contains('delta: -_roundMoney(amount)'));
     expect(body, contains('calculateCashDrawerExpectedCash('));
     expect(body, contains('UPDATE cash_drawer_sessions'));
+    expect(body, contains("fixedAssetAccount.subtype == 'fixed_assets'"));
+    expect(body, contains('حساب تفصيلي مثل السيارات أو المعدات'));
   });
 
   test('fixed-asset dialog defaults to real cash drawer payment', () {
@@ -43,6 +45,10 @@ void main() {
 
     expect(body, contains("var paymentMode = 'cash_drawer'"));
     expect(body, contains("a.subtype.startsWith('fixed_')"));
+    expect(body, contains("a.subtype != 'fixed_assets'"));
+    expect(body, contains("'fixed_vehicles'"));
+    expect(body, contains("'نوع الأصل'"));
+    expect(body, isNot(contains("labelText: tr.text('fixed_assets_account')")));
     expect(body, contains('AppPermission.cashBoxManage'));
     expect(body, contains('paidFromCashDrawer: paidFromCashDrawer'));
     expect(body, contains('deviceId: widget.store.appIdentity.deviceId'));
