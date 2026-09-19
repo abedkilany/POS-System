@@ -20,6 +20,7 @@ import '../../data/app_store.dart';
 import '../../models/expense.dart';
 import '../../models/store_profile.dart';
 import '../../models/user_role.dart';
+import '../accounts/account_statement_actions.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -301,6 +302,14 @@ class _ExpensesPageState extends State<ExpensesPage> {
                 PageDataLoadIndicator(
                   loadedCount: expenses.length,
                   totalCount: totalCount,
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => printExpenseStatementForPeriod(
+                    context: context,
+                    store: widget.store,
+                  ),
+                  icon: const Icon(Icons.print_outlined),
+                  label: Text(tr.text('print_expense_statement')),
                 ),
                 FilledButton.icon(
                   onPressed: widget.store.canManageExpenses
@@ -660,7 +669,6 @@ class _ExpensesPageState extends State<ExpensesPage> {
       }
     }
   }
-
 
   Future<void> _printExpense(BuildContext context, Expense expense) async {
     final tr = AppLocalizations.of(context);

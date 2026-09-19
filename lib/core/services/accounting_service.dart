@@ -1751,6 +1751,11 @@ class AccountingService {
     return 'general_expense';
   }
 
+  /// Returns the semantic role used when posting an expense. Reports use this
+  /// to resolve the same primary/sub-account that received the journal line.
+  static String expenseAccountRoleKeyForReport(Expense expense) =>
+      _expenseAccountRoleKey(expense);
+
   static Future<String> _resolveExpenseAccountForDatabase(
     VentioDriftDatabase db,
     Expense expense,

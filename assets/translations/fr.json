@@ -70,6 +70,8 @@
   "account_enter_current_password": "Entrez le mot de passe actuel.",
   "account_id": "Identifiant du compte",
   "account_ledger": "Grand livre de comptes",
+  "print_account_statement": "Imprimer le relevé de compte",
+  "print_expense_statement": "Imprimer le relevé des dépenses",
   "account_login_name": "Nom de connexion",
   "account_management": "Gestion des comptes",
   "account_management_description": "Il s'agit de la zone de compte en ligne de votre boutique. Le système de point de vente et d'inventaire reste disponible à partir de la connexion hors ligne sur cet appareil.",

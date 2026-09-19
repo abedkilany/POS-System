@@ -9,6 +9,7 @@ import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
+import 'account_statement_actions.dart';
 import '../../models/account_transaction.dart';
 import '../../models/cash_ledger_transaction.dart';
 import '../../models/payment_allocation.dart';
@@ -156,6 +157,17 @@ class _AccountLedgerSheet extends StatelessWidget {
                 Expanded(
                     child: Text(accountName,
                         style: Theme.of(context).textTheme.headlineSmall)),
+                IconButton(
+                    tooltip: AppLocalizations.of(context)
+                        .text('print_account_statement'),
+                    onPressed: () => printAccountStatementForAccount(
+                          context: context,
+                          store: store,
+                          accountType: accountType,
+                          accountId: accountId,
+                          accountName: accountName,
+                        ),
+                    icon: const Icon(Icons.print_outlined)),
                 IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close)),
@@ -477,7 +489,8 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   String submitError = '';
 
   bool get _isCustomer => widget.accountType == 'customer';
-  bool get _hasOpenInvoices => _isCustomer && widget.customerInvoices.isNotEmpty;
+  bool get _hasOpenInvoices =>
+      _isCustomer && widget.customerInvoices.isNotEmpty;
   String get _voucherCurrency =>
       widget.store.storeProfile.baseCurrency.toUpperCase();
 
@@ -606,21 +619,20 @@ class _PaymentDialogState extends State<_PaymentDialog> {
       }
       final take = remaining < dueInVoucher ? remaining : dueInVoucher;
       if (take <= 0.000001) continue;
-      var referenceAmount = sale.invoiceCurrency.toUpperCase() == _voucherCurrency
-          ? take
-          : convertCurrency(
-              take,
-              _voucherCurrency,
-              sale.invoiceCurrency,
-              widget.store.storeProfile,
-              effectiveAt: DateTime.now(),
-            );
+      var referenceAmount =
+          sale.invoiceCurrency.toUpperCase() == _voucherCurrency
+              ? take
+              : convertCurrency(
+                  take,
+                  _voucherCurrency,
+                  sale.invoiceCurrency,
+                  widget.store.storeProfile,
+                  effectiveAt: DateTime.now(),
+                );
       if (referenceAmount > sale.balanceDue) {
         referenceAmount = sale.balanceDue;
       }
-      final exchange = take <= 0
-          ? 1.0
-          : referenceAmount / take;
+      final exchange = take <= 0 ? 1.0 : referenceAmount / take;
       drafts.add(
         PaymentAllocationDraft(
           referenceId: sale.id,
@@ -659,9 +671,8 @@ class _PaymentDialogState extends State<_PaymentDialog> {
         vertical: 24,
       ),
       constraints: BoxConstraints(maxWidth: dialogWidth),
-      title: Text(_isCustomer
-          ? tr.text('receive_payment')
-          : tr.text('pay_supplier')),
+      title: Text(
+          _isCustomer ? tr.text('receive_payment') : tr.text('pay_supplier')),
       content: SizedBox(
         width: dialogWidth,
         child: ResponsiveDialogBox(
@@ -854,7 +865,8 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                       DropdownMenuItem(
                           value: 'Wish', child: Text(tr.text('payment_wish'))),
                       DropdownMenuItem(
-                          value: 'Check', child: Text(tr.text('payment_check'))),
+                          value: 'Check',
+                          child: Text(tr.text('payment_check'))),
                     ],
                     onChanged: (value) =>
                         setState(() => paymentMethod = value ?? 'Cash'),
@@ -875,7 +887,8 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                     const SizedBox(height: 10),
                     Text(
                       submitError,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                      style:
+                          TextStyle(color: Theme.of(context).colorScheme.error),
                     ),
                   ],
                 ],

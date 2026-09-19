@@ -14,6 +14,7 @@ import '../../data/app_store.dart';
 import '../../models/customer.dart';
 import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
+import '../accounts/account_statement_actions.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -355,6 +356,23 @@ class _CustomersPageState extends State<CustomersPage> {
                                                   accountId: customer.id,
                                                   accountName: customer.name);
                                             }
+                                            if (value == 'statement' &&
+                                                widget.store
+                                                    .hasAnyPermission(<String>{
+                                                  AppPermission
+                                                      .customersLedgerView,
+                                                  AppPermission.customersManage,
+                                                })) {
+                                              unawaited(
+                                                printAccountStatementForAccount(
+                                                  context: context,
+                                                  store: widget.store,
+                                                  accountType: 'customer',
+                                                  accountId: customer.id,
+                                                  accountName: customer.name,
+                                                ),
+                                              );
+                                            }
                                             if (value == 'payment' &&
                                                 widget.store
                                                     .hasAnyPermission(<String>{
@@ -384,6 +402,10 @@ class _CustomersPageState extends State<CustomersPage> {
                                                 value: 'ledger',
                                                 child: Text(
                                                     tr.text('account_ledger'))),
+                                            PopupMenuItem(
+                                                value: 'statement',
+                                                child: Text(tr.text(
+                                                    'print_account_statement'))),
                                             PopupMenuItem(
                                                 value: 'payment',
                                                 child: Text(tr
@@ -420,6 +442,30 @@ class _CustomersPageState extends State<CustomersPage> {
                                                     .receipt_long_outlined),
                                                 tooltip:
                                                     tr.text('account_ledger')),
+                                            IconButton(
+                                                onPressed: widget.store
+                                                        .hasAnyPermission(<String>{
+                                                  AppPermission
+                                                      .customersLedgerView,
+                                                  AppPermission.customersManage,
+                                                })
+                                                    ? () => unawaited(
+                                                          printAccountStatementForAccount(
+                                                            context: context,
+                                                            store: widget.store,
+                                                            accountType:
+                                                                'customer',
+                                                            accountId:
+                                                                customer.id,
+                                                            accountName:
+                                                                customer.name,
+                                                          ),
+                                                        )
+                                                    : null,
+                                                icon: const Icon(
+                                                    Icons.print_outlined),
+                                                tooltip: tr.text(
+                                                    'print_account_statement')),
                                             IconButton(
                                                 onPressed: widget.store
                                                         .hasAnyPermission(<String>{

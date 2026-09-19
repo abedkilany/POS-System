@@ -70,6 +70,8 @@
   "account_enter_current_password": "Enter current password.",
   "account_id": "Account ID",
   "account_ledger": "Account Ledger",
+  "print_account_statement": "Print Account Statement",
+  "print_expense_statement": "Print Expense Statement",
   "account_login_name": "Login name",
   "account_management": "Account management",
   "account_management_description": "This is the online account area for your store. The POS and inventory system stay available from Offline login on this device.",

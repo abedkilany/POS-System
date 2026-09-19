@@ -70,6 +70,8 @@
   "account_enter_current_password": "أدخل كلمة المرور الحالية.",
   "account_id": "معرّف الحساب",
   "account_ledger": "دفتر حساب",
+  "print_account_statement": "طباعة كشف الحساب",
+  "print_expense_statement": "طباعة كشف المصاريف",
   "account_login_name": "اسم تسجيل الدخول",
   "account_management": "إدارة الحساب",
   "account_management_description": "هذه منطقة الحساب الإلكتروني لمتجرك. يبقى نظام نقاط البيع والمخزون متاحًا من تسجيل الدخول المحلي على هذا الجهاز.",

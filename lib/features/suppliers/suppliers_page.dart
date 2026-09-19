@@ -16,6 +16,7 @@ import '../../data/app_store.dart';
 import '../../models/supplier.dart';
 import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
+import '../accounts/account_statement_actions.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -360,6 +361,23 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                   accountId: supplier.id,
                                                   accountName: supplier.name);
                                             }
+                                            if (value == 'statement' &&
+                                                widget.store
+                                                    .hasAnyPermission(<String>{
+                                                  AppPermission
+                                                      .suppliersLedgerView,
+                                                  AppPermission.suppliersManage,
+                                                })) {
+                                              unawaited(
+                                                printAccountStatementForAccount(
+                                                  context: context,
+                                                  store: widget.store,
+                                                  accountType: 'supplier',
+                                                  accountId: supplier.id,
+                                                  accountName: supplier.name,
+                                                ),
+                                              );
+                                            }
                                             if (value == 'payment' &&
                                                 widget.store
                                                     .hasAnyPermission(<String>{
@@ -389,6 +407,10 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                 value: 'ledger',
                                                 child: Text(
                                                     tr.text('account_ledger'))),
+                                            PopupMenuItem(
+                                                value: 'statement',
+                                                child: Text(tr.text(
+                                                    'print_account_statement'))),
                                             PopupMenuItem(
                                                 value: 'payment',
                                                 child: Text(
@@ -425,6 +447,30 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                     .receipt_long_outlined),
                                                 tooltip:
                                                     tr.text('account_ledger')),
+                                            IconButton(
+                                                onPressed: widget.store
+                                                        .hasAnyPermission(<String>{
+                                                  AppPermission
+                                                      .suppliersLedgerView,
+                                                  AppPermission.suppliersManage,
+                                                })
+                                                    ? () => unawaited(
+                                                          printAccountStatementForAccount(
+                                                            context: context,
+                                                            store: widget.store,
+                                                            accountType:
+                                                                'supplier',
+                                                            accountId:
+                                                                supplier.id,
+                                                            accountName:
+                                                                supplier.name,
+                                                          ),
+                                                        )
+                                                    : null,
+                                                icon: const Icon(
+                                                    Icons.print_outlined),
+                                                tooltip: tr.text(
+                                                    'print_account_statement')),
                                             IconButton(
                                                 onPressed: widget.store
                                                         .hasAnyPermission(<String>{
