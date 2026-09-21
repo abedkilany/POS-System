@@ -1487,12 +1487,14 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     required DateTime originalSaleDate,
     required String restorationSourceType,
     required String restorationSourceId,
+    bool preserveSaleProductIds = false,
   }) =>
       _AppStoreSplitPricingCosting(this as AppStore)
           ._restoreInventoryCostLayersFromSaleItemsInTransaction(db, items, now,
               originalSaleDate: originalSaleDate,
               restorationSourceType: restorationSourceType,
-              restorationSourceId: restorationSourceId);
+              restorationSourceId: restorationSourceId,
+              preserveSaleProductIds: preserveSaleProductIds);
 
   Future<void> _closeInventoryCostLayersForPurchaseInTransaction(
     VentioDriftDatabase db,

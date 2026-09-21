@@ -1,0 +1,616 @@
+{
+  "database": "C:\\Users\\User\\AppData\\Roaming\\Ventio\\ventio.sqlite",
+  "mode": "apply",
+  "source_products": 29,
+  "historical_versions": 54,
+  "sale_lines": 189,
+  "examples": [
+    {
+      "source_product_id": "1786892233863927",
+      "source_name": "ارشيز قلوبات فاخرة 330 غ",
+      "historical_name": "ارشي قلوبات فاخرة 400 غ",
+      "sale_line_count": 8,
+      "name_hash": "fb28a646361b"
+    },
+    {
+      "source_product_id": "1786892233863927",
+      "source_name": "ارشيز قلوبات فاخرة 330 غ",
+      "historical_name": "ع المود قلوبات فاخرة 400 غ",
+      "sale_line_count": 2,
+      "name_hash": "2c31524cd23c"
+    },
+    {
+      "source_product_id": "1786893075351973",
+      "source_name": "ارشيز سوبر اكسترا 300 غ",
+      "historical_name": "ارشي سوبر اكسترا 400 غ",
+      "sale_line_count": 6,
+      "name_hash": "7d775913730c"
+    },
+    {
+      "source_product_id": "1786893075351973",
+      "source_name": "ارشيز سوبر اكسترا 300 غ",
+      "historical_name": "ارشيز سوبر اكسترا 330 غ",
+      "sale_line_count": 3,
+      "name_hash": "469241357430"
+    },
+    {
+      "source_product_id": "1786893075351973",
+      "source_name": "ارشيز سوبر اكسترا 300 غ",
+      "historical_name": "ع المود سوبر اكسترا 400 غ",
+      "sale_line_count": 4,
+      "name_hash": "e318989ce52c"
+    },
+    {
+      "source_product_id": "1786897769988680",
+      "source_name": "ارشيز فستق حلبي 330 غ",
+      "historical_name": "ارشي فستق حلبي 400 غ",
+      "sale_line_count": 7,
+      "name_hash": "d568fb01ae54"
+    },
+    {
+      "source_product_id": "1786897769988680",
+      "source_name": "ارشيز فستق حلبي 330 غ",
+      "historical_name": "ع المود فستق حلبي 400 غ",
+      "sale_line_count": 2,
+      "name_hash": "e481ac2f4e2a"
+    },
+    {
+      "source_product_id": "1786898004247402",
+      "source_name": "ارشيز ذرة مالحة 200 غ",
+      "historical_name": "ارشي ذرة مالحة 250 غ",
+      "sale_line_count": 4,
+      "name_hash": "e3b86fc80760"
+    }
+  ],
+  "backup": "C:\\Users\\User\\Desktop\\Ventio\\outputs\\historical-product-split\\ventio.sqlite.before_history_split_20260920_002622.bak",
+  "result": {
+    "generated_at": "2026-09-19T21:26:22.615619Z",
+    "planned_historical_versions": 54,
+    "new_historical_products": 54,
+    "existing_historical_products_reused": 0,
+    "sale_lines_remapped": 189,
+    "mapping": [
+      {
+        "source_product_id": "1786892233863927",
+        "source_name": "ارشيز قلوبات فاخرة 330 غ",
+        "historical_name": "ارشي قلوبات فاخرة 400 غ",
+        "historical_product_id": "product_history_1786892233863927_fb28a646361b",
+        "historical_barcode": "8531826156203",
+        "sale_lines_expected": 8,
+        "sale_lines_remapped_now": 8,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786892233863927",
+        "source_name": "ارشيز قلوبات فاخرة 330 غ",
+        "historical_name": "ع المود قلوبات فاخرة 400 غ",
+        "historical_product_id": "product_history_1786892233863927_2c31524cd23c",
+        "historical_barcode": "8531826156210",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786893075351973",
+        "source_name": "ارشيز سوبر اكسترا 300 غ",
+        "historical_name": "ارشي سوبر اكسترا 400 غ",
+        "historical_product_id": "product_history_1786893075351973_7d775913730c",
+        "historical_barcode": "8531826156227",
+        "sale_lines_expected": 6,
+        "sale_lines_remapped_now": 6,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786893075351973",
+        "source_name": "ارشيز سوبر اكسترا 300 غ",
+        "historical_name": "ارشيز سوبر اكسترا 330 غ",
+        "historical_product_id": "product_history_1786893075351973_469241357430",
+        "historical_barcode": "8531826156234",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786893075351973",
+        "source_name": "ارشيز سوبر اكسترا 300 غ",
+        "historical_name": "ع المود سوبر اكسترا 400 غ",
+        "historical_product_id": "product_history_1786893075351973_e318989ce52c",
+        "historical_barcode": "8531826156241",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786897769988680",
+        "source_name": "ارشيز فستق حلبي 330 غ",
+        "historical_name": "ارشي فستق حلبي 400 غ",
+        "historical_product_id": "product_history_1786897769988680_d568fb01ae54",
+        "historical_barcode": "8531826156258",
+        "sale_lines_expected": 7,
+        "sale_lines_remapped_now": 7,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786897769988680",
+        "source_name": "ارشيز فستق حلبي 330 غ",
+        "historical_name": "ع المود فستق حلبي 400 غ",
+        "historical_product_id": "product_history_1786897769988680_e481ac2f4e2a",
+        "historical_barcode": "8531826156265",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786898004247402",
+        "source_name": "ارشيز ذرة مالحة 200 غ",
+        "historical_name": "ارشي ذرة مالحة 250 غ",
+        "historical_product_id": "product_history_1786898004247402_e3b86fc80760",
+        "historical_barcode": "8531826156272",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786898004247402",
+        "source_name": "ارشيز ذرة مالحة 200 غ",
+        "historical_name": "ع المود ذرة مالحة 250 غ",
+        "historical_product_id": "product_history_1786898004247402_7a4114684b49",
+        "historical_barcode": "8531826156289",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786899476924470",
+        "source_name": "ارشيز كري كري سادة 330 غ",
+        "historical_name": "ارشي كري كري سادة 400 غ",
+        "historical_product_id": "product_history_1786899476924470_0435123492c8",
+        "historical_barcode": "8531826156296",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786899476924470",
+        "source_name": "ارشيز كري كري سادة 330 غ",
+        "historical_name": "ع المود كري كري سادة 400 غ",
+        "historical_product_id": "product_history_1786899476924470_f455ee5adaa2",
+        "historical_barcode": "8531826156302",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786902553797153",
+        "source_name": "ارشيز بزر دوار شمس بلا ملح 180 غ",
+        "historical_name": "ارشي بزر دوار الشمس بلا ملح 200 غ",
+        "historical_product_id": "product_history_1786902553797153_d2de53f39908",
+        "historical_barcode": "8531826156319",
+        "sale_lines_expected": 5,
+        "sale_lines_remapped_now": 5,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786902553797153",
+        "source_name": "ارشيز بزر دوار شمس بلا ملح 180 غ",
+        "historical_name": "ارشيز بزر دوار الشمس بلا ملح 180 غ",
+        "historical_product_id": "product_history_1786902553797153_0fd01daed13f",
+        "historical_barcode": "8531826156326",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786902553797153",
+        "source_name": "ارشيز بزر دوار شمس بلا ملح 180 غ",
+        "historical_name": "ع المود بزر دوار الشمس بلا ملح 200 غ",
+        "historical_product_id": "product_history_1786902553797153_71712c6878d1",
+        "historical_barcode": "8531826156333",
+        "sale_lines_expected": 5,
+        "sale_lines_remapped_now": 5,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786905094703864",
+        "source_name": "ارشيز بزر دوار شمس خل 180 غ",
+        "historical_name": "ارشي بزر دوار الشمس خل 200 غ",
+        "historical_product_id": "product_history_1786905094703864_4d01df119f86",
+        "historical_barcode": "8531826156340",
+        "sale_lines_expected": 6,
+        "sale_lines_remapped_now": 6,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786905094703864",
+        "source_name": "ارشيز بزر دوار شمس خل 180 غ",
+        "historical_name": "ارشيز بزر دوار الشمس خل 180 غ",
+        "historical_product_id": "product_history_1786905094703864_64656164e002",
+        "historical_barcode": "8531826156357",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786905094703864",
+        "source_name": "ارشيز بزر دوار شمس خل 180 غ",
+        "historical_name": "ع المود بزر دوار الشمس خل 200 غ",
+        "historical_product_id": "product_history_1786905094703864_645a7e15e6ae",
+        "historical_barcode": "8531826156364",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906061887362",
+        "source_name": "ارشيز بزر دوار شمس ملح 180 غ",
+        "historical_name": "ارشي بزر دوار الشمس ملح 200 غ",
+        "historical_product_id": "product_history_1786906061887362_d285501e8c6b",
+        "historical_barcode": "8531826156371",
+        "sale_lines_expected": 7,
+        "sale_lines_remapped_now": 7,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906061887362",
+        "source_name": "ارشيز بزر دوار شمس ملح 180 غ",
+        "historical_name": "ارشيز بزر دوار الشمس ملح 180 غ",
+        "historical_product_id": "product_history_1786906061887362_c7c61e150959",
+        "historical_barcode": "8531826156388",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906061887362",
+        "source_name": "ارشيز بزر دوار شمس ملح 180 غ",
+        "historical_name": "ع المود بزر دوار الشمس ملح 200 غ",
+        "historical_product_id": "product_history_1786906061887362_fe405188fff3",
+        "historical_barcode": "8531826156395",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906623269851",
+        "source_name": "ارشيز مخلوطة عادي 330 غ",
+        "historical_name": "ارشي مخلوطة عادي 400 غ",
+        "historical_product_id": "product_history_1786906623269851_a7ed4b307bc1",
+        "historical_barcode": "8531826156401",
+        "sale_lines_expected": 5,
+        "sale_lines_remapped_now": 5,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906623269851",
+        "source_name": "ارشيز مخلوطة عادي 330 غ",
+        "historical_name": "ع المود مخلوطة عادي 400 غ",
+        "historical_product_id": "product_history_1786906623269851_7654bcf9eb2d",
+        "historical_barcode": "8531826156418",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906654779435",
+        "source_name": "ارشيز عبيد مدخن 330 غ",
+        "historical_name": "ع المود عبيد مدخن 400 غ",
+        "historical_product_id": "product_history_1786906654779435_f700d8ffc767",
+        "historical_barcode": "8531826156425",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906681999993",
+        "source_name": "ارشيز عبيد اكسترا 330 غ",
+        "historical_name": "ارشي عبيد اكسترا 400 غ",
+        "historical_product_id": "product_history_1786906681999993_24eac2bb18da",
+        "historical_barcode": "8531826156432",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906681999993",
+        "source_name": "ارشيز عبيد اكسترا 330 غ",
+        "historical_name": "ع المود عبيد عادي 400 غ",
+        "historical_product_id": "product_history_1786906681999993_14f52e05f0ae",
+        "historical_barcode": "8531826156449",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906704624871",
+        "source_name": "ارشيز شيبس صيني 135 غ",
+        "historical_name": "ارشي شيبس صيني 145 غ",
+        "historical_product_id": "product_history_1786906704624871_4d6d34b00875",
+        "historical_barcode": "8531826156456",
+        "sale_lines_expected": 9,
+        "sale_lines_remapped_now": 9,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906704624871",
+        "source_name": "ارشيز شيبس صيني 135 غ",
+        "historical_name": "ارشيز شيبس صيني 145 غ",
+        "historical_product_id": "product_history_1786906704624871_832e52f68ed5",
+        "historical_barcode": "8531826156463",
+        "sale_lines_expected": 5,
+        "sale_lines_remapped_now": 5,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906704624871",
+        "source_name": "ارشيز شيبس صيني 135 غ",
+        "historical_name": "ع المود شيبس صيني 145 غ",
+        "historical_product_id": "product_history_1786906704624871_95e5715d30fa",
+        "historical_barcode": "8531826156470",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906760307738",
+        "source_name": "ارشيز لوز مدخن 330 غ",
+        "historical_name": "ارشي لوز مدخن 400 غ",
+        "historical_product_id": "product_history_1786906760307738_4c32a16585ca",
+        "historical_barcode": "8531826156487",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906760307738",
+        "source_name": "ارشيز لوز مدخن 330 غ",
+        "historical_name": "ع المود لوز مدخن 400 غ",
+        "historical_product_id": "product_history_1786906760307738_cd640dc401b6",
+        "historical_barcode": "8531826156494",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906785452712",
+        "source_name": "ارشيز بزر ابيض اكسترا 330 غ",
+        "historical_name": "ارشي بزر ابيض اكسترا 330 غ",
+        "historical_product_id": "product_history_1786906785452712_3e8d3caa152c",
+        "historical_barcode": "8531826156500",
+        "sale_lines_expected": 8,
+        "sale_lines_remapped_now": 8,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906785452712",
+        "source_name": "ارشيز بزر ابيض اكسترا 330 غ",
+        "historical_name": "ع المود بزر ابيض اكسترا 330 غ",
+        "historical_product_id": "product_history_1786906785452712_3713a12f34fb",
+        "historical_barcode": "8531826156517",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906857358792",
+        "source_name": "ارشيز كري كري جبنة 400 غ",
+        "historical_name": "ع المود كري كري جبنة 400 غ",
+        "historical_product_id": "product_history_1786906857358792_a779c5f36a16",
+        "historical_barcode": "8531826156524",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906895473423",
+        "source_name": "ارشيز ذرة جبنة 200 غ",
+        "historical_name": "ارشي ذرة جبنة 250 غ",
+        "historical_product_id": "product_history_1786906895473423_62bdfe781eff",
+        "historical_barcode": "8531826156531",
+        "sale_lines_expected": 5,
+        "sale_lines_remapped_now": 5,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906895473423",
+        "source_name": "ارشيز ذرة جبنة 200 غ",
+        "historical_name": "ع المود ذرة جبنة 250 غ",
+        "historical_product_id": "product_history_1786906895473423_e78decf7c0a5",
+        "historical_barcode": "8531826156548",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906931775804",
+        "source_name": "ارشيز قضامة مالحة 450 غ",
+        "historical_name": "ارشي قضامة مالحة 450 غ",
+        "historical_product_id": "product_history_1786906931775804_f2694e1307d6",
+        "historical_barcode": "8531826156555",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906931775804",
+        "source_name": "ارشيز قضامة مالحة 450 غ",
+        "historical_name": "ع المود قضامة مالحة 450 غ",
+        "historical_product_id": "product_history_1786906931775804_ab2859266795",
+        "historical_barcode": "8531826156562",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906969076336",
+        "source_name": "ارشيز قضامة سكرية 450 غ",
+        "historical_name": "ارشي قضامة سكرية 450 غ",
+        "historical_product_id": "product_history_1786906969076336_8b5f7ba48e41",
+        "historical_barcode": "8531826156579",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786906969076336",
+        "source_name": "ارشيز قضامة سكرية 450 غ",
+        "historical_name": "ع المود قضامة سكرية 450 غ",
+        "historical_product_id": "product_history_1786906969076336_a36d0059c09e",
+        "historical_barcode": "8531826156586",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786907282334862",
+        "source_name": "ارشيز كاجو 330 غ",
+        "historical_name": "ارشي كاجو 400 غ",
+        "historical_product_id": "product_history_1786907282334862_a8ba0f0af641",
+        "historical_barcode": "8531826156593",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786907282334862",
+        "source_name": "ارشيز كاجو 330 غ",
+        "historical_name": "ع المود كاجو 400 غ",
+        "historical_product_id": "product_history_1786907282334862_4a158549ed5b",
+        "historical_barcode": "8531826156609",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786911036502771",
+        "source_name": "ارشيز عبيد حلو 330 غ",
+        "historical_name": "ارشي عبيد حلو 400غ",
+        "historical_product_id": "product_history_1786911036502771_017625d4fac4",
+        "historical_barcode": "8531826156616",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786911036502771",
+        "source_name": "ارشيز عبيد حلو 330 غ",
+        "historical_name": "ع المود عبيد حلو 400غ",
+        "historical_product_id": "product_history_1786911036502771_c2efe9eccb9c",
+        "historical_barcode": "8531826156623",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786981959948065",
+        "source_name": "ارشيز كري كري جبنة 250 غ",
+        "historical_name": "ارشي كري كري جبنة 350غ",
+        "historical_product_id": "product_history_1786981959948065_d84b3463c045",
+        "historical_barcode": "8531826156630",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1786981959948065",
+        "source_name": "ارشيز كري كري جبنة 250 غ",
+        "historical_name": "ع المود كري كري جبنة 350غ",
+        "historical_product_id": "product_history_1786981959948065_018260767c42",
+        "historical_barcode": "8531826156647",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1787169291561226",
+        "source_name": "ارشيز بزر مصري اكسترا 330 غ",
+        "historical_name": "ارشي بزر مصري اكسترا 350 غ",
+        "historical_product_id": "product_history_1787169291561226_4d76381c1bc9",
+        "historical_barcode": "8531826156654",
+        "sale_lines_expected": 10,
+        "sale_lines_remapped_now": 10,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1787172141908561",
+        "source_name": "ارشيز بزر شمام بلا ملح 220 غ",
+        "historical_name": "ارشي بزر شمام بلا ملح 270 غ",
+        "historical_product_id": "product_history_1787172141908561_949a81ab6f4c",
+        "historical_barcode": "8531826156661",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1787172499851985",
+        "source_name": "ارشيز بزر شمام ملح 220 غ",
+        "historical_name": "ارشي بزر شمام ملح 270 غ",
+        "historical_product_id": "product_history_1787172499851985_c9a00cba352e",
+        "historical_barcode": "8531826156678",
+        "sale_lines_expected": 6,
+        "sale_lines_remapped_now": 6,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1787741450435383",
+        "source_name": "ارشيز فستق حلبي 80 غ",
+        "historical_name": "ارشيز فستق حلبي 50 غ",
+        "historical_product_id": "product_history_1787741450435383_265622b5ceb0",
+        "historical_barcode": "8531826156685",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1787741450435383",
+        "source_name": "ارشيز فستق حلبي 80 غ",
+        "historical_name": "ارشيز فستق حلبي 90 غ",
+        "historical_product_id": "product_history_1787741450435383_84ae3d303ffc",
+        "historical_barcode": "8531826156692",
+        "sale_lines_expected": 3,
+        "sale_lines_remapped_now": 3,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1787743933840040",
+        "source_name": "ارشيز لوز مدخن 100 غ",
+        "historical_name": "ارشيز لوز مدخن 50 غ",
+        "historical_product_id": "product_history_1787743933840040_5a24ebcf50c1",
+        "historical_barcode": "8531826156708",
+        "sale_lines_expected": 1,
+        "sale_lines_remapped_now": 1,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "1787820367683783",
+        "source_name": "ارشيز فستق حلبي 180 غ",
+        "historical_name": "ارشيز فستق حلبي 250 غ",
+        "historical_product_id": "product_history_1787820367683783_51cbc4176c92",
+        "historical_barcode": "8531826156715",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "product_1786791549893464",
+        "source_name": "كري كري سادة",
+        "historical_name": "كريكري سادة",
+        "historical_product_id": "product_history_product_1786791549893464_adde5956b472",
+        "historical_barcode": "8531826156722",
+        "sale_lines_expected": 2,
+        "sale_lines_remapped_now": 2,
+        "historical_product_deleted": true
+      },
+      {
+        "source_product_id": "product_1786792145898826",
+        "source_name": "عبيد (باذنجان) 1 كيلو",
+        "historical_name": "عبيد حلو (باذنجان)",
+        "historical_product_id": "product_history_product_1786792145898826_bb3507b63edd",
+        "historical_barcode": "8531826156739",
+        "sale_lines_expected": 4,
+        "sale_lines_remapped_now": 4,
+        "historical_product_deleted": true
+      }
+    ]
+  },
+  "validation": "passed"
+}

@@ -14,7 +14,8 @@ extension _AppStoreCatalogRead on AppStore {
     return product.isDeleted ? null : product;
   }
 
-  List<Product> get _allProductsForDiagnosticsReadImpl => List.unmodifiable(_products);
+  List<Product> get _allProductsForDiagnosticsReadImpl =>
+      List.unmodifiable(_products);
 
   List<PriceList> get _priceListsReadImpl {
     unawaited(ensurePriceListsLoaded());
@@ -209,4 +210,38 @@ extension _AppStoreCatalogRead on AppStore {
     final product = _products[index];
     return product.id == id ? product : null;
   }
+
+  Product? _findProductForHistoricalSaleReadImpl(String id) {
+    final product = _findProductByIdReadImpl(id);
+    if (product == null) return null;
+    final sourceId = _historicalSourceProductId(product);
+    if (sourceId.isEmpty || sourceId == product.id) return product;
+    return _findProductByIdReadImpl(sourceId) ?? product;
+  }
+
+  // Sale returns must address the exact product stored on the original sale.
+  // Historical products are intentionally separate catalog records, so they
+  // must not be resolved back to their current/source product here.
+  Product? _findProductForSaleReturnReadImpl(String id) {
+    return _findProductByIdReadImpl(id);
+  }
+
+  bool _isHistoricalProductReadImpl(String id) {
+    final product = _findProductByIdReadImpl(id);
+    return product != null && _historicalSourceProductId(product).isNotEmpty;
+  }
+
+  String _operationalProductIdReadImpl(String id) {
+    final product = _findProductByIdReadImpl(id);
+    if (product == null) return id.trim();
+    final sourceId = _historicalSourceProductId(product);
+    return sourceId.isEmpty ? product.id : sourceId;
+  }
+}
+
+String _historicalSourceProductId(Product product) {
+  final match = RegExp(
+    r'\[ventio-history-source-id:([^\]]+)\]',
+  ).firstMatch(product.description);
+  return match?.group(1)?.trim() ?? '';
 }

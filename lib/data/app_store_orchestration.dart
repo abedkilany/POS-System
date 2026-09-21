@@ -7,8 +7,6 @@ part of 'app_store.dart';
 /// intentionally small.
 mixin _AppStoreOrchestration
     on ChangeNotifier, _AppStoreStateAccessors, _AppStoreForwardingApi {
-
-
   bool get sqliteSourceOfTruth => LocalDatabaseService.isSqliteAuthoritative;
 
   StorageLayerSnapshot get storageLayerSnapshot => StorageLayerSnapshot(
@@ -373,7 +371,8 @@ mixin _AppStoreOrchestration
       _AppStoreCatalogRead(this as AppStore)._inventoryCostLayersReadImpl;
 
   List<SupplierProductPrice> get allSupplierProductPricesForDiagnostics =>
-      _AppStorePartyRead(this as AppStore)._allSupplierProductPricesForDiagnosticsReadImpl;
+      _AppStorePartyRead(this as AppStore)
+          ._allSupplierProductPricesForDiagnosticsReadImpl;
   List<CatalogItem> get categories =>
       _AppStoreCatalogRead(this as AppStore)._categoriesReadImpl;
 
@@ -482,8 +481,7 @@ mixin _AppStoreOrchestration
   bool get canManageDeliveryNotes =>
       hasPermission(AppPermission.deliveryNotesManage);
   bool get canViewPurchases => canAccessPage('purchases');
-  bool get canManagePurchases =>
-      hasPermission(AppPermission.purchasesManage);
+  bool get canManagePurchases => hasPermission(AppPermission.purchasesManage);
   bool get canViewExpenses => canAccessPage('expenses');
   bool get canManageExpenses => hasPermission(AppPermission.expensesManage);
   bool get canViewAccounting => canAccessPage('accounting');
@@ -527,7 +525,8 @@ mixin _AppStoreOrchestration
       _AppStorePurchaseInsights(this as AppStore)._purchasesOverviewImpl;
 
   void _ensurePurchaseInsightsCache() =>
-      _AppStorePurchaseInsights(this as AppStore)._ensurePurchaseInsightsCacheImpl();
+      _AppStorePurchaseInsights(this as AppStore)
+          ._ensurePurchaseInsightsCacheImpl();
 
   List<SupplierPurchasePrice> purchasePriceHistoryForProduct(
     String productId,
@@ -742,7 +741,8 @@ mixin _AppStoreOrchestration
       );
 
   String get approvedHostTransferDeviceId =>
-      LocalDatabaseService.getString(AppStore._hostTransferApprovedDeviceKey)?.trim() ??
+      LocalDatabaseService.getString(AppStore._hostTransferApprovedDeviceKey)
+          ?.trim() ??
       '';
 
   int _stockMovementIndexForId(String id) =>
@@ -756,13 +756,29 @@ mixin _AppStoreOrchestration
       _accountTransactionIndexById[id.trim()] ?? -1;
 
   String resolveCustomerName(String? customerId) =>
-      _AppStorePartyRead(this as AppStore)._resolveCustomerNameReadImpl(customerId);
+      _AppStorePartyRead(this as AppStore)
+          ._resolveCustomerNameReadImpl(customerId);
 
   String sanitizeSelectedCustomerId(String? customerId) =>
-      _AppStorePartyRead(this as AppStore)._sanitizeSelectedCustomerIdReadImpl(customerId);
+      _AppStorePartyRead(this as AppStore)
+          ._sanitizeSelectedCustomerIdReadImpl(customerId);
 
   Product? _findProductById(String id) =>
       _AppStoreCatalogRead(this as AppStore)._findProductByIdReadImpl(id);
+
+  Product? _findProductForHistoricalSale(String id) =>
+      _AppStoreCatalogRead(this as AppStore)
+          ._findProductForHistoricalSaleReadImpl(id);
+
+  Product? _findProductForSaleReturn(String id) =>
+      _AppStoreCatalogRead(this as AppStore)
+          ._findProductForSaleReturnReadImpl(id);
+
+  bool _isHistoricalProduct(String id) =>
+      _AppStoreCatalogRead(this as AppStore)._isHistoricalProductReadImpl(id);
+
+  String _operationalProductIdForStorage(String id) =>
+      _AppStoreCatalogRead(this as AppStore)._operationalProductIdReadImpl(id);
 
   // Default import-section selector for internal full-replace/reset paths.
   // The manual Backup Import flow defines a local `wants` function that

@@ -6,6 +6,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../../models/credit_note.dart';
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
 import '../utils/currency_utils.dart';
@@ -24,11 +25,15 @@ class InvoicePdfService {
     required Sale sale,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    bool isReturn = false,
   }) async {
     final documentSale = PostedDocumentSnapshotService.saleView(sale);
     final documentProfile =
         PostedDocumentSnapshotService.profileForSale(sale, profile);
-    final labels = _InvoicePdfLabels(locale.languageCode);
+    final labels = _InvoicePdfLabels(
+      locale.languageCode,
+      isReturn: isReturn,
+    );
     final isArabic = locale.languageCode == 'ar';
     final pdfFonts = await PdfFontLoader.loadArabicFonts();
     final arabicFont = pdfFonts.regular;
@@ -127,6 +132,60 @@ class InvoicePdfService {
     await Printing.sharePdf(
       bytes: bytes,
       filename: '${sale.invoiceNo}.pdf',
+    );
+  }
+
+  static Future<void> printSaleReturn({
+    required CreditNote creditNote,
+    required StoreProfile profile,
+    Locale locale = const Locale('en'),
+  }) async {
+    final bytes = await buildSaleReturnPdf(
+      creditNote: creditNote,
+      profile: profile,
+      locale: locale,
+    );
+    await Printing.layoutPdf(
+      onLayout: (_) async => bytes,
+      name: creditNote.creditNoteNo,
+    );
+  }
+
+  static Future<Uint8List> buildSaleReturnPdf({
+    required CreditNote creditNote,
+    required StoreProfile profile,
+    Locale locale = const Locale('en'),
+  }) {
+    final subtotal = creditNote.items.fold<double>(
+      0,
+      (sum, item) => sum + item.lineTotal,
+    );
+    final discount =
+        (subtotal - creditNote.amount).clamp(0, double.infinity).toDouble();
+    final sale = Sale(
+      id: creditNote.id,
+      invoiceNo: creditNote.creditNoteNo,
+      customerName: creditNote.customerName,
+      customerId: creditNote.customerId,
+      date: creditNote.date,
+      status: 'Issued',
+      items: creditNote.items,
+      discount: discount,
+      invoiceCurrency: creditNote.currency,
+      paymentCurrency: creditNote.currency,
+      transactionAmount: creditNote.amount,
+      baseAmount: creditNote.amount,
+      paidAmount: creditNote.amount,
+      paymentMethod: creditNote.refundMethod,
+      paymentStatus: 'refunded',
+      note: creditNote.note,
+      postedSnapshot: creditNote.postedSnapshot,
+    );
+    return buildInvoicePdf(
+      sale: sale,
+      profile: profile,
+      locale: locale,
+      isReturn: true,
     );
   }
 
@@ -852,9 +911,10 @@ class InvoicePdfService {
 }
 
 class _InvoicePdfLabels {
-  const _InvoicePdfLabels(this.languageCode);
+  const _InvoicePdfLabels(this.languageCode, {this.isReturn = false});
 
   final String languageCode;
+  final bool isReturn;
   bool get isArabic => languageCode == 'ar';
   bool get isFrench => languageCode == 'fr';
 
@@ -863,11 +923,17 @@ class _InvoicePdfLabels {
       : isFrench
           ? 'N° facture'
           : 'Invoice No.';
-  String get salesInvoice => isArabic
-      ? 'فاتورة مبيعات'
-      : isFrench
-          ? 'Facture de vente'
-          : 'Sales Invoice';
+  String get salesInvoice => isReturn
+      ? (isArabic
+          ? 'مرتجع مبيعات'
+          : isFrench
+              ? 'Retour de vente'
+              : 'Sales Return')
+      : isArabic
+          ? 'فاتورة مبيعات'
+          : isFrench
+              ? 'Facture de vente'
+              : 'Sales Invoice';
   String get date => isArabic
       ? 'التاريخ'
       : isFrench

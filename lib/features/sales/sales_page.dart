@@ -1905,6 +1905,14 @@ class _SalesPageState extends State<SalesPage> {
                   icon: const Icon(Icons.receipt_long_outlined),
                   label: Text(tr.text('recent_invoices')),
                 ),
+                OutlinedButton.icon(
+                  onPressed: widget.store.hasPermission(
+                          AppPermission.salesCancel)
+                      ? () => _openSaleReturnDialog(context)
+                      : null,
+                  icon: const Icon(Icons.assignment_return_outlined),
+                  label: Text(tr.text('new_sales_return')),
+                ),
                 _buildSalePriceTypeSelector(context, tr),
               ],
             ),
@@ -2800,6 +2808,11 @@ class _SalesPageState extends State<SalesPage> {
                     icon: Icons.receipt_long_outlined,
                     label: tr.text('recent_invoices'),
                     onTap: _showInvoicesSheet),
+                if (widget.store.hasPermission(AppPermission.salesCancel))
+                  _MobileSaleAction(
+                      icon: Icons.assignment_return_outlined,
+                      label: tr.text('new_sales_return'),
+                      onTap: () => _openSaleReturnDialog(context)),
               ],
             ),
           ],
@@ -3653,8 +3666,316 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+  Future<void> _openSaleReturnDialog(BuildContext context) async {
+    if (!widget.store.hasPermission(AppPermission.salesCancel)) return;
+    final tr = AppLocalizations.of(context);
+    await widget.store.ensureCreditNotesLoaded();
+    if (!mounted || !context.mounted) return;
+    const epsilon = 0.000001;
+
+    Map<String, double> returnedFor(Sale sale) {
+      final returned = <String, double>{};
+      for (final note in widget.store.creditNotes) {
+        if (note.originalSaleId != sale.id ||
+            <String>{'cancelled', 'reversed', 'void'}
+                .contains(note.status.trim().toLowerCase())) {
+          continue;
+        }
+        for (final item in note.items) {
+          returned.update(item.productId, (value) => value + item.quantity,
+              ifAbsent: () => item.quantity);
+        }
+      }
+      return returned;
+    }
+
+    final sources = widget.store.sales.where((sale) {
+      if (sale.isDeleted || sale.isCancelled || sale.items.isEmpty) {
+        return false;
+      }
+      final returned = returnedFor(sale);
+      return sale.items.any((item) =>
+          item.quantity - (returned[item.productId] ?? 0) > epsilon);
+    }).toList(growable: false);
+    if (sources.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('no_sales_return_sources'))),
+      );
+      return;
+    }
+
+    Sale? selected;
+    final quantityControllers = <String, TextEditingController>{};
+    String? dialogError;
+    ({String sourceId, Map<String, double> quantities})? result;
+    try {
+      result = await showDialog<
+          ({String sourceId, Map<String, double> quantities})>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final source = selected;
+            final returned = source == null ? <String, double>{} : returnedFor(source);
+            final itemsByProduct = <String, SaleItem>{};
+            final quantitiesByProduct = <String, double>{};
+            if (source != null) {
+              for (final item in source.items) {
+                itemsByProduct.putIfAbsent(item.productId, () => item);
+                quantitiesByProduct.update(item.productId,
+                    (value) => value + item.quantity,
+                    ifAbsent: () => item.quantity);
+              }
+            }
+            final requestedByProduct = <String, double>{
+              for (final productId in quantitiesByProduct.keys)
+                productId: double.tryParse(
+                      quantityControllers[productId]?.text.trim() ?? '',
+                    ) ??
+                    0,
+            };
+            var returnSubtotal = 0.0;
+            if (source != null) {
+              final remainingByProduct = <String, double>{
+                for (final entry in requestedByProduct.entries)
+                  entry.key: entry.value,
+              };
+              for (final item in source.items) {
+                final requested = remainingByProduct[item.productId] ?? 0;
+                final quantity = math.min(
+                  item.quantity,
+                  requested.clamp(0, double.infinity).toDouble(),
+                );
+                if (quantity <= epsilon) continue;
+                returnSubtotal += quantity * item.unitPrice;
+                remainingByProduct[item.productId] = requested - quantity;
+              }
+            }
+            final returnAmount = source == null
+                ? 0.0
+                : normalizeAccountingAmount(
+                    (returnSubtotal -
+                            (source.subtotal <= 0
+                                ? 0
+                                : source.discount *
+                                    (returnSubtotal / source.subtotal)))
+                        .clamp(0, double.infinity)
+                        .toDouble(),
+                    source.invoiceCurrency,
+                    widget.store.storeProfile,
+                  );
+
+            final content = <Widget>[
+              DropdownButtonFormField<Sale>(
+                initialValue: selected,
+                decoration: InputDecoration(
+                    labelText: tr.text('source_sale_invoice')),
+                isExpanded: true,
+                items: sources
+                    .map((sale) => DropdownMenuItem<Sale>(
+                          value: sale,
+                          child: Text('${sale.invoiceNo} — ${sale.customerName}'),
+                        ))
+                    .toList(growable: false),
+                onChanged: (value) {
+                  for (final controller in quantityControllers.values) {
+                    controller.dispose();
+                  }
+                  quantityControllers.clear();
+                  setDialogState(() {
+                    selected = value;
+                    dialogError = null;
+                  });
+                },
+              ),
+              if (source != null) ...[
+                const SizedBox(height: 14),
+                Text(tr.text('select_return_items'),
+                    style: Theme.of(dialogContext).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                ...itemsByProduct.entries.map((entry) {
+                  final productId = entry.key;
+                  final item = entry.value;
+                  final available = (quantitiesByProduct[productId]! -
+                          (returned[productId] ?? 0))
+                      .clamp(0, double.infinity)
+                      .toDouble();
+                  final controller = quantityControllers.putIfAbsent(
+                      productId, TextEditingController.new);
+                  return Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(item.productName),
+                                Text(
+                                  '${tr.text('available_for_return')}: ${_formatQuantity(available)} ${item.unitName}',
+                                  style: Theme.of(dialogContext)
+                                      .textTheme
+                                      .bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 110,
+                            child: TextField(
+                              controller: controller,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                  decimal: true),
+                              decoration: InputDecoration(
+                                  labelText: tr.text('return_quantity')),
+                              onChanged: (_) => setDialogState(() {
+                                dialogError = null;
+                              }),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 8),
+                Card(
+                  color: Theme.of(dialogContext)
+                      .colorScheme
+                      .primaryContainer
+                      .withValues(alpha: .35),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          tr.text('final_total'),
+                          style: Theme.of(dialogContext)
+                              .textTheme
+                              .titleMedium,
+                        ),
+                        Text(
+                          _formatSaleCurrency(
+                              returnAmount, source.invoiceCurrency),
+                          style: Theme.of(dialogContext)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              if (dialogError != null) ...[
+                const SizedBox(height: 8),
+                Text(dialogError!,
+                    style: TextStyle(
+                        color: Theme.of(dialogContext).colorScheme.error)),
+              ],
+            ];
+
+            return AlertDialog(
+              title: Text(tr.text('new_sales_return')),
+              content: SizedBox(
+                width: 620,
+                child: SingleChildScrollView(child: Column(children: content)),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(tr.text('cancel'))),
+                FilledButton(
+                  onPressed: source == null
+                      ? null
+                      : () {
+                          final quantities = <String, double>{};
+                          for (final entry in quantitiesByProduct.entries) {
+                            final quantity = double.tryParse(
+                                    quantityControllers[entry.key]
+                                            ?.text
+                                            .trim() ??
+                                        '') ??
+                                0;
+                            final available = (entry.value -
+                                    (returned[entry.key] ?? 0))
+                                .clamp(0, double.infinity)
+                                .toDouble();
+                            if (!quantity.isFinite ||
+                                quantity < 0 ||
+                                quantity > available + epsilon) {
+                              setDialogState(() {
+                                dialogError = tr.text('select_return_items');
+                              });
+                              return;
+                            }
+                            if (quantity > epsilon) {
+                              quantities[entry.key] = quantity;
+                            }
+                          }
+                          if (quantities.isEmpty) {
+                            setDialogState(() {
+                              dialogError = tr.text('select_return_items');
+                            });
+                            return;
+                          }
+                          Navigator.pop(dialogContext, (
+                            sourceId: source.id,
+                            quantities: quantities,
+                          ));
+                        },
+                  child: Text(tr.text('confirm')),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      for (final controller in quantityControllers.values) {
+        controller.dispose();
+      }
+    }
+    if (result == null || !context.mounted) return;
+    if (!await requestSensitiveActionAuthorization(
+      context,
+      widget.store,
+      action: SensitiveAction.saleReverse,
+    )) {
+      return;
+    }
+    try {
+      await widget.store.returnSale(
+        result.sourceId,
+        restoreStock: true,
+        returnedQuantities: result.quantities,
+      );
+      if (!mounted) return;
+      setState(() {
+        _salesQueryFuture = null;
+        _salesQueryFutureKey = '';
+        _invoiceDetailsFutureById.clear();
+        _invoiceSearchIndexCache.invalidate();
+      });
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('invoice_return_created'))),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizedErrorText(tr, error))),
+      );
+    }
+  }
+
   Future<void> _showInvoicesSheet() async {
     final tr = AppLocalizations.of(context);
+    await widget.store.ensureCreditNotesLoaded();
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -3678,6 +3999,7 @@ class _SalesPageState extends State<SalesPage> {
                   sheetContext,
                   tr,
                   widget.store.sales,
+                  creditNotes: widget.store.creditNotes,
                   onSearchChanged: resetSearchState,
                 ),
               );
@@ -3693,6 +4015,7 @@ class _SalesPageState extends State<SalesPage> {
                       sheetContext,
                       tr,
                       result.items,
+                      creditNotes: widget.store.creditNotes,
                       setSheetState: setModalState,
                       totalCount: result.totalCount,
                       onSearchChanged: resetSearchState,
@@ -3723,6 +4046,7 @@ class _SalesPageState extends State<SalesPage> {
                     sheetContext,
                     tr,
                     widget.store.sales,
+                    creditNotes: widget.store.creditNotes,
                     onSearchChanged: resetSearchState,
                   ),
                 );
@@ -3756,7 +4080,8 @@ class _SalesPageState extends State<SalesPage> {
 
   Widget _buildInvoicesPanelFromSales(
       BuildContext context, AppLocalizations tr, List<Sale> sales,
-      {int totalCount = 0,
+      {List<CreditNote> creditNotes = const [],
+      int totalCount = 0,
       VoidCallback? onLoadMore,
       VoidCallback? onSearchChanged}) {
     final query = _invoiceSearchController.text.trim().toLowerCase();
@@ -3769,6 +4094,11 @@ class _SalesPageState extends State<SalesPage> {
     final displaySales = onLoadMore == null && filteredSales.length > 50
         ? filteredSales.take(50).toList()
         : filteredSales;
+    final displayCreditNotes = creditNotes
+        .where((note) => _creditNoteMatches(note, query))
+        .toList(growable: false);
+    final entries = <Object>[...displaySales, ...displayCreditNotes]
+      ..sort((a, b) => _invoiceEntryDate(b).compareTo(_invoiceEntryDate(a)));
     return Card(
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
@@ -3799,16 +4129,20 @@ class _SalesPageState extends State<SalesPage> {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: displaySales.isEmpty
+              child: entries.isEmpty
                   ? EmptyStateCard(
                       icon: Icons.receipt_long_outlined,
                       title: tr.text('no_sales'),
                       subtitle: tr.text('no_sales_desc'))
                   : ListView.separated(
-                      itemCount: displaySales.length,
+                      itemCount: entries.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
-                        final sale = displaySales[index];
+                        final entry = entries[index];
+                        if (entry is CreditNote) {
+                          return _buildCreditNoteTile(context, tr, entry);
+                        }
+                        final sale = entry as Sale;
                         return ExpansionTile(
                           leading: Icon(sale.isCancelled
                               ? Icons.cancel_outlined
@@ -3963,6 +4297,7 @@ class _SalesPageState extends State<SalesPage> {
     BuildContext context,
     AppLocalizations tr,
     List<SaleSummary> sales, {
+    List<CreditNote> creditNotes = const [],
     required void Function(VoidCallback fn) setSheetState,
     int totalCount = 0,
     VoidCallback? onLoadMore,
@@ -3970,6 +4305,11 @@ class _SalesPageState extends State<SalesPage> {
   }) {
     final query = _invoiceSearchController.text.trim().toLowerCase();
     final displaySales = sales;
+    final displayCreditNotes = creditNotes
+        .where((note) => _creditNoteMatches(note, query))
+        .toList(growable: false);
+    final entries = <Object>[...displaySales, ...displayCreditNotes]
+      ..sort((a, b) => _invoiceEntryDate(b).compareTo(_invoiceEntryDate(a)));
     return Card(
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
@@ -4000,16 +4340,20 @@ class _SalesPageState extends State<SalesPage> {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: displaySales.isEmpty
+              child: entries.isEmpty
                   ? EmptyStateCard(
                       icon: Icons.receipt_long_outlined,
                       title: tr.text('no_sales'),
                       subtitle: tr.text('no_sales_desc'))
                   : ListView.separated(
-                      itemCount: displaySales.length,
+                      itemCount: entries.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
-                        final summary = displaySales[index];
+                        final entry = entries[index];
+                        if (entry is CreditNote) {
+                          return _buildCreditNoteTile(context, tr, entry);
+                        }
+                        final summary = entry as SaleSummary;
                         final expanded =
                             _expandedInvoiceIds.contains(summary.id);
                         return ExpansionTile(
@@ -4206,6 +4550,157 @@ class _SalesPageState extends State<SalesPage> {
         ),
       ],
     );
+  }
+
+  bool _creditNoteMatches(CreditNote note, String query) {
+    if (query.isEmpty) return true;
+    final haystack = <String>[
+      note.creditNoteNo,
+      note.originalInvoiceNo,
+      note.customerName,
+      note.customerId,
+      note.note,
+      note.status,
+      ...note.items.map((item) => item.productName),
+    ].join(' ').toLowerCase();
+    return haystack.contains(query);
+  }
+
+  DateTime _invoiceEntryDate(Object entry) {
+    if (entry is CreditNote) return entry.date;
+    if (entry is Sale) return entry.date;
+    return (entry as SaleSummary).date;
+  }
+
+  Widget _buildCreditNoteTile(
+    BuildContext context,
+    AppLocalizations tr,
+    CreditNote note,
+  ) {
+    final status = note.status.trim().toLowerCase();
+    final isInactive =
+        status == 'cancelled' || status == 'reversed' || status == 'void';
+    final isLatestActive = !isInactive &&
+        _latestActiveCreditNoteForSale(note.originalSaleId)?.id == note.id;
+    final amount = formatCurrency(
+      note.amount,
+      currency: note.currency,
+      profile: widget.store.storeProfile,
+    );
+    return ExpansionTile(
+      key: PageStorageKey<String>('credit_note_${note.id}'),
+      leading: Icon(isInactive
+          ? Icons.cancel_outlined
+          : Icons.assignment_return_outlined),
+      title: Text(note.creditNoteNo),
+      subtitle: Text(
+        '${tr.text('sale_return')} • ${note.customerName} • '
+        '${note.date.toLocal().toString().split('.').first}',
+      ),
+      trailing: Text(
+        '−$amount',
+        style: TextStyle(
+          color: isInactive ? null : Theme.of(context).colorScheme.error,
+        ),
+      ),
+      children: [
+        ListTile(
+          dense: true,
+          title: Text('${tr.text('sale_invoice')}: ${note.originalInvoiceNo}'),
+          subtitle: Text(
+            note.status.trim().isEmpty ? tr.text('sale_return') : note.status,
+          ),
+        ),
+        ...note.items.map(
+          (item) => ListTile(
+            dense: true,
+            title: Text(item.productName),
+            subtitle: Text(
+              '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × '
+              '${formatCurrency(item.unitPrice, currency: note.currency, profile: widget.store.storeProfile)}',
+            ),
+            trailing: Text(formatCurrency(
+              item.lineTotal,
+              currency: note.currency,
+              profile: widget.store.storeProfile,
+            )),
+          ),
+        ),
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  '${tr.text('total')}: $amount',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (widget.store.hasPermission(AppPermission.salesPrint))
+                    OutlinedButton.icon(
+                      onPressed: () => _handleInvoiceAction(
+                        () => InvoicePdfService.printSaleReturn(
+                          creditNote: note,
+                          profile: widget.store.storeProfile,
+                          locale: AppLocalizations.of(context).locale,
+                        ),
+                      ),
+                      icon: const Icon(Icons.print_outlined),
+                      label: Text(tr.text('print_invoice')),
+                    ),
+                  if (isLatestActive &&
+                      widget.store.hasPermission(AppPermission.salesEdit) &&
+                      widget.store.hasPermission(AppPermission.salesCancel))
+                    FilledButton.icon(
+                      onPressed: () => _editCreditNote(context, note),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: Text(
+                        '${tr.text('edit')} ${_saleReturnLabel(tr)}',
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _editCreditNote(
+    BuildContext context,
+    CreditNote note,
+  ) async {
+    Sale? sale;
+    for (final candidate in widget.store.sales) {
+      if (candidate.id == note.originalSaleId) {
+        sale = candidate;
+        break;
+      }
+    }
+    sale ??= await LocalDatabaseService.getSaleFromSqliteById(
+      note.originalSaleId,
+    );
+    if (!context.mounted) return;
+    if (sale == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text('no_sale_details_found'),
+          ),
+        ),
+      );
+      return;
+    }
+    await _editLatestSaleReturn(context, sale);
   }
 
   Map<String, String> _invoiceSearchIndex(List<Sale> sales) {

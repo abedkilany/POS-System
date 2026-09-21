@@ -1422,8 +1422,21 @@ class AccountingService {
       currency: accountingCurrency,
     );
     final tax = frozenReturnTax == null ? await _taxBreakdown(gross) : null;
-    final returnNet = frozenReturnTax?.netAmount ?? tax!.netAmount;
-    final returnTaxAmount = frozenReturnTax?.taxAmount ?? tax!.taxAmount;
+    // Historical invoices can contain line-level discount rounding that is
+    // one minor unit away from the proportional discount used for the return.
+    // The credit line is authoritative, so derive the net debit from the
+    // rounded gross after preserving the frozen tax amount. This keeps the
+    // journal balanced without changing the return amount shown to the user.
+    final returnTaxAmount = _roundMoney(
+      (frozenReturnTax?.taxAmount ?? tax!.taxAmount)
+          .clamp(0, gross)
+          .toDouble(),
+      currency: accountingCurrency,
+    );
+    final returnNet = _roundMoney(
+      (gross - returnTaxAmount).clamp(0, double.infinity).toDouble(),
+      currency: accountingCurrency,
+    );
     final lines = <JournalLineDraft>[];
     if (gross > 0) {
       lines.add(JournalLineDraft(

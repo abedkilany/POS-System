@@ -468,8 +468,8 @@ class _CompactSummaryStrip extends StatelessWidget {
           amount: metrics.monthGrossProfit),
       _SummaryMetric(
           icon: Icons.receipt_long_outlined,
-          title: _accountingUiText(context, 'مصاريف الشهر',
-              'Month expenses', 'Charges du mois'),
+          title: _accountingUiText(
+              context, 'مصاريف الشهر', 'Month expenses', 'Charges du mois'),
           amount: metrics.monthExpenses),
       _SummaryMetric(
           icon: Icons.insights_outlined,
@@ -1068,6 +1068,197 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
     }
   }
 
+  Future<void> _editAccountDialog(
+    List<AccountingAccount> accounts,
+    AccountingAccount account,
+  ) async {
+    widget.store.requirePermission(AppPermission.accountingManage);
+    final tr = AppLocalizations.of(context);
+    final codeController = TextEditingController(text: account.code);
+    final nameController = TextEditingController(text: account.name);
+    final descriptionController =
+        TextEditingController(text: account.description);
+    var parentId = account.parentId;
+    var type = account.type;
+    var normalBalance = account.normalBalance;
+    var isPostable = account.isPostable;
+
+    final descendantIds = <String>{};
+    void collectDescendants(String parent) {
+      for (final candidate in accounts) {
+        if (candidate.parentId == parent && descendantIds.add(candidate.id)) {
+          collectDescendants(candidate.id);
+        }
+      }
+    }
+
+    collectDescendants(account.id);
+    final activeAccounts = accounts
+        .where((candidate) =>
+            candidate.isActive &&
+            candidate.id != account.id &&
+            !descendantIds.contains(candidate.id))
+        .toList()
+      ..sort((a, b) => a.code.compareTo(b.code));
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('${tr.text('edit')} ${tr.text('account_name')}'),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: codeController,
+                    decoration: InputDecoration(
+                      labelText: tr.text('account_code'),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nameController,
+                    decoration: InputDecoration(
+                      labelText: tr.text('account_name'),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: parentId,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: tr.text('parent_account'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: '',
+                        child: Text(tr.text('no_parent')),
+                      ),
+                      for (final candidate in activeAccounts)
+                        DropdownMenuItem(
+                          value: candidate.id,
+                          child: Text(
+                            '${candidate.code} • ${candidate.name}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      final selected = activeAccounts
+                          .where((candidate) => candidate.id == value)
+                          .firstOrNull;
+                      setDialogState(() {
+                        parentId = value ?? '';
+                        if (selected != null) {
+                          type = selected.type;
+                          normalBalance = selected.normalBalance;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: type,
+                    decoration: InputDecoration(
+                      labelText: tr.text('account_type'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: AccountingService.supportedAccountTypes
+                        .map((value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(_accountTypeLabel(value, tr)),
+                            ))
+                        .toList(),
+                    onChanged: (value) => setDialogState(() {
+                      type = value ?? type;
+                      normalBalance = _defaultNormalBalance(type);
+                    }),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: normalBalance,
+                    decoration: InputDecoration(
+                      labelText: tr.text('normal_balance'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                          value: 'debit', child: Text(tr.text('debit'))),
+                      DropdownMenuItem(
+                          value: 'credit', child: Text(tr.text('credit'))),
+                    ],
+                    onChanged: (value) => setDialogState(
+                        () => normalBalance = value ?? normalBalance),
+                  ),
+                  const SizedBox(height: 6),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: isPostable,
+                    title: Text(tr.text('allow_direct_posting')),
+                    subtitle: Text(tr.text('allow_direct_posting_desc')),
+                    onChanged: (value) =>
+                        setDialogState(() => isPostable = value),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: descriptionController,
+                    maxLines: 2,
+                    decoration: InputDecoration(
+                      labelText: tr.text('description'),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(tr.text('save')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await AccountingService.updateAccount(
+        accountId: account.id,
+        code: codeController.text,
+        name: nameController.text,
+        type: type,
+        normalBalance: normalBalance,
+        subtype: account.subtype,
+        parentId: parentId,
+        currency: account.currency,
+        description: descriptionController.text,
+        isPostable: isPostable,
+      );
+      if (!mounted) return;
+      setState(_reload);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(tr.text('account_updated')),
+      ));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(error.toString()),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ));
+    }
+  }
+
   Future<void> _deleteAccount(AccountingAccount account) async {
     widget.store.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
@@ -1226,13 +1417,19 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
                                   : null)
                               : PopupMenuButton<String>(
                                   onSelected: (value) {
-                                    if (value == 'toggle') {
+                                    if (value == 'edit') {
+                                      _editAccountDialog(accounts, account);
+                                    } else if (value == 'toggle') {
                                       _toggleAccount(account);
                                     } else if (value == 'delete') {
                                       _deleteAccount(account);
                                     }
                                   },
                                   itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text(tr.text('edit')),
+                                    ),
                                     PopupMenuItem(
                                       value: 'toggle',
                                       child: Text(account.isActive
@@ -1396,8 +1593,8 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
       for (final period in periods) {
         final start = DateTime.parse(period.accountCode).toLocal();
         final end = DateTime.parse(period.accountName).toLocal();
-        final containsNow = !now.isBefore(_startOfDay(start)) &&
-            !now.isAfter(_endOfDay(end));
+        final containsNow =
+            !now.isBefore(_startOfDay(start)) && !now.isAfter(_endOfDay(end));
         final isOpen = period.type.trim().toLowerCase() == 'open';
         if (containsNow && isOpen) {
           current = period;
@@ -1459,8 +1656,8 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
         return _AccountingReportRange(
           from: from,
           to: nextMonth.subtract(const Duration(microseconds: 1)),
-          label: _accountingUiText(
-              context, 'هذا الشهر', 'This month', 'Ce mois'),
+          label:
+              _accountingUiText(context, 'هذا الشهر', 'This month', 'Ce mois'),
         );
       case _AccountingReportRangeMode.year:
         return _AccountingReportRange(
@@ -1487,7 +1684,8 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
         return _AccountingReportRange(
           from: monthStart,
           to: _endOfDay(now),
-          label: _accountingUiText(context, 'هذا الشهر', 'This month', 'Ce mois'),
+          label:
+              _accountingUiText(context, 'هذا الشهر', 'This month', 'Ce mois'),
         );
       case _AccountingReportRangeMode.custom:
         final from = _customFrom ?? DateTime(now.year, now.month, 1);
@@ -1687,13 +1885,11 @@ class _AccountingReportRangeBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasAccountingPeriods = accountingPeriods.isNotEmpty;
-    final effectiveMode =
-        mode == _AccountingReportRangeMode.accountingPeriod &&
-                !hasAccountingPeriods
-            ? _AccountingReportRangeMode.month
-            : mode;
-    final dateRangeText =
-        '${_dateText(range.from)} → ${_dateText(range.to)}';
+    final effectiveMode = mode == _AccountingReportRangeMode.accountingPeriod &&
+            !hasAccountingPeriods
+        ? _AccountingReportRangeMode.month
+        : mode;
+    final dateRangeText = '${_dateText(range.from)} → ${_dateText(range.to)}';
     final selectedPeriodExists = accountingPeriods
         .any((period) => period.id == selectedAccountingPeriodId);
     final selectedPeriodValue = selectedPeriodExists
@@ -1706,8 +1902,8 @@ class _AccountingReportRangeBar extends StatelessWidget {
       items: [
         DropdownMenuItem(
           value: _AccountingReportRangeMode.today,
-          child: Text(
-              _accountingUiText(context, 'اليوم', 'Today', 'Aujourd’hui')),
+          child:
+              Text(_accountingUiText(context, 'اليوم', 'Today', 'Aujourd’hui')),
         ),
         DropdownMenuItem(
           value: _AccountingReportRangeMode.week,
@@ -1732,8 +1928,8 @@ class _AccountingReportRangeBar extends StatelessWidget {
           ),
         DropdownMenuItem(
           value: _AccountingReportRangeMode.custom,
-          child: Text(_accountingUiText(context, 'فترة مخصصة', 'Custom range',
-              'Période personnalisée')),
+          child: Text(_accountingUiText(
+              context, 'فترة مخصصة', 'Custom range', 'Période personnalisée')),
         ),
       ],
       onChanged: (value) {
@@ -1741,27 +1937,27 @@ class _AccountingReportRangeBar extends StatelessWidget {
       },
     );
 
-    final periodSelector = effectiveMode ==
-                _AccountingReportRangeMode.accountingPeriod &&
-            selectedPeriodValue != null
-        ? DropdownButton<String>(
-            value: selectedPeriodValue,
-            underline: const SizedBox.shrink(),
-            items: [
-              for (final period in accountingPeriods)
-                DropdownMenuItem(
-                  value: period.id,
-                  child: Text(
-                    _accountingPeriodLabel(context, period),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-            onChanged: (value) {
-              if (value != null) onAccountingPeriodChanged(value);
-            },
-          )
-        : null;
+    final periodSelector =
+        effectiveMode == _AccountingReportRangeMode.accountingPeriod &&
+                selectedPeriodValue != null
+            ? DropdownButton<String>(
+                value: selectedPeriodValue,
+                underline: const SizedBox.shrink(),
+                items: [
+                  for (final period in accountingPeriods)
+                    DropdownMenuItem(
+                      value: period.id,
+                      child: Text(
+                        _accountingPeriodLabel(context, period),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value != null) onAccountingPeriodChanged(value);
+                },
+              )
+            : null;
 
     return Card(
       elevation: 0,
@@ -1770,64 +1966,64 @@ class _AccountingReportRangeBar extends StatelessWidget {
         child: DefaultTextStyle.merge(
           style: const TextStyle(fontSize: 12),
           child: LayoutBuilder(
-          builder: (context, constraints) {
-            final details = Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.date_range_outlined, size: 18),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    '${range.label} • $dateRangeText',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (effectiveMode == _AccountingReportRangeMode.custom) ...[
-                  const SizedBox(width: 6),
-                  IconButton(
-                    tooltip: _accountingUiText(context, 'تغيير الفترة',
-                        'Change range', 'Modifier la période'),
-                    onPressed: onPickCustom,
-                    icon: const Icon(Icons.edit_calendar_outlined, size: 20),
-                  ),
-                ],
-              ],
-            );
-            if (constraints.maxWidth < 820) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+            builder: (context, constraints) {
+              final details = Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  modeSelector,
-                  if (periodSelector != null) ...[
-                    const SizedBox(height: 4),
-                    periodSelector,
+                  const Icon(Icons.date_range_outlined, size: 18),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      '${range.label} • $dateRangeText',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (effectiveMode == _AccountingReportRangeMode.custom) ...[
+                    const SizedBox(width: 6),
+                    IconButton(
+                      tooltip: _accountingUiText(context, 'تغيير الفترة',
+                          'Change range', 'Modifier la période'),
+                      onPressed: onPickCustom,
+                      icon: const Icon(Icons.edit_calendar_outlined, size: 20),
+                    ),
                   ],
-                  const SizedBox(height: 6),
-                  details,
                 ],
               );
-            }
-            return Row(
-              children: [
-                Text(
-                  _accountingUiText(
-                      context, 'فترة التقرير:', 'Report period:', 'Période :'),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(width: 8),
-                modeSelector,
-                if (periodSelector != null) ...[
-                  const SizedBox(width: 14),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 280),
-                    child: periodSelector,
+              if (constraints.maxWidth < 820) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    modeSelector,
+                    if (periodSelector != null) ...[
+                      const SizedBox(height: 4),
+                      periodSelector,
+                    ],
+                    const SizedBox(height: 6),
+                    details,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Text(
+                    _accountingUiText(context, 'فترة التقرير:',
+                        'Report period:', 'Période :'),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
+                  const SizedBox(width: 8),
+                  modeSelector,
+                  if (periodSelector != null) ...[
+                    const SizedBox(width: 14),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 280),
+                      child: periodSelector,
+                    ),
+                  ],
+                  const SizedBox(width: 18),
+                  Expanded(child: details),
                 ],
-                const SizedBox(width: 18),
-                Expanded(child: details),
-              ],
-            );
-          },
+              );
+            },
           ),
         ),
       ),
@@ -1859,25 +2055,38 @@ String _accountingUiText(
 String _topSectionSubtitle(BuildContext context, int index) {
   switch (index) {
     case 0:
-      return _accountingUiText(context, 'العملاء والموردون وأعمار الديون',
-          'Customers, suppliers and aging', 'Clients, fournisseurs et échéances');
+      return _accountingUiText(
+          context,
+          'العملاء والموردون وأعمار الديون',
+          'Customers, suppliers and aging',
+          'Clients, fournisseurs et échéances');
     case 1:
-      return _accountingUiText(context, 'القيود اليومية ودفتر الأستاذ ودليل الحسابات',
+      return _accountingUiText(
+          context,
+          'القيود اليومية ودفتر الأستاذ ودليل الحسابات',
           'Journal, general ledger and chart of accounts',
           'Journal, grand livre et plan comptable');
     case 2:
-      return _accountingUiText(context, 'حركة النقد والبنوك والرقابة النقدية',
+      return _accountingUiText(
+          context,
+          'حركة النقد والبنوك والرقابة النقدية',
           'Cash, banks and treasury monitoring',
           'Trésorerie, banques et suivi');
     case 3:
-      return _accountingUiText(context, 'التقارير المالية الرسمية حسب الفترة',
-          'Period-based financial statements', 'Rapports financiers par période');
+      return _accountingUiText(
+          context,
+          'التقارير المالية الرسمية حسب الفترة',
+          'Period-based financial statements',
+          'Rapports financiers par période');
     case 4:
-      return _accountingUiText(context, 'إدارة الفترات والربط والإعدادات المحاسبية',
+      return _accountingUiText(
+          context,
+          'إدارة الفترات والربط والإعدادات المحاسبية',
           'Periods, mappings and accounting administration',
           'Périodes, rattachements et administration');
     default:
-      return _accountingUiText(context, 'المحاسبة', 'Accounting', 'Comptabilité');
+      return _accountingUiText(
+          context, 'المحاسبة', 'Accounting', 'Comptabilité');
   }
 }
 
@@ -2067,7 +2276,6 @@ class _LazyTabPaneState extends State<_LazyTabPane> {
     return _builtChild ?? const SizedBox.expand();
   }
 }
-
 
 class _AccountingPrintablePage extends StatefulWidget {
   const _AccountingPrintablePage({
@@ -2331,7 +2539,8 @@ class _AccountsTabMemory extends StatelessWidget {
                       subtitle: [customer.phone, customer.address]
                           .where((part) => part.trim().isNotEmpty)
                           .join(' • '),
-                      balance: store.accounting.accountBalance('customer', customer.id),
+                      balance: store.accounting
+                          .accountBalance('customer', customer.id),
                     ))
                 .toList()
             : store.suppliers
@@ -2344,7 +2553,8 @@ class _AccountsTabMemory extends StatelessWidget {
                       subtitle: [supplier.phone, supplier.address]
                           .where((part) => part.trim().isNotEmpty)
                           .join(' • '),
-                      balance: store.accounting.accountBalance('supplier', supplier.id),
+                      balance: store.accounting
+                          .accountBalance('supplier', supplier.id),
                     ))
                 .toList();
         computed.sort((a, b) => b.balance.abs().compareTo(a.balance.abs()));
@@ -2980,7 +3190,6 @@ String _agingBucketText(BuildContext context, String bucket) {
   }
 }
 
-
 class _CashLedgerTransactionsTab extends StatefulWidget {
   const _CashLedgerTransactionsTab({required this.store, required this.query});
 
@@ -3116,7 +3325,8 @@ class _CashLedgerTransactionsTabState
             future: _future,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator.adaptive());
+                return const Center(
+                    child: CircularProgressIndicator.adaptive());
               }
               if (snapshot.hasError) {
                 return _ReportError(message: snapshot.error.toString());
@@ -3124,7 +3334,8 @@ class _CashLedgerTransactionsTabState
               final rows = snapshot.data ?? const <CashLedgerTransaction>[];
               if (rows.isEmpty) {
                 return _EmptyAccountingState(
-                  message: AppLocalizations.of(context).text('no_cash_movements'),
+                  message:
+                      AppLocalizations.of(context).text('no_cash_movements'),
                 );
               }
               return LayoutBuilder(
@@ -3139,7 +3350,8 @@ class _CashLedgerTransactionsTabState
                               const _CashLedgerTableHeader(),
                               Expanded(
                                 child: ListView.builder(
-                                  scrollCacheExtent: _kAccountingListCacheExtent,
+                                  scrollCacheExtent:
+                                      _kAccountingListCacheExtent,
                                   keyboardDismissBehavior:
                                       ScrollViewKeyboardDismissBehavior.onDrag,
                                   itemExtent: 74,
@@ -3250,8 +3462,8 @@ class _CashLedgerFilterBar extends StatelessWidget {
                 items: [
                   DropdownMenuItem(
                     value: '',
-                    child: Text(_accountingUiText(
-                        context, 'داخل وخارج', 'In & out', 'Entrées et sorties')),
+                    child: Text(_accountingUiText(context, 'داخل وخارج',
+                        'In & out', 'Entrées et sorties')),
                   ),
                   DropdownMenuItem(
                     value: 'in',
@@ -3280,8 +3492,8 @@ class _CashLedgerFilterBar extends StatelessWidget {
                 items: [
                   DropdownMenuItem(
                     value: '',
-                    child: Text(_accountingUiText(context, 'كل الأنواع',
-                        'All types', 'Tous les types')),
+                    child: Text(_accountingUiText(
+                        context, 'كل الأنواع', 'All types', 'Tous les types')),
                   ),
                   for (final value in types)
                     DropdownMenuItem(
@@ -3448,69 +3660,69 @@ class _CashLedgerTransactionRow extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(_dateText(transaction.occurredAt.toLocal())),
-          ),
-          Expanded(
-            flex: 2,
-            child: Row(
-              children: [
-                Icon(
-                  isIn ? Icons.south_west : Icons.north_east,
-                  size: 18,
-                  color: directionColor,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    typeLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+          children: [
+            SizedBox(
+              width: 110,
+              child: Text(_dateText(transaction.occurredAt.toLocal())),
+            ),
+            Expanded(
+              flex: 2,
+              child: Row(
+                children: [
+                  Icon(
+                    isIn ? Icons.south_west : Icons.north_east,
+                    size: 18,
+                    color: directionColor,
                   ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text(
-              party,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              reference,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          SizedBox(
-            width: 120,
-            child: Text(
-              isIn ? amountText : '',
-              textAlign: TextAlign.end,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: isIn ? directionColor : null,
-                    fontWeight: isIn ? FontWeight.w800 : null,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      typeLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
+                ],
+              ),
             ),
-          ),
-          SizedBox(
-            width: 120,
-            child: Text(
-              isIn ? '' : amountText,
-              textAlign: TextAlign.end,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: isIn ? null : directionColor,
-                    fontWeight: isIn ? null : FontWeight.w800,
-                  ),
+            Expanded(
+              flex: 3,
+              child: Text(
+                party,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                reference,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            SizedBox(
+              width: 120,
+              child: Text(
+                isIn ? amountText : '',
+                textAlign: TextAlign.end,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: isIn ? directionColor : null,
+                      fontWeight: isIn ? FontWeight.w800 : null,
+                    ),
+              ),
+            ),
+            SizedBox(
+              width: 120,
+              child: Text(
+                isIn ? '' : amountText,
+                textAlign: TextAlign.end,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: isIn ? null : directionColor,
+                      fontWeight: isIn ? null : FontWeight.w800,
+                    ),
+              ),
+            ),
           ],
         ),
       ),
@@ -3813,9 +4025,8 @@ class _TransactionRow extends StatelessWidget {
         ? ''
         : _paymentMethodLabel(context, transaction.paymentMethod);
     final note = transaction.note.trim();
-    final postingLabel = transaction.debit > 0
-        ? tr.text('debit')
-        : tr.text('credit');
+    final postingLabel =
+        transaction.debit > 0 ? tr.text('debit') : tr.text('credit');
     final postingAmount = transaction.debit > 0 ? debitText : creditText;
 
     if (!isWide) {
@@ -3866,50 +4077,50 @@ class _TransactionRow extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
-        children: [
-          SizedBox(width: 110, child: Text(_dateText(transaction.date))),
-          Expanded(
-            flex: 2,
-            child: Row(
-              children: [
-                Icon(_iconForType(transaction.type),
-                    size: 18,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text(typeText,
-                        maxLines: 1, overflow: TextOverflow.ellipsis)),
-              ],
-            ),
-          ),
-          Expanded(
-              flex: 3,
-              child: Text(accountName,
-                  maxLines: 1, overflow: TextOverflow.ellipsis)),
-          Expanded(
+          children: [
+            SizedBox(width: 110, child: Text(_dateText(transaction.date))),
+            Expanded(
               flex: 2,
-              child: Text(
-                  [transaction.referenceNo, methodText]
-                      .where((part) => part.trim().isNotEmpty)
-                      .join(' • '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis)),
-          SizedBox(
-              width: 118,
-              child: Text(debitText,
-                  textAlign: TextAlign.end,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700))),
-          SizedBox(
-              width: 118,
-              child: Text(creditText,
-                  textAlign: TextAlign.end,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700))),
+              child: Row(
+                children: [
+                  Icon(_iconForType(transaction.type),
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: Text(typeText,
+                          maxLines: 1, overflow: TextOverflow.ellipsis)),
+                ],
+              ),
+            ),
+            Expanded(
+                flex: 3,
+                child: Text(accountName,
+                    maxLines: 1, overflow: TextOverflow.ellipsis)),
+            Expanded(
+                flex: 2,
+                child: Text(
+                    [transaction.referenceNo, methodText]
+                        .where((part) => part.trim().isNotEmpty)
+                        .join(' • '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis)),
+            SizedBox(
+                width: 118,
+                child: Text(debitText,
+                    textAlign: TextAlign.end,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700))),
+            SizedBox(
+                width: 118,
+                child: Text(creditText,
+                    textAlign: TextAlign.end,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700))),
           ],
         ),
       ),
@@ -4028,9 +4239,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
     });
   }
 
-
-  Future<void> _editManualJournal(
-      JournalEntrySummaryReport summary) async {
+  Future<void> _editManualJournal(JournalEntrySummaryReport summary) async {
     widget.store.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     try {
@@ -4153,8 +4362,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                               '${item.accountCode} - ${_localizedAccountingName(item.name, tr)}'),
                         ),
                     ],
-                    onChanged: (value) =>
-                        setDialogState(() => branch = value),
+                    onChanged: (value) => setDialogState(() => branch = value),
                   ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<AccountingAccount>(
@@ -4180,8 +4388,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                         labelText: tr.text('debit_cost_center')),
                     items: [
                       DropdownMenuItem<AdvancedAccountingItem?>(
-                          value: null,
-                          child: Text(tr.text('no_cost_center'))),
+                          value: null, child: Text(tr.text('no_cost_center'))),
                       for (final item in costCenters)
                         DropdownMenuItem<AdvancedAccountingItem?>(
                           value: item,
@@ -4216,8 +4423,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                         labelText: tr.text('credit_cost_center')),
                     items: [
                       DropdownMenuItem<AdvancedAccountingItem?>(
-                          value: null,
-                          child: Text(tr.text('no_cost_center'))),
+                          value: null, child: Text(tr.text('no_cost_center'))),
                       for (final item in costCenters)
                         DropdownMenuItem<AdvancedAccountingItem?>(
                           value: item,
@@ -4233,8 +4439,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                     controller: amount,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    decoration:
-                        InputDecoration(labelText: tr.text('amount')),
+                    decoration: InputDecoration(labelText: tr.text('amount')),
                   ),
                 ],
               ),
@@ -4384,9 +4589,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                           entry.description,
                           if (entry.reversalReason.trim().isNotEmpty)
                             entry.reversalReason.trim(),
-                        ]
-                            .where((part) => part.trim().isNotEmpty)
-                            .join(' • '),
+                        ].where((part) => part.trim().isNotEmpty).join(' • '),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -4434,7 +4637,8 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                               icon: const Icon(Icons.edit_outlined),
                             ),
                           IconButton(
-                            tooltip: _accountingUiText(context, 'عرض القيد', 'View journal', 'Voir l’écriture'),
+                            tooltip: _accountingUiText(context, 'عرض القيد',
+                                'View journal', 'Voir l’écriture'),
                             onPressed: () => _showJournalDrillDown(
                               context,
                               store: widget.store,
@@ -4515,7 +4719,12 @@ class _JournalEntriesFilterBar extends StatelessWidget {
                     child: Text(_accountingUiText(
                         context, 'كل الحالات', 'All statuses', 'Tous statuts')),
                   ),
-                  for (final value in const ['posted', 'reversed', 'draft', 'void'])
+                  for (final value in const [
+                    'posted',
+                    'reversed',
+                    'draft',
+                    'void'
+                  ])
                     DropdownMenuItem(
                       value: value,
                       child: Text(_localizedAccountingStatus(
@@ -4533,17 +4742,22 @@ class _JournalEntriesFilterBar extends StatelessWidget {
                 isExpanded: true,
                 decoration: InputDecoration(
                   isDense: true,
-                  labelText: _accountingUiText(
-                      context, 'المصدر', 'Source', 'Source'),
+                  labelText:
+                      _accountingUiText(context, 'المصدر', 'Source', 'Source'),
                   border: const OutlineInputBorder(),
                 ),
                 items: [
                   DropdownMenuItem(
                     value: '',
-                    child: Text(_accountingUiText(
-                        context, 'كل المصادر', 'All sources', 'Toutes sources')),
+                    child: Text(_accountingUiText(context, 'كل المصادر',
+                        'All sources', 'Toutes sources')),
                   ),
-                  for (final value in const ['system', 'manual', 'import', 'reversal'])
+                  for (final value in const [
+                    'system',
+                    'manual',
+                    'import',
+                    'reversal'
+                  ])
                     DropdownMenuItem(
                       value: value,
                       child: Text(_journalSourceLabel(context, value)),
@@ -4734,14 +4948,17 @@ class _JournalDetailsCard extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               child: DataTable(
                 columns: [
-                  DataColumn(label: Text(_accountingUiText(
-                      context, 'الحساب', 'Account', 'Compte'))),
+                  DataColumn(
+                      label: Text(_accountingUiText(
+                          context, 'الحساب', 'Account', 'Compte'))),
                   DataColumn(label: Text(tr.text('debit')), numeric: true),
                   DataColumn(label: Text(tr.text('credit')), numeric: true),
-                  DataColumn(label: Text(_accountingUiText(
-                      context, 'الطرف', 'Party', 'Tiers'))),
-                  DataColumn(label: Text(_accountingUiText(
-                      context, 'البيان', 'Memo', 'Libellé'))),
+                  DataColumn(
+                      label: Text(_accountingUiText(
+                          context, 'الطرف', 'Party', 'Tiers'))),
+                  DataColumn(
+                      label: Text(_accountingUiText(
+                          context, 'البيان', 'Memo', 'Libellé'))),
                 ],
                 rows: [
                   for (final line in entry.lines)
@@ -4763,8 +4980,7 @@ class _JournalDetailsCard extends StatelessWidget {
                     ]),
                   DataRow(cells: [
                     DataCell(Text(
-                      _accountingUiText(
-                          context, 'الإجمالي', 'Total', 'Total'),
+                      _accountingUiText(context, 'الإجمالي', 'Total', 'Total'),
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     )),
                     DataCell(Text(
@@ -4798,16 +5014,26 @@ class _AccountingStatusBadge extends StatelessWidget {
     final normalized = status.trim().toLowerCase();
     final scheme = Theme.of(context).colorScheme;
     final (background, foreground, icon) = switch (normalized) {
-      'posted' || 'active' || 'cleared' || 'collected' || 'closed' =>
-        (scheme.primaryContainer, scheme.onPrimaryContainer,
-            Icons.check_circle_outline),
-      'reversed' || 'void' || 'cancelled' || 'canceled' || 'bounced' =>
-        (scheme.errorContainer, scheme.onErrorContainer, Icons.undo_outlined),
-      'draft' || 'pending' || 'open' =>
-        (scheme.tertiaryContainer, scheme.onTertiaryContainer,
-            Icons.schedule_outlined),
-      _ => (scheme.surfaceContainerHighest, scheme.onSurfaceVariant,
-          Icons.info_outline),
+      'posted' || 'active' || 'cleared' || 'collected' || 'closed' => (
+          scheme.primaryContainer,
+          scheme.onPrimaryContainer,
+          Icons.check_circle_outline
+        ),
+      'reversed' || 'void' || 'cancelled' || 'canceled' || 'bounced' => (
+          scheme.errorContainer,
+          scheme.onErrorContainer,
+          Icons.undo_outlined
+        ),
+      'draft' || 'pending' || 'open' => (
+          scheme.tertiaryContainer,
+          scheme.onTertiaryContainer,
+          Icons.schedule_outlined
+        ),
+      _ => (
+          scheme.surfaceContainerHighest,
+          scheme.onSurfaceVariant,
+          Icons.info_outline
+        ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -5029,8 +5255,8 @@ class _GeneralLedgerTabState extends State<_GeneralLedgerTab> {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            _accountingUiText(
-                                context, 'الرصيد الختامي', 'Closing balance', 'Solde de clôture'),
+                            _accountingUiText(context, 'الرصيد الختامي',
+                                'Closing balance', 'Solde de clôture'),
                             style: Theme.of(context).textTheme.labelSmall,
                           ),
                           Text(
@@ -5043,7 +5269,8 @@ class _GeneralLedgerTabState extends State<_GeneralLedgerTab> {
                         ],
                       ),
                       children: [
-                        _LedgerLinesTable(store: widget.store, account: account),
+                        _LedgerLinesTable(
+                            store: widget.store, account: account),
                       ],
                     ),
                   );
@@ -5128,7 +5355,8 @@ class _GeneralLedgerFilterBar extends StatelessWidget {
     }
 
     final rangeLabel = from == null || to == null
-        ? _accountingUiText(context, 'كل الفترات', 'All periods', 'Toutes périodes')
+        ? _accountingUiText(
+            context, 'كل الفترات', 'All periods', 'Toutes périodes')
         : '${_dateText(from!)} → ${_dateText(to!)}';
     return Card(
       elevation: 0,
@@ -5146,8 +5374,8 @@ class _GeneralLedgerFilterBar extends StatelessWidget {
               items: [
                 DropdownMenuItem(
                   value: '',
-                  child: Text(_accountingUiText(
-                      context, 'كل الحسابات', 'All accounts', 'Tous les comptes')),
+                  child: Text(_accountingUiText(context, 'كل الحسابات',
+                      'All accounts', 'Tous les comptes')),
                 ),
                 for (final account in accounts.where((a) => a.isPostable))
                   DropdownMenuItem(
@@ -5167,8 +5395,8 @@ class _GeneralLedgerFilterBar extends StatelessWidget {
               items: [
                 DropdownMenuItem(
                   value: '',
-                  child: Text(_accountingUiText(
-                      context, 'كل الفروع', 'All branches', 'Toutes les branches')),
+                  child: Text(_accountingUiText(context, 'كل الفروع',
+                      'All branches', 'Toutes les branches')),
                 ),
                 for (final branch in branches.where((item) => item.isActive))
                   DropdownMenuItem(
@@ -5253,7 +5481,9 @@ class _LedgerLinesTable extends StatelessWidget {
           child: DataTable(
             columns: [
               DataColumn(label: Text(tr.text('date'))),
-              DataColumn(label: Text(_accountingUiText(context, 'القيد', 'Journal', 'Écriture'))),
+              DataColumn(
+                  label: Text(_accountingUiText(
+                      context, 'القيد', 'Journal', 'Écriture'))),
               DataColumn(label: Text(tr.text('reference'))),
               DataColumn(label: Text(tr.text('description'))),
               DataColumn(label: Text(tr.text('debit')), numeric: true),
@@ -5266,8 +5496,8 @@ class _LedgerLinesTable extends StatelessWidget {
                 const DataCell(Text('')),
                 const DataCell(Text('')),
                 DataCell(Text(
-                  _accountingUiText(
-                      context, 'الرصيد الافتتاحي للفترة', 'Opening balance', 'Solde d’ouverture'),
+                  _accountingUiText(context, 'الرصيد الافتتاحي للفترة',
+                      'Opening balance', 'Solde d’ouverture'),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 )),
                 const DataCell(Text('')),
@@ -5289,7 +5519,8 @@ class _LedgerLinesTable extends StatelessWidget {
                     icon: const Icon(Icons.open_in_new, size: 16),
                     label: Text(line.entryNo),
                   )),
-                  DataCell(Text(_joinParts([line.referenceType, line.referenceNo]))),
+                  DataCell(
+                      Text(_joinParts([line.referenceType, line.referenceNo]))),
                   DataCell(SizedBox(
                     width: 280,
                     child: Text(
@@ -5307,7 +5538,10 @@ class _LedgerLinesTable extends StatelessWidget {
                 const DataCell(Text('')),
                 DataCell(Text(
                   _accountingUiText(
-                      context, 'إجمالي الفترة / الرصيد الختامي', 'Period totals / closing balance', 'Totaux / solde de clôture'),
+                      context,
+                      'إجمالي الفترة / الرصيد الختامي',
+                      'Period totals / closing balance',
+                      'Totaux / solde de clôture'),
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 )),
                 DataCell(Text(
@@ -5439,15 +5673,22 @@ class _TrialBalanceTab extends StatelessWidget {
                               DataColumn(
                                   label: Text(tr.text('debit')), numeric: true),
                               DataColumn(
-                                  label: Text(tr.text('credit')), numeric: true),
+                                  label: Text(tr.text('credit')),
+                                  numeric: true),
                               DataColumn(
-                                label: Text(_accountingUiText(context,
-                                    'رصيد مدين', 'Debit balance', 'Solde débiteur')),
+                                label: Text(_accountingUiText(
+                                    context,
+                                    'رصيد مدين',
+                                    'Debit balance',
+                                    'Solde débiteur')),
                                 numeric: true,
                               ),
                               DataColumn(
-                                label: Text(_accountingUiText(context,
-                                    'رصيد دائن', 'Credit balance', 'Solde créditeur')),
+                                label: Text(_accountingUiText(
+                                    context,
+                                    'رصيد دائن',
+                                    'Credit balance',
+                                    'Solde créditeur')),
                                 numeric: true,
                               ),
                             ],
@@ -5562,8 +5803,8 @@ class _IncomeStatementTab extends StatelessWidget {
               const SizedBox(height: 16),
               _FinancialBreakdownSection(
                 store: store,
-                title: _accountingUiText(
-                    context, 'الإيرادات من المبيعات', 'Sales revenue', 'Revenus des ventes'),
+                title: _accountingUiText(context, 'الإيرادات من المبيعات',
+                    'Sales revenue', 'Revenus des ventes'),
                 rows: [
                   _StatementRow(tr.text('sales_revenue'), report.grossSales),
                   _StatementRow(tr.text('sales_returns'), -report.salesReturns),
@@ -5781,7 +6022,8 @@ class _InventoryManufacturingReportsTab extends StatelessWidget {
                           DataCell(Text(_money(store, row.actualUnitCost))),
                           DataCell(_AccountingStatusBadge(status: row.status)),
                           DataCell(IconButton(
-                            tooltip: _accountingUiText(context, 'عرض القيد', 'View journal', 'Voir l’écriture'),
+                            tooltip: _accountingUiText(context, 'عرض القيد',
+                                'View journal', 'Voir l’écriture'),
                             onPressed: row.journalEntryId.trim().isEmpty
                                 ? null
                                 : () => _showJournalDrillDown(
@@ -5872,7 +6114,8 @@ class _InventoryManufacturingReportsTab extends StatelessWidget {
                           DataCell(Text(_money(store, row.differenceValue))),
                           DataCell(_AccountingStatusBadge(status: row.status)),
                           DataCell(IconButton(
-                            tooltip: _accountingUiText(context, 'عرض القيد', 'View journal', 'Voir l’écriture'),
+                            tooltip: _accountingUiText(context, 'عرض القيد',
+                                'View journal', 'Voir l’écriture'),
                             onPressed: row.journalEntryId.trim().isEmpty
                                 ? null
                                 : () => _showJournalDrillDown(
@@ -5943,8 +6186,8 @@ class _BalanceSheetTab extends StatelessWidget {
               const SizedBox(height: 12),
               _ReportBalanceBanner(
                 isBalanced: isBalanced,
-                balancedText: _accountingUiText(
-                    context, 'المركز المالي متوازن', 'Balance sheet is balanced', 'Le bilan est équilibré'),
+                balancedText: _accountingUiText(context, 'المركز المالي متوازن',
+                    'Balance sheet is balanced', 'Le bilan est équilibré'),
                 warningText: _accountingUiText(
                   context,
                   'يوجد فرق محاسبي بقيمة ${_money(store, report.difference)}',
@@ -5955,11 +6198,14 @@ class _BalanceSheetTab extends StatelessWidget {
               const SizedBox(height: 16),
               _FinancialBreakdownSection(
                 store: store,
-                title: _accountingUiText(
-                    context, 'الأصول المتداولة', 'Current assets', 'Actifs courants'),
+                title: _accountingUiText(context, 'الأصول المتداولة',
+                    'Current assets', 'Actifs courants'),
                 accountLines: report.currentAssetLines,
-                totalLabel: _accountingUiText(context, 'إجمالي الأصول المتداولة',
-                    'Total current assets', 'Total actifs courants'),
+                totalLabel: _accountingUiText(
+                    context,
+                    'إجمالي الأصول المتداولة',
+                    'Total current assets',
+                    'Total actifs courants'),
                 totalAmount: report.currentAssets,
               ),
               const SizedBox(height: 12),
@@ -5968,8 +6214,11 @@ class _BalanceSheetTab extends StatelessWidget {
                 title: _accountingUiText(context, 'الأصول غير المتداولة',
                     'Non-current assets', 'Actifs non courants'),
                 accountLines: report.nonCurrentAssetLines,
-                totalLabel: _accountingUiText(context, 'إجمالي الأصول غير المتداولة',
-                    'Total non-current assets', 'Total actifs non courants'),
+                totalLabel: _accountingUiText(
+                    context,
+                    'إجمالي الأصول غير المتداولة',
+                    'Total non-current assets',
+                    'Total actifs non courants'),
                 totalAmount: report.nonCurrentAssets,
               ),
               const SizedBox(height: 12),
@@ -5984,8 +6233,11 @@ class _BalanceSheetTab extends StatelessWidget {
                 title: _accountingUiText(context, 'الالتزامات المتداولة',
                     'Current liabilities', 'Passifs courants'),
                 accountLines: report.currentLiabilityLines,
-                totalLabel: _accountingUiText(context, 'إجمالي الالتزامات المتداولة',
-                    'Total current liabilities', 'Total passifs courants'),
+                totalLabel: _accountingUiText(
+                    context,
+                    'إجمالي الالتزامات المتداولة',
+                    'Total current liabilities',
+                    'Total passifs courants'),
                 totalAmount: report.currentLiabilities,
               ),
               const SizedBox(height: 12),
@@ -5994,8 +6246,11 @@ class _BalanceSheetTab extends StatelessWidget {
                 title: _accountingUiText(context, 'الالتزامات غير المتداولة',
                     'Non-current liabilities', 'Passifs non courants'),
                 accountLines: report.nonCurrentLiabilityLines,
-                totalLabel: _accountingUiText(context, 'إجمالي الالتزامات غير المتداولة',
-                    'Total non-current liabilities', 'Total passifs non courants'),
+                totalLabel: _accountingUiText(
+                    context,
+                    'إجمالي الالتزامات غير المتداولة',
+                    'Total non-current liabilities',
+                    'Total passifs non courants'),
                 totalAmount: report.nonCurrentLiabilities,
               ),
               const SizedBox(height: 12),
@@ -6008,7 +6263,10 @@ class _BalanceSheetTab extends StatelessWidget {
                       tr.text('current_profit_loss'), report.retainedEarnings),
                 ],
                 totalLabel: _accountingUiText(
-                    context, 'إجمالي حقوق الملكية والنتيجة', 'Total equity and result', 'Total capitaux propres et résultat'),
+                    context,
+                    'إجمالي حقوق الملكية والنتيجة',
+                    'Total equity and result',
+                    'Total capitaux propres et résultat'),
                 totalAmount: report.equity + report.retainedEarnings,
               ),
               const SizedBox(height: 16),
@@ -6020,8 +6278,8 @@ class _BalanceSheetTab extends StatelessWidget {
               const SizedBox(height: 8),
               _FinancialResultTile(
                 store: store,
-                label: _accountingUiText(
-                    context, 'إجمالي الأصول', 'Total assets', 'Total des actifs'),
+                label: _accountingUiText(context, 'إجمالي الأصول',
+                    'Total assets', 'Total des actifs'),
                 amount: report.assets,
                 prominent: true,
               ),
@@ -6151,7 +6409,10 @@ class _CashFlowStatementTab extends StatelessWidget {
               _ReportBalanceBanner(
                 isBalanced: reconciled,
                 balancedText: _accountingUiText(
-                    context, 'التدفقات النقدية متصالحة مع الرصيد', 'Cash flow reconciles to closing cash', 'Les flux de trésorerie sont rapprochés'),
+                    context,
+                    'التدفقات النقدية متصالحة مع الرصيد',
+                    'Cash flow reconciles to closing cash',
+                    'Les flux de trésorerie sont rapprochés'),
                 warningText: _accountingUiText(
                   context,
                   'فرق المصالحة النقدية ${_money(store, reconciliationDifference)}',
@@ -6236,7 +6497,9 @@ class _CashFlowStatementTab extends StatelessWidget {
                       DataColumn(label: Text(tr.text('in')), numeric: true),
                       DataColumn(label: Text(tr.text('out')), numeric: true),
                       DataColumn(label: Text(tr.text('net')), numeric: true),
-                      DataColumn(label: Text(_accountingUiText(context, 'القيد', 'Journal', 'Écriture'))),
+                      DataColumn(
+                          label: Text(_accountingUiText(
+                              context, 'القيد', 'Journal', 'Écriture'))),
                     ],
                     rows: [
                       for (final line
@@ -6255,7 +6518,8 @@ class _CashFlowStatementTab extends StatelessWidget {
                           DataCell(Text(_money(store, line.outflow))),
                           DataCell(Text(_money(store, line.netCashFlow))),
                           DataCell(IconButton(
-                            tooltip: _accountingUiText(context, 'عرض القيد', 'View journal', 'Voir l’écriture'),
+                            tooltip: _accountingUiText(context, 'عرض القيد',
+                                'View journal', 'Voir l’écriture'),
                             onPressed: () => _showJournalDrillDown(
                               context,
                               store: store,
@@ -6312,7 +6576,8 @@ class _CashFlowSection extends StatelessWidget {
             _StatementLine(
                 label: tr.text('cash_inflows'), value: _money(store, inflows)),
             _StatementLine(
-                label: tr.text('cash_outflows'), value: _money(store, outflows)),
+                label: tr.text('cash_outflows'),
+                value: _money(store, outflows)),
             const Divider(height: 12),
             _StatementLine(
                 label: tr.text('net_cash_flow'),
@@ -6938,20 +7203,16 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 
     String fixedAssetTypeLabel(AccountingAccount account) {
       return switch (account.subtype) {
-        'fixed_equipment' => _accountingUiText(
-            context, 'معدات وآلات', 'Equipment & machinery',
-            'Équipements et machines'),
-        'fixed_furniture' => _accountingUiText(
-            context, 'أثاث وتجهيزات', 'Furniture & fixtures',
-            'Mobilier et agencements'),
-        'fixed_computers' => _accountingUiText(
-            context, 'أجهزة وحواسيب', 'Devices & computers',
-            'Appareils et ordinateurs'),
-        'fixed_vehicles' => _accountingUiText(
-            context, 'سيارات', 'Vehicles', 'Véhicules'),
-        'fixed_other' => _accountingUiText(
-            context, 'أصول ثابتة أخرى', 'Other fixed assets',
-            'Autres immobilisations'),
+        'fixed_equipment' => _accountingUiText(context, 'معدات وآلات',
+            'Equipment & machinery', 'Équipements et machines'),
+        'fixed_furniture' => _accountingUiText(context, 'أثاث وتجهيزات',
+            'Furniture & fixtures', 'Mobilier et agencements'),
+        'fixed_computers' => _accountingUiText(context, 'أجهزة وحواسيب',
+            'Devices & computers', 'Appareils et ordinateurs'),
+        'fixed_vehicles' =>
+          _accountingUiText(context, 'سيارات', 'Vehicles', 'Véhicules'),
+        'fixed_other' => _accountingUiText(context, 'أصول ثابتة أخرى',
+            'Other fixed assets', 'Autres immobilisations'),
         _ => _localizedAccountingName(account.name, tr),
       };
     }
@@ -6960,9 +7221,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       (a) => a.subtype == 'fixed_equipment',
       orElse: () => assetAccounts.first,
     );
-    final counterpartAccounts = accounts
-        .where((a) => a.id != assetAccount?.id)
-        .toList(growable: false);
+    final counterpartAccounts =
+        accounts.where((a) => a.id != assetAccount?.id).toList(growable: false);
     AccountingAccount? paymentAccount;
     for (final account in counterpartAccounts) {
       if (account.subtype == 'cash') {
@@ -7088,8 +7348,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                     )),
                   ),
                 ],
-                onChanged: (value) => setDialogState(
-                    () => paymentMode = value ?? paymentMode),
+                onChanged: (value) =>
+                    setDialogState(() => paymentMode = value ?? paymentMode),
               ),
               if (paymentMode == 'cash_drawer') ...[
                 const SizedBox(height: 8),
@@ -7115,9 +7375,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                     for (final a in counterpartAccounts)
                       if (a.id != assetAccount?.id)
                         DropdownMenuItem(
-                          value: a,
-                          child: Text(
-                              '${a.code} - ${_localizedAccountingName(a.name, tr)}'))
+                            value: a,
+                            child: Text(
+                                '${a.code} - ${_localizedAccountingName(a.name, tr)}'))
                   ],
                   onChanged: (value) =>
                       setDialogState(() => paymentAccount = value),
@@ -7197,7 +7457,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Bad state: ', ''))),
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Bad state: ', ''))),
       );
     }
   }
@@ -7724,7 +7985,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 TextButton.icon(
                     onPressed: () => _showCashTransferJournalHint(item),
                     icon: const Icon(Icons.menu_book_outlined),
-                    label: Text(_accountingUiText(context, 'عرض القيد', 'View journal', 'Voir l’écriture')))
+                    label: Text(_accountingUiText(context, 'عرض القيد',
+                        'View journal', 'Voir l’écriture')))
               ],
             ),
             _AdvancedSection(
@@ -8291,11 +8553,12 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
         if (snapshot.hasError) {
           return _ReportError(message: snapshot.error.toString());
         }
-        final data = snapshot.data ?? const _AccountingSettingsData(
-          vatRatePercent: 0,
-          profiles: TaxProfile.defaults,
-          defaultTaxProfileId: TaxProfile.standardId,
-        );
+        final data = snapshot.data ??
+            const _AccountingSettingsData(
+              vatRatePercent: 0,
+              profiles: TaxProfile.defaults,
+              defaultTaxProfileId: TaxProfile.standardId,
+            );
         final canManageAccounting =
             widget.store.hasPermission(AppPermission.accountingManage);
         return Card(
@@ -8370,8 +8633,10 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
                 Text(
                   AppLocalizations.of(context)
                       .text('accounting_read_only_permission'),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.error),
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Theme.of(context).colorScheme.error),
                 ),
               ],
             ],
@@ -8420,7 +8685,8 @@ class _TaxProfilesSettingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final active = profiles.where((item) => item.isActive).toList(growable: false);
+    final active =
+        profiles.where((item) => item.isActive).toList(growable: false);
     final selected = active.any((item) => item.id == defaultTaxProfileId)
         ? defaultTaxProfileId
         : (active.isEmpty ? null : active.first.id);
@@ -8504,9 +8770,7 @@ class _TaxProfilesSettingCard extends StatelessWidget {
 
 class _AccountingSettingDefinition {
   const _AccountingSettingDefinition(
-      {required this.titleKey,
-      required this.subtitleKey,
-      required this.icon});
+      {required this.titleKey, required this.subtitleKey, required this.icon});
 
   final String titleKey;
   final String subtitleKey;
@@ -8782,9 +9046,8 @@ class _ReportBalanceBanner extends StatelessWidget {
     final background = isBalanced
         ? scheme.primaryContainer.withValues(alpha: 0.35)
         : scheme.errorContainer.withValues(alpha: 0.55);
-    final foreground = isBalanced
-        ? scheme.onPrimaryContainer
-        : scheme.onErrorContainer;
+    final foreground =
+        isBalanced ? scheme.onPrimaryContainer : scheme.onErrorContainer;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -8794,7 +9057,9 @@ class _ReportBalanceBanner extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            isBalanced ? Icons.check_circle_outline : Icons.warning_amber_rounded,
+            isBalanced
+                ? Icons.check_circle_outline
+                : Icons.warning_amber_rounded,
             size: 20,
             color: foreground,
           ),
@@ -8864,8 +9129,8 @@ class _FinancialBreakdownSection extends StatelessWidget {
               tilePadding: const EdgeInsets.symmetric(horizontal: 14),
               childrenPadding: const EdgeInsets.only(bottom: 6),
               title: Text(
-                _accountingUiText(context, 'تفاصيل الحسابات',
-                    'Account details', 'Détails des comptes'),
+                _accountingUiText(context, 'تفاصيل الحسابات', 'Account details',
+                    'Détails des comptes'),
                 style: Theme.of(context)
                     .textTheme
                     .bodyMedium

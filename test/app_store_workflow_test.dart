@@ -956,6 +956,45 @@ void main() {
       expect(store.products.single.stock, 5);
     });
 
+    test('edits a sale return after rebuilding stock and accounting effects',
+        () async {
+      final store = await readySqliteStore(storeId: 'ST-SALERET-EDIT');
+      await store.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
+      await store.adjustStock(
+          productId: 'p1',
+          warehouseId: Warehouse.defaultId,
+          quantityDelta: 5,
+          reason: 'test seed');
+
+      final sale = await store.createSale(
+        customerId: 'customer-sale-return-edit',
+        customerName: 'Return Edit Customer',
+        paymentMethod: 'Credit',
+        paymentStatus: 'credit',
+        items: const [
+          SaleItem(
+            productId: 'p1',
+            productName: 'Coffee',
+            unitPrice: 10,
+            quantity: 2,
+          ),
+        ],
+      );
+      await store.returnSale(sale.id);
+      final note = store.creditNotes.single;
+
+      final edited = await store.editSaleReturn(
+        creditNoteId: note.id,
+        expectedVersion: note.version,
+        returnedQuantities: const <String, double>{'p1': 1},
+      );
+
+      expect(edited.items.single.quantity, 1);
+      expect(edited.version, 2);
+      expect(store.products.single.stock, 4);
+      expect(store.sales.single.status, 'Partially Returned');
+    });
+
     test(
         'partial sale returns are cumulative and cannot return the same units twice',
         () async {
