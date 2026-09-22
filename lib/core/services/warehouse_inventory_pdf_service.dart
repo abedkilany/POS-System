@@ -1,13 +1,15 @@
 import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
+import '../../models/print_settings.dart';
 import '../../models/product.dart';
 import '../../models/store_profile.dart';
 import '../../models/warehouse.dart';
+import 'print_service.dart';
 import 'professional_pdf_theme.dart';
 
 class WarehouseInventoryPdfRow {
@@ -107,6 +109,7 @@ class WarehouseInventoryPdfService {
     required Warehouse warehouse,
     required List<WarehouseInventoryPdfRow> rows,
     required StoreProfile profile,
+    BuildContext? context,
     Locale locale = const Locale('en'),
   }) async {
     final bytes = await buildWarehouseInventoryPdf(
@@ -114,9 +117,15 @@ class WarehouseInventoryPdfService {
     final safeName = warehouse.code.trim().isNotEmpty
         ? warehouse.code.trim()
         : warehouse.name.trim();
-    await Printing.layoutPdf(
-        onLayout: (_) async => bytes,
-        name: safeName.isEmpty ? 'warehouse-inventory' : 'inventory-$safeName');
+    await PrintService.printPdf(
+      profile: profile,
+      documentKey: PrintDocumentKeys.warehouseInventory,
+      context: context,
+      bytes: bytes,
+      name: safeName.isEmpty ? 'warehouse-inventory' : 'inventory-$safeName',
+      defaultFormat: PdfPageFormat.a4,
+      allowedFormats: const [PrintPaperFormats.a4],
+    );
   }
 
   static String _formatQuantity(double value) {

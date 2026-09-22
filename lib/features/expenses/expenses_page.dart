@@ -674,6 +674,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
     final tr = AppLocalizations.of(context);
     try {
       await ExpensePdfService.printExpense(
+        context: context,
         expense: expense,
         profile: widget.store.storeProfile,
         locale: Localizations.localeOf(context),

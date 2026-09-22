@@ -283,6 +283,7 @@ class _TransactionTile extends StatelessWidget {
       final printable = await _resolvePrintableReceipt();
       if (!context.mounted) return;
       await CashReceiptPdfService.printReceipt(
+        context: context,
         transaction: printable,
         profile: store.storeProfile,
         locale: Localizations.localeOf(context),

@@ -160,13 +160,22 @@ class _MaintenancePageState extends State<MaintenancePage> {
       if (!mounted) return;
       await _refresh(deep: true);
       if (!mounted) return;
+      final repairMessage = tr.format('repair_product_costs_done', {
+        'batches': result.repairedBatches,
+        'products': result.rebuiltProducts,
+        'unresolved': result.unresolvedBatches,
+      });
+      final reconciliationMessage = result.inventoryReconciled
+          ? tr.text('repair_product_costs_status_ok')
+          : tr.format('repair_product_costs_status_pending', {
+              'difference': result.inventoryDifference.toStringAsFixed(2),
+              'gl': result.inventoryGlBalance.toStringAsFixed(2),
+              'valuation': result.inventoryValuation.toStringAsFixed(2),
+            });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(tr.format('repair_product_costs_done', {
-            'batches': result.repairedBatches,
-            'products': result.rebuiltProducts,
-            'unresolved': result.unresolvedBatches,
-          })),
+          duration: const Duration(seconds: 7),
+          content: Text('$repairMessage\n$reconciliationMessage'),
         ),
       );
     } catch (error, stackTrace) {

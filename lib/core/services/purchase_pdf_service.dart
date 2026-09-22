@@ -1,16 +1,19 @@
 import 'dart:convert';
+
+import 'package:flutter/material.dart';
 import 'dart:ui' show Locale;
 
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../models/purchase.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import '../utils/currency_utils.dart';
 import 'pdf_font_loader.dart';
 import 'posted_document_snapshot_service.dart';
+import 'print_service.dart';
 
 class PurchasePdfService {
   static const PdfColor _navy = PdfColor(0.035, 0.13, 0.25);
@@ -90,6 +93,7 @@ class PurchasePdfService {
   }
 
   static Future<void> printPurchase({
+    BuildContext? context,
     required Purchase purchase,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
@@ -99,9 +103,13 @@ class PurchasePdfService {
       profile: profile,
       locale: locale,
     );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.purchaseInvoice,
+      bytes: bytes,
       name: purchase.purchaseNo,
+      defaultFormat: PdfPageFormat.a4,
     );
   }
 
@@ -323,7 +331,8 @@ class PurchasePdfService {
             profile.taxRegistrationNumber.trim().isNotEmpty) ...[
           pw.SizedBox(height: 6),
           _companyLine(
-            label: 'VAT: ${profile.vatNumber.trim().isNotEmpty ? profile.vatNumber.trim() : profile.taxRegistrationNumber.trim()}',
+            label:
+                'VAT: ${profile.vatNumber.trim().isNotEmpty ? profile.vatNumber.trim() : profile.taxRegistrationNumber.trim()}',
             isArabic: false,
           ),
         ],
@@ -512,7 +521,8 @@ class PurchasePdfService {
       ];
       if (hasTax) {
         final line = purchase.postedSnapshot!.lines[index];
-        row.add(_taxLineLabel(line.taxCode, line.taxMode, line.taxRate, labels));
+        row.add(
+            _taxLineLabel(line.taxCode, line.taxMode, line.taxRate, labels));
       }
       row.add(_formatMoney(item.lineTotal, profile));
       data.add(row);
@@ -570,7 +580,8 @@ class PurchasePdfService {
     double rate,
     _PurchasePdfLabels labels,
   ) {
-    if (mode == 'exempt') return code.isEmpty ? labels.exempt : '$code ${labels.exempt}';
+    if (mode == 'exempt')
+      return code.isEmpty ? labels.exempt : '$code ${labels.exempt}';
     if (mode == 'out_of_scope') {
       return code.isEmpty ? labels.outOfScope : '$code ${labels.outOfScope}';
     }

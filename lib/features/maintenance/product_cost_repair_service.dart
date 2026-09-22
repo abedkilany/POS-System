@@ -15,12 +15,20 @@ class ProductCostRepairResult {
     required this.rebuiltProducts,
     required this.postedRevaluations,
     required this.unresolvedBatches,
+    this.inventoryReconciled = false,
+    this.inventoryGlBalance = 0,
+    this.inventoryValuation = 0,
+    this.inventoryDifference = 0,
   });
 
   final int repairedBatches;
   final int rebuiltProducts;
   final int postedRevaluations;
   final int unresolvedBatches;
+  final bool inventoryReconciled;
+  final double inventoryGlBalance;
+  final double inventoryValuation;
+  final double inventoryDifference;
 
   int get changedRecords => repairedBatches + rebuiltProducts;
 }
@@ -149,13 +157,91 @@ class ProductCostRepairService {
     await store.refreshAfterDatabaseChange('products_v4');
     await store.refreshAfterDatabaseChange('product_costs_v1');
     await store.refreshAfterDatabaseChange('account_transactions_v1');
+
+    // Cost repair can change the physical value, while BOM classification is
+    // maintained by a separate accounting journal. Reconcile only after the
+    // inventory transaction has committed so a failed classification check
+    // cannot partially roll back or falsely report success.
+    var closure = await _readInventoryClosure(db);
+    var inventoryReconciled = false;
+    if (closure.inventoryDifference.abs() <= 0.05) {
+      inventoryReconciled =
+          await AccountingService.reconcileInventoryAccountClassification(
+        referenceContext:
+            'maintenance:cost-repair:${now.microsecondsSinceEpoch}',
+        database: db,
+      );
+      closure = await _readInventoryClosure(db);
+    }
     return ProductCostRepairResult(
       repairedBatches: repairedBatches,
       rebuiltProducts: rebuiltProducts,
       postedRevaluations: postedRevaluations,
       unresolvedBatches: unresolvedBatches,
+      inventoryReconciled: inventoryReconciled,
+      inventoryGlBalance: closure.glBalance,
+      inventoryValuation: closure.valuation,
+      inventoryDifference: closure.inventoryDifference,
     );
   }
+
+  Future<({double glBalance, double valuation, double inventoryDifference})>
+      _readInventoryClosure(dynamic db) async {
+    final accountIds = <String>{
+      await AccountingService.resolveAccountRoleForDatabase(
+        db,
+        'inventory_asset',
+      ),
+      await AccountingService.resolveAccountRoleForDatabase(
+        db,
+        'inventory_raw',
+      ),
+      await AccountingService.resolveAccountRoleForDatabase(
+        db,
+        'inventory_wip',
+      ),
+      await AccountingService.resolveAccountRoleForDatabase(
+        db,
+        'inventory_finished',
+      ),
+      await AccountingService.resolveAccountRoleForDatabase(
+        db,
+        'inventory_merchandise',
+      ),
+    }..removeWhere((id) => id.trim().isEmpty);
+
+    final placeholders = List.filled(accountIds.length, '?').join(',');
+    final glRow = await db.customSelect(
+      '''
+      SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS balance
+      FROM journal_lines jl
+      INNER JOIN journal_entries je ON je.id = jl.entry_id
+      WHERE jl.account_id IN ($placeholders)
+        AND je.deleted_at = ''
+        AND je.status IN ('posted', 'reversed')
+      ''',
+      variables: <Variable<Object>>[
+        for (final accountId in accountIds) Variable<String>(accountId),
+      ],
+    ).getSingle();
+    final glBalance = _round((glRow.data['balance'] as num?)?.toDouble() ?? 0);
+
+    final valuationRows =
+        await AccountingService.inventoryValuationReport(database: db);
+    final valuation = _round(
+      valuationRows.fold<double>(
+        0,
+        (sum, row) => sum + row.totalValue,
+      ),
+    );
+    return (
+      glBalance: glBalance,
+      valuation: valuation,
+      inventoryDifference: _round(glBalance - valuation),
+    );
+  }
+
+  double _round(double value) => (value * 100).roundToDouble() / 100;
 
   Future<({int changed, int unresolved, int revaluations})>
       _repairPurchaseBatches(

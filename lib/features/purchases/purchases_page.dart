@@ -1725,6 +1725,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final tr = AppLocalizations.of(context);
     try {
       await PurchasePdfService.printPurchase(
+        context: context,
         purchase: purchase,
         profile: widget.store.storeProfile,
         locale: tr.locale,

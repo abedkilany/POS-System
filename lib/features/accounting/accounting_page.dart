@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../core/accounting/accounting_account_role.dart';
 import '../../core/localization/app_localizations.dart';
@@ -16,12 +15,14 @@ import '../../core/services/accounting_service.dart';
 import '../../core/services/accounting_aging_service.dart';
 import '../../core/services/cash_ledger_service.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/services/print_service.dart';
 import '../../data/app_store.dart';
 import 'accounting_snapshot_service.dart';
 import '../../models/account_transaction.dart';
 import '../../models/cash_ledger_transaction.dart';
 import '../../models/accounting_account.dart';
 import '../../models/journal_entry.dart';
+import '../../models/print_settings.dart';
 import '../../models/tax_profile.dart';
 import '../../models/aging_report.dart';
 import '../../models/user_role.dart';
@@ -699,6 +700,7 @@ class _AccountsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 0,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('customers'),
                         child: _AccountsTab(
                           store: store,
@@ -711,6 +713,7 @@ class _AccountsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 1,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('suppliers'),
                         child: _AccountsTab(
                           store: store,
@@ -723,6 +726,7 @@ class _AccountsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 2,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('aging_reports'),
                         child: _AgingReportsTab(store: store, query: query),
                       ),
@@ -731,6 +735,7 @@ class _AccountsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 3,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('recent_transactions'),
                         child: _TransactionsTab(
                           store: store,
@@ -790,6 +795,7 @@ class _OperationsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 0,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: _accountingUiText(context, 'القيود اليومية',
                             'Journal entries', 'Écritures'),
                         child: _JournalEntriesTab(store: store, query: query),
@@ -799,6 +805,7 @@ class _OperationsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 1,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('general_ledger'),
                         child: _GeneralLedgerTab(store: store, query: query),
                       ),
@@ -807,6 +814,7 @@ class _OperationsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 2,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('chart_of_accounts'),
                         child: _ChartOfAccountsTab(store: store, query: query),
                       ),
@@ -1495,6 +1503,7 @@ class _CashAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 0,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('cash_movement'),
                         child: _CashLedgerTransactionsTab(
                           store: store,
@@ -1506,6 +1515,7 @@ class _CashAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 1,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: _accountingUiText(context, 'رقابة النقد',
                             'Cash control', 'Contrôle de caisse'),
                         child: _AdvancedAccountingTab(
@@ -1518,6 +1528,7 @@ class _CashAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 2,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('cash_bank'),
                         child: _CashBankReportTab(store: store),
                       ),
@@ -1782,6 +1793,7 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
                       index: 0,
                       cacheToken: 'trial|$rangeToken',
                       builder: (_) => _AccountingPrintablePage(
+                        store: widget.store,
                         title: tr.text('trial_balance'),
                         child: _TrialBalanceTab(
                           store: widget.store,
@@ -1796,6 +1808,7 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
                       index: 1,
                       cacheToken: 'income|$rangeToken',
                       builder: (_) => _AccountingPrintablePage(
+                        store: widget.store,
                         title: tr.text('income_statement'),
                         child: _IncomeStatementTab(
                           store: widget.store,
@@ -1809,6 +1822,7 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
                       index: 2,
                       cacheToken: 'balance|$rangeToken',
                       builder: (_) => _AccountingPrintablePage(
+                        store: widget.store,
                         title: tr.text('balance_sheet'),
                         child: _BalanceSheetTab(
                           store: widget.store,
@@ -1821,6 +1835,7 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
                       index: 3,
                       cacheToken: 'cashflow|$rangeToken',
                       builder: (_) => _AccountingPrintablePage(
+                        store: widget.store,
                         title: tr.text('cash_flow_statement'),
                         child: _CashFlowStatementTab(
                           store: widget.store,
@@ -1834,6 +1849,7 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
                       index: 4,
                       cacheToken: 'tax|$rangeToken',
                       builder: (_) => _AccountingPrintablePage(
+                        store: widget.store,
                         title: tr.text('tax_report'),
                         child: _TaxReportTab(
                           store: widget.store,
@@ -1846,6 +1862,7 @@ class _ReportsAccountingGroupState extends State<_ReportsAccountingGroup> {
                       controller: controller,
                       index: 5,
                       builder: (_) => _AccountingPrintablePage(
+                        store: widget.store,
                         title: tr.text('inventory'),
                         child: _InventoryManufacturingReportsTab(
                           store: widget.store,
@@ -2132,6 +2149,7 @@ class _SettingsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 0,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: _accountingUiText(
                           context,
                           'الإدارة المحاسبية',
@@ -2145,6 +2163,7 @@ class _SettingsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 1,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: _accountingUiText(context, 'ربط الحسابات',
                             'Account mapping', 'Rattachement des comptes'),
                         child: _AccountingRolesTab(store: store),
@@ -2154,6 +2173,7 @@ class _SettingsAccountingGroup extends StatelessWidget {
                       controller: controller,
                       index: 2,
                       builder: (_) => _AccountingPrintablePage(
+                        store: store,
                         title: tr.text('settings'),
                         child: _AccountingSettingsTab(store: store),
                       ),
@@ -2279,10 +2299,12 @@ class _LazyTabPaneState extends State<_LazyTabPane> {
 
 class _AccountingPrintablePage extends StatefulWidget {
   const _AccountingPrintablePage({
+    required this.store,
     required this.title,
     required this.child,
   });
 
+  final AppStore store;
   final String title;
   final Widget child;
 
@@ -2332,9 +2354,14 @@ class _AccountingPrintablePageState extends State<_AccountingPrintablePage> {
         ),
       );
       final bytes = await pdf.save();
-      await Printing.layoutPdf(
+      await PrintService.printPdf(
+        profile: widget.store.storeProfile,
+        documentKey: PrintDocumentKeys.accountingPage,
+        context: context,
+        bytes: Uint8List.fromList(bytes),
         name: widget.title.trim().isEmpty ? 'accounting' : widget.title.trim(),
-        onLayout: (_) async => Uint8List.fromList(bytes),
+        defaultFormat: PdfPageFormat.a4,
+        allowedFormats: const [PrintPaperFormats.a4],
       );
     } catch (error) {
       if (!mounted) return;

@@ -693,6 +693,7 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
       await WarehouseTransferPdfService.printTransferOrder(
         order: order,
         profile: widget.store.storeProfile,
+        context: context,
         locale: Localizations.localeOf(context),
       );
     } catch (error) {

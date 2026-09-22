@@ -34,6 +34,7 @@ Future<void> printAccountStatementForAccount({
   if (range == null || !context.mounted) return;
   try {
     await AccountStatementPdfService.printAccountStatement(
+      context: context,
       accountType: accountType,
       accountName: accountName,
       transactions: store.accountTransactionsForAccount(accountType, accountId),
@@ -69,6 +70,7 @@ Future<void> printExpenseStatementForPeriod({
                 selection.accountIds!.contains(accountIds[expense.id]))
             .toList(growable: false);
     await AccountStatementPdfService.printExpenseStatement(
+      context: context,
       expenses: selectedExpenses,
       from: _startOfDay(range.start),
       to: _endOfDay(range.end),

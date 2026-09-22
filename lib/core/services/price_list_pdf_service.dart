@@ -1,12 +1,14 @@
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../models/product.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import 'professional_pdf_theme.dart';
+import 'print_service.dart';
 
 class PriceListPdfService {
   static Future<Uint8List> build({
@@ -72,6 +74,7 @@ class PriceListPdfService {
   }
 
   static Future<void> printPriceList({
+    BuildContext? context,
     required List<Product> products,
     required StoreProfile profile,
     required String title,
@@ -86,7 +89,14 @@ class PriceListPdfService {
         fields: fields,
         valueResolver: valueResolver,
         arabic: arabic);
-    await Printing.layoutPdf(onLayout: (_) async => bytes, name: 'price-list');
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.priceList,
+      bytes: bytes,
+      name: 'price-list',
+      defaultFormat: PdfPageFormat.a4,
+    );
   }
 
   static String _fieldLabel(String field, bool arabic) {

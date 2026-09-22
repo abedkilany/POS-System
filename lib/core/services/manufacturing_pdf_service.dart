@@ -1,13 +1,15 @@
 import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../models/manufacturing.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import 'professional_pdf_theme.dart';
+import 'print_service.dart';
 
 class ManufacturingPdfService {
   static Future<Uint8List> buildBillOfMaterialsPdf({
@@ -86,15 +88,21 @@ class ManufacturingPdfService {
   }
 
   static Future<void> printBillOfMaterials({
+    BuildContext? context,
     required BillOfMaterials bom,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
     final bytes = await buildBillOfMaterialsPdf(
         bom: bom, profile: profile, locale: locale);
-    await Printing.layoutPdf(
-        onLayout: (_) async => bytes,
-        name: bom.name.isEmpty ? 'manufacturing-recipe' : bom.name);
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.manufacturingBom,
+      bytes: bytes,
+      name: bom.name.isEmpty ? 'manufacturing-recipe' : bom.name,
+      defaultFormat: PdfPageFormat.a4,
+    );
   }
 
   static Future<Uint8List> buildManufacturingOrderPdf({
@@ -186,6 +194,7 @@ class ManufacturingPdfService {
   }
 
   static Future<void> printManufacturingOrder({
+    BuildContext? context,
     required ManufacturingOrder order,
     BillOfMaterials? bom,
     required StoreProfile profile,
@@ -193,9 +202,14 @@ class ManufacturingPdfService {
   }) async {
     final bytes = await buildManufacturingOrderPdf(
         order: order, bom: bom, profile: profile, locale: locale);
-    await Printing.layoutPdf(
-        onLayout: (_) async => bytes,
-        name: order.orderNo.isEmpty ? 'manufacturing-order' : order.orderNo);
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.manufacturingOrder,
+      bytes: bytes,
+      name: order.orderNo.isEmpty ? 'manufacturing-order' : order.orderNo,
+      defaultFormat: PdfPageFormat.a4,
+    );
   }
 
   static Future<Uint8List> buildManufacturingOrdersPdf({
@@ -265,6 +279,7 @@ class ManufacturingPdfService {
   }
 
   static Future<void> printManufacturingOrders({
+    BuildContext? context,
     required List<ManufacturingOrder> orders,
     required Map<String, BillOfMaterials> bomsById,
     required bool includeDetails,
@@ -278,9 +293,14 @@ class ManufacturingPdfService {
         includeDetails: includeDetails,
         profile: profile,
         locale: locale);
-    await Printing.layoutPdf(
-        onLayout: (_) async => bytes,
-        name: 'manufacturing-orders-${orders.length}');
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.manufacturingOrders,
+      bytes: bytes,
+      name: 'manufacturing-orders-${orders.length}',
+      defaultFormat: PdfPageFormat.a4,
+    );
   }
 
   static pw.Widget _manufacturingOrderBlock({

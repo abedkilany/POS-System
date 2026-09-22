@@ -1,12 +1,18 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import 'pdf_font_loader.dart';
+import '../../models/print_settings.dart';
+import '../../models/store_profile.dart';
+import 'print_service.dart';
 
 class SimpleReportPdfService {
   static Future<void> printReport({
+    required StoreProfile profile,
+    String documentKey = PrintDocumentKeys.report,
+    BuildContext? context,
     required String title,
     required List<String> lines,
     bool arabic = false,
@@ -28,7 +34,13 @@ class SimpleReportPdfService {
             )),
       ],
     ));
-    await Printing.layoutPdf(
-        onLayout: (_) async => Uint8List.fromList(await pdf.save()));
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: documentKey,
+      bytes: Uint8List.fromList(await pdf.save()),
+      name: title,
+      defaultFormat: PdfPageFormat.a4,
+    );
   }
 }

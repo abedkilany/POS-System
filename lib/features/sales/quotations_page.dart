@@ -7,6 +7,7 @@ import '../../models/customer.dart';
 import '../../models/product.dart';
 import '../../models/sale_item.dart';
 import '../../models/sale_quotation.dart';
+import '../../models/print_settings.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../core/services/simple_report_pdf_service.dart';
 
@@ -146,6 +147,9 @@ class _QuotationsPageState extends State<QuotationsPage> {
   Future<void> _printQuotation(SaleQuotation quotation) async {
     final tr = AppLocalizations.of(context);
     await SimpleReportPdfService.printReport(
+      context: context,
+      profile: widget.store.storeProfile,
+      documentKey: PrintDocumentKeys.quotation,
       title: '${tr.text('quotations')} ${quotation.quotationNo}',
       arabic: tr.locale.languageCode == 'ar',
       lines: [

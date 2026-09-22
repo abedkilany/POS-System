@@ -55,10 +55,10 @@ class ThermalPrinterService {
         paperWidth: paperWidth,
       );
     } catch (_) {
-      // The virtual printer must remain usable in headless/test renderers where
-      // GPU screenshot capture is unavailable. Real printers still use the
-      // image path above so Arabic shaping is preserved.
-      bytes = _buildVirtualTextReceiptBytes(
+      // Keep a text fallback for headless/test renderers where GPU screenshot
+      // capture is unavailable. Real printers still use the image path above
+      // so Arabic shaping is preserved.
+      bytes = _buildTextFallbackReceiptBytes(
         sale: documentSale,
         profile: documentProfile,
         paperWidth: paperWidth,
@@ -79,33 +79,6 @@ class ThermalPrinterService {
         await _printer.disconnect(printer: printer);
       }
     }
-  }
-
-  Future<VirtualPrinterJob> captureSaleForVirtualPrinter({
-    required BuildContext context,
-    required Sale sale,
-    required StoreProfile profile,
-    Locale locale = const Locale('en'),
-    ThermalPaperWidth paperWidth = ThermalPaperWidth.mm80,
-  }) async {
-    final documentSale = PostedDocumentSnapshotService.saleView(sale);
-    final documentProfile =
-        PostedDocumentSnapshotService.profileForSale(sale, profile);
-    final bytes = await buildSaleReceiptBytes(
-      context: context,
-      sale: documentSale,
-      profile: documentProfile,
-      locale: locale,
-      paperWidth: paperWidth,
-    );
-    return VirtualPrinterStore.instance.capture(
-      bytes,
-      invoiceNo: documentSale.invoiceNo,
-      paperWidth: paperWidth,
-      sale: documentSale,
-      profile: documentProfile,
-      locale: locale,
-    );
   }
 
   Future<List<int>> buildSaleReceiptBytes({
@@ -149,7 +122,7 @@ class ThermalPrinterService {
 
   Future<void> dispose() => _printer.dispose();
 
-  List<int> _buildVirtualTextReceiptBytes({
+  List<int> _buildTextFallbackReceiptBytes({
     required Sale sale,
     required StoreProfile profile,
     required ThermalPaperWidth paperWidth,
@@ -168,8 +141,7 @@ class ThermalPrinterService {
         'Discount: ${_formatMoney(sale.discount, profile)}',
       if (sale.hasTaxBreakdown)
         'Net before VAT: ${_formatMoney(sale.taxableAmount, profile)}',
-      if (sale.hasTaxBreakdown)
-        'VAT: ${_formatMoney(sale.taxAmount, profile)}',
+      if (sale.hasTaxBreakdown) 'VAT: ${_formatMoney(sale.taxAmount, profile)}',
       'TOTAL: ${_formatMoney(sale.total, profile, forceCurrencies: const [
             'USD',
             'LBP'
@@ -187,67 +159,6 @@ class ThermalPrinterService {
       ..addAll([0x1d, 0x56, 0x00]);
     return output;
   }
-}
-
-class VirtualPrinterJob {
-  const VirtualPrinterJob({
-    required this.id,
-    required this.invoiceNo,
-    required this.bytes,
-    required this.paperWidth,
-    required this.createdAt,
-    required this.sale,
-    required this.profile,
-    required this.locale,
-  });
-
-  final int id;
-  final String invoiceNo;
-  final Uint8List bytes;
-  final ThermalPaperWidth paperWidth;
-  final DateTime createdAt;
-  final Sale sale;
-  final StoreProfile profile;
-  final Locale locale;
-
-  bool get hasEscPosHeader =>
-      bytes.length >= 3 && bytes[0] == 0x1b && bytes[1] == 0x40;
-  bool get hasCutCommand => bytes.contains(0x1d) && bytes.contains(0x56);
-}
-
-class VirtualPrinterStore {
-  VirtualPrinterStore._();
-
-  static final instance = VirtualPrinterStore._();
-  final List<VirtualPrinterJob> _jobs = <VirtualPrinterJob>[];
-
-  List<VirtualPrinterJob> get jobs => List.unmodifiable(_jobs);
-  VirtualPrinterJob? get lastJob => _jobs.isEmpty ? null : _jobs.last;
-
-  VirtualPrinterJob capture(
-    List<int> bytes, {
-    required String invoiceNo,
-    required ThermalPaperWidth paperWidth,
-    required Sale sale,
-    required StoreProfile profile,
-    required Locale locale,
-  }) {
-    final job = VirtualPrinterJob(
-      id: DateTime.now().microsecondsSinceEpoch,
-      invoiceNo: invoiceNo,
-      bytes: Uint8List.fromList(bytes),
-      paperWidth: paperWidth,
-      createdAt: DateTime.now(),
-      sale: sale,
-      profile: profile,
-      locale: locale,
-    );
-    _jobs.add(job);
-    if (_jobs.length > 20) _jobs.removeAt(0);
-    return job;
-  }
-
-  void clear() => _jobs.clear();
 }
 
 class ThermalReceiptWidget extends StatelessWidget {

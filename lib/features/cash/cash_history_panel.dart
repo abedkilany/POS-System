@@ -535,6 +535,7 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
             onPressed: () async {
               try {
                 await CashReceiptPdfService.printReceipt(
+                  context: context,
                   transaction: item,
                   profile: widget.store.storeProfile,
                   locale: Localizations.localeOf(context),

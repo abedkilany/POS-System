@@ -14,6 +14,7 @@ import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/invoice_pdf_service.dart';
 import '../../core/services/thermal_printer_service.dart';
+import '../../core/services/print_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
@@ -24,6 +25,7 @@ import '../../models/app_user.dart';
 import '../../models/customer.dart';
 import '../../models/credit_note.dart';
 import '../../models/product.dart';
+import '../../models/print_settings.dart';
 import '../../models/sale.dart';
 import '../../models/sale_item.dart';
 import '../../models/sale_summary.dart';
@@ -1833,7 +1835,7 @@ class _SalesPageState extends State<SalesPage> {
             nextUser != null &&
             session.referenceId.trim().isNotEmpty) {
           await AccountingService.openCashDrawer(
-          authorization: widget.store,
+            authorization: widget.store,
             drawerNo: session.name,
             cashLocationId: session.referenceId,
             openingBalance: countedAmount,
@@ -1906,10 +1908,10 @@ class _SalesPageState extends State<SalesPage> {
                   label: Text(tr.text('recent_invoices')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: widget.store.hasPermission(
-                          AppPermission.salesCancel)
-                      ? () => _openSaleReturnDialog(context)
-                      : null,
+                  onPressed:
+                      widget.store.hasPermission(AppPermission.salesCancel)
+                          ? () => _openSaleReturnDialog(context)
+                          : null,
                   icon: const Icon(Icons.assignment_return_outlined),
                   label: Text(tr.text('new_sales_return')),
                 ),
@@ -3694,8 +3696,8 @@ class _SalesPageState extends State<SalesPage> {
         return false;
       }
       final returned = returnedFor(sale);
-      return sale.items.any((item) =>
-          item.quantity - (returned[item.productId] ?? 0) > epsilon);
+      return sale.items.any(
+          (item) => item.quantity - (returned[item.productId] ?? 0) > epsilon);
     }).toList(growable: false);
     if (sources.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3709,20 +3711,21 @@ class _SalesPageState extends State<SalesPage> {
     String? dialogError;
     ({String sourceId, Map<String, double> quantities})? result;
     try {
-      result = await showDialog<
-          ({String sourceId, Map<String, double> quantities})>(
+      result =
+          await showDialog<({String sourceId, Map<String, double> quantities})>(
         context: context,
         builder: (dialogContext) => StatefulBuilder(
           builder: (dialogContext, setDialogState) {
             final source = selected;
-            final returned = source == null ? <String, double>{} : returnedFor(source);
+            final returned =
+                source == null ? <String, double>{} : returnedFor(source);
             final itemsByProduct = <String, SaleItem>{};
             final quantitiesByProduct = <String, double>{};
             if (source != null) {
               for (final item in source.items) {
                 itemsByProduct.putIfAbsent(item.productId, () => item);
-                quantitiesByProduct.update(item.productId,
-                    (value) => value + item.quantity,
+                quantitiesByProduct.update(
+                    item.productId, (value) => value + item.quantity,
                     ifAbsent: () => item.quantity);
               }
             }
@@ -3767,13 +3770,14 @@ class _SalesPageState extends State<SalesPage> {
             final content = <Widget>[
               DropdownButtonFormField<Sale>(
                 initialValue: selected,
-                decoration: InputDecoration(
-                    labelText: tr.text('source_sale_invoice')),
+                decoration:
+                    InputDecoration(labelText: tr.text('source_sale_invoice')),
                 isExpanded: true,
                 items: sources
                     .map((sale) => DropdownMenuItem<Sale>(
                           value: sale,
-                          child: Text('${sale.invoiceNo} — ${sale.customerName}'),
+                          child:
+                              Text('${sale.invoiceNo} — ${sale.customerName}'),
                         ))
                     .toList(growable: false),
                 onChanged: (value) {
@@ -3825,8 +3829,9 @@ class _SalesPageState extends State<SalesPage> {
                             width: 110,
                             child: TextField(
                               controller: controller,
-                              keyboardType: const TextInputType.numberWithOptions(
-                                  decimal: true),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
                               decoration: InputDecoration(
                                   labelText: tr.text('return_quantity')),
                               onChanged: (_) => setDialogState(() {
@@ -3853,9 +3858,7 @@ class _SalesPageState extends State<SalesPage> {
                       children: [
                         Text(
                           tr.text('final_total'),
-                          style: Theme.of(dialogContext)
-                              .textTheme
-                              .titleMedium,
+                          style: Theme.of(dialogContext).textTheme.titleMedium,
                         ),
                         Text(
                           _formatSaleCurrency(
@@ -3900,10 +3903,10 @@ class _SalesPageState extends State<SalesPage> {
                                             .trim() ??
                                         '') ??
                                 0;
-                            final available = (entry.value -
-                                    (returned[entry.key] ?? 0))
-                                .clamp(0, double.infinity)
-                                .toDouble();
+                            final available =
+                                (entry.value - (returned[entry.key] ?? 0))
+                                    .clamp(0, double.infinity)
+                                    .toDouble();
                             if (!quantity.isFinite ||
                                 quantity < 0 ||
                                 quantity > available + epsilon) {
@@ -4179,6 +4182,7 @@ class _SalesPageState extends State<SalesPage> {
                                             AppPermission.salesPrint)
                                         ? () => _handleInvoiceAction(() =>
                                             InvoicePdfService.printInvoice(
+                                                context: context,
                                                 sale: sale,
                                                 profile:
                                                     widget.store.storeProfile,
@@ -4483,6 +4487,7 @@ class _SalesPageState extends State<SalesPage> {
                 onPressed: widget.store.hasPermission(AppPermission.salesPrint)
                     ? () => _handleInvoiceAction(() =>
                         InvoicePdfService.printInvoice(
+                            context: context,
                             sale: sale,
                             profile: widget.store.storeProfile,
                             locale: AppLocalizations.of(context).locale))
@@ -4528,7 +4533,8 @@ class _SalesPageState extends State<SalesPage> {
                 label: Text(_saleReturnLabel(tr)),
               ),
               OutlinedButton.icon(
-                onPressed: (widget.store.hasPermission(AppPermission.salesEdit) &&
+                onPressed: (widget.store
+                            .hasPermission(AppPermission.salesEdit) &&
                         widget.store.hasPermission(AppPermission.salesCancel) &&
                         _latestActiveCreditNoteForSale(sale.id) != null)
                     ? () => _editLatestSaleReturn(context, sale)
@@ -4648,6 +4654,7 @@ class _SalesPageState extends State<SalesPage> {
                     OutlinedButton.icon(
                       onPressed: () => _handleInvoiceAction(
                         () => InvoicePdfService.printSaleReturn(
+                          context: context,
                           creditNote: note,
                           profile: widget.store.storeProfile,
                           locale: AppLocalizations.of(context).locale,
@@ -5665,172 +5672,170 @@ class _SalesPageState extends State<SalesPage> {
     final originalDiscountCurrency = _discountCurrency;
 
     final bool? confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (context, setDialogState) {
-            final pageTr = AppLocalizations.of(context);
-            final invoiceTotal = _invoiceTotal;
-            final cashInInvoice = _cashReceivedAmount;
-            final paidInInvoice = _derivedPaidAmount;
-            final remaining = (invoiceTotal - paidInInvoice)
-                .clamp(0, double.infinity)
-                .toDouble();
-            final nonCashOrCredit = (invoiceTotal - cashInInvoice)
-                .clamp(0, double.infinity)
-                .toDouble();
-            return Focus(
-              focusNode: _paymentShortcutFocusNode,
-              autofocus: true,
-              onKeyEvent: (node, event) => _handlePaymentShortcutKey(
-                      event, dialogContext, setDialogState)
-                  ? KeyEventResult.handled
-                  : KeyEventResult.ignored,
-              child: AlertDialog(
-                title: Text(pageTr.text('payment_page')),
-                content: SizedBox(
-                  width: 520,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildPaymentShortcutGuide(context, pageTr),
-                        const SizedBox(height: 8),
-                        _buildCustomerSelector(context, pageTr,
-                            modalSetState: setDialogState),
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final pageTr = AppLocalizations.of(context);
+          final invoiceTotal = _invoiceTotal;
+          final cashInInvoice = _cashReceivedAmount;
+          final paidInInvoice = _derivedPaidAmount;
+          final remaining = (invoiceTotal - paidInInvoice)
+              .clamp(0, double.infinity)
+              .toDouble();
+          final nonCashOrCredit = (invoiceTotal - cashInInvoice)
+              .clamp(0, double.infinity)
+              .toDouble();
+          return Focus(
+            focusNode: _paymentShortcutFocusNode,
+            autofocus: true,
+            onKeyEvent: (node, event) =>
+                _handlePaymentShortcutKey(event, dialogContext, setDialogState)
+                    ? KeyEventResult.handled
+                    : KeyEventResult.ignored,
+            child: AlertDialog(
+              title: Text(pageTr.text('payment_page')),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildPaymentShortcutGuide(context, pageTr),
+                      const SizedBox(height: 8),
+                      _buildCustomerSelector(context, pageTr,
+                          modalSetState: setDialogState),
+                      const SizedBox(height: 16),
+                      _buildPaymentMethodChips(pageTr,
+                          modalSetState: setDialogState),
+                      const SizedBox(height: 16),
+                      _buildPaymentCurrencySwitch(pageTr,
+                          modalSetState: setDialogState),
+                      if (_showsCashReceived) ...[
                         const SizedBox(height: 16),
-                        _buildPaymentMethodChips(pageTr,
+                        _buildCashReceivedField(pageTr,
                             modalSetState: setDialogState),
-                        const SizedBox(height: 16),
-                        _buildPaymentCurrencySwitch(pageTr,
-                            modalSetState: setDialogState),
-                        if (_showsCashReceived) ...[
-                          const SizedBox(height: 16),
-                          _buildCashReceivedField(pageTr,
-                              modalSetState: setDialogState),
+                      ],
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              key: const ValueKey('SalesPaymentDiscountField'),
+                              focusNode: _discountFocusNode,
+                              controller: _discountController,
+                              decoration: InputDecoration(
+                                labelText: pageTr.text('discount'),
+                                suffixText: _discountCurrency,
+                              ),
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                    RegExp(r'^\d*\.?\d{0,2}$'))
+                              ],
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              onChanged: (_) {
+                                _syncDiscountPercentFromAmount();
+                                setState(
+                                    () => _discountCurrency = _invoiceCurrency);
+                                setDialogState(() {});
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              key: const ValueKey(
+                                  'SalesPaymentDiscountPercentField'),
+                              controller: _discountPercentController,
+                              decoration: InputDecoration(
+                                labelText: pageTr.text('discount_percentage'),
+                                suffixText: '%',
+                              ),
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                    RegExp(r'^\d*\.?\d{0,2}$'))
+                              ],
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              onChanged: (_) {
+                                _syncDiscountAmountFromPercent();
+                                setState(() {});
+                                setDialogState(() {});
+                              },
+                            ),
+                          ),
                         ],
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                key: const ValueKey('SalesPaymentDiscountField'),
-                                focusNode: _discountFocusNode,
-                                controller: _discountController,
-                                decoration: InputDecoration(
-                                  labelText: pageTr.text('discount'),
-                                  suffixText: _discountCurrency,
-                                ),
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                      RegExp(r'^\d*\.?\d{0,2}$'))
-                                ],
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                        decimal: true),
-                                onChanged: (_) {
-                                  _syncDiscountPercentFromAmount();
-                                  setState(() =>
-                                      _discountCurrency = _invoiceCurrency);
-                                  setDialogState(() {});
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextFormField(
-                                key: const ValueKey('SalesPaymentDiscountPercentField'),
-                                controller: _discountPercentController,
-                                decoration: InputDecoration(
-                                  labelText: pageTr.text('discount_percentage'),
-                                  suffixText: '%',
-                                ),
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                      RegExp(r'^\d*\.?\d{0,2}$'))
-                                ],
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                        decimal: true),
-                                onChanged: (_) {
-                                  _syncDiscountAmountFromPercent();
-                                  setState(() {});
-                                  setDialogState(() {});
-                                },
-                              ),
-                            ),
-                          ],
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          onPressed: () => setDialogState(() {
+                            _showInvoiceProfit = !_showInvoiceProfit;
+                          }),
+                          icon: Icon(_showInvoiceProfit
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined),
+                          label: Text(_showInvoiceProfit
+                              ? pageTr.text('hide_invoice_profit')
+                              : pageTr.text('show_invoice_profit')),
                         ),
-                        const SizedBox(height: 8),
+                      ),
+                      if (_showInvoiceProfit)
                         Align(
                           alignment: AlignmentDirectional.centerStart,
-                          child: TextButton.icon(
-                            onPressed: () => setDialogState(() {
-                              _showInvoiceProfit = !_showInvoiceProfit;
-                            }),
-                            icon: Icon(_showInvoiceProfit
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined),
-                            label: Text(_showInvoiceProfit
-                                ? pageTr.text('hide_invoice_profit')
-                                : pageTr.text('show_invoice_profit')),
+                          child: Text(
+                            '${pageTr.text('invoice_profit_amount')}: ${_formatSaleCurrency(_currencyFromBase(_invoiceProfitAmount, _invoiceCurrency), _invoiceCurrency)} • '
+                            '${pageTr.text('invoice_profit_percentage')}: ${_invoiceProfitPercent.toStringAsFixed(2)}%',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
-                        if (_showInvoiceProfit)
-                          Align(
-                            alignment: AlignmentDirectional.centerStart,
-                            child: Text(
-                              '${pageTr.text('invoice_profit_amount')}: ${_formatSaleCurrency(_currencyFromBase(_invoiceProfitAmount, _invoiceCurrency), _invoiceCurrency)} • '
-                              '${pageTr.text('invoice_profit_percentage')}: ${_invoiceProfitPercent.toStringAsFixed(2)}%',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        const Divider(height: 28),
-                        _totalLine(pageTr.text('total'),
+                      const Divider(height: 28),
+                      _totalLine(pageTr.text('total'),
+                          _formatSaleCurrency(invoiceTotal, _invoiceCurrency),
+                          isBold: true),
+                      if (_showsCashReceived)
+                        _totalLine(
+                            pageTr.text('cash_received_amount'),
+                            _formatSaleCurrency(
+                                cashInInvoice, _invoiceCurrency)),
+                      if (_isCreditPayment)
+                        _totalLine(pageTr.text('remaining_debt'),
+                            _formatSaleCurrency(remaining, _invoiceCurrency),
+                            isBold: true)
+                      else if (!_isCashPayment)
+                        _totalLine(
+                            pageTr.text('non_cash_amount'),
+                            _formatSaleCurrency(
+                                nonCashOrCredit, _invoiceCurrency),
+                            isBold: true)
+                      else
+                        _totalLine(pageTr.text('paid_amount'),
                             _formatSaleCurrency(invoiceTotal, _invoiceCurrency),
                             isBold: true),
-                        if (_showsCashReceived)
-                          _totalLine(
-                              pageTr.text('cash_received_amount'),
-                              _formatSaleCurrency(
-                                  cashInInvoice, _invoiceCurrency)),
-                        if (_isCreditPayment)
-                          _totalLine(pageTr.text('remaining_debt'),
-                              _formatSaleCurrency(remaining, _invoiceCurrency),
-                              isBold: true)
-                        else if (!_isCashPayment)
-                          _totalLine(
-                              pageTr.text('non_cash_amount'),
-                              _formatSaleCurrency(
-                                  nonCashOrCredit, _invoiceCurrency),
-                              isBold: true)
-                        else
-                          _totalLine(
-                              pageTr.text('paid_amount'),
-                              _formatSaleCurrency(
-                                  invoiceTotal, _invoiceCurrency),
-                              isBold: true),
-                      ],
-                    ),
+                    ],
                   ),
                 ),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(dialogContext, false),
-                      child: Text(pageTr.text('cancel'))),
-                  FilledButton.icon(
-                    key: const ValueKey('SalesConfirmPaymentButton'),
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    icon: const Icon(Icons.check_circle_outline),
-                    label: Text(pageTr.text('confirm_payment')),
-                  ),
-                ],
               ),
-            );
-          },
-        ),
-      );
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: Text(pageTr.text('cancel'))),
+                FilledButton.icon(
+                  key: const ValueKey('SalesConfirmPaymentButton'),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: Text(pageTr.text('confirm_payment')),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
     if (confirmed == true) {
       await _saveCurrentInvoice(printAfterSave: printAfterSave);
     } else if (mounted) {
@@ -5876,7 +5881,9 @@ class _SalesPageState extends State<SalesPage> {
       }
       if (product == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.format('product_not_found_named', {'product': item.productName}))),
+          SnackBar(
+              content: Text(tr.format(
+                  'product_not_found_named', {'product': item.productName}))),
         );
         return;
       }
@@ -5968,8 +5975,7 @@ class _SalesPageState extends State<SalesPage> {
                           unitPrice: line.unitPrice,
                           quantity: line.quantity,
                           unitName: line.unitName,
-                          baseQuantity:
-                              line.quantity * line.conversionToBase,
+                          baseQuantity: line.quantity * line.conversionToBase,
                           conversionToBase: line.conversionToBase,
                           unitCost: 0,
                         ))
@@ -5977,8 +5983,7 @@ class _SalesPageState extends State<SalesPage> {
                 discount: discount,
                 originalDiscount: discount,
                 discountCurrency: sale.discountCurrency,
-                discountExchangeRateAtEntry:
-                    sale.discountExchangeRateAtEntry,
+                discountExchangeRateAtEntry: sale.discountExchangeRateAtEntry,
                 warehouseId: selectedWarehouseId,
                 warehouseName: warehouse.name,
               );
@@ -6038,7 +6043,8 @@ class _SalesPageState extends State<SalesPage> {
                         onChanged: saving
                             ? null
                             : (value) => setDialogState(() {
-                                  if (value != null) selectedWarehouseId = value;
+                                  if (value != null)
+                                    selectedWarehouseId = value;
                                 }),
                       ),
                       const SizedBox(height: 12),
@@ -6092,9 +6098,10 @@ class _SalesPageState extends State<SalesPage> {
                                                   line.unitName = unit.name;
                                                   line.conversionToBase =
                                                       unit.conversionToBase;
-                                                  line.unitPrice = unit.price > 0
-                                                      ? unit.price
-                                                      : product.price;
+                                                  line.unitPrice =
+                                                      unit.price > 0
+                                                          ? unit.price
+                                                          : product.price;
                                                 }),
                                       ),
                                     ),
@@ -6156,7 +6163,8 @@ class _SalesPageState extends State<SalesPage> {
                               ? null
                               : () => setDialogState(() {
                                     final product = activeProducts.first;
-                                    final unit = product.effectiveSaleUnits.first;
+                                    final unit =
+                                        product.effectiveSaleUnits.first;
                                     lines.add(_PostedSaleEditLine(
                                       product: product,
                                       quantity: 1,
@@ -6565,6 +6573,7 @@ class _SalesPageState extends State<SalesPage> {
 
     if (printAfterSave) {
       await _handleInvoiceAction(() => InvoicePdfService.printInvoice(
+          context: context,
           sale: sale,
           profile: widget.store.storeProfile,
           locale: AppLocalizations.of(context).locale));
@@ -6595,57 +6604,45 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _printThermalInvoice(BuildContext context, Sale sale) async {
-    final settings = widget.store.storeProfile.thermalPrinter;
-    if (!settings.enabled) {
+    final profile = widget.store.storeProfile;
+    final selection = await PrintService.resolveSelection(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.thermalSalesInvoice,
+      allowedFormats: const [
+        PrintPaperFormats.thermal80,
+        PrintPaperFormats.thermal58,
+      ],
+    );
+    final printerProfile = profile.printSettings.printerById(
+      selection.printerId,
+    );
+    if (printerProfile == null || !printerProfile.isThermal) {
       throw StateError(
           AppLocalizations.of(context).text('thermal_printer_not_configured'));
     }
-    if (settings.type == 'virtual') {
-      final service = ThermalPrinterService();
-      try {
-        final job = await service.captureSaleForVirtualPrinter(
-          context: context,
-          sale: sale,
-          profile: widget.store.storeProfile,
-          locale: AppLocalizations.of(context).locale,
-          paperWidth: settings.paperWidth == 58
-              ? ThermalPaperWidth.mm58
-              : ThermalPaperWidth.mm80,
-        );
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text(
-                    '${AppLocalizations.of(context).text('virtual_print_captured')} #${job.id}')),
-          );
-        }
-      } finally {
-        await service.dispose();
-      }
-      return;
-    }
-    final type = switch (settings.type) {
+    final type = switch (printerProfile.thermalType) {
       'bluetooth' => PrinterType.bluetooth,
       'usb' => PrinterType.usb,
       _ => PrinterType.network,
     };
     final printer = Printer(
       type: type,
-      name: settings.name,
-      ip: settings.ip,
-      port: settings.port.toString(),
-      bleAddress: settings.bluetoothAddress,
-      usbAddress: settings.usbAddress,
+      name: printerProfile.name,
+      ip: printerProfile.ip,
+      port: printerProfile.port.toString(),
+      bleAddress: printerProfile.bluetoothAddress,
+      usbAddress: printerProfile.usbAddress,
     );
     final service = ThermalPrinterService();
     try {
       await service.printSale(
         context: context,
         sale: sale,
-        profile: widget.store.storeProfile,
+        profile: profile,
         printer: printer,
         locale: AppLocalizations.of(context).locale,
-        paperWidth: settings.paperWidth == 58
+        paperWidth: selection.format == PrintPaperFormats.thermal58
             ? ThermalPaperWidth.mm58
             : ThermalPaperWidth.mm80,
       );

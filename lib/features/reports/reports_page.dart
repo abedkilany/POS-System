@@ -4,6 +4,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../models/product.dart';
+import '../../models/print_settings.dart';
 import '../../widgets/report_card.dart';
 import '../../core/utils/responsive.dart';
 import 'reports_snapshot_service.dart';
@@ -20,6 +21,9 @@ class ReportsPage extends StatelessWidget {
       BuildContext context, AppLocalizations tr, _ReportsPageData data) async {
     final arabic = tr.locale.languageCode == 'ar';
     await SimpleReportPdfService.printReport(
+      context: context,
+      profile: store.storeProfile,
+      documentKey: PrintDocumentKeys.report,
       title: tr.text('reports'),
       arabic: arabic,
       lines: [

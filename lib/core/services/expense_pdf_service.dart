@@ -1,14 +1,16 @@
 import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../models/expense.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import '../utils/currency_utils.dart';
 import 'professional_pdf_theme.dart';
+import 'print_service.dart';
 
 class ExpensePdfService {
   static Future<Uint8List> buildExpensePdf({
@@ -85,13 +87,21 @@ class ExpensePdfService {
   }
 
   static Future<void> printExpense({
+    BuildContext? context,
     required Expense expense,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
     final bytes = await buildExpensePdf(
         expense: expense, profile: profile, locale: locale);
-    await Printing.layoutPdf(onLayout: (_) async => bytes, name: expense.title);
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.expense,
+      bytes: bytes,
+      name: expense.title,
+      defaultFormat: PdfPageFormat.a4,
+    );
   }
 
   static String _statusLabel(_ExpensePdfLabels labels, Expense expense) =>

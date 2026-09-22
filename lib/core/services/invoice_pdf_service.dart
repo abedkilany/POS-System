@@ -9,9 +9,11 @@ import 'package:printing/printing.dart';
 import '../../models/credit_note.dart';
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import '../utils/currency_utils.dart';
 import 'pdf_font_loader.dart';
 import 'posted_document_snapshot_service.dart';
+import 'print_service.dart';
 
 class InvoicePdfService {
   static const PdfColor _navy = PdfColor(0.035, 0.13, 0.25);
@@ -104,6 +106,7 @@ class InvoicePdfService {
   }
 
   static Future<void> printInvoice({
+    BuildContext? context,
     required Sale sale,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
@@ -113,9 +116,13 @@ class InvoicePdfService {
       profile: profile,
       locale: locale,
     );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.salesInvoice,
+      bytes: bytes,
       name: sale.invoiceNo,
+      defaultFormat: PdfPageFormat.a4,
     );
   }
 
@@ -136,6 +143,7 @@ class InvoicePdfService {
   }
 
   static Future<void> printSaleReturn({
+    BuildContext? context,
     required CreditNote creditNote,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
@@ -145,9 +153,13 @@ class InvoicePdfService {
       profile: profile,
       locale: locale,
     );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.salesReturn,
+      bytes: bytes,
       name: creditNote.creditNoteNo,
+      defaultFormat: PdfPageFormat.a4,
     );
   }
 
@@ -402,7 +414,8 @@ class InvoicePdfService {
             profile.taxRegistrationNumber.trim().isNotEmpty) ...[
           pw.SizedBox(height: 6),
           _companyLine(
-            label: 'VAT: ${profile.vatNumber.trim().isNotEmpty ? profile.vatNumber.trim() : profile.taxRegistrationNumber.trim()}',
+            label:
+                'VAT: ${profile.vatNumber.trim().isNotEmpty ? profile.vatNumber.trim() : profile.taxRegistrationNumber.trim()}',
             isArabic: false,
           ),
         ],
@@ -588,7 +601,8 @@ class InvoicePdfService {
       ];
       if (hasTax) {
         final line = sale.postedSnapshot!.lines[index];
-        row.add(_taxLineLabel(line.taxCode, line.taxMode, line.taxRate, labels));
+        row.add(
+            _taxLineLabel(line.taxCode, line.taxMode, line.taxRate, labels));
       }
       row.add(_formatMoney(item.lineTotal, profile));
       data.add(row);
@@ -646,7 +660,8 @@ class InvoicePdfService {
     double rate,
     _InvoicePdfLabels labels,
   ) {
-    if (mode == 'exempt') return code.isEmpty ? labels.exempt : '$code ${labels.exempt}';
+    if (mode == 'exempt')
+      return code.isEmpty ? labels.exempt : '$code ${labels.exempt}';
     if (mode == 'out_of_scope') {
       return code.isEmpty ? labels.outOfScope : '$code ${labels.outOfScope}';
     }

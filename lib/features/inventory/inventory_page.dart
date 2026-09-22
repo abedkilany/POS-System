@@ -287,8 +287,7 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
           if (expiry == null) return sum;
           final alertDays = (row['alertDays'] as num? ?? 30).toInt();
           if (expiry.difference(startOfToday).inDays > alertDays) return sum;
-          return sum +
-              quantity * (row['unitCost'] as num? ?? 0).toDouble();
+          return sum + quantity * (row['unitCost'] as num? ?? 0).toDouble();
         });
         return Column(children: [
           Padding(
@@ -296,7 +295,8 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
             child: Wrap(spacing: 12, runSpacing: 8, children: [
               Chip(
                   avatar: const Icon(Icons.inventory_2_outlined),
-                  label: Text('${tr.text('unified_batch')}: ${allRows.length}')),
+                  label:
+                      Text('${tr.text('unified_batch')}: ${allRows.length}')),
               Chip(
                   avatar: const Icon(Icons.error_outline, color: Colors.red),
                   label: Text('${tr.text('expired')}: $expiredCount')),
@@ -324,9 +324,16 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
               const SizedBox(width: 12),
               DropdownButton<String>(
                 value: status,
-                items: <String>['all', 'active', 'blocked', 'depleted', 'disposed']
+                items: <String>[
+                  'all',
+                  'active',
+                  'blocked',
+                  'depleted',
+                  'disposed'
+                ]
                     .map((value) => DropdownMenuItem(
-                        value: value, child: Text(_batchStatusLabel(tr, value))))
+                        value: value,
+                        child: Text(_batchStatusLabel(tr, value))))
                     .toList(),
                 onChanged: (value) => setState(() => status = value ?? 'all'),
               ),
@@ -366,110 +373,114 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
                     itemCount: rows.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
-              final row = rows[index];
-              final expiry =
-                  DateTime.tryParse(row['expirationDate']?.toString() ?? '');
-              final days = expiry == null
-                  ? null
-                  : DateTime(expiry.year, expiry.month, expiry.day)
-                      .difference(startOfToday)
-                      .inDays;
-              final color = days == null
-                  ? Colors.grey
-                  : days < 0
-                      ? Colors.red
-                      : days <= 30
-                          ? Colors.orange
-                          : Colors.green;
-              final quantity = (row['quantity'] as num? ?? 0).toDouble();
-              return Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: color.withValues(alpha: .14),
-                    child: Icon(
-                      expiry == null
-                          ? Icons.inventory_2_outlined
-                          : Icons.event_outlined,
-                      color: color,
-                    ),
-                  ),
-                  title: Text(row['productName']?.toString() ?? ''),
-                  subtitle: Text([
-                    if ((row['supplierBatchNumber']?.toString() ?? '')
-                        .isNotEmpty)
-                      '${tr.text('batch_number')}: ${row['supplierBatchNumber']}',
-                    '${tr.text('warehouse')}: ${row['warehouseId']}',
-                    '${tr.text('quantity')}: ${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 2)}',
-                    '${tr.text('status')}: ${_batchStatusLabel(tr, row['status']?.toString() ?? 'active')}',
-                    if ((row['sourceType']?.toString() ?? '').isNotEmpty)
-                      row['sourceType'].toString().replaceAll('_', ' '),
-                    if (DateTime.tryParse(
-                            row['receivedAt']?.toString() ?? '') !=
-                        null)
-                      '${tr.text('received')}: ${MaterialLocalizations.of(context).formatMediumDate(DateTime.parse(row['receivedAt'].toString()).toLocal())}',
-                  ].join(' • ')),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            expiry == null
-                                ? tr.text('no_expiration_date')
-                                : MaterialLocalizations.of(context)
-                                    .formatMediumDate(expiry),
-                            style: TextStyle(
-                                color: color, fontWeight: FontWeight.w700),
+                      final row = rows[index];
+                      final expiry = DateTime.tryParse(
+                          row['expirationDate']?.toString() ?? '');
+                      final days = expiry == null
+                          ? null
+                          : DateTime(expiry.year, expiry.month, expiry.day)
+                              .difference(startOfToday)
+                              .inDays;
+                      final color = days == null
+                          ? Colors.grey
+                          : days < 0
+                              ? Colors.red
+                              : days <= 30
+                                  ? Colors.orange
+                                  : Colors.green;
+                      final quantity =
+                          (row['quantity'] as num? ?? 0).toDouble();
+                      return Card(
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: color.withValues(alpha: .14),
+                            child: Icon(
+                              expiry == null
+                                  ? Icons.inventory_2_outlined
+                                  : Icons.event_outlined,
+                              color: color,
+                            ),
                           ),
-                          if (days != null)
-                            Text(days < 0
-                                ? tr.text('expired')
-                                : '$days ${tr.text('days')}'),
-                        ]),
-                    PopupMenuButton<String>(
-                      enabled: canManageCorrections,
-                      onSelected: (value) async {
-                        if (value == 'count') {
-                          await _adjustBatch(row, dispose: false);
-                        }
-                        if (value == 'dispose') {
-                          await _adjustBatch(row, dispose: true);
-                        }
-                        if (value == 'block') {
-                          await _changeStatus(row, 'blocked');
-                        }
-                        if (value == 'activate') {
-                          await _changeStatus(row, 'active');
-                        }
-                        if (value == 'reverse') {
-                          await _reverseLatestBatchAdjustment(row);
-                        }
-                      },
-                      itemBuilder: (_) => [
-                        PopupMenuItem(
-                            value: 'count',
-                            child: Text(tr.text('batch_count'))),
-                        if (expiry != null)
-                          PopupMenuItem(
-                              value: 'dispose',
-                              child: Text(tr.text('dispose_batch'))),
-                        PopupMenuItem(
-                            value: 'reverse',
-                            child: Text(tr.text('reverse_adjustment'))),
-                        if ((row['status']?.toString() ?? 'active') ==
-                            'blocked')
-                          PopupMenuItem(
-                              value: 'activate',
-                              child: Text(tr.text('activate_batch')))
-                        else
-                          PopupMenuItem(
-                              value: 'block',
-                              child: Text(tr.text('block_batch'))),
-                      ],
-                    ),
-                  ]),
-                ),
-              );
+                          title: Text(row['productName']?.toString() ?? ''),
+                          subtitle: Text([
+                            if ((row['supplierBatchNumber']?.toString() ?? '')
+                                .isNotEmpty)
+                              '${tr.text('batch_number')}: ${row['supplierBatchNumber']}',
+                            '${tr.text('warehouse')}: ${row['warehouseId']}',
+                            '${tr.text('quantity')}: ${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 2)}',
+                            '${tr.text('status')}: ${_batchStatusLabel(tr, row['status']?.toString() ?? 'active')}',
+                            if ((row['sourceType']?.toString() ?? '')
+                                .isNotEmpty)
+                              row['sourceType'].toString().replaceAll('_', ' '),
+                            if (DateTime.tryParse(
+                                    row['receivedAt']?.toString() ?? '') !=
+                                null)
+                              '${tr.text('received')}: ${MaterialLocalizations.of(context).formatMediumDate(DateTime.parse(row['receivedAt'].toString()).toLocal())}',
+                          ].join(' • ')),
+                          trailing:
+                              Row(mainAxisSize: MainAxisSize.min, children: [
+                            Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    expiry == null
+                                        ? tr.text('no_expiration_date')
+                                        : MaterialLocalizations.of(context)
+                                            .formatMediumDate(expiry),
+                                    style: TextStyle(
+                                        color: color,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                  if (days != null)
+                                    Text(days < 0
+                                        ? tr.text('expired')
+                                        : '$days ${tr.text('days')}'),
+                                ]),
+                            PopupMenuButton<String>(
+                              enabled: canManageCorrections,
+                              onSelected: (value) async {
+                                if (value == 'count') {
+                                  await _adjustBatch(row, dispose: false);
+                                }
+                                if (value == 'dispose') {
+                                  await _adjustBatch(row, dispose: true);
+                                }
+                                if (value == 'block') {
+                                  await _changeStatus(row, 'blocked');
+                                }
+                                if (value == 'activate') {
+                                  await _changeStatus(row, 'active');
+                                }
+                                if (value == 'reverse') {
+                                  await _reverseLatestBatchAdjustment(row);
+                                }
+                              },
+                              itemBuilder: (_) => [
+                                PopupMenuItem(
+                                    value: 'count',
+                                    child: Text(tr.text('batch_count'))),
+                                if (expiry != null)
+                                  PopupMenuItem(
+                                      value: 'dispose',
+                                      child: Text(tr.text('dispose_batch'))),
+                                PopupMenuItem(
+                                    value: 'reverse',
+                                    child: Text(tr.text('reverse_adjustment'))),
+                                if ((row['status']?.toString() ?? 'active') ==
+                                    'blocked')
+                                  PopupMenuItem(
+                                      value: 'activate',
+                                      child: Text(tr.text('activate_batch')))
+                                else
+                                  PopupMenuItem(
+                                      value: 'block',
+                                      child: Text(tr.text('block_batch'))),
+                              ],
+                            ),
+                          ]),
+                        ),
+                      );
                     },
                   ),
           ),
@@ -771,8 +782,8 @@ class _InventoryPageState extends State<InventoryPage>
                   query = value;
                   _visibleInventoryProductCount = 100;
                 }),
-                onAdjust: widget.store.hasPermission(
-                        AppPermission.inventoryCorrectionsManage)
+                onAdjust: widget.store
+                        .hasPermission(AppPermission.inventoryCorrectionsManage)
                     ? _openAdjustmentDialog
                     : null,
                 canAdjust: widget.store.hasPermission(
@@ -1370,6 +1381,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
             )
             .toList(growable: false),
         profile: widget.store.storeProfile,
+        context: context,
         locale: Localizations.localeOf(context),
       );
     } catch (error) {
@@ -1575,8 +1587,7 @@ class _MovementsListState extends State<_MovementsList> {
         await widget.store.manualStockAdjustmentVersion(operationId);
     if (!mounted || expectedVersion <= 0) return;
 
-    final quantityController =
-        TextEditingController(text: delta.toString());
+    final quantityController = TextEditingController(text: delta.toString());
     final notesController = TextEditingController(text: first.notes);
     final evidenceController = TextEditingController(text: first.evidenceRef);
     var category = first.adjustmentCategory.trim().isEmpty
@@ -1662,15 +1673,13 @@ class _MovementsListState extends State<_MovementsList> {
                   final nextDelta =
                       double.tryParse(quantityController.text.trim()) ?? 0;
                   if (nextDelta.abs() <= 0.000001) return;
-                  List<BatchAllocation> allocations =
-                      const <BatchAllocation>[];
+                  List<BatchAllocation> allocations = const <BatchAllocation>[];
                   if (product.expiryTrackingEnabled && nextDelta > 0) {
                     final selected = await showBatchAllocationDialog(
                       dialogContext,
                       product: product,
                       expectedQuantity: nextDelta,
-                      sourceId:
-                          '$operationId-edit-v${expectedVersion + 1}',
+                      sourceId: '$operationId-edit-v${expectedVersion + 1}',
                     );
                     if (selected == null) return;
                     allocations = selected;

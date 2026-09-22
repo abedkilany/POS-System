@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import 'print_settings.dart';
+
 import 'tax_profile.dart';
 
 String _safeCurrencyRoundingMethod(String? value) {
@@ -285,79 +287,6 @@ class OrganizationBranch {
   }
 }
 
-class ThermalPrinterSettings {
-  const ThermalPrinterSettings({
-    this.enabled = false,
-    this.type = 'network',
-    this.name = '',
-    this.ip = '',
-    this.port = 9100,
-    this.bluetoothAddress = '',
-    this.usbAddress = '',
-    this.paperWidth = 80,
-  });
-
-  final bool enabled;
-  final String type;
-  final String name;
-  final String ip;
-  final int port;
-  final String bluetoothAddress;
-  final String usbAddress;
-  final int paperWidth;
-
-  ThermalPrinterSettings copyWith({
-    bool? enabled,
-    String? type,
-    String? name,
-    String? ip,
-    int? port,
-    String? bluetoothAddress,
-    String? usbAddress,
-    int? paperWidth,
-  }) {
-    return ThermalPrinterSettings(
-      enabled: enabled ?? this.enabled,
-      type: type ?? this.type,
-      name: name ?? this.name,
-      ip: ip ?? this.ip,
-      port: port ?? this.port,
-      bluetoothAddress: bluetoothAddress ?? this.bluetoothAddress,
-      usbAddress: usbAddress ?? this.usbAddress,
-      paperWidth: paperWidth ?? this.paperWidth,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'enabled': enabled,
-        'type': type,
-        'name': name,
-        'ip': ip,
-        'port': port,
-        'bluetoothAddress': bluetoothAddress,
-        'usbAddress': usbAddress,
-        'paperWidth': paperWidth,
-      };
-
-  factory ThermalPrinterSettings.fromJson(Map<String, dynamic> json) {
-    final rawType = (json['type'] as String? ?? 'network').trim().toLowerCase();
-    final type = {'network', 'bluetooth', 'usb', 'virtual'}.contains(rawType)
-        ? rawType
-        : 'network';
-    final rawWidth = (json['paperWidth'] as num? ?? 80).toInt();
-    return ThermalPrinterSettings(
-      enabled: json['enabled'] as bool? ?? false,
-      type: type,
-      name: json['name'] as String? ?? '',
-      ip: json['ip'] as String? ?? '',
-      port: (json['port'] as num? ?? 9100).toInt().clamp(1, 65535),
-      bluetoothAddress: json['bluetoothAddress'] as String? ?? '',
-      usbAddress: json['usbAddress'] as String? ?? '',
-      paperWidth: rawWidth == 58 ? 58 : 80,
-    );
-  }
-}
-
 class StoreProfile {
   const StoreProfile({
     required this.name,
@@ -397,7 +326,7 @@ class StoreProfile {
     this.exchangeLossAccountId = '',
     this.documentNumbering = const DocumentNumberingSettings(),
     this.branches = const <OrganizationBranch>[],
-    this.thermalPrinter = const ThermalPrinterSettings(),
+    this.printSettings = const PrintSettings(),
     this.allowNegativeStock = false,
     this.allowNegativeCashBalance = false,
     this.taxProfiles = TaxProfile.defaults,
@@ -476,7 +405,7 @@ class StoreProfile {
   final String exchangeLossAccountId;
   final DocumentNumberingSettings documentNumbering;
   final List<OrganizationBranch> branches;
-  final ThermalPrinterSettings thermalPrinter;
+  final PrintSettings printSettings;
 
   /// Whether stock-out movements may take a tracked product below zero.
   final bool allowNegativeStock;
@@ -650,7 +579,7 @@ class StoreProfile {
     String? exchangeLossAccountId,
     DocumentNumberingSettings? documentNumbering,
     List<OrganizationBranch>? branches,
-    ThermalPrinterSettings? thermalPrinter,
+    PrintSettings? printSettings,
     bool? allowNegativeStock,
     bool? allowNegativeCashBalance,
     List<TaxProfile>? taxProfiles,
@@ -665,8 +594,8 @@ class StoreProfile {
       ...this.historicalLogoAssetsBase64,
       ...?historicalLogoAssetsBase64,
     };
-    final logoWasExplicitlyChanged = logoDataBase64 != null &&
-        logoDataBase64 != this.logoDataBase64;
+    final logoWasExplicitlyChanged =
+        logoDataBase64 != null && logoDataBase64 != this.logoDataBase64;
     final nextLogoData = logoDataBase64 ?? this.logoDataBase64;
     var nextLogoAssetId = logoAssetId ?? this.logoAssetId;
     if (logoWasExplicitlyChanged) {
@@ -676,9 +605,8 @@ class StoreProfile {
       if (this.logoDataBase64.isNotEmpty && currentAssetId.isNotEmpty) {
         nextHistoricalLogoAssets[currentAssetId] = this.logoDataBase64;
       }
-      nextLogoAssetId = nextLogoData.isEmpty
-          ? ''
-          : logoAssetIdForData(nextLogoData);
+      nextLogoAssetId =
+          nextLogoData.isEmpty ? '' : logoAssetIdForData(nextLogoData);
     } else if (nextLogoData.isNotEmpty && nextLogoAssetId.isEmpty) {
       nextLogoAssetId = logoAssetIdForData(nextLogoData);
     }
@@ -745,7 +673,7 @@ class StoreProfile {
           exchangeLossAccountId ?? this.exchangeLossAccountId,
       documentNumbering: documentNumbering ?? this.documentNumbering,
       branches: branches ?? this.branches,
-      thermalPrinter: thermalPrinter ?? this.thermalPrinter,
+      printSettings: printSettings ?? this.printSettings,
       allowNegativeStock: allowNegativeStock ?? this.allowNegativeStock,
       allowNegativeCashBalance:
           allowNegativeCashBalance ?? this.allowNegativeCashBalance,
@@ -843,7 +771,7 @@ class StoreProfile {
         'exchangeLossAccountId': exchangeLossAccountId,
         'documentNumbering': documentNumbering.toJson(),
         'branches': branches.map((item) => item.toJson()).toList(),
-        'thermalPrinter': thermalPrinter.toJson(),
+        'printSettings': printSettings.toJson(),
         'allowNegativeStock': allowNegativeStock,
         'allowNegativeCashBalance': allowNegativeCashBalance,
         'taxProfiles': taxProfiles.map((item) => item.toJson()).toList(),
@@ -985,7 +913,10 @@ class StoreProfile {
             ? TaxProfile.standardId
             : taxProfiles.first.id);
     final taxConfigurationVersion =
-        (json['taxConfigurationVersion'] as num? ?? 0).toInt().clamp(0, 1).toInt();
+        (json['taxConfigurationVersion'] as num? ?? 0)
+            .toInt()
+            .clamp(0, 1)
+            .toInt();
 
     final logoDataBase64 = json['logoDataBase64'] as String? ?? '';
     final rawLogoAssetId = json['logoAssetId']?.toString().trim() ?? '';
@@ -1062,10 +993,10 @@ class StoreProfile {
               .where((item) => item.name.trim().isNotEmpty)
               .toList(growable: false)
           : const <OrganizationBranch>[],
-      thermalPrinter: json['thermalPrinter'] is Map
-          ? ThermalPrinterSettings.fromJson(
-              Map<String, dynamic>.from(json['thermalPrinter'] as Map))
-          : const ThermalPrinterSettings(),
+      printSettings: json['printSettings'] is Map
+          ? PrintSettings.fromJson(
+              Map<String, dynamic>.from(json['printSettings'] as Map))
+          : const PrintSettings(),
       allowNegativeStock: json['allowNegativeStock'] == true,
       allowNegativeCashBalance: json['allowNegativeCashBalance'] == true,
       taxProfiles: taxProfiles,
@@ -1109,7 +1040,7 @@ class StoreProfile {
     exchangeLossAccountId: '',
     documentNumbering: DocumentNumberingSettings(),
     branches: <OrganizationBranch>[],
-    thermalPrinter: ThermalPrinterSettings(),
+    printSettings: PrintSettings(),
     allowNegativeStock: false,
     allowNegativeCashBalance: false,
     taxProfiles: TaxProfile.defaults,

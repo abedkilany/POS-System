@@ -1,14 +1,16 @@
 import 'dart:convert';
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../models/cash_ledger_transaction.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import 'pdf_font_loader.dart';
+import 'print_service.dart';
 
 class CashReceiptPdfService {
   static const PdfColor _navy = PdfColor(0.035, 0.13, 0.25);
@@ -21,6 +23,10 @@ class CashReceiptPdfService {
   static Future<Uint8List> buildReceiptPdf({
     required CashLedgerTransaction transaction,
     required StoreProfile profile,
+    PdfPageFormat pageFormat = const PdfPageFormat(
+      80 * PdfPageFormat.mm,
+      180 * PdfPageFormat.mm,
+    ),
     Locale locale = const Locale('en'),
   }) async {
     final pdfFonts = await PdfFontLoader.loadArabicFonts();
@@ -39,10 +45,7 @@ class CashReceiptPdfService {
 
     pdf.addPage(
       pw.Page(
-        pageFormat: const PdfPageFormat(
-          80 * PdfPageFormat.mm,
-          180 * PdfPageFormat.mm,
-        ),
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(13, 12, 13, 12),
         textDirection: ar ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         build: (_) => pw.Column(
@@ -81,20 +84,40 @@ class CashReceiptPdfService {
   }
 
   static Future<void> printReceipt({
+    BuildContext? context,
     required CashLedgerTransaction transaction,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildReceiptPdf(
-      transaction: transaction,
+    await PrintService.printPdf(
+      context: context,
       profile: profile,
-      locale: locale,
-    );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
+      documentKey: PrintDocumentKeys.cashReceipt,
+      bytesBuilder: (selection) => buildReceiptPdf(
+        transaction: transaction,
+        profile: profile,
+        locale: locale,
+        pageFormat: selection.format == PrintPaperFormats.thermal58
+            ? const PdfPageFormat(
+                58 * PdfPageFormat.mm,
+                180 * PdfPageFormat.mm,
+              )
+            : const PdfPageFormat(
+                80 * PdfPageFormat.mm,
+                180 * PdfPageFormat.mm,
+              ),
+      ),
       name: transaction.referenceNumber.trim().isNotEmpty
           ? transaction.referenceNumber.trim()
           : transaction.id,
+      defaultFormat: const PdfPageFormat(
+        80 * PdfPageFormat.mm,
+        180 * PdfPageFormat.mm,
+      ),
+      allowedFormats: const [
+        PrintPaperFormats.thermal80,
+        PrintPaperFormats.thermal58,
+      ],
     );
   }
 

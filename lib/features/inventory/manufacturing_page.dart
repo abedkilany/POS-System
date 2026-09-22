@@ -118,12 +118,11 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                                     vertical: 14,
                                   ),
                                 ),
-                                onPressed:
-                                    widget.store.hasPermission(
+                                onPressed: widget.store.hasPermission(
                                   AppPermission.inventoryManufacturingManage,
                                 )
-                                        ? () => _showBomDialog()
-                                        : null,
+                                    ? () => _showBomDialog()
+                                    : null,
                                 icon: const Icon(Icons.add),
                                 label: Text(_t('new_bom')),
                               ),
@@ -514,6 +513,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       await ManufacturingPdfService.printBillOfMaterials(
         bom: estimatedBom,
         profile: widget.store.storeProfile,
+        context: context,
         locale: locale,
       );
     } catch (error) {
@@ -591,6 +591,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
         bomsById: bomsById,
         includeDetails: includeDetails,
         profile: widget.store.storeProfile,
+        context: context,
         locale: Localizations.localeOf(context),
       );
     } catch (error) {
@@ -1512,9 +1513,10 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       AppPermission.inventoryManufacturingManage,
     )) return;
 
-    final initialOutputQuantity = editCompleted && order.actualOutputQuantity > 0
-        ? order.actualOutputQuantity
-        : order.quantity;
+    final initialOutputQuantity =
+        editCompleted && order.actualOutputQuantity > 0
+            ? order.actualOutputQuantity
+            : order.quantity;
     final qtyController =
         TextEditingController(text: initialOutputQuantity.toString());
     final bom = widget.store.billsOfMaterials.firstWhere(
@@ -1533,10 +1535,8 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
     final consumedControllers = <String, TextEditingController>{
       for (final component in bom.components)
         component.productId: TextEditingController(
-          text: (editCompleted
-                  ? historicalConsumed[component.productId]
-                  : null)
-              ?.toString() ??
+          text: (editCompleted ? historicalConsumed[component.productId] : null)
+                  ?.toString() ??
               (component.quantity * factor).toString(),
         ),
     };
@@ -1544,9 +1544,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       for (final component in bom.components)
         component.productId: TextEditingController(
           text: (editCompleted
-                  ? historicalWaste[component.productId]?.quantity
-                  : null)
-              ?.toString() ??
+                      ? historicalWaste[component.productId]?.quantity
+                      : null)
+                  ?.toString() ??
               '0',
         ),
     };
@@ -1563,8 +1563,12 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       builder: (dialogContext) => AlertDialog(
         title: Text(_localizedText(
           ar: editCompleted ? 'تعديل التصنيع المكتمل' : 'تأكيد انتهاء التصنيع',
-          en: editCompleted ? 'Edit completed manufacturing' : 'Confirm production completion',
-          fr: editCompleted ? 'Modifier la fabrication terminée' : 'Confirmer la fin de fabrication',
+          en: editCompleted
+              ? 'Edit completed manufacturing'
+              : 'Confirm production completion',
+          fr: editCompleted
+              ? 'Modifier la fabrication terminée'
+              : 'Confirmer la fin de fabrication',
         )),
         content: SizedBox(
           width: 520,
@@ -1747,8 +1751,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
           finishedGoodsWarehouseId: order.finishedGoodsWarehouseId,
           finishedGoodsWarehouseName: order.finishedGoodsWarehouseName,
           notes: order.notes,
-          outputBatchAllocations:
-              outputBatches ?? const <BatchAllocation>[],
+          outputBatchAllocations: outputBatches ?? const <BatchAllocation>[],
           actualConsumedQuantities: consumed,
           wasteQuantities: waste,
           wasteReasons: wasteReasons,
@@ -1757,8 +1760,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
         await widget.store.finishManufacturingOrder(
           orderId: order.id,
           actualQuantity: actualQuantity,
-          outputBatchAllocations:
-              outputBatches ?? const <BatchAllocation>[],
+          outputBatchAllocations: outputBatches ?? const <BatchAllocation>[],
           actualConsumedQuantities: consumed,
           wasteQuantities: waste,
           wasteReasons: wasteReasons,

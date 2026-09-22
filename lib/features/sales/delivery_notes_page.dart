@@ -6,6 +6,7 @@ import '../../data/app_store.dart';
 import '../../models/delivery_note.dart';
 import '../../models/sale.dart';
 import '../../models/user_role.dart';
+import '../../models/print_settings.dart';
 import '../../core/services/simple_report_pdf_service.dart';
 
 class DeliveryNotesPage extends StatefulWidget {
@@ -159,6 +160,9 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
   Future<void> _printNote(DeliveryNote note) async {
     final tr = AppLocalizations.of(context);
     await SimpleReportPdfService.printReport(
+      context: context,
+      profile: widget.store.storeProfile,
+      documentKey: PrintDocumentKeys.deliveryNote,
       title: '${tr.text('delivery_note')} ${note.deliveryNo}',
       arabic: tr.locale.languageCode == 'ar',
       lines: [

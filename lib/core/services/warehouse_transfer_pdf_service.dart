@@ -1,12 +1,14 @@
 import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
+import '../../models/print_settings.dart';
 import '../../models/store_profile.dart';
 import '../../models/warehouse_transfer_order.dart';
+import 'print_service.dart';
 import 'professional_pdf_theme.dart';
 
 class WarehouseTransferPdfService {
@@ -91,13 +93,20 @@ class WarehouseTransferPdfService {
   static Future<void> printTransferOrder({
     required WarehouseTransferOrder order,
     required StoreProfile profile,
+    BuildContext? context,
     Locale locale = const Locale('en'),
   }) async {
     final bytes = await buildTransferOrderPdf(
         order: order, profile: profile, locale: locale);
-    await Printing.layoutPdf(
-        onLayout: (_) async => bytes,
-        name: order.orderNo.isEmpty ? 'warehouse-transfer' : order.orderNo);
+    await PrintService.printPdf(
+      profile: profile,
+      documentKey: PrintDocumentKeys.warehouseTransfer,
+      context: context,
+      bytes: bytes,
+      name: order.orderNo.isEmpty ? 'warehouse-transfer' : order.orderNo,
+      defaultFormat: PdfPageFormat.a4,
+      allowedFormats: const [PrintPaperFormats.a4],
+    );
   }
 
   static String _formatQuantity(double value) {

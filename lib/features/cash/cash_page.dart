@@ -1591,6 +1591,7 @@ class _CashPageState extends State<CashPage> {
                                         if (!dialogContext.mounted) return;
                                         await CashShiftReportPdfService
                                             .printShift(
+                                          context: dialogContext,
                                           session: session,
                                           movements: movements,
                                           detailed: printDetailed,

@@ -1,17 +1,20 @@
 import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../models/cash_ledger_transaction.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import 'accounting_service.dart';
 import 'professional_pdf_theme.dart';
+import 'print_service.dart';
 
 class CashShiftReportPdfService {
   static Future<void> printShift({
+    BuildContext? context,
     required CashShiftReportSession session,
     required List<CashLedgerTransaction> movements,
     required bool detailed,
@@ -25,9 +28,13 @@ class CashShiftReportPdfService {
       profile: profile,
       locale: locale,
     );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.cashShiftReport,
+      bytes: bytes,
       name: 'shift-${session.drawerNo.isEmpty ? session.id : session.drawerNo}',
+      defaultFormat: PdfPageFormat.a4,
     );
   }
 

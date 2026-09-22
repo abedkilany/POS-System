@@ -272,8 +272,8 @@ class _ProductsPageState extends State<ProductsPage> {
         final categories =
             await LocalDatabaseService.queryProductCategoriesFromSqlite() ??
                 const <String>[];
-        final costSnapshots = await widget.store
-            .productCostSnapshotsForProducts(page.items);
+        final costSnapshots =
+            await widget.store.productCostSnapshotsForProducts(page.items);
         return _ProductsQueryResult(
           items: page.items,
           totalCount: page.totalCount,
@@ -350,10 +350,10 @@ class _ProductsPageState extends State<ProductsPage> {
                   totalCount: totalCount,
                 ),
                 FilledButton.tonalIcon(
-                  onPressed: canBulkAdjustPrices &&
-                          _selectedProductIds.isNotEmpty
-                      ? () => _openBulkPriceAdjustment(context)
-                      : null,
+                  onPressed:
+                      canBulkAdjustPrices && _selectedProductIds.isNotEmpty
+                          ? () => _openBulkPriceAdjustment(context)
+                          : null,
                   icon: const Icon(Icons.percent_outlined),
                   label: Text(
                     Localizations.localeOf(context).languageCode == 'ar'
@@ -454,15 +454,17 @@ class _ProductsPageState extends State<ProductsPage> {
               selectedCount: _selectedProductIds.length,
               visibleCount: products.length,
               allVisibleSelected: products.isNotEmpty &&
-                  products.every((item) => _selectedProductIds.contains(item.id)),
-              someVisibleSelected: products.any(
-                  (item) => _selectedProductIds.contains(item.id)),
+                  products
+                      .every((item) => _selectedProductIds.contains(item.id)),
+              someVisibleSelected:
+                  products.any((item) => _selectedProductIds.contains(item.id)),
               onToggleVisible: (selected) {
                 setState(() {
                   if (selected) {
                     _selectedProductIds.addAll(products.map((item) => item.id));
                   } else {
-                    _selectedProductIds.removeAll(products.map((item) => item.id));
+                    _selectedProductIds
+                        .removeAll(products.map((item) => item.id));
                   }
                 });
               },
@@ -509,13 +511,16 @@ class _ProductsPageState extends State<ProductsPage> {
                                 child: _ProductTile(
                                   row: row,
                                   compact: constraints.maxWidth < 620,
-                                  selected: _selectedProductIds.contains(product.id),
+                                  selected:
+                                      _selectedProductIds.contains(product.id),
                                   onSelectedChanged: canBulkAdjustPrices
                                       ? (value) => setState(() {
                                             if (value == true) {
-                                              _selectedProductIds.add(product.id);
+                                              _selectedProductIds
+                                                  .add(product.id);
                                             } else {
-                                              _selectedProductIds.remove(product.id);
+                                              _selectedProductIds
+                                                  .remove(product.id);
                                             }
                                           })
                                       : null,
@@ -584,8 +589,9 @@ class _ProductsPageState extends State<ProductsPage> {
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final percentage =
-              double.tryParse(percentController.text.trim().replaceAll(',', '.')) ?? 0;
+          final percentage = double.tryParse(
+                  percentController.text.trim().replaceAll(',', '.')) ??
+              0;
           final selectedProducts = widget.store.products
               .where((item) => _selectedProductIds.contains(item.id))
               .toList(growable: false);
@@ -606,9 +612,8 @@ class _ProductsPageState extends State<ProductsPage> {
               continue;
             }
             if (!validPercent) continue;
-            final factor = increase
-                ? 1 + percentage / 100
-                : 1 - percentage / 100;
+            final factor =
+                increase ? 1 + percentage / 100 : 1 - percentage / 100;
             final next = _roundedPreviewPrice(
               price.baseAmount * factor,
               price.baseCurrencyCode,
@@ -625,9 +630,8 @@ class _ProductsPageState extends State<ProductsPage> {
             }
           }
           return AlertDialog(
-            title: Text(isArabic
-                ? 'تعديل الأسعار الجماعي'
-                : 'Bulk price adjustment'),
+            title: Text(
+                isArabic ? 'تعديل الأسعار الجماعي' : 'Bulk price adjustment'),
             content: SizedBox(
               width: 620,
               child: SingleChildScrollView(
@@ -645,7 +649,9 @@ class _ProductsPageState extends State<ProductsPage> {
                     DropdownButtonFormField<String>(
                       initialValue: priceListId,
                       decoration: InputDecoration(
-                        labelText: isArabic ? 'السعر المطلوب تعديله' : 'Price to adjust',
+                        labelText: isArabic
+                            ? 'السعر المطلوب تعديله'
+                            : 'Price to adjust',
                       ),
                       items: <String>['retail', 'wholesale', 'wholesale_bulk']
                           .map((id) => DropdownMenuItem(
@@ -684,14 +690,16 @@ class _ProductsPageState extends State<ProductsPage> {
                     TextField(
                       controller: percentController,
                       enabled: !submitting,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
                       inputFormatters: [
                         FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
                       ],
                       decoration: InputDecoration(
                         labelText: isArabic ? 'النسبة %' : 'Percentage %',
                         suffixText: '%',
-                        errorText: percentController.text.trim().isNotEmpty && !validPercent
+                        errorText: percentController.text.trim().isNotEmpty &&
+                                !validPercent
                             ? (isArabic
                                 ? 'أدخل نسبة صحيحة. الإنقاص لا يمكن أن يتجاوز 100%.'
                                 : 'Enter a valid percentage. Decrease cannot exceed 100%.')
@@ -771,7 +779,8 @@ class _ProductsPageState extends State<ProductsPage> {
                     : () async {
                         setDialogState(() => submitting = true);
                         try {
-                          final result = await widget.store.bulkAdjustProductPrices(
+                          final result =
+                              await widget.store.bulkAdjustProductPrices(
                             productIds: _selectedProductIds,
                             priceListId: priceListId,
                             percentage: percentage,
@@ -835,7 +844,8 @@ class _ProductsPageState extends State<ProductsPage> {
             future: widget.store.productPriceHistoryForProduct(product.id),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator.adaptive());
+                return const Center(
+                    child: CircularProgressIndicator.adaptive());
               }
               final rows = snapshot.data ?? const <ProductPriceHistoryEntry>[];
               if (rows.isEmpty) {
@@ -850,8 +860,11 @@ class _ProductsPageState extends State<ProductsPage> {
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final row = rows[index];
-                  final sign = row.newAmount > row.oldAmount ? '+' :
-                      row.newAmount < row.oldAmount ? '−' : '';
+                  final sign = row.newAmount > row.oldAmount
+                      ? '+'
+                      : row.newAmount < row.oldAmount
+                          ? '−'
+                          : '';
                   final percentText = row.changePercent > 0
                       ? ' • $sign${row.changePercent.toStringAsFixed(row.changePercent % 1 == 0 ? 0 : 2)}%'
                       : '';
@@ -1010,6 +1023,7 @@ class _ProductsPageState extends State<ProductsPage> {
             onPressed: () async {
               Navigator.pop(dialogContext);
               await PriceListPdfService.printPriceList(
+                context: context,
                 products: products,
                 profile: widget.store.storeProfile,
                 title: _priceListTitle(isArabic, selection),
@@ -1576,7 +1590,10 @@ class _ProductSelectionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.35),
       borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1879,8 +1896,7 @@ class _ProductDialogState extends State<_ProductDialog> {
     final tr = AppLocalizations.of(context);
     final product = widget.product;
     if (product != null && product.trackStock) {
-      _costSnapshotFuture =
-          widget.store.productCostSnapshotForProduct(product);
+      _costSnapshotFuture = widget.store.productCostSnapshotForProduct(product);
     }
     _productId =
         product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
@@ -1925,7 +1941,8 @@ class _ProductDialogState extends State<_ProductDialog> {
     )) {
       taxProfileId = widget.store.storeProfile.defaultTaxProfileId;
     } else {
-      taxProfileId = activeTaxProfiles.isEmpty ? '' : activeTaxProfiles.first.id;
+      taxProfileId =
+          activeTaxProfiles.isEmpty ? '' : activeTaxProfiles.first.id;
     }
     priceController = TextEditingController(
         text: defaultProductPrice?.baseAmount.toString() ??
@@ -2368,7 +2385,8 @@ class _ProductDialogState extends State<_ProductDialog> {
                           ? taxProfileId
                           : (widget.store.storeProfile.activeTaxProfiles.isEmpty
                               ? null
-                              : widget.store.storeProfile.activeTaxProfiles.first.id),
+                              : widget.store.storeProfile.activeTaxProfiles
+                                  .first.id),
                       decoration: InputDecoration(
                         labelText: tr.text('tax_profile'),
                         helperText: tr.text('tax_profile_product_desc'),

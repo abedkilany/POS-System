@@ -1,7 +1,25 @@
 part of 'app_store.dart';
 
+bool _bomChangesInventoryClassification(
+  BillOfMaterials previous,
+  BillOfMaterials next,
+) {
+  if (previous.outputProductId != next.outputProductId) return true;
+
+  final previousComponents = previous.components
+      .map((component) => component.productId.trim())
+      .where((productId) => productId.isNotEmpty)
+      .toSet();
+  final nextComponents = next.components
+      .map((component) => component.productId.trim())
+      .where((productId) => productId.isNotEmpty)
+      .toSet();
+  if (previousComponents.length != nextComponents.length) return true;
+  return !previousComponents.containsAll(nextComponents);
+}
+
 extension _AppStoreSplitManufacturing on AppStore {
-Future<double> estimatedUnifiedBatchUnitCostForProduct(
+  Future<double> estimatedUnifiedBatchUnitCostForProduct(
     Product product, {
     String warehouseId = '',
     double requiredQuantity = 0,
@@ -12,7 +30,7 @@ Future<double> estimatedUnifiedBatchUnitCostForProduct(
         requiredQuantity: requiredQuantity,
       );
 
-Future<double> _estimatedUnifiedBatchUnitCostForProduct(
+  Future<double> _estimatedUnifiedBatchUnitCostForProduct(
     Product product, {
     String warehouseId = '',
     double requiredQuantity = 0,
@@ -34,8 +52,8 @@ Future<double> _estimatedUnifiedBatchUnitCostForProduct(
     final db = SqliteMigrationManager.database!;
     final normalizedWarehouse = warehouseId.trim();
     if (normalizedWarehouse.isNotEmpty && requiredQuantity > 0.000001) {
-      final preview = await BatchInventoryService(db)
-          .previewUnifiedAllocationInTransaction(
+      final preview =
+          await BatchInventoryService(db).previewUnifiedAllocationInTransaction(
         product: product,
         warehouseId: normalizedWarehouse,
         quantity: requiredQuantity,
@@ -89,7 +107,7 @@ Future<double> _estimatedUnifiedBatchUnitCostForProduct(
     return fallback();
   }
 
-Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
+  Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
     VentioDriftDatabase sqliteDb, {
     required BatchInventoryService batchService,
     required Product product,
@@ -130,8 +148,7 @@ Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
         Variable<String>(appIdentity.storeId),
         Variable<String>(warehouseId),
         Variable<String>(product.id),
-        if (product.expiryTrackingEnabled)
-          Variable<String>(startOfMovementDay),
+        if (product.expiryTrackingEnabled) Variable<String>(startOfMovementDay),
       ],
     ).get();
 
@@ -178,8 +195,7 @@ Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
           Variable<String>(batchId),
         ],
       ).getSingle();
-      final outboundCount =
-          (priorOutbound.data['c'] as num? ?? 0).toInt();
+      final outboundCount = (priorOutbound.data['c'] as num? ?? 0).toInt();
       if (outboundCount > 0) {
         throw LocalizedDomainException(
           'error_manufacturing_zero_cost_batch_already_consumed',
@@ -219,9 +235,8 @@ Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
           (sourceValueRow.data['source_quantity'] as num? ?? 0).toDouble();
       final sourceValue =
           (sourceValueRow.data['source_value'] as num? ?? 0).toDouble();
-      final sourceUnitCost = sourceQuantity <= 0.000001
-          ? 0.0
-          : sourceValue / sourceQuantity;
+      final sourceUnitCost =
+          sourceQuantity <= 0.000001 ? 0.0 : sourceValue / sourceQuantity;
       final referenceUnitCost = sourceUnitCost > 0.000001
           ? sourceUnitCost
           : await batchService.resolveReferenceUnitCostInTransaction(
@@ -270,8 +285,8 @@ Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
       }
 
       if (revaluationValue > 0.000001) {
-        final journalId =
-            await AccountingService.recordInventoryBatchRevaluationInTransaction(
+        final journalId = await AccountingService
+            .recordInventoryBatchRevaluationInTransaction(
           database: sqliteDb,
           entryDate: repairedAt,
           referenceId: '$referenceId:batch-cost-repair:$batchId',
@@ -295,7 +310,7 @@ Future<void> _repairZeroCostManufacturingInputBatchesInTransaction(
     }
   }
 
-Future<BillOfMaterials> estimateBillOfMaterialsSnapshot(
+  Future<BillOfMaterials> estimateBillOfMaterialsSnapshot(
     BillOfMaterials bom, {
     String warehouseId = '',
   }) async {
@@ -319,7 +334,7 @@ Future<BillOfMaterials> estimateBillOfMaterialsSnapshot(
     return bom.copyWith(components: components);
   }
 
-Future<double> estimateBillOfMaterialsUnitCost(
+  Future<double> estimateBillOfMaterialsUnitCost(
     BillOfMaterials bom, {
     String warehouseId = '',
   }) async {
@@ -329,7 +344,8 @@ Future<double> estimateBillOfMaterialsUnitCost(
     );
     return estimated.unitCost;
   }
-Future<BillOfMaterials> createBillOfMaterials({
+
+  Future<BillOfMaterials> createBillOfMaterials({
     required String name,
     required String outputProductId,
     required double outputQuantity,
@@ -429,7 +445,7 @@ Future<BillOfMaterials> createBillOfMaterials({
     return bom;
   }
 
-Future<BillOfMaterials> updateBillOfMaterials({
+  Future<BillOfMaterials> updateBillOfMaterials({
     required String id,
     required String name,
     required String outputProductId,
@@ -471,8 +487,9 @@ Future<BillOfMaterials> updateBillOfMaterials({
       ));
     }
     final now = DateTime.now();
+    final previous = _billsOfMaterials[index];
     final updated = _withSyncMeta<BillOfMaterials>(
-      _billsOfMaterials[index].copyWith(
+      previous.copyWith(
         name: name.trim(),
         outputProductId: output.id,
         outputProductName: output.name,
@@ -498,14 +515,20 @@ Future<BillOfMaterials> updateBillOfMaterials({
             deletedAt: updated.deletedAt?.toIso8601String() ?? '',
             sortIndex: index,
           );
-          await _reconcileInventoryAccountsAfterBomChange(
-            updated,
-            database: sqliteDb,
-            withinExistingTransaction: true,
-          );
+          // A name, note, quantity, or component-cost edit does not change
+          // the semantic inventory account of any product. Do not block
+          // harmless metadata edits because of an unrelated old GL drift.
+          if (_bomChangesInventoryClassification(previous, updated)) {
+            await _reconcileInventoryAccountsAfterBomChange(
+              updated,
+              database: sqliteDb,
+              withinExistingTransaction: true,
+            );
+          }
         });
       } catch (_) {
-        _forgetSqliteDirtyBusinessRow(AppStore._billsOfMaterialsKey, updated.id);
+        _forgetSqliteDirtyBusinessRow(
+            AppStore._billsOfMaterialsKey, updated.id);
         rethrow;
       }
       _forgetSqliteDirtyBusinessRow(AppStore._billsOfMaterialsKey, updated.id);
@@ -532,7 +555,7 @@ Future<BillOfMaterials> updateBillOfMaterials({
     return updated;
   }
 
-Future<void> deleteBillOfMaterials(String id) async {
+  Future<void> deleteBillOfMaterials(String id) async {
     requirePermission(AppPermission.inventoryManufacturingManage);
     final index = _billsOfMaterials.indexWhere((item) => item.id == id);
     if (index == -1 || _billsOfMaterials[index].isDeleted) return;
@@ -567,7 +590,8 @@ Future<void> deleteBillOfMaterials(String id) async {
           );
         });
       } catch (_) {
-        _forgetSqliteDirtyBusinessRow(AppStore._billsOfMaterialsKey, deleted.id);
+        _forgetSqliteDirtyBusinessRow(
+            AppStore._billsOfMaterialsKey, deleted.id);
         rethrow;
       }
       _forgetSqliteDirtyBusinessRow(AppStore._billsOfMaterialsKey, deleted.id);
@@ -593,7 +617,7 @@ Future<void> deleteBillOfMaterials(String id) async {
     notifyListeners();
   }
 
-Future<void> deleteManufacturingOrder(String id) async {
+  Future<void> deleteManufacturingOrder(String id) async {
     requirePermission(AppPermission.inventoryManufacturingManage);
     final index = _manufacturingOrders.indexWhere((item) => item.id == id);
     if (index == -1 || _manufacturingOrders[index].isDeleted) return;
@@ -656,7 +680,7 @@ Future<void> deleteManufacturingOrder(String id) async {
     notifyListeners();
   }
 
-Future<ManufacturingOrder> updateManufacturingOrder({
+  Future<ManufacturingOrder> updateManufacturingOrder({
     required String id,
     required String bomId,
     required double quantity,
@@ -743,7 +767,7 @@ Future<ManufacturingOrder> updateManufacturingOrder({
     return updated;
   }
 
-Future<ManufacturingOrder> startManufacturingOrder({
+  Future<ManufacturingOrder> startManufacturingOrder({
     required String bomId,
     required double quantity,
     String rawMaterialsWarehouseId = '',
@@ -831,7 +855,7 @@ Future<ManufacturingOrder> startManufacturingOrder({
     return order;
   }
 
-Future<ManufacturingOrder> finishManufacturingOrder({
+  Future<ManufacturingOrder> finishManufacturingOrder({
     required String orderId,
     required double actualQuantity,
     List<BatchAllocation> outputBatchAllocations = const <BatchAllocation>[],
@@ -866,7 +890,7 @@ Future<ManufacturingOrder> finishManufacturingOrder({
     );
   }
 
-Future<ManufacturingOrder> completeManufacturingOrder({
+  Future<ManufacturingOrder> completeManufacturingOrder({
     required String bomId,
     required double quantity,
     String rawMaterialsWarehouseId = '',
@@ -911,7 +935,9 @@ Future<ManufacturingOrder> completeManufacturingOrder({
       throw ArgumentError('Manufacturing order was not found.');
     }
     final existingOrder = existingOrderOverride ??
-        (existingOrderIndex == -1 ? null : _manufacturingOrders[existingOrderIndex]);
+        (existingOrderIndex == -1
+            ? null
+            : _manufacturingOrders[existingOrderIndex]);
     if (existingOrder != null &&
         <String>{'completed', 'reversed'}
             .contains(existingOrder.status.trim().toLowerCase()) &&
@@ -936,27 +962,27 @@ Future<ManufacturingOrder> completeManufacturingOrder({
       warehouseId: finishedGoodsWarehouseId,
     );
     final orderPreview = ManufacturingOrder(
-        id: existingOrder?.id ?? '${now.microsecondsSinceEpoch}-mfg',
-        orderNo: existingOrder?.orderNo ??
-            'MFG-${now.microsecondsSinceEpoch.toString().substring(6)}',
-        bomId: bom.id,
-        bomName: bom.name,
-        outputProductId: output.id,
-        outputProductName: output.name,
-        quantity: quantity,
-        rawMaterialsWarehouseId: rawWarehouse.id,
-        rawMaterialsWarehouseName: rawMaterialsWarehouseName.trim().isEmpty
-            ? rawWarehouse.name
-            : rawMaterialsWarehouseName.trim(),
-        finishedGoodsWarehouseId: finishedWarehouse.id,
-        finishedGoodsWarehouseName: finishedGoodsWarehouseName.trim().isEmpty
-            ? finishedWarehouse.name
-            : finishedGoodsWarehouseName.trim(),
-        notes: notes.trim(),
-        date: existingOrder?.date ?? now,
-        createdAt: existingOrder?.createdAt,
-        status: 'completed',
-      );
+      id: existingOrder?.id ?? '${now.microsecondsSinceEpoch}-mfg',
+      orderNo: existingOrder?.orderNo ??
+          'MFG-${now.microsecondsSinceEpoch.toString().substring(6)}',
+      bomId: bom.id,
+      bomName: bom.name,
+      outputProductId: output.id,
+      outputProductName: output.name,
+      quantity: quantity,
+      rawMaterialsWarehouseId: rawWarehouse.id,
+      rawMaterialsWarehouseName: rawMaterialsWarehouseName.trim().isEmpty
+          ? rawWarehouse.name
+          : rawMaterialsWarehouseName.trim(),
+      finishedGoodsWarehouseId: finishedWarehouse.id,
+      finishedGoodsWarehouseName: finishedGoodsWarehouseName.trim().isEmpty
+          ? finishedWarehouse.name
+          : finishedGoodsWarehouseName.trim(),
+      notes: notes.trim(),
+      date: existingOrder?.date ?? now,
+      createdAt: existingOrder?.createdAt,
+      status: 'completed',
+    );
     var order = suppressPostCommitInternal && existingOrder != null
         ? orderPreview.copyWith(
             updatedAt: now,
@@ -1119,7 +1145,8 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             warehouseName: rawWarehouse.name,
             movementGroupId: operationReferenceId,
             documentLineId: '$operationReferenceId-consume-$lineIndex',
-            idempotencyKey: '$operationReferenceId:manufacture:consume:$lineIndex',
+            idempotencyKey:
+                '$operationReferenceId:manufacture:consume:$lineIndex',
             unitCost: lineUnitCost,
             createdAt: now,
             updatedAt: now,
@@ -1199,7 +1226,8 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             ? outputBatchAllocations
             : <BatchAllocation>[
                 BatchAllocation(
-                  batchId: '$operationReferenceId-${output.id}-manufacturing-batch',
+                  batchId:
+                      '$operationReferenceId-${output.id}-manufacturing-batch',
                   quantity: quantity,
                   manufacturingDate: now,
                   unitCost: producedUnitCost,
@@ -1259,7 +1287,8 @@ Future<ManufacturingOrder> completeManufacturingOrder({
             batchId: resolved.batchId,
             unitCost: producedUnitCost,
             documentLineId: '$operationReferenceId-produce-batch-$batchIndex',
-            idempotencyKey: '$operationReferenceId:manufacture:produce:$batchIndex',
+            idempotencyKey:
+                '$operationReferenceId:manufacture:produce:$batchIndex',
           ));
         }
         producedBatchAllocations = resolvedOutputBatches;
@@ -1403,6 +1432,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
           sortIndex: 0,
         );
       }
+
       if (withinExistingTransactionInternal) {
         await persistCompletion();
       } else {
@@ -1586,8 +1616,7 @@ Future<ManufacturingOrder> completeManufacturingOrder({
     return order;
   }
 
-
-Future<ManufacturingOrder> editCompletedManufacturingOrder({
+  Future<ManufacturingOrder> editCompletedManufacturingOrder({
     required String orderId,
     required int expectedVersion,
     required String bomId,
@@ -1613,7 +1642,8 @@ Future<ManufacturingOrder> editCompletedManufacturingOrder({
       );
     }
     await _flushProductDerivedData();
-    final persistedOrders = await BusinessSqliteStore.readManufacturingOrders(db);
+    final persistedOrders =
+        await BusinessSqliteStore.readManufacturingOrders(db);
     final initial = persistedOrders.firstWhere(
       (item) => item.id == orderId && !item.isDeleted,
       orElse: () => throw ArgumentError('Manufacturing order was not found.'),
@@ -1641,8 +1671,8 @@ Future<ManufacturingOrder> editCompletedManufacturingOrder({
           final rows = await BusinessSqliteStore.readManufacturingOrders(db);
           return rows.firstWhere(
             (item) => item.id == orderId && !item.isDeleted,
-            orElse: () =>
-                throw StateError('Manufacturing order disappeared during edit.'),
+            orElse: () => throw StateError(
+                'Manufacturing order disappeared during edit.'),
           );
         },
         validatePermission: (_) async {
@@ -1662,7 +1692,8 @@ Future<ManufacturingOrder> editCompletedManufacturingOrder({
           }
         },
         validateDependencies: (current) async {
-          final activeMovements = await BusinessSqliteStore.readStockMovements(db);
+          final activeMovements =
+              await BusinessSqliteStore.readStockMovements(db);
           final reversedIds = activeMovements
               .where((movement) => movement.reversalOfMovementId.isNotEmpty)
               .map((movement) => movement.reversalOfMovementId)
@@ -1791,8 +1822,9 @@ Future<ManufacturingOrder> editCompletedManufacturingOrder({
               'Edited manufacturing order failed version/status verification.',
             );
           }
-          final persisted = (await BusinessSqliteStore.readManufacturingOrders(db))
-              .firstWhere(
+          final persisted =
+              (await BusinessSqliteStore.readManufacturingOrders(db))
+                  .firstWhere(
             (item) => item.id == current.id && !item.isDeleted,
             orElse: () => throw StateError(
               'Edited manufacturing order was not persisted.',
@@ -1837,8 +1869,8 @@ Future<ManufacturingOrder> editCompletedManufacturingOrder({
       (item) => item.id == updated.id && !item.isDeleted,
       orElse: () => updated,
     );
-    final orderIndex =
-        _manufacturingOrders.indexWhere((item) => item.id == persistedUpdated.id);
+    final orderIndex = _manufacturingOrders
+        .indexWhere((item) => item.id == persistedUpdated.id);
     if (orderIndex == -1) {
       _manufacturingOrders.add(persistedUpdated);
     } else {
@@ -1910,8 +1942,7 @@ Future<ManufacturingOrder> editCompletedManufacturingOrder({
           batchId: data['id']?.toString() ?? '',
           quantity: (data['initial_quantity'] as num? ?? 0).toDouble(),
           unitCost: (data['unit_cost'] as num? ?? 0).toDouble(),
-          supplierBatchNumber:
-              data['supplier_batch_number']?.toString() ?? '',
+          supplierBatchNumber: data['supplier_batch_number']?.toString() ?? '',
           manufacturingDate:
               DateTime.tryParse(data['manufacturing_date']?.toString() ?? ''),
           expirationDate:
@@ -1939,7 +1970,7 @@ Future<ManufacturingOrder> editCompletedManufacturingOrder({
     return persistedUpdated;
   }
 
-Future<ManufacturingOrder> reverseManufacturingOrder({
+  Future<ManufacturingOrder> reverseManufacturingOrder({
     required String orderId,
     required String reason,
     bool withinExistingTransactionInternal = false,
@@ -2041,9 +2072,10 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
       allowNegativeStockResolver: (_, __) => _storeProfile.allowNegativeStock,
     );
     final batchService = BatchInventoryService(db);
-    final reversalOperationReferenceId = operationReferenceIdOverride.trim().isEmpty
-        ? '${order.id}:reversal'
-        : operationReferenceIdOverride.trim();
+    final reversalOperationReferenceId =
+        operationReferenceIdOverride.trim().isEmpty
+            ? '${order.id}:reversal'
+            : operationReferenceIdOverride.trim();
     final reversalTransactionIdempotencyKey =
         operationReferenceIdOverride.trim().isEmpty
             ? '${order.id}:manufacturing:reversal'
@@ -2170,7 +2202,6 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
             sortIndices: const <int?>[0],
           );
         }
-
       }
 
       // The manufactured receipt changed both stock and the product costing
@@ -2338,6 +2369,7 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
         sortIndex: 0,
       );
     }
+
     if (withinExistingTransactionInternal) {
       await persistReversal();
     } else {
@@ -2386,5 +2418,4 @@ Future<ManufacturingOrder> reverseManufacturingOrder({
     notifyListeners();
     return reversedOrder;
   }
-
 }

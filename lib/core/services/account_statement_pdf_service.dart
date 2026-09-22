@@ -1,15 +1,17 @@
 import 'dart:typed_data';
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../models/account_transaction.dart';
 import '../../models/expense.dart';
 import '../../models/store_profile.dart';
+import '../../models/print_settings.dart';
 import '../utils/currency_utils.dart';
 import 'professional_pdf_theme.dart';
+import 'print_service.dart';
 
 /// Builds printable, date-bounded account and expense statements.
 ///
@@ -51,6 +53,7 @@ class AccountStatementPdfService {
   }
 
   static Future<void> printAccountStatement({
+    BuildContext? context,
     required String accountType,
     required String accountName,
     required List<AccountTransaction> transactions,
@@ -68,9 +71,13 @@ class AccountStatementPdfService {
       profile: profile,
       locale: locale,
     );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.accountStatement,
+      bytes: bytes,
       name: 'account-statement-$accountName',
+      defaultFormat: PdfPageFormat.a4,
     );
   }
 
@@ -100,6 +107,7 @@ class AccountStatementPdfService {
   }
 
   static Future<void> printExpenseStatement({
+    BuildContext? context,
     required List<Expense> expenses,
     required DateTime from,
     required DateTime to,
@@ -115,9 +123,13 @@ class AccountStatementPdfService {
       accountName: accountName,
       locale: locale,
     );
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.expenseStatement,
+      bytes: bytes,
       name: 'expense-statement',
+      defaultFormat: PdfPageFormat.a4,
     );
   }
 
