@@ -4,8 +4,8 @@
     "channel":  "stable",
     "windows":  {
                     "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.53-build53.exe",
-                    "sha256":  "b80cd8fd9023587c03a801eb6f814e4719201bae4d54ca50f2e501409269035e",
-                    "size":  26186432
+                    "sha256":  "22eeef9fd946235e4386d47079ad43aa04e4d39bd772b09df681804518989464",
+                    "size":  26184936
                 },
     "android":  {
                     "source":  "play_store"

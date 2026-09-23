@@ -5,9 +5,9 @@
                          "url":  "/releases/windows/VentioSetup-1.0.53-build53.exe",
                          "version":  "1.0.53",
                          "build":  53,
-                         "size":  26186432,
-                         "sha256":  "b80cd8fd9023587c03a801eb6f814e4719201bae4d54ca50f2e501409269035e",
-                         "publishedAt":  "2026-09-22T08:27:17Z"
+                         "size":  26184936,
+                         "sha256":  "22eeef9fd946235e4386d47079ad43aa04e4d39bd772b09df681804518989464",
+                         "publishedAt":  "2026-09-23T07:18:25Z"
                      },
                      {
                          "name":  "VentioSetup-1.0.52-build52.exe",
@@ -17,33 +17,6 @@
                          "size":  26174857,
                          "sha256":  "e99bed9366abaa875593bff733e40c627a8c6ef59064841682ab213cb585a9be",
                          "publishedAt":  "2026-09-20T20:07:23Z"
-                     },
-                     {
-                         "name":  "VentioSetup-1.0.51-build51.exe",
-                         "url":  "/releases/windows/VentioSetup-1.0.51-build51.exe",
-                         "version":  "1.0.51",
-                         "build":  51,
-                         "size":  26157817,
-                         "sha256":  "0fe283e10b621ce5aa1b9a96d9abdfb5ecae165f3b7093a6026dc51076a9203d",
-                         "publishedAt":  "2026-09-19T08:51:05Z"
-                     },
-                     {
-                         "name":  "VentioSetup-1.0.50-build50.exe",
-                         "url":  "/releases/windows/VentioSetup-1.0.50-build50.exe",
-                         "version":  "1.0.50",
-                         "build":  50,
-                         "size":  26145605,
-                         "sha256":  "a2d2bfaf6624da3301372ac7a44234a9f4a8849c2326e234c9fa26712c648ac9",
-                         "publishedAt":  "2026-09-19T07:32:26Z"
-                     },
-                     {
-                         "name":  "VentioSetup-1.0.49-build49.exe",
-                         "url":  "/releases/windows/VentioSetup-1.0.49-build49.exe",
-                         "version":  "1.0.49",
-                         "build":  49,
-                         "size":  26132788,
-                         "sha256":  "6b64250b6b12664a9ede4a3e5271b36f29eea20fe7f24032218b9f609b667452",
-                         "publishedAt":  "2026-09-18T16:43:11Z"
                      }
                  ]
 }

@@ -401,7 +401,35 @@ class UnifiedBatchPhase4ClosureService {
       <Object?>[costingSettingKey, atText],
     );
 
-    final canonicalId = 'unified_batch_phase4_${at.microsecondsSinceEpoch}';
+    final canonicalBaseId =
+        'unified_batch_phase4_${at.microsecondsSinceEpoch}';
+    // The canonical id predates store-scoped identities. A reset/re-import can
+    // therefore leave a deleted row with the same id from another store. Keep
+    // that historical row intact and derive a stable store-scoped id for the
+    // new active boundary instead of retrying the colliding INSERT forever.
+    var canonicalId = canonicalBaseId;
+    final baseCollision = await _db.customSelect(
+      r'''
+      SELECT store_id, deleted_at
+      FROM costing_method_history
+      WHERE id = ?
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(canonicalBaseId),
+      ],
+    ).getSingleOrNull();
+    if (baseCollision != null) {
+      final collisionStoreId =
+          baseCollision.data['store_id']?.toString().trim() ?? '';
+      final collisionDeletedAt =
+          baseCollision.data['deleted_at']?.toString().trim() ?? '';
+      if (collisionDeletedAt.isNotEmpty ||
+          (collisionStoreId.isNotEmpty && collisionStoreId != storeId)) {
+        final safeStoreId = storeId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+        canonicalId = '$canonicalBaseId-$safeStoreId';
+      }
+    }
     final canonical = await _db.customSelect(
       r'''
       SELECT id, method, effective_from, effective_to, reason
