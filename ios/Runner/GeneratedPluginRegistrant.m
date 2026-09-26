@@ -60,12 +60,6 @@
 @import sqlite3_flutter_libs;
 #endif
 
-#if __has_include(<thermal_printer_flutter/ThermalPrinterFlutterPlugin.h>)
-#import <thermal_printer_flutter/ThermalPrinterFlutterPlugin.h>
-#else
-@import thermal_printer_flutter;
-#endif
-
 @implementation GeneratedPluginRegistrant
 
 + (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {
@@ -78,7 +72,6 @@
   [PrintingPlugin registerWithRegistrar:[registry registrarForPlugin:@"PrintingPlugin"]];
   [SharedPreferencesPlugin registerWithRegistrar:[registry registrarForPlugin:@"SharedPreferencesPlugin"]];
   [Sqlite3FlutterLibsPlugin registerWithRegistrar:[registry registrarForPlugin:@"Sqlite3FlutterLibsPlugin"]];
-  [ThermalPrinterFlutterPlugin registerWithRegistrar:[registry registrarForPlugin:@"ThermalPrinterFlutterPlugin"]];
 }
 
 @end

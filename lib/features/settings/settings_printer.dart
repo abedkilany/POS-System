@@ -56,11 +56,11 @@ extension _SettingsPrinterSection on SettingsPage {
 
     try {
       for (final printer in await Printing.listPrinters()) {
+        if (printer.url.trim().isEmpty) continue;
         final id = 'system:${printer.url}';
         byId[id] = PrintPrinterProfile(
           id: id,
           name: printer.name,
-          kind: 'system',
           url: printer.url,
         );
       }
@@ -68,44 +68,7 @@ extension _SettingsPrinterSection on SettingsPage {
       // A platform may not expose the system printer list.
     }
 
-    final thermalService = ThermalPrinterService();
-    try {
-      for (final type in thermal.PrinterType.values) {
-        try {
-          for (final printer in await thermalService.listPrinters(type)) {
-            final id = _thermalPrinterId(printer);
-            if (id.isEmpty) continue;
-            byId[id] = PrintPrinterProfile(
-              id: id,
-              name: printer.name.trim().isEmpty ? id : printer.name,
-              kind: 'thermal',
-              thermalType: printer.type.name,
-              ip: printer.ip,
-              port: int.tryParse(printer.port) ?? 9100,
-              bluetoothAddress: printer.bleAddress,
-              usbAddress: printer.usbAddress,
-            );
-          }
-        } catch (_) {
-          // USB/Bluetooth/network discovery is platform-dependent.
-        }
-      }
-    } finally {
-      await thermalService.dispose();
-    }
-
     return byId.values.toList(growable: false);
-  }
-
-  String _thermalPrinterId(thermal.Printer printer) {
-    final type = printer.type.name;
-    final address = switch (printer.type) {
-      thermal.PrinterType.network => '${printer.ip}:${printer.port}',
-      thermal.PrinterType.bluetooth => printer.bleAddress,
-      thermal.PrinterType.usb => printer.usbAddress,
-    };
-    final value = address.trim();
-    return value.isEmpty ? '' : 'thermal:$type:$value';
   }
 
   Future<void> _editPrintSettings(BuildContext context) async {
@@ -126,6 +89,7 @@ extension _SettingsPrinterSection on SettingsPage {
     } catch (_) {
       // Keep previously saved printers if discovery is unavailable.
     }
+    if (!context.mounted) return;
 
     final result = await showDialog<PrintSettings>(
       context: context,
@@ -223,9 +187,7 @@ extension _SettingsPrinterSection on SettingsPage {
   ) {
     final tr = AppLocalizations.of(context);
     final document = settings.forDocument(key);
-    final compatible = printers
-        .where((printer) => _printerSupportsFormat(printer, document.format))
-        .toList(growable: false);
+    final compatible = printers;
     final selectedPrinter =
         compatible.any((item) => item.id == document.printerId)
             ? document.printerId
@@ -271,11 +233,10 @@ extension _SettingsPrinterSection on SettingsPage {
                         .toList(growable: false),
                     onChanged: (value) {
                       if (value == null) return;
-                      final nextPrinter = printers.any((item) =>
-                              item.id == document.printerId &&
-                              _printerSupportsFormat(item, value))
-                          ? document.printerId
-                          : '';
+                      final nextPrinter =
+                          printers.any((item) => item.id == document.printerId)
+                              ? document.printerId
+                              : '';
                       update(document.copyWith(
                         format: value,
                         printerId: nextPrinter,
@@ -313,6 +274,28 @@ extension _SettingsPrinterSection on SettingsPage {
                   onSelected: (value) =>
                       update(document.copyWith(directPrint: value)),
                 ),
+                SizedBox(
+                  width: 130,
+                  child: DropdownButtonFormField<int>(
+                    initialValue: document.copies,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: tr.text('copies'),
+                      isDense: true,
+                    ),
+                    items: List<int>.generate(99, (index) => index + 1)
+                        .map((value) => DropdownMenuItem<int>(
+                              value: value,
+                              child: Text('$value'),
+                            ))
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value != null) {
+                        update(document.copyWith(copies: value));
+                      }
+                    },
+                  ),
+                ),
               ],
             ),
           ],
@@ -325,16 +308,10 @@ extension _SettingsPrinterSection on SettingsPage {
     return PrintDocumentKeys.allowedFormatsFor(key);
   }
 
-  bool _printerSupportsFormat(PrintPrinterProfile printer, String format) {
-    if (PrintPaperFormats.isThermal(format)) return printer.isThermal;
-    return printer.isSystem;
-  }
-
   String _printDocumentLabel(AppLocalizations tr, String key) {
     const labels = <String, String>{
       PrintDocumentKeys.salesInvoice: 'sales_invoice',
       PrintDocumentKeys.salesReturn: 'sales_return',
-      PrintDocumentKeys.thermalSalesInvoice: 'thermal_sales_invoice',
       PrintDocumentKeys.purchaseInvoice: 'purchase_invoice',
       PrintDocumentKeys.cashReceipt: 'cash_receipt',
       PrintDocumentKeys.cashShiftReport: 'cash_shift_report',
@@ -359,9 +336,9 @@ extension _SettingsPrinterSection on SettingsPage {
 
   String _printFormatLabel(AppLocalizations tr, String format) {
     switch (format) {
-      case PrintPaperFormats.thermal80:
+      case PrintPaperFormats.mm80:
         return '80 mm';
-      case PrintPaperFormats.thermal58:
+      case PrintPaperFormats.mm58:
         return '58 mm';
       case PrintPaperFormats.shippingLabel:
         return '4 × 6 in';

@@ -2,15 +2,24 @@
 class PrintPaperFormats {
   PrintPaperFormats._();
 
-  static const thermal80 = 'thermal_80';
-  static const thermal58 = 'thermal_58';
+  static const mm80 = 'mm_80';
+  static const mm58 = 'mm_58';
   static const a4 = 'a4';
   static const shippingLabel = 'shipping_label_4x6';
 
   static const all = <String>[
-    thermal80,
-    thermal58,
     a4,
+    mm58,
+    mm80,
+    shippingLabel,
+  ];
+
+  /// Formats available to ordinary documents. Barcode labels deliberately
+  /// keep their own size and layout workflow.
+  static const documentFormats = <String>[
+    a4,
+    mm58,
+    mm80,
     shippingLabel,
   ];
 
@@ -18,9 +27,6 @@ class PrintPaperFormats {
     final normalized = value.trim().toLowerCase();
     return all.contains(normalized) ? normalized : fallback;
   }
-
-  static bool isThermal(String value) =>
-      value == thermal80 || value == thermal58;
 }
 
 /// Stable identifiers for every non-barcode print action.
@@ -29,7 +35,6 @@ class PrintDocumentKeys {
 
   static const salesInvoice = 'sales_invoice';
   static const salesReturn = 'sales_return';
-  static const thermalSalesInvoice = 'thermal_sales_invoice';
   static const purchaseInvoice = 'purchase_invoice';
   static const cashReceipt = 'cash_receipt';
   static const cashShiftReport = 'cash_shift_report';
@@ -51,7 +56,6 @@ class PrintDocumentKeys {
   static const all = <String>[
     salesInvoice,
     salesReturn,
-    thermalSalesInvoice,
     purchaseInvoice,
     cashReceipt,
     cashShiftReport,
@@ -72,19 +76,14 @@ class PrintDocumentKeys {
   ];
 
   static String defaultFormatFor(String key) {
-    if (key == thermalSalesInvoice || key == cashReceipt) {
-      return PrintPaperFormats.thermal80;
-    }
     if (key == shippingLabel) return PrintPaperFormats.shippingLabel;
+    if (key == cashReceipt) return PrintPaperFormats.mm80;
     return PrintPaperFormats.a4;
   }
 
   static List<String> allowedFormatsFor(String key) {
-    if (key == thermalSalesInvoice || key == cashReceipt) {
-      return const [PrintPaperFormats.thermal80, PrintPaperFormats.thermal58];
-    }
     if (key == shippingLabel) return const [PrintPaperFormats.shippingLabel];
-    return const [PrintPaperFormats.a4];
+    return PrintPaperFormats.documentFormats;
   }
 }
 
@@ -92,52 +91,24 @@ class PrintPrinterProfile {
   const PrintPrinterProfile({
     required this.id,
     required this.name,
-    required this.kind,
     this.url = '',
-    this.thermalType = '',
-    this.ip = '',
-    this.port = 9100,
-    this.bluetoothAddress = '',
-    this.usbAddress = '',
   });
 
   final String id;
   final String name;
-  final String kind; // system or thermal
   final String url;
-  final String thermalType; // network, bluetooth, usb
-  final String ip;
-  final int port;
-  final String bluetoothAddress;
-  final String usbAddress;
-
-  bool get isSystem => kind == 'system';
-  bool get isThermal => kind == 'thermal';
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'id': id,
         'name': name,
-        'kind': kind,
         'url': url,
-        'thermalType': thermalType,
-        'ip': ip,
-        'port': port,
-        'bluetoothAddress': bluetoothAddress,
-        'usbAddress': usbAddress,
       };
 
   factory PrintPrinterProfile.fromJson(Map<String, dynamic> json) {
-    final kind = json['kind']?.toString() == 'thermal' ? 'thermal' : 'system';
     return PrintPrinterProfile(
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
-      kind: kind,
       url: json['url']?.toString() ?? '',
-      thermalType: json['thermalType']?.toString() ?? '',
-      ip: json['ip']?.toString() ?? '',
-      port: (json['port'] as num? ?? 9100).toInt().clamp(1, 65535),
-      bluetoothAddress: json['bluetoothAddress']?.toString() ?? '',
-      usbAddress: json['usbAddress']?.toString() ?? '',
     );
   }
 }
@@ -259,7 +230,8 @@ class PrintSettings {
             .whereType<Map>()
             .map((item) =>
                 PrintPrinterProfile.fromJson(Map<String, dynamic>.from(item)))
-            .where((printer) => printer.id.trim().isNotEmpty)
+            .where((printer) =>
+                printer.id.trim().isNotEmpty && printer.url.trim().isNotEmpty)
             .toList(growable: false)
         : const <PrintPrinterProfile>[];
     final rawDocuments = json['documents'];
@@ -267,7 +239,7 @@ class PrintSettings {
     if (rawDocuments is Map) {
       for (final entry in rawDocuments.entries) {
         final key = entry.key.toString();
-        if (entry.value is Map) {
+        if (PrintDocumentKeys.all.contains(key) && entry.value is Map) {
           documents[key] = PrintDocumentSettings.fromJson(
             key,
             Map<String, dynamic>.from(entry.value as Map),

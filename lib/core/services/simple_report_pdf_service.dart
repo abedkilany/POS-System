@@ -1,4 +1,5 @@
-import 'package:flutter/services.dart';
+import 'dart:typed_data';
+
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -20,25 +21,31 @@ class SimpleReportPdfService {
     final pdfFonts = await PdfFontLoader.loadArabicFonts();
     final font = pdfFonts.regular;
     final bold = pdfFonts.bold;
-    final pdf =
-        pw.Document(theme: pw.ThemeData.withFont(base: font, bold: bold));
-    pdf.addPage(pw.MultiPage(
-      pageFormat: PdfPageFormat.a4,
-      textDirection: arabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
-      build: (_) => [
-        pw.Text(title, style: pw.TextStyle(font: bold, fontSize: 20)),
-        pw.SizedBox(height: 16),
-        ...lines.map((line) => pw.Padding(
-              padding: const pw.EdgeInsets.only(bottom: 8),
-              child: pw.Text(line),
-            )),
-      ],
-    ));
+    if (context != null && !context.mounted) return;
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: documentKey,
-      bytes: Uint8List.fromList(await pdf.save()),
+      bytesBuilder: (selection) async {
+        final pdf =
+            pw.Document(theme: pw.ThemeData.withFont(base: font, bold: bold));
+        pdf.addPage(pw.MultiPage(
+          pageFormat: PrintService.pageFormatFor(
+            selection.format,
+            fallback: PdfPageFormat.a4,
+          ),
+          textDirection: arabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+          build: (_) => [
+            pw.Text(title, style: pw.TextStyle(font: bold, fontSize: 20)),
+            pw.SizedBox(height: 16),
+            ...lines.map((line) => pw.Padding(
+                  padding: const pw.EdgeInsets.only(bottom: 8),
+                  child: pw.Text(line),
+                )),
+          ],
+        ));
+        return Uint8List.fromList(await pdf.save());
+      },
       name: title,
       defaultFormat: PdfPageFormat.a4,
     );

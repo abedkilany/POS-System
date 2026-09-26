@@ -1,6 +1,4 @@
 import 'dart:typed_data';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -17,6 +15,7 @@ class ExpensePdfService {
     required Expense expense,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _ExpensePdfLabels(locale.languageCode);
     final isArabic = labels.isArabic;
@@ -32,7 +31,7 @@ class ExpensePdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -92,13 +91,19 @@ class ExpensePdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildExpensePdf(
-        expense: expense, profile: profile, locale: locale);
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.expense,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildExpensePdf(
+        expense: expense,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: expense.title,
       defaultFormat: PdfPageFormat.a4,
     );

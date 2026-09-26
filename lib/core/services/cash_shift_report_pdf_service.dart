@@ -1,6 +1,4 @@
 import 'dart:typed_data';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -20,19 +18,23 @@ class CashShiftReportPdfService {
     required bool detailed,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
-    final bytes = await buildShiftPdf(
-      session: session,
-      movements: movements,
-      detailed: detailed,
-      profile: profile,
-      locale: locale,
-    );
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.cashShiftReport,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildShiftPdf(
+        session: session,
+        movements: movements,
+        detailed: detailed,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: 'shift-${session.drawerNo.isEmpty ? session.id : session.drawerNo}',
       defaultFormat: PdfPageFormat.a4,
     );
@@ -44,6 +46,7 @@ class CashShiftReportPdfService {
     required bool detailed,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final ar = locale.languageCode == 'ar';
     final theme = await ProfessionalPdfTheme.loadTheme();
@@ -70,7 +73,7 @@ class CashShiftReportPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: ar ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1

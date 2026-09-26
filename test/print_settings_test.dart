@@ -3,11 +3,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ventio/models/print_settings.dart';
 
 void main() {
-  test('document defaults use thermal, A4, and shipping formats', () {
+  test('document defaults use standard, narrow, and shipping formats', () {
     expect(
-      PrintDocumentKeys.defaultFormatFor(PrintDocumentKeys.thermalSalesInvoice),
-      PrintPaperFormats.thermal80,
+      PrintDocumentKeys.defaultFormatFor(PrintDocumentKeys.salesInvoice),
+      PrintPaperFormats.a4,
     );
+    expect(
+        PrintDocumentKeys.allowedFormatsFor(PrintDocumentKeys.salesInvoice),
+        containsAll(<String>[
+          PrintPaperFormats.a4,
+          PrintPaperFormats.mm58,
+          PrintPaperFormats.mm80,
+          PrintPaperFormats.shippingLabel,
+        ]));
     expect(
       PrintDocumentKeys.defaultFormatFor(PrintDocumentKeys.report),
       PrintPaperFormats.a4,
@@ -27,7 +35,6 @@ void main() {
         PrintPrinterProfile(
           id: 'system:test',
           name: 'Office Printer',
-          kind: 'system',
           url: 'printer://test',
         ),
       ],
@@ -36,6 +43,7 @@ void main() {
           format: PrintPaperFormats.a4,
           printerId: 'system:test',
           directPrint: true,
+          copies: 3,
         ),
       },
     );
@@ -47,6 +55,7 @@ void main() {
     expect(restored.forDocument(PrintDocumentKeys.report).printerId,
         'system:test');
     expect(restored.forDocument(PrintDocumentKeys.report).directPrint, isTrue);
+    expect(restored.forDocument(PrintDocumentKeys.report).copies, 3);
   });
 
   test('invalid persisted formats fall back to the document default', () {
@@ -58,7 +67,7 @@ void main() {
     });
 
     expect(settings.forDocument(PrintDocumentKeys.cashReceipt).format,
-        PrintPaperFormats.thermal80);
+        PrintPaperFormats.mm80);
     expect(settings.forDocument(PrintDocumentKeys.shippingLabel).format,
         PrintPaperFormats.shippingLabel);
   });

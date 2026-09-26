@@ -1,6 +1,4 @@
 import 'dart:typed_data';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -16,13 +14,14 @@ class ManufacturingPdfService {
     required BillOfMaterials bom,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _Labels(locale.languageCode);
     final isArabic = labels.isArabic;
     final pdf = pw.Document(theme: await ProfessionalPdfTheme.loadTheme());
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -93,13 +92,19 @@ class ManufacturingPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildBillOfMaterialsPdf(
-        bom: bom, profile: profile, locale: locale);
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.manufacturingBom,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildBillOfMaterialsPdf(
+        bom: bom,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: bom.name.isEmpty ? 'manufacturing-recipe' : bom.name,
       defaultFormat: PdfPageFormat.a4,
     );
@@ -110,6 +115,7 @@ class ManufacturingPdfService {
     BillOfMaterials? bom,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _Labels(locale.languageCode);
     final isArabic = labels.isArabic;
@@ -120,7 +126,7 @@ class ManufacturingPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -200,13 +206,20 @@ class ManufacturingPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildManufacturingOrderPdf(
-        order: order, bom: bom, profile: profile, locale: locale);
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.manufacturingOrder,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildManufacturingOrderPdf(
+        order: order,
+        bom: bom,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: order.orderNo.isEmpty ? 'manufacturing-order' : order.orderNo,
       defaultFormat: PdfPageFormat.a4,
     );
@@ -218,6 +231,7 @@ class ManufacturingPdfService {
     required bool includeDetails,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _Labels(locale.languageCode);
     final isArabic = labels.isArabic;
@@ -225,7 +239,7 @@ class ManufacturingPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -287,17 +301,21 @@ class ManufacturingPdfService {
     Locale locale = const Locale('en'),
   }) async {
     if (orders.isEmpty) return;
-    final bytes = await buildManufacturingOrdersPdf(
-        orders: orders,
-        bomsById: bomsById,
-        includeDetails: includeDetails,
-        profile: profile,
-        locale: locale);
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.manufacturingOrders,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildManufacturingOrdersPdf(
+        orders: orders,
+        bomsById: bomsById,
+        includeDetails: includeDetails,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: 'manufacturing-orders-${orders.length}',
       defaultFormat: PdfPageFormat.a4,
     );

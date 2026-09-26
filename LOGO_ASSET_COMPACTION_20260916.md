@@ -7,7 +7,7 @@ This patch is intentionally limited to the repeated store-logo payload that was 
 - StoreProfile keeps the active logo once in `logoDataBase64` and identifies it with a SHA-256 content id (`logoAssetId`).
 - When the logo changes, the previous logo is moved once into `historicalLogoAssetsBase64`, keyed by its content id.
 - Posted document snapshots no longer embed `logoDataBase64` or the historical logo registry. They freeze only `logoAssetId` and the small logo metadata.
-- PDF/thermal rendering resolves the historical logo from the active/historical StoreProfile asset registry, so changing the logo does not alter old posted documents.
+- PDF rendering resolves the historical logo from the active/historical StoreProfile asset registry, so changing the logo does not alter old posted documents.
 - Incoming StoreProfile replacements/sync merges preserve already-known historical logo assets.
 
 ## Legacy database migration

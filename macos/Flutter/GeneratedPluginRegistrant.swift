@@ -13,7 +13,6 @@ import mobile_scanner
 import printing
 import shared_preferences_foundation
 import sqlite3_flutter_libs
-import thermal_printer_flutter
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   AudioplayersDarwinPlugin.register(with: registry.registrar(forPlugin: "AudioplayersDarwinPlugin"))
@@ -24,5 +23,4 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   PrintingPlugin.register(with: registry.registrar(forPlugin: "PrintingPlugin"))
   SharedPreferencesPlugin.register(with: registry.registrar(forPlugin: "SharedPreferencesPlugin"))
   Sqlite3FlutterLibsPlugin.register(with: registry.registrar(forPlugin: "Sqlite3FlutterLibsPlugin"))
-  ThermalPrinterFlutterPlugin.register(with: registry.registrar(forPlugin: "ThermalPrinterFlutterPlugin"))
 }

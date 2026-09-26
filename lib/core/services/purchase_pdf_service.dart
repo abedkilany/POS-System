@@ -1,8 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -27,6 +25,7 @@ class PurchasePdfService {
     required Purchase purchase,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final documentPurchase =
         PostedDocumentSnapshotService.purchaseView(purchase);
@@ -45,7 +44,7 @@ class PurchasePdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -98,16 +97,19 @@ class PurchasePdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildPurchasePdf(
-      purchase: purchase,
-      profile: profile,
-      locale: locale,
-    );
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.purchaseInvoice,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildPurchasePdf(
+        purchase: purchase,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: purchase.purchaseNo,
       defaultFormat: PdfPageFormat.a4,
     );

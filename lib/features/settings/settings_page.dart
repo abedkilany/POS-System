@@ -10,8 +10,6 @@ import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:printing/printing.dart';
-import 'package:thermal_printer_flutter/thermal_printer_flutter.dart'
-    as thermal;
 
 import '../../core/app_brand.dart';
 import '../../core/services/backup_download_service.dart';
@@ -25,7 +23,6 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/app_update_service.dart';
-import '../../core/services/thermal_printer_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/shortcuts/app_shortcuts.dart';

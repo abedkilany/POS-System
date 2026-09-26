@@ -28,6 +28,7 @@ class InvoicePdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
     bool isReturn = false,
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final documentSale = PostedDocumentSnapshotService.saleView(sale);
     final documentProfile =
@@ -57,7 +58,7 @@ class InvoicePdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -111,16 +112,19 @@ class InvoicePdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildInvoicePdf(
-      sale: sale,
-      profile: profile,
-      locale: locale,
-    );
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.salesInvoice,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildInvoicePdf(
+        sale: sale,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: sale.invoiceNo,
       defaultFormat: PdfPageFormat.a4,
     );
@@ -148,16 +152,19 @@ class InvoicePdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildSaleReturnPdf(
-      creditNote: creditNote,
-      profile: profile,
-      locale: locale,
-    );
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.salesReturn,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildSaleReturnPdf(
+        creditNote: creditNote,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: creditNote.creditNoteNo,
       defaultFormat: PdfPageFormat.a4,
     );
@@ -167,6 +174,7 @@ class InvoicePdfService {
     required CreditNote creditNote,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) {
     final subtotal = creditNote.items.fold<double>(
       0,
@@ -198,6 +206,7 @@ class InvoicePdfService {
       profile: profile,
       locale: locale,
       isReturn: true,
+      pageFormat: pageFormat,
     );
   }
 

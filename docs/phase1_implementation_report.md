@@ -16,7 +16,7 @@ Implemented in code. Full `flutter analyze` and full test suite intentionally de
 - Added sale-return backfill/loading support in AppStore paths.
 - Invoice PDF uses snapshot-derived sale + frozen StoreProfile when a snapshot exists.
 - Purchase PDF uses snapshot-derived purchase + frozen StoreProfile when a snapshot exists.
-- Thermal sale printing/virtual-printer rendering uses the snapshot-derived sale/profile.
+- PDF sale printing/rendering uses the snapshot-derived sale/profile.
 - Added targeted snapshot tests for serialization/immutability behavior.
 
 ## Important design decisions
@@ -30,7 +30,7 @@ The current execution environment does not provide Flutter/Dart SDK, and the pro
 - targeted snapshot tests
 - full Flutter tests
 - migration tests
-- PDF/thermal regression tests
+- PDF regression tests
 
 ## Next phase
 Phase 2 — Tax Profiles, VAT, and legal invoice behavior.

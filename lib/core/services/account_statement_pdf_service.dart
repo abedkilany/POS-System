@@ -1,6 +1,4 @@
 import 'dart:typed_data';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -27,6 +25,7 @@ class AccountStatementPdfService {
     required DateTime to,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _StatementLabels(locale.languageCode);
     final rows = _accountRows(
@@ -49,6 +48,7 @@ class AccountStatementPdfService {
       labels: labels,
       openingBalance: _openingBalance(transactions, from),
       showBalance: true,
+      pageFormat: pageFormat,
     );
   }
 
@@ -62,20 +62,23 @@ class AccountStatementPdfService {
     required StoreProfile profile,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildAccountStatementPdf(
-      accountType: accountType,
-      accountName: accountName,
-      transactions: transactions,
-      from: from,
-      to: to,
-      profile: profile,
-      locale: locale,
-    );
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.accountStatement,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildAccountStatementPdf(
+        accountType: accountType,
+        accountName: accountName,
+        transactions: transactions,
+        from: from,
+        to: to,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: 'account-statement-$accountName',
       defaultFormat: PdfPageFormat.a4,
     );
@@ -88,6 +91,7 @@ class AccountStatementPdfService {
     required StoreProfile profile,
     String accountName = '',
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _StatementLabels(locale.languageCode);
     final rows = _expenseRows(expenses, from, to, labels);
@@ -103,6 +107,7 @@ class AccountStatementPdfService {
       labels: labels,
       openingBalance: 0,
       showBalance: false,
+      pageFormat: pageFormat,
     );
   }
 
@@ -115,19 +120,22 @@ class AccountStatementPdfService {
     String accountName = '',
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildExpenseStatementPdf(
-      expenses: expenses,
-      from: from,
-      to: to,
-      profile: profile,
-      accountName: accountName,
-      locale: locale,
-    );
     await PrintService.printPdf(
       context: context,
       profile: profile,
       documentKey: PrintDocumentKeys.expenseStatement,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildExpenseStatementPdf(
+        expenses: expenses,
+        from: from,
+        to: to,
+        profile: profile,
+        accountName: accountName,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: 'expense-statement',
       defaultFormat: PdfPageFormat.a4,
     );
@@ -231,6 +239,7 @@ class AccountStatementPdfService {
     required _StatementLabels labels,
     required double openingBalance,
     required bool showBalance,
+    required PdfPageFormat pageFormat,
   }) async {
     final isArabic = labels.isArabic;
     final theme = await ProfessionalPdfTheme.loadTheme();
@@ -290,7 +299,7 @@ class AccountStatementPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1

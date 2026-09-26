@@ -65,7 +65,7 @@ Implementation complete in code and ready for release verification with `flutter
 - Product editing exposes tax-profile assignment.
 - Sale and purchase PDFs show seller VAT/tax registration identity when configured.
 - Posted PDFs show line tax treatment, net-before-VAT, and VAT totals using frozen snapshot values.
-- Thermal sale output shows the same frozen VAT summary and tax registration identity.
+- Sale PDF output shows the same frozen VAT summary and tax registration identity.
 - Arabic, English, and French strings were added for the new tax-profile UI.
 
 ## Regression coverage added

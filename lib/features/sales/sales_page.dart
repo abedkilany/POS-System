@@ -13,8 +13,6 @@ import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/invoice_pdf_service.dart';
-import '../../core/services/thermal_printer_service.dart';
-import '../../core/services/print_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
@@ -25,13 +23,11 @@ import '../../models/app_user.dart';
 import '../../models/customer.dart';
 import '../../models/credit_note.dart';
 import '../../models/product.dart';
-import '../../models/print_settings.dart';
 import '../../models/sale.dart';
 import '../../models/sale_item.dart';
 import '../../models/sale_summary.dart';
 import '../../models/user_role.dart';
 import '../../models/warehouse.dart';
-import 'package:thermal_printer_flutter/thermal_printer_flutter.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -4195,20 +4191,6 @@ class _SalesPageState extends State<SalesPage> {
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: widget.store.hasPermission(
-                                            AppPermission.salesPrint)
-                                        ? () => _handleInvoiceAction(
-                                              () => _printThermalInvoice(
-                                                  context, sale),
-                                              failureMessageKey:
-                                                  'thermal_print_failed',
-                                            )
-                                        : null,
-                                    icon: const Icon(Icons.print_outlined),
-                                    label:
-                                        Text(tr.text('print_thermal_invoice')),
-                                  ),
-                                  OutlinedButton.icon(
-                                    onPressed: widget.store.hasPermission(
                                             AppPermission.salesExport)
                                         ? () => _handleInvoiceAction(() =>
                                             InvoicePdfService.shareInvoice(
@@ -4494,16 +4476,6 @@ class _SalesPageState extends State<SalesPage> {
                     : null,
                 icon: const Icon(Icons.print_outlined),
                 label: Text(tr.text('print_invoice')),
-              ),
-              OutlinedButton.icon(
-                onPressed: widget.store.hasPermission(AppPermission.salesPrint)
-                    ? () => _handleInvoiceAction(
-                          () => _printThermalInvoice(context, sale),
-                          failureMessageKey: 'thermal_print_failed',
-                        )
-                    : null,
-                icon: const Icon(Icons.print_outlined),
-                label: Text(tr.text('print_thermal_invoice')),
               ),
               OutlinedButton.icon(
                 onPressed: widget.store.hasPermission(AppPermission.salesExport)
@@ -6600,54 +6572,6 @@ class _SalesPageState extends State<SalesPage> {
           content: SelectableText('$message\n$visibleError'),
         ),
       );
-    }
-  }
-
-  Future<void> _printThermalInvoice(BuildContext context, Sale sale) async {
-    final profile = widget.store.storeProfile;
-    final selection = await PrintService.resolveSelection(
-      context: context,
-      profile: profile,
-      documentKey: PrintDocumentKeys.thermalSalesInvoice,
-      allowedFormats: const [
-        PrintPaperFormats.thermal80,
-        PrintPaperFormats.thermal58,
-      ],
-    );
-    final printerProfile = profile.printSettings.printerById(
-      selection.printerId,
-    );
-    if (printerProfile == null || !printerProfile.isThermal) {
-      throw StateError(
-          AppLocalizations.of(context).text('thermal_printer_not_configured'));
-    }
-    final type = switch (printerProfile.thermalType) {
-      'bluetooth' => PrinterType.bluetooth,
-      'usb' => PrinterType.usb,
-      _ => PrinterType.network,
-    };
-    final printer = Printer(
-      type: type,
-      name: printerProfile.name,
-      ip: printerProfile.ip,
-      port: printerProfile.port.toString(),
-      bleAddress: printerProfile.bluetoothAddress,
-      usbAddress: printerProfile.usbAddress,
-    );
-    final service = ThermalPrinterService();
-    try {
-      await service.printSale(
-        context: context,
-        sale: sale,
-        profile: profile,
-        printer: printer,
-        locale: AppLocalizations.of(context).locale,
-        paperWidth: selection.format == PrintPaperFormats.thermal58
-            ? ThermalPaperWidth.mm58
-            : ThermalPaperWidth.mm80,
-      );
-    } finally {
-      await service.dispose();
     }
   }
 }

@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
@@ -97,15 +95,21 @@ class CashReceiptPdfService {
         transaction: transaction,
         profile: profile,
         locale: locale,
-        pageFormat: selection.format == PrintPaperFormats.thermal58
-            ? const PdfPageFormat(
-                58 * PdfPageFormat.mm,
-                180 * PdfPageFormat.mm,
-              )
-            : const PdfPageFormat(
-                80 * PdfPageFormat.mm,
-                180 * PdfPageFormat.mm,
-              ),
+        pageFormat: switch (selection.format) {
+          PrintPaperFormats.mm58 => const PdfPageFormat(
+              58 * PdfPageFormat.mm,
+              180 * PdfPageFormat.mm,
+            ),
+          PrintPaperFormats.a4 => PdfPageFormat.a4,
+          PrintPaperFormats.shippingLabel => const PdfPageFormat(
+              102 * PdfPageFormat.mm,
+              152 * PdfPageFormat.mm,
+            ),
+          _ => const PdfPageFormat(
+              80 * PdfPageFormat.mm,
+              180 * PdfPageFormat.mm,
+            ),
+        },
       ),
       name: transaction.referenceNumber.trim().isNotEmpty
           ? transaction.referenceNumber.trim()
@@ -114,10 +118,6 @@ class CashReceiptPdfService {
         80 * PdfPageFormat.mm,
         180 * PdfPageFormat.mm,
       ),
-      allowedFormats: const [
-        PrintPaperFormats.thermal80,
-        PrintPaperFormats.thermal58,
-      ],
     );
   }
 

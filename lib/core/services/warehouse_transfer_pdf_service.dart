@@ -1,6 +1,4 @@
 import 'dart:typed_data';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -16,6 +14,7 @@ class WarehouseTransferPdfService {
     required WarehouseTransferOrder order,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _WarehouseTransferPdfLabels(locale.languageCode);
     final isArabic = labels.isArabic;
@@ -24,7 +23,7 @@ class WarehouseTransferPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -96,16 +95,21 @@ class WarehouseTransferPdfService {
     BuildContext? context,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildTransferOrderPdf(
-        order: order, profile: profile, locale: locale);
     await PrintService.printPdf(
       profile: profile,
       documentKey: PrintDocumentKeys.warehouseTransfer,
       context: context,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildTransferOrderPdf(
+        order: order,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: order.orderNo.isEmpty ? 'warehouse-transfer' : order.orderNo,
       defaultFormat: PdfPageFormat.a4,
-      allowedFormats: const [PrintPaperFormats.a4],
     );
   }
 

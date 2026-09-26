@@ -1,6 +1,4 @@
 import 'dart:typed_data';
-import 'dart:ui' show Locale;
-
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -24,6 +22,7 @@ class WarehouseInventoryPdfService {
     required List<WarehouseInventoryPdfRow> rows,
     required StoreProfile profile,
     Locale locale = const Locale('en'),
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final labels = _WarehouseInventoryPdfLabels(locale.languageCode);
     final isArabic = labels.isArabic;
@@ -35,7 +34,7 @@ class WarehouseInventoryPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -112,8 +111,6 @@ class WarehouseInventoryPdfService {
     BuildContext? context,
     Locale locale = const Locale('en'),
   }) async {
-    final bytes = await buildWarehouseInventoryPdf(
-        warehouse: warehouse, rows: rows, profile: profile, locale: locale);
     final safeName = warehouse.code.trim().isNotEmpty
         ? warehouse.code.trim()
         : warehouse.name.trim();
@@ -121,10 +118,18 @@ class WarehouseInventoryPdfService {
       profile: profile,
       documentKey: PrintDocumentKeys.warehouseInventory,
       context: context,
-      bytes: bytes,
+      bytesBuilder: (selection) => buildWarehouseInventoryPdf(
+        warehouse: warehouse,
+        rows: rows,
+        profile: profile,
+        locale: locale,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: safeName.isEmpty ? 'warehouse-inventory' : 'inventory-$safeName',
       defaultFormat: PdfPageFormat.a4,
-      allowedFormats: const [PrintPaperFormats.a4],
     );
   }
 

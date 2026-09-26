@@ -2339,29 +2339,34 @@ class _AccountingPrintablePageState extends State<_AccountingPrintablePage> {
         byteData.offsetInBytes,
         byteData.lengthInBytes,
       );
-      final pdf = pw.Document();
-      final pageFormat = image.width >= image.height
-          ? PdfPageFormat.a4.landscape
-          : PdfPageFormat.a4;
+      if (!mounted) return;
       final pdfImage = pw.MemoryImage(Uint8List.fromList(imageBytes));
-      pdf.addPage(
-        pw.Page(
-          pageFormat: pageFormat,
-          margin: const pw.EdgeInsets.all(18),
-          build: (_) => pw.Center(
-            child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
-          ),
-        ),
-      );
-      final bytes = await pdf.save();
       await PrintService.printPdf(
         profile: widget.store.storeProfile,
         documentKey: PrintDocumentKeys.accountingPage,
         context: context,
-        bytes: Uint8List.fromList(bytes),
+        bytesBuilder: (selection) async {
+          final pdf = pw.Document();
+          final pageFormat = selection.format == PrintPaperFormats.a4 &&
+                  image.width >= image.height
+              ? PdfPageFormat.a4.landscape
+              : PrintService.pageFormatFor(
+                  selection.format,
+                  fallback: PdfPageFormat.a4,
+                );
+          pdf.addPage(
+            pw.Page(
+              pageFormat: pageFormat,
+              margin: const pw.EdgeInsets.all(18),
+              build: (_) => pw.Center(
+                child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
+              ),
+            ),
+          );
+          return Uint8List.fromList(await pdf.save());
+        },
         name: widget.title.trim().isEmpty ? 'accounting' : widget.title.trim(),
         defaultFormat: PdfPageFormat.a4,
-        allowedFormats: const [PrintPaperFormats.a4],
       );
     } catch (error) {
       if (!mounted) return;

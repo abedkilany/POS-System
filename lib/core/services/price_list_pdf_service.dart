@@ -18,6 +18,7 @@ class PriceListPdfService {
     List<String> fields = const <String>[],
     String Function(Product product, String field)? valueResolver,
     bool arabic = false,
+    PdfPageFormat pageFormat = PdfPageFormat.a4,
   }) async {
     final theme = await ProfessionalPdfTheme.loadTheme();
     final pdf = pw.Document(theme: theme);
@@ -39,7 +40,7 @@ class PriceListPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.fromLTRB(24, 22, 24, 22),
         textDirection: arabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         header: (context) => context.pageNumber == 1
@@ -82,18 +83,22 @@ class PriceListPdfService {
     String Function(Product product, String field)? valueResolver,
     bool arabic = false,
   }) async {
-    final bytes = await build(
+    await PrintService.printPdf(
+      context: context,
+      profile: profile,
+      documentKey: PrintDocumentKeys.priceList,
+      bytesBuilder: (selection) => build(
         products: products,
         profile: profile,
         title: title,
         fields: fields,
         valueResolver: valueResolver,
-        arabic: arabic);
-    await PrintService.printPdf(
-      context: context,
-      profile: profile,
-      documentKey: PrintDocumentKeys.priceList,
-      bytes: bytes,
+        arabic: arabic,
+        pageFormat: PrintService.pageFormatFor(
+          selection.format,
+          fallback: PdfPageFormat.a4,
+        ),
+      ),
       name: 'price-list',
       defaultFormat: PdfPageFormat.a4,
     );

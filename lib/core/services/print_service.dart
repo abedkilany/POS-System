@@ -13,11 +13,13 @@ class PrintSelection {
     required this.format,
     required this.printerId,
     required this.directPrint,
+    required this.copies,
   });
 
   final String format;
   final String printerId;
   final bool directPrint;
+  final int copies;
 }
 
 /// Centralizes the print preference behavior used by every non-barcode print
@@ -37,6 +39,7 @@ class PrintService {
       format: safeFormat,
       printerId: defaults.printerId,
       directPrint: defaults.directPrint,
+      copies: defaults.copies,
     );
 
     if (!profile.printSettings.showOptionsBeforePrint || context == null) {
@@ -63,13 +66,15 @@ class PrintService {
     Future<Uint8List> Function(PrintSelection selection)? bytesBuilder,
     required String name,
     required PdfPageFormat defaultFormat,
-    List<String> allowedFormats = const [PrintPaperFormats.a4],
+    List<String>? allowedFormats,
   }) async {
+    final formats =
+        allowedFormats ?? PrintDocumentKeys.allowedFormatsFor(documentKey);
     final selection = await resolveSelection(
       context: context,
       profile: profile,
       documentKey: documentKey,
-      allowedFormats: allowedFormats,
+      allowedFormats: formats,
     );
     final configuredPrinter = profile.printSettings.printerById(
       selection.printerId,
@@ -83,20 +88,23 @@ class PrintService {
 
     Future<Uint8List> onLayout(PdfPageFormat _) async => outputBytes;
 
-    if (selection.directPrint && configuredPrinter?.isSystem == true) {
+    if (selection.directPrint && configuredPrinter != null) {
       final printer = Printer(
-        url: configuredPrinter!.url,
+        url: configuredPrinter.url,
         name: configuredPrinter.name,
       );
       final info = await Printing.info();
       if (info.directPrint) {
-        await Printing.directPrintPdf(
-          printer: printer,
-          onLayout: onLayout,
-          name: name,
-          format: format,
-          usePrinterSettings: true,
-        );
+        for (var copy = 0; copy < selection.copies; copy++) {
+          await Printing.directPrintPdf(
+            printer: printer,
+            onLayout: onLayout,
+            name: name,
+            format: format,
+            usePrinterSettings: false,
+            forceCustomPrintPaper: true,
+          );
+        }
         return;
       }
     }
@@ -114,12 +122,12 @@ class PrintService {
     required PdfPageFormat fallback,
   }) {
     switch (format) {
-      case PrintPaperFormats.thermal80:
+      case PrintPaperFormats.mm80:
         return const PdfPageFormat(
-            80 * PdfPageFormat.mm, 200 * PdfPageFormat.mm);
-      case PrintPaperFormats.thermal58:
+            80 * PdfPageFormat.mm, 180 * PdfPageFormat.mm);
+      case PrintPaperFormats.mm58:
         return const PdfPageFormat(
-            58 * PdfPageFormat.mm, 200 * PdfPageFormat.mm);
+            58 * PdfPageFormat.mm, 180 * PdfPageFormat.mm);
       case PrintPaperFormats.shippingLabel:
         return const PdfPageFormat(
             102 * PdfPageFormat.mm, 152 * PdfPageFormat.mm);
@@ -151,6 +159,7 @@ class _PrintSelectionDialogState extends State<_PrintSelectionDialog> {
   late String _format;
   late String _printerId;
   late bool _directPrint;
+  late int _copies;
 
   @override
   void initState() {
@@ -158,14 +167,13 @@ class _PrintSelectionDialogState extends State<_PrintSelectionDialog> {
     _format = widget.initial.format;
     _printerId = widget.initial.printerId;
     _directPrint = widget.initial.directPrint;
+    _copies = widget.initial.copies;
   }
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final printers = widget.profile.printSettings.printers
-        .where((printer) => _supportsFormat(printer, _format))
-        .toList(growable: false);
+    final printers = widget.profile.printSettings.printers;
     final selectedPrinter =
         printers.any((item) => item.id == _printerId) ? _printerId : '';
 
@@ -221,6 +229,20 @@ class _PrintSelectionDialogState extends State<_PrintSelectionDialog> {
               value: _directPrint,
               onChanged: (value) => setState(() => _directPrint = value),
             ),
+            DropdownButtonFormField<int>(
+              initialValue: _copies,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: tr.text('copies')),
+              items: List<int>.generate(99, (index) => index + 1)
+                  .map((value) => DropdownMenuItem<int>(
+                        value: value,
+                        child: Text('$value'),
+                      ))
+                  .toList(growable: false),
+              onChanged: (value) {
+                if (value != null) setState(() => _copies = value);
+              },
+            ),
           ],
         ),
       ),
@@ -234,6 +256,7 @@ class _PrintSelectionDialogState extends State<_PrintSelectionDialog> {
             format: _format,
             printerId: _printerId,
             directPrint: _directPrint,
+            copies: _copies,
           )),
           child: Text(tr.text('print')),
         ),
@@ -241,16 +264,11 @@ class _PrintSelectionDialogState extends State<_PrintSelectionDialog> {
     );
   }
 
-  bool _supportsFormat(PrintPrinterProfile printer, String format) {
-    if (PrintPaperFormats.isThermal(format)) return printer.isThermal;
-    return printer.isSystem;
-  }
-
   String _formatLabel(String format) {
     switch (format) {
-      case PrintPaperFormats.thermal80:
+      case PrintPaperFormats.mm80:
         return '80 mm';
-      case PrintPaperFormats.thermal58:
+      case PrintPaperFormats.mm58:
         return '58 mm';
       case PrintPaperFormats.shippingLabel:
         return 'Shipping label 4 × 6 in';
