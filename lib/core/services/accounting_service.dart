@@ -29,6 +29,13 @@ import 'unified_batch_phase4_closure_service.dart';
 class AccountingService {
   AccountingService._();
 
+  /// Set when a BOM change was saved while the inventory account
+  /// classification check was deferred because the Unified Batch valuation
+  /// did not yet reconcile to the inventory GL. The marker is intentionally
+  /// local and persistent so a later successful reconciliation can clear it.
+  static const String deferredBomInventoryReconciliationKey =
+      'inventory_bom_account_reconciliation_pending_v1';
+
   static final Random _random = Random.secure();
   static StoreProfile _moneyProfile = StoreProfile.defaults;
   static bool get isAvailable => SqliteMigrationManager.database != null;
@@ -513,6 +520,7 @@ class AccountingService {
     }
 
     if (currentTotal.abs() <= 0.005 && physicalTotal.abs() <= 0.005) {
+      await _clearDeferredBomInventoryReconciliation(database: db);
       return true;
     }
 
@@ -566,7 +574,10 @@ class AccountingService {
         memo: 'Clear general inventory into semantic inventory accounts',
       ));
     }
-    if (lines.isEmpty) return true;
+    if (lines.isEmpty) {
+      await _clearDeferredBomInventoryReconciliation(database: db);
+      return true;
+    }
 
     final sortedAccountIds = <String>[...accountIds]..sort();
     final fingerprintParts = <String>[
@@ -590,7 +601,49 @@ class AccountingService {
       database: db,
       withinExistingTransaction: withinExistingTransaction,
     );
+    await _clearDeferredBomInventoryReconciliation(database: db);
     return true;
+  }
+
+  /// Records that a BOM save intentionally deferred inventory account
+  /// reclassification. This does not change any GL or inventory value.
+  static Future<void> deferBomInventoryAccountReconciliation({
+    required String referenceContext,
+    VentioDriftDatabase? database,
+  }) async {
+    if (database == null && !isAvailable) return;
+    final db = database ?? _db;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.customInsert(
+      '''
+      INSERT INTO accounting_settings
+        (key, account_id, value, description, updated_at)
+      VALUES (?, '', ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        description = excluded.description,
+        updated_at = excluded.updated_at
+      ''',
+      variables: <Variable<Object>>[
+        const Variable<String>(deferredBomInventoryReconciliationKey),
+        Variable<String>(referenceContext.trim()),
+        Variable<String>(
+          'BOM inventory account reclassification is deferred until inventory GL and Unified Batch valuation are reconciled.',
+        ),
+        Variable<String>(now),
+      ],
+    );
+  }
+
+  static Future<void> _clearDeferredBomInventoryReconciliation({
+    required VentioDriftDatabase database,
+  }) async {
+    await database.customUpdate(
+      'DELETE FROM accounting_settings WHERE key = ?',
+      variables: const <Variable<Object>>[
+        Variable<String>(deferredBomInventoryReconciliationKey),
+      ],
+    );
   }
 
   static Future<List<AccountingAccount>> listAccounts({
@@ -1428,9 +1481,7 @@ class AccountingService {
     // rounded gross after preserving the frozen tax amount. This keeps the
     // journal balanced without changing the return amount shown to the user.
     final returnTaxAmount = _roundMoney(
-      (frozenReturnTax?.taxAmount ?? tax!.taxAmount)
-          .clamp(0, gross)
-          .toDouble(),
+      (frozenReturnTax?.taxAmount ?? tax!.taxAmount).clamp(0, gross).toDouble(),
       currency: accountingCurrency,
     );
     final returnNet = _roundMoney(

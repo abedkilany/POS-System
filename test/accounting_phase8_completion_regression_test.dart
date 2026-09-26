@@ -142,7 +142,8 @@ void main() {
     expect(creditFor(generalAccount), closeTo(0, 0.0001));
   });
 
-  test('inventory valuation uses Unified Batch carrying value instead of product cost cache',
+  test(
+      'inventory valuation uses Unified Batch carrying value instead of product cost cache',
       () async {
     final store = await support.readyPhase5SqliteStore();
     await store.addOrUpdateProduct(support.phase5Product(
@@ -243,7 +244,8 @@ void main() {
     expect(row.totalValue, closeTo(10, 0.0001));
   });
 
-  test('BOM create update and delete reclassify existing Unified Batch inventory',
+  test(
+      'BOM create update and delete reclassify existing Unified Batch inventory',
       () async {
     final store = await support.readyPhase5SqliteStore();
     await store.addOrUpdateProduct(support.phase5Product(
@@ -408,8 +410,9 @@ void main() {
     final db = SqliteMigrationManager.database!;
     final rawAccount =
         await AccountingService.resolveAccountRole('inventory_raw');
-    final rawSnapshot = (await AccountingService.listAccounts(activeOnly: false))
-        .firstWhere((account) => account.id == rawAccount);
+    final rawSnapshot =
+        (await AccountingService.listAccounts(activeOnly: false))
+            .firstWhere((account) => account.id == rawAccount);
     Future<void> setRawPostable(bool value) => AccountingService.updateAccount(
           accountId: rawSnapshot.id,
           code: rawSnapshot.code,
@@ -441,9 +444,11 @@ void main() {
         throwsA(isA<StateError>()),
       );
 
-      final persisted = await db.customSelect(
-        "SELECT COUNT(*) AS count FROM bill_of_materials WHERE name = 'Atomic failure BOM' AND deleted_at = ''",
-      ).getSingle();
+      final persisted = await db
+          .customSelect(
+            "SELECT COUNT(*) AS count FROM bill_of_materials WHERE name = 'Atomic failure BOM' AND deleted_at = ''",
+          )
+          .getSingle();
       expect(persisted.read<int>('count'), 0);
       final reclassEntries = await db.customSelect('''
         SELECT COUNT(*) AS count FROM journal_entries
@@ -454,6 +459,89 @@ void main() {
     } finally {
       await setRawPostable(true);
     }
+  });
+
+  test(
+      'BOM save defers inventory reclassification when valuation is mismatched',
+      () async {
+    final store = await support.readyPhase5SqliteStore();
+    await store.addOrUpdateProduct(support.phase5Product(
+      id: 'bom-deferred-component',
+      code: 'BOM-DF-C',
+      stock: 0,
+      cost: 3,
+    ));
+    await store.addOrUpdateProduct(support.phase5Product(
+      id: 'bom-deferred-output',
+      code: 'BOM-DF-O',
+      stock: 0,
+      cost: 0,
+    ));
+    final warehouse =
+        await store.createWarehouse(name: 'BOM deferred', code: 'BDF');
+    await store.addOrUpdateSupplier(Supplier(
+      id: 'supplier-bom-deferred',
+      name: 'BOM Deferred Supplier',
+      phone: '',
+      address: '',
+      notes: '',
+    ));
+    await store.createPurchase(
+      supplierId: 'supplier-bom-deferred',
+      supplierName: 'BOM Deferred Supplier',
+      receiveNow: true,
+      paymentStatus: 'credit',
+      paymentMethod: 'Credit',
+      warehouseId: warehouse.id,
+      warehouseName: warehouse.name,
+      items: const <PurchaseItem>[
+        PurchaseItem(
+          productId: 'bom-deferred-component',
+          productName: 'Deferred component',
+          quantity: 2,
+          unitCost: 3,
+        ),
+      ],
+    );
+
+    final db = SqliteMigrationManager.database!;
+    await db.customUpdate(
+      'UPDATE inventory_batches SET unit_cost = ? WHERE product_id = ?',
+      variables: const <Variable<Object>>[
+        Variable<double>(4),
+        Variable<String>('bom-deferred-component'),
+      ],
+    );
+
+    final bom = await store.createBillOfMaterials(
+      name: 'Deferred classification BOM',
+      outputProductId: 'bom-deferred-output',
+      outputQuantity: 1,
+      components: const <BillOfMaterialsLine>[
+        BillOfMaterialsLine(
+          productId: 'bom-deferred-component',
+          productName: 'Deferred component',
+          quantity: 1,
+        ),
+      ],
+    );
+
+    final persisted = await db.customSelect(
+      "SELECT COUNT(*) AS count FROM bill_of_materials WHERE id = ? AND deleted_at = ''",
+      variables: <Variable<Object>>[Variable<String>(bom.id)],
+    ).getSingle();
+    expect(persisted.read<int>('count'), 1);
+
+    final pending = await db.customSelect(
+      'SELECT value, description FROM accounting_settings WHERE key = ?',
+      variables: const <Variable<Object>>[
+        Variable<String>(
+          AccountingService.deferredBomInventoryReconciliationKey,
+        ),
+      ],
+    ).getSingle();
+    expect(pending.read<String>('value'), startsWith('bom:${bom.id}:v'));
+    expect(pending.read<String>('description'), contains('deferred'));
   });
 
   test('manufacturing reversal ignores downstream movements already reversed',
@@ -560,7 +648,8 @@ void main() {
     expect(updateBody, contains('else if (current.isReceived)'));
     expect(
       updateBody,
-      contains('await _requirePurchaseBatchesUnusedInTransaction(sqliteDb, current);'),
+      contains(
+          'await _requirePurchaseBatchesUnusedInTransaction(sqliteDb, current);'),
     );
     expect(updateBody, contains(r'Purchase edit reverse v${current.version}'));
     expect(

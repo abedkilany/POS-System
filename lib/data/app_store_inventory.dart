@@ -1,7 +1,7 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitInventory on AppStore {
-double _stockAt(String productId, DateTime at) {
+  double _stockAt(String productId, DateTime at) {
     final productIndex = _productIndexById[productId];
     var stock = productIndex == null ? 0.0 : _products[productIndex].stock;
     for (final movement in _stockMovements) {
@@ -12,7 +12,7 @@ double _stockAt(String productId, DateTime at) {
     return stock;
   }
 
-int movementCountAfterInventoryLine(InventoryCountLine line) {
+  int movementCountAfterInventoryLine(InventoryCountLine line) {
     final countedAt = line.countedAt;
     if (countedAt == null) return 0;
     return _stockMovements
@@ -25,7 +25,7 @@ int movementCountAfterInventoryLine(InventoryCountLine line) {
         .length;
   }
 
-Future<InventoryCountSession> createInventoryCountSession({
+  Future<InventoryCountSession> createInventoryCountSession({
     String notes = '',
     String warehouseId = '',
     String warehouseName = '',
@@ -69,13 +69,14 @@ Future<InventoryCountSession> createInventoryCountSession({
       lines: lines,
     );
     _inventoryCounts.add(session);
-    _rememberSqliteDirtyBusinessRow(AppStore._inventoryCountsKey, session.toJson());
+    _rememberSqliteDirtyBusinessRow(
+        AppStore._inventoryCountsKey, session.toJson());
     await _saveDirty(inventoryCounts: true);
     notifyListeners();
     return session;
   }
 
-Future<void> countInventoryLine({
+  Future<void> countInventoryLine({
     required String sessionId,
     required String productId,
     required double countedQty,
@@ -121,7 +122,7 @@ Future<void> countInventoryLine({
     notifyListeners();
   }
 
-Future<void> resetInventoryCountLine({
+  Future<void> resetInventoryCountLine({
     required String sessionId,
     required String productId,
   }) async {
@@ -159,7 +160,7 @@ Future<void> resetInventoryCountLine({
     notifyListeners();
   }
 
-Future<void> approveInventoryCount(String sessionId) async {
+  Future<void> approveInventoryCount(String sessionId) async {
     requirePermission(AppPermission.inventoryCountsManage);
     final sessionIndex = _inventoryCounts.indexWhere(
       (session) => session.id == sessionId,
@@ -682,7 +683,7 @@ Future<void> approveInventoryCount(String sessionId) async {
     notifyListeners();
   }
 
-Future<void> reverseInventoryCount(
+  Future<void> reverseInventoryCount(
     String sessionId, {
     String reason = '',
   }) async {
@@ -903,7 +904,7 @@ Future<void> reverseInventoryCount(
     notifyListeners();
   }
 
-Future<void> cancelInventoryCount(String sessionId) async {
+  Future<void> cancelInventoryCount(String sessionId) async {
     requirePermission(AppPermission.inventoryCountsManage);
     final sessionIndex = _inventoryCounts.indexWhere(
       (session) => session.id == sessionId,
@@ -926,7 +927,7 @@ Future<void> cancelInventoryCount(String sessionId) async {
     notifyListeners();
   }
 
-Future<void> reviewAutoCorrection(
+  Future<void> reviewAutoCorrection(
     String movementId, {
     String note = '',
   }) async {
@@ -964,7 +965,7 @@ Future<void> reviewAutoCorrection(
     notifyListeners();
   }
 
-Future<void> setExpiryBatchStatus(String batchId, String status) async {
+  Future<void> setExpiryBatchStatus(String batchId, String status) async {
     requirePermission(AppPermission.inventoryCorrectionsManage);
     final db = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || db == null) {
@@ -993,7 +994,7 @@ Future<void> setExpiryBatchStatus(String batchId, String status) async {
     notifyListeners();
   }
 
-void _recordInventoryBatchSyncChanges({
+  void _recordInventoryBatchSyncChanges({
     required Product product,
     required List<BatchAllocation> allocations,
     required String sourceType,
@@ -1044,7 +1045,7 @@ void _recordInventoryBatchSyncChanges({
     }
   }
 
-Future<void> adjustExpiryBatchStock({
+  Future<void> adjustExpiryBatchStock({
     required String productId,
     required String warehouseId,
     required String batchId,
@@ -1117,8 +1118,7 @@ Future<void> adjustExpiryBatchStock({
       if (batchRow == null) {
         throw StateError('Inventory batch was not found.');
       }
-      final unitCost =
-          (batchRow.data['unit_cost'] as num? ?? 0).toDouble();
+      final unitCost = (batchRow.data['unit_cost'] as num? ?? 0).toDouble();
       movement = movement.copyWith(unitCost: unitCost);
       await batchService.adjustUnifiedBatchInTransaction(
         product: product,
@@ -1227,7 +1227,7 @@ Future<void> adjustExpiryBatchStock({
     notifyListeners();
   }
 
-Future<void> reverseExpiryBatchAdjustment(
+  Future<void> reverseExpiryBatchAdjustment(
     String movementId, {
     String reason = '',
   }) async {
@@ -1317,8 +1317,8 @@ Future<void> reverseExpiryBatchAdjustment(
             Variable<String>(original.productId),
           ],
         ).getSingleOrNull();
-        final cutoverAt = DateTime.tryParse(
-            cutoverRow?.data['cutover_at']?.toString() ?? '');
+        final cutoverAt =
+            DateTime.tryParse(cutoverRow?.data['cutover_at']?.toString() ?? '');
         final isHistoricalPreUnified =
             cutoverAt == null || original.date.isBefore(cutoverAt);
         if (isHistoricalPreUnified) {
@@ -1460,7 +1460,7 @@ Future<void> reverseExpiryBatchAdjustment(
     notifyListeners();
   }
 
-Future<int> manualStockAdjustmentVersion(String operationReferenceId) async {
+  Future<int> manualStockAdjustmentVersion(String operationReferenceId) async {
     final operationId = operationReferenceId.trim();
     if (operationId.isEmpty) return 0;
     final db = SqliteMigrationManager.database;
@@ -1495,12 +1495,12 @@ Future<int> manualStockAdjustmentVersion(String operationReferenceId) async {
     return parsed ?? 1;
   }
 
-/// Safely edits a posted manual inventory adjustment while preserving the
-/// original movement/journal history. The stable [operationReferenceId]
-/// identifies the adjustment family; each successful edit reverses the active
-/// stock/accounting effects and appends a new `inventory_adjustment_edit:vN`
-/// member inside one authoritative SQLite transaction.
-Future<void> editStockAdjustment({
+  /// Safely edits a posted manual inventory adjustment while preserving the
+  /// original movement/journal history. The stable [operationReferenceId]
+  /// identifies the adjustment family; each successful edit reverses the active
+  /// stock/accounting effects and appends a new `inventory_adjustment_edit:vN`
+  /// member inside one authoritative SQLite transaction.
+  Future<void> editStockAdjustment({
     required String operationReferenceId,
     required int expectedVersion,
     required double quantityDelta,
@@ -2031,7 +2031,7 @@ Future<void> editStockAdjustment({
     notifyListeners();
   }
 
-Future<void> adjustStock({
+  Future<void> adjustStock({
     required String productId,
     required String warehouseId,
     required double quantityDelta,
@@ -2158,7 +2158,8 @@ Future<void> adjustStock({
                 ),
             ];
           } else {
-            adjustmentUnitCost = await _unifiedOpeningCostForProductInTransaction(
+            adjustmentUnitCost =
+                await _unifiedOpeningCostForProductInTransaction(
               sqliteDb,
               product: product,
               warehouseId: resolvedWarehouse.id,
@@ -2373,7 +2374,7 @@ Future<void> adjustStock({
     notifyListeners();
   }
 
-Future<void> recordWasteLoss({
+  Future<void> recordWasteLoss({
     required String productId,
     required String warehouseId,
     required double quantity,
@@ -2458,8 +2459,7 @@ Future<void> recordWasteLoss({
       );
       wasteValue = allocations.fold<double>(
         0,
-        (sum, allocation) =>
-            sum + (allocation.quantity * allocation.unitCost),
+        (sum, allocation) => sum + (allocation.quantity * allocation.unitCost),
       );
       movements = <StockMovement>[
         for (var index = 0; index < allocations.length; index += 1)
@@ -2530,7 +2530,7 @@ Future<void> recordWasteLoss({
     notifyListeners();
   }
 
-Future<void> reverseWasteLossGroup(String movementId) async {
+  Future<void> reverseWasteLossGroup(String movementId) async {
     requirePermission(AppPermission.inventoryWasteManage);
     final selected = _stockMovements.firstWhere(
       (item) => item.id == movementId,
@@ -2687,7 +2687,7 @@ Future<void> reverseWasteLossGroup(String movementId) async {
     notifyListeners();
   }
 
-Future<void> deleteWasteLoss(String movementId) async {
+  Future<void> deleteWasteLoss(String movementId) async {
     requirePermission(AppPermission.inventoryWasteManage);
     final index = _stockMovements.indexWhere((item) => item.id == movementId);
     if (index == -1) throw ArgumentError('Waste movement not found.');
@@ -2796,7 +2796,8 @@ Future<void> deleteWasteLoss(String movementId) async {
           syncTarget: _stockTransactionSyncTarget,
         );
         if (original.batchId.isNotEmpty) {
-          await BatchInventoryService(db).assertWarehouseBatchBalanceInTransaction(
+          await BatchInventoryService(db)
+              .assertWarehouseBatchBalanceInTransaction(
             productId: original.productId,
             warehouseId: original.warehouseId,
             storeId: appIdentity.storeId,
@@ -2872,7 +2873,7 @@ Future<void> deleteWasteLoss(String movementId) async {
     notifyListeners();
   }
 
-void _applyPurchaseStock(Purchase purchase, DateTime now) {
+  void _applyPurchaseStock(Purchase purchase, DateTime now) {
     for (var lineIndex = 0; lineIndex < purchase.items.length; lineIndex += 1) {
       final item = purchase.items[lineIndex];
       final index = _productIndexById[item.productId];
@@ -2924,7 +2925,7 @@ void _applyPurchaseStock(Purchase purchase, DateTime now) {
     }
   }
 
-void _addStockMovement(StockMovement movement, {bool recordSync = false}) {
+  void _addStockMovement(StockMovement movement, {bool recordSync = false}) {
     final index = _stockMovementIndexForId(movement.id);
     if (index != -1) return;
     _putStockMovementAtIndex(movement, _stockMovements.length);
@@ -2938,7 +2939,7 @@ void _addStockMovement(StockMovement movement, {bool recordSync = false}) {
     }
   }
 
-Future<void> _reconcileInventoryAccountsAfterBomChange(
+  Future<void> _reconcileInventoryAccountsAfterBomChange(
     BillOfMaterials bom, {
     VentioDriftDatabase? database,
     bool withinExistingTransaction = false,
@@ -2955,10 +2956,14 @@ Future<void> _reconcileInventoryAccountsAfterBomChange(
       withinExistingTransaction: withinExistingTransaction,
     );
     if (!reconciled) {
-      throw StateError(
-        'BOM inventory account reclassification is blocked because inventory GL does not reconcile to Unified Batch valuation.',
+      // Temporary controlled deferral: the BOM itself is valid and can be
+      // saved, while the inventory account classification journal waits for
+      // the user's final stock count and valuation audit. Other inventory
+      // mutations still run their normal reconciliation guards.
+      await AccountingService.deferBomInventoryAccountReconciliation(
+        referenceContext: 'bom:${bom.id}:v${bom.version}',
+        database: database,
       );
     }
   }
-
 }
