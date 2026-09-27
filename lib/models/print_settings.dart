@@ -170,11 +170,15 @@ class PrintDocumentSettings {
 class PrintSettings {
   const PrintSettings({
     this.showOptionsBeforePrint = false,
+    this.askBeforeSalesInvoicePrint = false,
+    this.printSalesInvoiceAfterSave = true,
     this.printers = const <PrintPrinterProfile>[],
     this.documents = const <String, PrintDocumentSettings>{},
   });
 
   final bool showOptionsBeforePrint;
+  final bool askBeforeSalesInvoicePrint;
+  final bool printSalesInvoiceAfterSave;
   final List<PrintPrinterProfile> printers;
   final Map<String, PrintDocumentSettings> documents;
 
@@ -201,12 +205,18 @@ class PrintSettings {
 
   PrintSettings copyWith({
     bool? showOptionsBeforePrint,
+    bool? askBeforeSalesInvoicePrint,
+    bool? printSalesInvoiceAfterSave,
     List<PrintPrinterProfile>? printers,
     Map<String, PrintDocumentSettings>? documents,
   }) {
     return PrintSettings(
       showOptionsBeforePrint:
           showOptionsBeforePrint ?? this.showOptionsBeforePrint,
+      askBeforeSalesInvoicePrint:
+          askBeforeSalesInvoicePrint ?? this.askBeforeSalesInvoicePrint,
+      printSalesInvoiceAfterSave:
+          printSalesInvoiceAfterSave ?? this.printSalesInvoiceAfterSave,
       printers:
           List<PrintPrinterProfile>.unmodifiable(printers ?? this.printers),
       documents: Map<String, PrintDocumentSettings>.unmodifiable(
@@ -216,6 +226,8 @@ class PrintSettings {
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'showOptionsBeforePrint': showOptionsBeforePrint,
+        'askBeforeSalesInvoicePrint': askBeforeSalesInvoicePrint,
+        'printSalesInvoiceAfterSave': printSalesInvoiceAfterSave,
         'printers': printers.map((printer) => printer.toJson()).toList(),
         'documents': <String, dynamic>{
           for (final entry in documents.entries)
@@ -249,6 +261,9 @@ class PrintSettings {
     }
     return PrintSettings(
       showOptionsBeforePrint: json['showOptionsBeforePrint'] == true,
+      askBeforeSalesInvoicePrint: json['askBeforeSalesInvoicePrint'] == true,
+      printSalesInvoiceAfterSave:
+          json['printSalesInvoiceAfterSave'] as bool? ?? true,
       printers: printers,
       documents: documents,
     );

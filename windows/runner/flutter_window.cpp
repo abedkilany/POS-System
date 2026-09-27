@@ -41,6 +41,11 @@ bool FlutterWindow::OnCreate() {
           PostMessage(GetHandle(), WM_CLOSE, 0, 0);
           return;
         }
+        if (call.method_name() == "cancelClose") {
+          close_request_pending_ = false;
+          result->Success();
+          return;
+        }
         result->NotImplemented();
       });
 

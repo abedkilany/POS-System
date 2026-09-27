@@ -8,6 +8,7 @@ class ReceiptVoucher {
     required this.customerName,
     required this.date,
     required this.amount,
+    this.discount = 0,
     required this.unallocatedAmount,
     this.currency = 'USD',
     this.paymentMethod = 'Cash',
@@ -42,7 +43,7 @@ class ReceiptVoucher {
   final String idempotencyKey, syncStatus, lastModifiedByDeviceId;
   final DateTime date, createdAt, updatedAt;
   final DateTime? deletedAt, reversedAt;
-  final double amount, unallocatedAmount;
+  final double amount, discount, unallocatedAmount;
   final int version;
   final List<PaymentAllocation> allocations;
 
@@ -56,6 +57,7 @@ class ReceiptVoucher {
         'customerName': customerName,
         'date': date.toIso8601String(),
         'amount': amount,
+        'discount': discount,
         'unallocatedAmount': unallocatedAmount,
         'currency': currency,
         'paymentMethod': paymentMethod,

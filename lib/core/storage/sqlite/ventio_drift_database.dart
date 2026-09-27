@@ -321,6 +321,198 @@ class VentioDriftDatabase extends GeneratedDatabase {
     }
   }
 
+  Future<void> _rebuildVoucherTablesForDiscountOnlySettlements() async {
+    final definitions = <String, Map<String, Object>>{
+      'receipt_vouchers': <String, Object>{
+        'create': r'''
+          CREATE TABLE receipt_vouchers (
+            id TEXT PRIMARY KEY NOT NULL,
+            voucher_no TEXT NOT NULL,
+            customer_id TEXT NOT NULL,
+            customer_name TEXT NOT NULL DEFAULT '',
+            voucher_date TEXT NOT NULL,
+            amount REAL NOT NULL,
+            discount REAL NOT NULL DEFAULT 0,
+            unallocated_amount REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            payment_method TEXT NOT NULL DEFAULT 'Cash',
+            cash_location_id TEXT NOT NULL DEFAULT '',
+            cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'posted',
+            reversed_at TEXT NOT NULL DEFAULT '',
+            reversal_reason TEXT NOT NULL DEFAULT '',
+            reversed_by TEXT NOT NULL DEFAULT '',
+            reversed_by_user_id TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_by_user_id TEXT NOT NULL DEFAULT '',
+            device_id TEXT NOT NULL DEFAULT '',
+            branch_id TEXT NOT NULL DEFAULT '',
+            store_id TEXT NOT NULL DEFAULT '',
+            idempotency_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT NOT NULL DEFAULT '',
+            sync_status TEXT NOT NULL DEFAULT 'pending',
+            version INTEGER NOT NULL DEFAULT 1,
+            last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+            CHECK (amount >= 0),
+            CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
+            CHECK (status IN ('posted', 'reversed', 'void'))
+          );
+        ''',
+        'indexes': <String>[
+          'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_customer_date ON receipt_vouchers(customer_id, voucher_date DESC);',
+          'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_session_date ON receipt_vouchers(cash_drawer_session_id, voucher_date DESC);',
+          'CREATE INDEX IF NOT EXISTS idx_receipt_vouchers_store_branch_date ON receipt_vouchers(store_id, branch_id, voucher_date DESC);',
+          "CREATE UNIQUE INDEX IF NOT EXISTS idx_receipt_vouchers_idempotency ON receipt_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';",
+        ],
+      },
+      'payment_vouchers': <String, Object>{
+        'create': r'''
+          CREATE TABLE payment_vouchers (
+            id TEXT PRIMARY KEY NOT NULL,
+            voucher_no TEXT NOT NULL,
+            supplier_id TEXT NOT NULL,
+            supplier_name TEXT NOT NULL DEFAULT '',
+            voucher_date TEXT NOT NULL,
+            amount REAL NOT NULL,
+            discount REAL NOT NULL DEFAULT 0,
+            unallocated_amount REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            payment_method TEXT NOT NULL DEFAULT 'Cash',
+            cash_location_id TEXT NOT NULL DEFAULT '',
+            cash_drawer_session_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'posted',
+            reversed_at TEXT NOT NULL DEFAULT '',
+            reversal_reason TEXT NOT NULL DEFAULT '',
+            reversed_by TEXT NOT NULL DEFAULT '',
+            reversed_by_user_id TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_by_user_id TEXT NOT NULL DEFAULT '',
+            device_id TEXT NOT NULL DEFAULT '',
+            branch_id TEXT NOT NULL DEFAULT '',
+            store_id TEXT NOT NULL DEFAULT '',
+            idempotency_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT NOT NULL DEFAULT '',
+            sync_status TEXT NOT NULL DEFAULT 'pending',
+            version INTEGER NOT NULL DEFAULT 1,
+            last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+            CHECK (amount >= 0),
+            CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
+            CHECK (status IN ('posted', 'reversed', 'void'))
+          );
+        ''',
+        'indexes': <String>[
+          'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_supplier_date ON payment_vouchers(supplier_id, voucher_date DESC);',
+          'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_session_date ON payment_vouchers(cash_drawer_session_id, voucher_date DESC);',
+          'CREATE INDEX IF NOT EXISTS idx_payment_vouchers_store_branch_date ON payment_vouchers(store_id, branch_id, voucher_date DESC);',
+          "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_vouchers_idempotency ON payment_vouchers(idempotency_key) WHERE idempotency_key <> '' AND deleted_at = '';",
+        ],
+      },
+      'payment_allocations': <String, Object>{
+        'create': r'''
+          CREATE TABLE payment_allocations (
+            id TEXT PRIMARY KEY NOT NULL,
+            voucher_type TEXT NOT NULL,
+            voucher_id TEXT NOT NULL,
+            reference_type TEXT NOT NULL,
+            reference_id TEXT NOT NULL,
+            reference_number TEXT NOT NULL DEFAULT '',
+            amount REAL NOT NULL,
+            reference_amount REAL NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            reference_currency TEXT NOT NULL DEFAULT 'USD',
+            exchange_rate REAL NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'active',
+            allocation_kind TEXT NOT NULL DEFAULT 'allocation',
+            reversal_of_id TEXT NOT NULL DEFAULT '',
+            reversed_at TEXT NOT NULL DEFAULT '',
+            reversal_reason TEXT NOT NULL DEFAULT '',
+            reversed_by TEXT NOT NULL DEFAULT '',
+            reversed_by_user_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT NOT NULL DEFAULT '',
+            sync_status TEXT NOT NULL DEFAULT 'pending',
+            version INTEGER NOT NULL DEFAULT 1,
+            last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+            CHECK (voucher_type IN ('receipt', 'payment')),
+            CHECK (reference_type IN ('sale', 'purchase')),
+            CHECK (amount >= 0),
+            CHECK (reference_amount > 0),
+            CHECK (exchange_rate > 0)
+          );
+        ''',
+        'indexes': <String>[
+          'CREATE INDEX IF NOT EXISTS idx_payment_allocations_voucher ON payment_allocations(voucher_type, voucher_id);',
+          'CREATE INDEX IF NOT EXISTS idx_payment_allocations_reference ON payment_allocations(reference_type, reference_id);',
+          "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_allocations_target_per_voucher_kind_active ON payment_allocations(voucher_type, voucher_id, reference_type, reference_id, allocation_kind, reversal_of_id) WHERE deleted_at = '' AND status = 'active';",
+          'CREATE INDEX IF NOT EXISTS idx_payment_allocations_status ON payment_allocations(status, reference_type, reference_id);',
+        ],
+      },
+    };
+
+    final needsRebuild = <String>[];
+    for (final table in definitions.keys) {
+      final row = await customSelect(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        variables: <Variable<Object>>[Variable<String>(table)],
+      ).getSingleOrNull();
+      final schema = row?.data['sql']?.toString() ?? '';
+      if (schema
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .contains('CHECK (amount > 0)')) {
+        needsRebuild.add(table);
+      }
+    }
+    if (needsRebuild.isEmpty) return;
+
+    await customStatement('PRAGMA foreign_keys = OFF;');
+    try {
+      for (final table in needsRebuild) {
+        final legacy = '${table}__legacy_discount_zero';
+        await customStatement('DROP TABLE IF EXISTS $legacy;');
+        await customStatement('ALTER TABLE $table RENAME TO $legacy;');
+        final indexes = definitions[table]!['indexes']! as List<String>;
+        for (final index in indexes) {
+          final name =
+              RegExp(r'INDEX IF NOT EXISTS\s+([^\s]+)', caseSensitive: false)
+                  .firstMatch(index)
+                  ?.group(1);
+          if (name != null) {
+            await customStatement('DROP INDEX IF EXISTS $name;');
+          }
+        }
+      }
+      for (final table in needsRebuild) {
+        final definition = definitions[table]!;
+        await customStatement(definition['create']! as String);
+        final legacy = '${table}__legacy_discount_zero';
+        final sourceColumns = await _tableColumns(legacy);
+        final targetColumns = await _tableColumns(table);
+        final columns =
+            sourceColumns.where(targetColumns.contains).toList(growable: false);
+        final joined = columns.join(', ');
+        if (joined.isNotEmpty) {
+          await customStatement('''
+            INSERT INTO $table ($joined)
+            SELECT $joined FROM $legacy;
+          ''');
+        }
+        await customStatement('DROP TABLE $legacy;');
+        for (final index in definition['indexes']! as List<String>) {
+          await customStatement(index);
+        }
+      }
+    } finally {
+      await customStatement('PRAGMA foreign_keys = ON;');
+    }
+  }
+
   Future<bool> _tableHasColumn(String tableName, String columnName) async {
     final rows = await customSelect('PRAGMA table_info($tableName);').get();
     return rows.any((row) => row.data['name']?.toString() == columnName);
@@ -2929,7 +3121,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         version INTEGER NOT NULL DEFAULT 1,
         last_modified_by_device_id TEXT NOT NULL DEFAULT '',
         CHECK (direction IN ('in', 'out')),
-        CHECK (amount >= 0)
+        CHECK (amount > 0)
       );
     ''');
     await customStatement(
@@ -3007,6 +3199,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         customer_name TEXT NOT NULL DEFAULT '',
         voucher_date TEXT NOT NULL,
         amount REAL NOT NULL,
+        discount REAL NOT NULL DEFAULT 0,
         unallocated_amount REAL NOT NULL DEFAULT 0,
         currency TEXT NOT NULL DEFAULT 'USD',
         payment_method TEXT NOT NULL DEFAULT 'Cash',
@@ -3030,7 +3223,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         sync_status TEXT NOT NULL DEFAULT 'pending',
         version INTEGER NOT NULL DEFAULT 1,
         last_modified_by_device_id TEXT NOT NULL DEFAULT '',
-        CHECK (amount > 0),
+        CHECK (amount >= 0),
         CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
         CHECK (status IN ('posted', 'reversed', 'void'))
       );
@@ -3051,6 +3244,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'receipt_vouchers', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'receipt_vouchers', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'receipt_vouchers', 'discount', "REAL NOT NULL DEFAULT 0");
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS payment_vouchers (
@@ -3060,6 +3255,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         supplier_name TEXT NOT NULL DEFAULT '',
         voucher_date TEXT NOT NULL,
         amount REAL NOT NULL,
+        discount REAL NOT NULL DEFAULT 0,
         unallocated_amount REAL NOT NULL DEFAULT 0,
         currency TEXT NOT NULL DEFAULT 'USD',
         payment_method TEXT NOT NULL DEFAULT 'Cash',
@@ -3079,7 +3275,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         sync_status TEXT NOT NULL DEFAULT 'pending',
         version INTEGER NOT NULL DEFAULT 1,
         last_modified_by_device_id TEXT NOT NULL DEFAULT '',
-        CHECK (amount > 0),
+        CHECK (amount >= 0),
         CHECK (unallocated_amount >= 0 AND unallocated_amount <= amount),
         CHECK (status IN ('posted', 'reversed', 'void'))
       );
@@ -3100,6 +3296,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'payment_vouchers', 'reversed_by', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'payment_vouchers', 'reversed_by_user_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'payment_vouchers', 'discount', "REAL NOT NULL DEFAULT 0");
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS payment_allocations (
@@ -3129,7 +3327,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         last_modified_by_device_id TEXT NOT NULL DEFAULT '',
         CHECK (voucher_type IN ('receipt', 'payment')),
         CHECK (reference_type IN ('sale', 'purchase')),
-        CHECK (amount > 0),
+        CHECK (amount >= 0),
         CHECK (reference_amount > 0),
         CHECK (exchange_rate > 0)
       );
@@ -3163,6 +3361,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_allocations_target_per_voucher_kind_active ON payment_allocations(voucher_type, voucher_id, reference_type, reference_id, allocation_kind, reversal_of_id) WHERE deleted_at = '' AND status = 'active';");
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_payment_allocations_status ON payment_allocations(status, reference_type, reference_id);');
+    await _rebuildVoucherTablesForDiscountOnlySettlements();
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cash_refund_allocations (
@@ -3788,6 +3987,16 @@ class VentioDriftDatabase extends GeneratedDatabase {
         '1'
       ],
       [
+        'acc_customer_settlement_discount',
+        '4130',
+        'خصومات تسوية العملاء',
+        'revenue',
+        'customer_settlement_discount',
+        'acc_revenue',
+        'debit',
+        '1'
+      ],
+      [
         'acc_service_revenue',
         '4200',
         'إيرادات خدمات',
@@ -3887,6 +4096,16 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'general',
         'acc_expenses',
         'debit',
+        '1'
+      ],
+      [
+        'acc_supplier_settlement_discount',
+        '6220',
+        'خصومات تسوية الموردين',
+        'revenue',
+        'supplier_settlement_discount',
+        'acc_revenue',
+        'credit',
         '1'
       ],
       [

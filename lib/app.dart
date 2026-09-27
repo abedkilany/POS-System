@@ -24,6 +24,7 @@ import 'core/services/page_timing_scope.dart';
 import 'core/services/startup_timing_service.dart';
 import 'core/shortcuts/app_shortcuts.dart';
 import 'data/app_store.dart';
+import 'widgets/shortcut_key_picker.dart';
 import 'features/dev_tools/stress_lab_coverage_manifest.dart';
 import 'features/accounting/accounting_page.dart';
 import 'features/customers/customers_page.dart';
@@ -84,6 +85,7 @@ class _VentioAppState extends State<VentioApp> {
   bool _autoSnapshotProgressDialogOpen = false;
   bool _firstFrameMarked = false;
   String _startupError = '';
+  Future<bool> Function()? _activeExitGuard;
   static const MethodChannel _windowLifecycleChannel =
       MethodChannel('ventio/window_lifecycle');
   bool _shutdownInProgress = false;
@@ -258,8 +260,21 @@ class _VentioAppState extends State<VentioApp> {
 
   Future<void> _handleWindowLifecycleCall(MethodCall call) async {
     if (call.method == 'requestClose') {
+      final guard = _activeExitGuard;
+      if (guard != null && !await guard()) {
+        try {
+          await _windowLifecycleChannel.invokeMethod<void>('cancelClose');
+        } on MissingPluginException {
+          // Non-Windows platforms don't install the native close interceptor.
+        }
+        return;
+      }
       await _gracefulShutdownAndCloseWindow();
     }
+  }
+
+  void _setActiveExitGuard(Future<bool> Function()? guard) {
+    _activeExitGuard = guard;
   }
 
   Future<void> _gracefulShutdownAndCloseWindow() async {
@@ -397,6 +412,7 @@ class _VentioAppState extends State<VentioApp> {
                             onLocaleChanged: _changeLocale,
                             onThemeModeChanged: _changeThemeMode,
                             themeMode: _themeMode,
+                            onExitGuardChanged: _setActiveExitGuard,
                             onSyncSettingsChanged: () async {
                               _syncStarted = false;
                               unawaited(_startSyncAfterLogin());
@@ -502,7 +518,8 @@ class MainShell extends StatefulWidget {
       required this.themeMode,
       required this.store,
       this.onSyncSettingsChanged,
-      this.onLogout});
+      this.onLogout,
+      this.onExitGuardChanged});
 
   final ValueChanged<Locale> onLocaleChanged;
   final ValueChanged<ThemeMode> onThemeModeChanged;
@@ -510,6 +527,7 @@ class MainShell extends StatefulWidget {
   final AppStore store;
   final Future<void> Function()? onSyncSettingsChanged;
   final Future<void> Function()? onLogout;
+  final ValueChanged<Future<bool> Function()?>? onExitGuardChanged;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -518,6 +536,7 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int selectedIndex = 0;
   bool _drawerNavigationLocked = false;
+  Future<bool> Function()? _salesExitGuard;
   bool _firstBuildMarked = false;
   late final AppUpdateService _updateService = getAppUpdateService();
   late final VoidCallback _updateStatusListener;
@@ -525,36 +544,65 @@ class _MainShellState extends State<MainShell> {
   VoidCallback? _cancelDownloadUpdate;
   AppUpdateInfo? _availableUpdate;
 
-  Widget _buildSalesShortcutStrip(AppLocalizations tr) {
+  Future<void> _editSaleShortcut(
+      SaleShortcutAction action, AppLocalizations tr) async {
     final settings = SaleShortcutSettings.load();
-    final chips = <Widget>[];
-    for (final action in SaleShortcutAction.values) {
-      final keyName = settings.keyForSaleAction(action);
-      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
-      chips.add(Padding(
-        padding: const EdgeInsetsDirectional.only(end: 4),
-        child: Chip(
-          visualDensity: VisualDensity.compact,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          avatar: const Icon(Icons.keyboard_outlined, size: 14),
-          label: Text('$keyName ${tr.text(action.labelKey)}'),
-          labelStyle: Theme.of(context).textTheme.labelSmall,
-        ),
-      ));
+    final currentKey =
+        settings.keyForSaleAction(action) ?? SaleShortcutSettings.noneKey;
+    final selectedKey = await showShortcutKeyPicker(
+      context: context,
+      title: tr.text('shortcut_change'),
+      currentKey: currentKey,
+      noneLabel: tr.text('shortcut_none'),
+      cancelLabel: tr.text('cancel'),
+      saveLabel: tr.text('save'),
+    );
+    if (selectedKey == null || !mounted) return;
+    if (settings.isSaleKeyUsedByAnotherAction(selectedKey, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
     }
-    if (chips.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      // Keep enough room for the configured shortcut chips. The horizontal
-      // scroll remains available when the window is narrower than this.
-      width: 900,
-      height: 48,
-      child: ClipRect(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(children: chips),
-        ),
-      ),
+    final next = settings.copyWithSaleActionKey(action, selectedKey);
+    await next.save();
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildSalesShortcutStrip(AppLocalizations tr) {
+    return ValueListenableBuilder<int>(
+      valueListenable: SaleShortcutSettings.revision,
+      builder: (context, _, __) {
+        final settings = SaleShortcutSettings.load();
+        final chips = <Widget>[];
+        for (final action in SaleShortcutAction.values) {
+          final keyName = settings.keyForSaleAction(action);
+          if (keyName == null || keyName == SaleShortcutSettings.noneKey) {
+            continue;
+          }
+          chips.add(Padding(
+            padding: const EdgeInsetsDirectional.only(end: 4),
+            child: ShortcutGuideChip(
+              keyName: keyName,
+              label: tr.text(action.labelKey),
+              onPressed: () => _editSaleShortcut(action, tr),
+            ),
+          ));
+        }
+        if (chips.isEmpty) return const SizedBox.shrink();
+        return SizedBox(
+          // Keep enough room for the configured shortcut chips. The horizontal
+          // scroll remains available when the window is narrower than this.
+          width: 900,
+          height: 48,
+          child: ClipRect(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: chips),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1003,9 +1051,15 @@ class _MainShellState extends State<MainShell> {
     if (_drawerNavigationLocked) return;
     _drawerNavigationLocked = true;
     try {
-      if (mounted && selectedIndex != index) {
+      if (selectedIndex != index && _salesExitGuard != null) {
+        final canLeave = await _salesExitGuard!();
+        if (!canLeave) return;
+      }
+      if (!mounted) return;
+      if (selectedIndex != index) {
         setState(() => selectedIndex = index);
       }
+      if (!drawerContext.mounted) return;
       final navigator = Navigator.of(drawerContext);
       if (navigator.canPop()) {
         navigator.pop();
@@ -1094,7 +1148,15 @@ class _MainShellState extends State<MainShell> {
             icon: Icons.receipt_long_outlined,
             selectedIcon: Icons.receipt_long,
             page: timedPage(
-                'SalesPage', tr.text('sales'), SalesPage(store: widget.store))),
+                'SalesPage',
+                tr.text('sales'),
+                SalesPage(
+                  store: widget.store,
+                  onExitGuardChanged: (guard) {
+                    _salesExitGuard = guard;
+                    widget.onExitGuardChanged?.call(guard);
+                  },
+                ))),
       if (widget.store.canAccessPage('quotations'))
         _ShellItem(
             label: tr.text('quotations'),

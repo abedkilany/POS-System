@@ -47,6 +47,7 @@ class PaymentVoucherService {
     required String customerId,
     required String customerName,
     required double amount,
+    double discount = 0,
     String currency = 'USD',
     String paymentMethod = 'Cash',
     String cashLocationId = '',
@@ -61,13 +62,18 @@ class PaymentVoucherService {
     String idempotencyKey = '',
     DateTime? date,
   }) async {
+    if (!discount.isFinite || discount < 0) {
+      throw ArgumentError('Discount must be zero or greater.');
+    }
     _validateCommon(
       partyId: customerId,
       amount: amount,
+      allowZeroAmount: discount > _epsilon,
       paymentMethod: paymentMethod,
       cashLocationId: cashLocationId,
       cashDrawerSessionId: cashDrawerSessionId,
     );
+    final cleanDiscount = _money(discount);
     final when = (date ?? DateTime.now()).toUtc();
     final cleanId = id.trim().isEmpty ? _newId('receipt') : id.trim();
     final cleanCurrency = _currency(currency);
@@ -107,6 +113,7 @@ class PaymentVoucherService {
         customerName: customerName.trim(),
         date: when,
         amount: _money(amount),
+        discount: cleanDiscount,
         unallocatedAmount: unallocated,
         currency: cleanCurrency,
         paymentMethod: cleanPaymentMethod,
@@ -129,7 +136,7 @@ class PaymentVoucherService {
       await _insertAllocations(prepared);
       await _applyAllocationCaches(prepared, deviceId: deviceId);
       await _postReceiptAccounting(voucher);
-      if (_isCash(cleanPaymentMethod)) {
+      if (_isCash(cleanPaymentMethod) && amount > _epsilon) {
         await _appendVoucherCashMovement(
           type: 'receipt',
           direction: 'in',
@@ -159,7 +166,7 @@ class PaymentVoucherService {
         voucherNo: voucher.voucherNo,
         partyId: voucher.customerId,
         partyName: voucher.customerName,
-        amount: voucher.amount,
+        amount: _money(voucher.amount + voucher.discount),
         currency: voucher.currency,
         paymentMethod: voucher.paymentMethod,
         allocations: prepared,
@@ -181,6 +188,7 @@ class PaymentVoucherService {
     required String supplierId,
     required String supplierName,
     required double amount,
+    double discount = 0,
     String currency = 'USD',
     String paymentMethod = 'Cash',
     String cashLocationId = '',
@@ -195,13 +203,18 @@ class PaymentVoucherService {
     String idempotencyKey = '',
     DateTime? date,
   }) async {
+    if (!discount.isFinite || discount < 0) {
+      throw ArgumentError('Discount must be zero or greater.');
+    }
     _validateCommon(
       partyId: supplierId,
       amount: amount,
+      allowZeroAmount: discount > _epsilon,
       paymentMethod: paymentMethod,
       cashLocationId: cashLocationId,
       cashDrawerSessionId: cashDrawerSessionId,
     );
+    final cleanDiscount = _money(discount);
     final when = (date ?? DateTime.now()).toUtc();
     final cleanId = id.trim().isEmpty ? _newId('payment') : id.trim();
     final cleanCurrency = _currency(currency);
@@ -217,7 +230,7 @@ class PaymentVoucherService {
         return existing;
       }
 
-      if (_isCash(cleanPaymentMethod)) {
+      if (_isCash(cleanPaymentMethod) && amount > _epsilon) {
         await AccountingService.ensureCashOutflowAllowed(
           cashLocationId: cashLocationId,
           amount: amount,
@@ -249,6 +262,7 @@ class PaymentVoucherService {
         supplierName: supplierName.trim(),
         date: when,
         amount: _money(amount),
+        discount: cleanDiscount,
         unallocatedAmount: unallocated,
         currency: cleanCurrency,
         paymentMethod: cleanPaymentMethod,
@@ -271,7 +285,7 @@ class PaymentVoucherService {
       await _insertAllocations(prepared);
       await _applyAllocationCaches(prepared, deviceId: deviceId);
       await _postPaymentAccounting(voucher);
-      if (_isCash(cleanPaymentMethod)) {
+      if (_isCash(cleanPaymentMethod) && voucher.amount > _epsilon) {
         await _appendVoucherCashMovement(
           type: 'payment',
           direction: 'out',
@@ -301,7 +315,7 @@ class PaymentVoucherService {
         voucherNo: voucher.voucherNo,
         partyId: voucher.supplierId,
         partyName: voucher.supplierName,
-        amount: voucher.amount,
+        amount: _money(voucher.amount + voucher.discount),
         currency: voucher.currency,
         paymentMethod: voucher.paymentMethod,
         allocations: prepared,
@@ -522,7 +536,7 @@ class PaymentVoucherService {
           );
           await _insertAllocations(prepared);
           await _applyAllocationCaches(prepared, deviceId: deviceId);
-          if (_isCash(requestedPaymentMethod)) {
+          if (_isCash(requestedPaymentMethod) && requestedAmount > _epsilon) {
             final technicalReferenceId =
                 '${updated.id}:receipt_edit:v${updated.version}';
             await _appendVoucherCashMovement(
@@ -577,7 +591,7 @@ class PaymentVoucherService {
             voucherNo: updated.voucherNo,
             partyId: updated.customerId,
             partyName: updated.customerName,
-            amount: updated.amount,
+            amount: _money(updated.amount + updated.discount),
             currency: updated.currency,
             paymentMethod: updated.paymentMethod,
             allocations: prepared,
@@ -806,7 +820,7 @@ class PaymentVoucherService {
           );
           await _insertAllocations(prepared);
           await _applyAllocationCaches(prepared, deviceId: deviceId);
-          if (_isCash(requestedPaymentMethod)) {
+          if (_isCash(requestedPaymentMethod) && requestedAmount > _epsilon) {
             final technicalReferenceId =
                 '${updated.id}:payment_edit:v${updated.version}';
             await _appendVoucherCashMovement(
@@ -857,7 +871,7 @@ class PaymentVoucherService {
             voucherNo: updated.voucherNo,
             partyId: updated.supplierId,
             partyName: updated.supplierName,
-            amount: updated.amount,
+            amount: _money(updated.amount + updated.discount),
             currency: updated.currency,
             paymentMethod: updated.paymentMethod,
             allocations: prepared,
@@ -1163,6 +1177,7 @@ class PaymentVoucherService {
       voucherNo: voucher.voucherNo,
       date: voucher.date,
       amount: voucher.amount,
+      discount: voucher.discount,
       paymentMethod: voucher.paymentMethod,
       partyId: voucher.customerId,
       partyName: voucher.customerName,
@@ -1188,6 +1203,7 @@ class PaymentVoucherService {
       voucherNo: voucher.voucherNo,
       date: voucher.date,
       amount: voucher.amount,
+      discount: voucher.discount,
       paymentMethod: voucher.paymentMethod,
       partyId: voucher.supplierId,
       partyName: voucher.supplierName,
@@ -2702,7 +2718,11 @@ class PaymentVoucherService {
     var allocated = 0.0;
     for (var index = 0; index < allocations.length; index++) {
       final allocation = allocations[index];
-      final allocationAmount = _money(allocation.amount);
+      final allocationAmount = _money(
+        allocation.referenceCurrency == currency
+            ? allocation.effectiveReferenceAmount
+            : allocation.amount,
+      );
       if (allocationAmount <= _epsilon) continue;
       allocated = _money(allocated + allocationAmount);
 
@@ -3156,6 +3176,7 @@ class PaymentVoucherService {
         LEFT JOIN cash_drawer_sessions cds ON cds.id = rv.cash_drawer_session_id
         WHERE rv.deleted_at = ''
           AND rv.status = 'posted'
+          AND rv.amount > 0
           AND (TRIM(rv.payment_method) = '' OR LOWER(TRIM(rv.payment_method)) = 'cash')
           AND COALESCE(NULLIF(TRIM(rv.cash_location_id), ''), NULLIF(TRIM(cds.cash_location_id), '')) IS NOT NULL
           AND EXISTS (
@@ -3214,6 +3235,7 @@ class PaymentVoucherService {
         LEFT JOIN cash_drawer_sessions cds ON cds.id = pv.cash_drawer_session_id
         WHERE pv.deleted_at = ''
           AND pv.status = 'posted'
+          AND pv.amount > 0
           AND (TRIM(pv.payment_method) = '' OR LOWER(TRIM(pv.payment_method)) = 'cash')
           AND COALESCE(NULLIF(TRIM(pv.cash_location_id), ''), NULLIF(TRIM(cds.cash_location_id), '')) IS NOT NULL
           AND EXISTS (
@@ -3430,6 +3452,7 @@ class PaymentVoucherService {
   void _validateCommon({
     required String partyId,
     required double amount,
+    bool allowZeroAmount = false,
     required String paymentMethod,
     required String cashLocationId,
     required String cashDrawerSessionId,
@@ -3437,7 +3460,7 @@ class PaymentVoucherService {
     if (partyId.trim().isEmpty) {
       throw ArgumentError.value(partyId, 'partyId', 'Must not be empty.');
     }
-    if (!amount.isFinite || amount <= 0) {
+    if (!amount.isFinite || amount < 0 || (!allowZeroAmount && amount <= 0)) {
       throw ArgumentError.value(amount, 'amount', 'Must be greater than zero.');
     }
     if (_isCash(paymentMethod)) {
@@ -3464,7 +3487,8 @@ class PaymentVoucherService {
     for (final draft in drafts) {
       if (draft.referenceId.trim().isEmpty ||
           !draft.amount.isFinite ||
-          draft.amount <= 0) {
+          draft.amount < 0 ||
+          (draft.amount == 0 && draft.referenceAmount <= 0)) {
         throw ArgumentError('Allocation reference and amount must be valid.');
       }
       if (!seenTargets.add(draft.referenceId.trim())) {
@@ -3603,11 +3627,11 @@ class PaymentVoucherService {
       '''
       INSERT INTO receipt_vouchers
         (id, voucher_no, customer_id, customer_name, voucher_date, amount,
-         unallocated_amount, currency, payment_method, cash_location_id,
+         discount, unallocated_amount, currency, payment_method, cash_location_id,
          cash_drawer_session_id, status, notes, created_by, created_by_user_id,
          device_id, branch_id, store_id, idempotency_key, created_at, updated_at,
          deleted_at, sync_status, version, last_modified_by_device_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 1, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 1, ?)
       ''',
       variables: <Variable<Object>>[
         Variable<String>(item.id),
@@ -3616,6 +3640,7 @@ class PaymentVoucherService {
         Variable<String>(item.customerName),
         Variable<String>(item.date.toIso8601String()),
         Variable<double>(item.amount),
+        Variable<double>(item.discount),
         Variable<double>(item.unallocatedAmount),
         Variable<String>(item.currency),
         Variable<String>(item.paymentMethod),
@@ -3640,11 +3665,11 @@ class PaymentVoucherService {
       '''
       INSERT INTO payment_vouchers
         (id, voucher_no, supplier_id, supplier_name, voucher_date, amount,
-         unallocated_amount, currency, payment_method, cash_location_id,
+         discount, unallocated_amount, currency, payment_method, cash_location_id,
          cash_drawer_session_id, status, notes, created_by, created_by_user_id,
          device_id, branch_id, store_id, idempotency_key, created_at, updated_at,
          deleted_at, sync_status, version, last_modified_by_device_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 1, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 1, ?)
       ''',
       variables: <Variable<Object>>[
         Variable<String>(item.id),
@@ -3653,6 +3678,7 @@ class PaymentVoucherService {
         Variable<String>(item.supplierName),
         Variable<String>(item.date.toIso8601String()),
         Variable<double>(item.amount),
+        Variable<double>(item.discount),
         Variable<double>(item.unallocatedAmount),
         Variable<String>(item.currency),
         Variable<String>(item.paymentMethod),
@@ -4406,6 +4432,7 @@ class PaymentVoucherService {
       customerName: row['customer_name']?.toString() ?? '',
       date: _date(row['voucher_date']),
       amount: _number(row['amount']),
+      discount: _number(row['discount']),
       unallocatedAmount: _number(row['unallocated_amount']),
       currency: row['currency']?.toString() ?? 'USD',
       paymentMethod: row['payment_method']?.toString() ?? 'Cash',
@@ -4443,6 +4470,7 @@ class PaymentVoucherService {
       supplierName: row['supplier_name']?.toString() ?? '',
       date: _date(row['voucher_date']),
       amount: _number(row['amount']),
+      discount: _number(row['discount']),
       unallocatedAmount: _number(row['unallocated_amount']),
       currency: row['currency']?.toString() ?? 'USD',
       paymentMethod: row['payment_method']?.toString() ?? 'Cash',

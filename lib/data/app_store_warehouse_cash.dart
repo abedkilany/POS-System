@@ -1745,6 +1745,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
     required String accountId,
     required String accountName,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String referenceNo = '',
     String notes = '',
@@ -1756,7 +1757,11 @@ extension _AppStoreSplitWarehouseCash on AppStore {
     if (type != 'customer' && type != 'supplier') {
       throw ArgumentError('Account type must be customer or supplier.');
     }
-    if (!amount.isFinite || amount <= 0) {
+    if (!amount.isFinite ||
+        amount < 0 ||
+        !discount.isFinite ||
+        discount < 0 ||
+        amount + discount <= 0) {
       throw ArgumentError('Payment amount must be greater than zero.');
     }
     if (type == 'customer') {
@@ -1791,6 +1796,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
         customerId: accountId.trim(),
         customerName: accountName.trim(),
         amount: amount,
+        discount: discount,
         currency: storeProfile.baseCurrency,
         paymentMethod: method,
         cashLocationId: cashLocationId,
@@ -1810,6 +1816,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
         supplierId: accountId.trim(),
         supplierName: accountName.trim(),
         amount: amount,
+        discount: discount,
         currency: storeProfile.baseCurrency,
         paymentMethod: method,
         cashLocationId: cashLocationId,
@@ -1954,6 +1961,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
   Future<Sale> settleSalePayment({
     required String saleId,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String notes = '',
     String idempotencyKey = '',
@@ -1963,6 +1971,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
     return _settleSalePaymentInternal(
       saleId: saleId,
       amount: amount,
+      discount: discount,
       paymentMethod: paymentMethod,
       notes: notes,
       idempotencyKey: idempotencyKey,
@@ -1973,12 +1982,17 @@ extension _AppStoreSplitWarehouseCash on AppStore {
   Future<Sale> _settleSalePaymentInternal({
     required String saleId,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String notes = '',
     String idempotencyKey = '',
     DateTime? date,
   }) async {
-    if (!amount.isFinite || amount <= 0) {
+    if (!amount.isFinite ||
+        amount < 0 ||
+        !discount.isFinite ||
+        discount < 0 ||
+        amount + discount <= 0) {
       throw ArgumentError('Payment amount must be greater than zero.');
     }
     final sqliteDb = SqliteMigrationManager.database;
@@ -1990,7 +2004,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
     if (current == null || current.isCancelled) {
       throw StateError('Sale is not available for payment.');
     }
-    if (amount > current.balanceDue + 0.000001) {
+    if (amount + discount > current.balanceDue + 0.000001) {
       throw StateError('Payment exceeds the remaining sale balance.');
     }
     final method = paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
@@ -2009,6 +2023,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
       customerId: current.customerId,
       customerName: current.customerName,
       amount: amount,
+      discount: discount,
       currency: current.invoiceCurrency,
       paymentMethod: method,
       cashLocationId: cashLocationId,
@@ -2018,7 +2033,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
           referenceId: current.id,
           referenceNumber: current.invoiceNo,
           amount: amount,
-          referenceAmount: amount,
+          referenceAmount: amount + discount,
           referenceCurrency: current.invoiceCurrency,
           exchangeRate: 1,
         ),
@@ -2051,13 +2066,18 @@ extension _AppStoreSplitWarehouseCash on AppStore {
   Future<Purchase> settlePurchasePayment({
     required String purchaseId,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String notes = '',
     String idempotencyKey = '',
     DateTime? date,
   }) async {
     requirePermission(AppPermission.suppliersPaymentManage);
-    if (!amount.isFinite || amount <= 0) {
+    if (!amount.isFinite ||
+        amount < 0 ||
+        !discount.isFinite ||
+        discount < 0 ||
+        amount + discount <= 0) {
       throw ArgumentError('Payment amount must be greater than zero.');
     }
     final sqliteDb = SqliteMigrationManager.database;
@@ -2073,7 +2093,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
       throw StateError(
           'Purchase returns are settled through the purchase return refund action.');
     }
-    if (amount > current.balanceDue + 0.000001) {
+    if (amount + discount > current.balanceDue + 0.000001) {
       throw StateError('Payment exceeds the remaining purchase balance.');
     }
     final method = paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
@@ -2092,6 +2112,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
       supplierId: current.supplierId,
       supplierName: current.supplierName,
       amount: amount,
+      discount: discount,
       currency: storeProfile.baseCurrency,
       paymentMethod: method,
       cashLocationId: cashLocationId,
@@ -2101,7 +2122,7 @@ extension _AppStoreSplitWarehouseCash on AppStore {
           referenceId: current.id,
           referenceNumber: current.purchaseNo,
           amount: amount,
-          referenceAmount: amount,
+          referenceAmount: amount + discount,
           referenceCurrency: storeProfile.baseCurrency,
           exchangeRate: 1,
         ),

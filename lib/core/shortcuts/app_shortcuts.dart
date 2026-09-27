@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../services/local_database_service.dart';
@@ -199,6 +200,7 @@ class SaleShortcutSettings {
       required this.purchaseDialogBindings});
 
   static const storageKey = 'keyboard_shortcuts_sale_v3';
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
   static const noneKey = 'NONE';
   static const availableKeys = <String>[
     noneKey,
@@ -364,6 +366,7 @@ class SaleShortcutSettings {
               entry.key.id: entry.value
           },
         }));
+    revision.value++;
   }
 
   SaleShortcutAction? saleActionForKey(String keyName) {

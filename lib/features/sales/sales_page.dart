@@ -30,7 +30,7 @@ import '../../models/user_role.dart';
 import '../../models/warehouse.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
-import '../../widgets/page_data_load_indicator.dart';
+import '../../widgets/shortcut_key_picker.dart';
 import '../barcode/barcode_scanner_page.dart';
 import '../security/sensitive_action_guard.dart';
 
@@ -44,10 +44,17 @@ enum _BarcodeAddResult {
   stockLimitReached,
 }
 
+enum _SalesExitChoice { clearCart, holdCart, cancel }
+
 class SalesPage extends StatefulWidget {
-  const SalesPage({super.key, required this.store});
+  const SalesPage({
+    super.key,
+    required this.store,
+    this.onExitGuardChanged,
+  });
 
   final AppStore store;
+  final ValueChanged<Future<bool> Function()?>? onExitGuardChanged;
 
   @override
   State<SalesPage> createState() => _SalesPageState();
@@ -78,6 +85,10 @@ class _SalesPageState extends State<SalesPage> {
   final Map<int, GlobalKey> _cartItemKeys = <int, GlobalKey>{};
 
   static const String _quickPagesStorageKey = 'sale_quick_product_pages_v1';
+  static const String _quickTileSizeStorageKey =
+      'sale_quick_product_tile_size_v1';
+  static const String _quickPanelFractionStorageKey =
+      'sale_quick_product_panel_fraction_v1';
   static const String _heldSalesStorageKey = 'sale_held_carts_v1';
 
   final List<_DraftSaleItem> _cart = [];
@@ -99,10 +110,13 @@ class _SalesPageState extends State<SalesPage> {
   );
   bool _scannerActive = false;
   bool _scannerStartFailed = false;
+  bool _exitPromptOpen = false;
   bool _manualBarcodeInput = false;
   bool _showInvoiceProfit = false;
   double? _invoicePreviewBatchCostTotal;
   bool _quickGridEditMode = false;
+  _QuickProductTileSize _quickTileSize = _QuickProductTileSize.medium;
+  double _quickPanelFraction = 0.4;
   List<_QuickProductPage>? _quickPagesEditSnapshot;
   int _selectedQuickPageIndex = 0;
   int _visibleInvoiceCount = 50;
@@ -113,6 +127,8 @@ class _SalesPageState extends State<SalesPage> {
   final Map<String, Future<Sale?>> _invoiceDetailsFutureById =
       <String, Future<Sale?>>{};
   final Set<String> _expandedInvoiceIds = <String>{};
+  bool Function(KeyEvent)? _activeProductSearchKeyHandler;
+  FocusNode? _activeProductSearchFocusNode;
   String? _lastScannedCode;
   DateTime? _lastScannedAt;
   int _cashShiftRefreshKey = 0;
@@ -185,6 +201,7 @@ class _SalesPageState extends State<SalesPage> {
   @override
   void initState() {
     super.initState();
+    widget.onExitGuardChanged?.call(_confirmSalesExit);
     widget.store.addListener(_handleStoreChanged);
     _selectedCustomerId = AppStore.walkInCustomerId;
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
@@ -198,6 +215,7 @@ class _SalesPageState extends State<SalesPage> {
     _paymentExchangeRateController.text =
         widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _storeUiRevision = _currentStoreUiRevision();
+    _loadQuickProductPreferences();
     _loadQuickProductPages();
     _loadHeldSaleCarts();
     _dataFuture = widget.store.commerce.ensureSalesLoaded();
@@ -222,6 +240,10 @@ class _SalesPageState extends State<SalesPage> {
   @override
   void didUpdateWidget(covariant SalesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.onExitGuardChanged != widget.onExitGuardChanged) {
+      oldWidget.onExitGuardChanged?.call(null);
+      widget.onExitGuardChanged?.call(_confirmSalesExit);
+    }
     if (oldWidget.store != widget.store) {
       oldWidget.store.removeListener(_handleStoreChanged);
       widget.store.addListener(_handleStoreChanged);
@@ -256,6 +278,9 @@ class _SalesPageState extends State<SalesPage> {
 
   @override
   void dispose() {
+    widget.onExitGuardChanged?.call(null);
+    _activeProductSearchKeyHandler = null;
+    _activeProductSearchFocusNode = null;
     widget.store.removeListener(_handleStoreChanged);
     HardwareKeyboard.instance.removeHandler(_handleSaleHardwareShortcutKey);
     _productSearchRevealTimer?.cancel();
@@ -599,8 +624,48 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   bool _handleSaleHardwareShortcutKey(KeyEvent event) {
-    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return false;
+    if (!mounted) return false;
+    final productSearchHandler = _activeProductSearchKeyHandler;
+    if (productSearchHandler != null) {
+      // When the search field owns focus, its FocusNode handles the event
+      // directly. Avoid processing the same key once more through the global
+      // hardware handler, which could add a product twice on Enter.
+      if (_activeProductSearchFocusNode?.hasFocus == true) return false;
+      return productSearchHandler(event);
+    }
+    if (ModalRoute.of(context)?.isCurrent != true) return false;
     return _handleSaleShortcutKey(event, _visibleProducts());
+  }
+
+  int? _productSearchDigitIndex(LogicalKeyboardKey key) {
+    final topRow = <LogicalKeyboardKey>[
+      LogicalKeyboardKey.digit0,
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit2,
+      LogicalKeyboardKey.digit3,
+      LogicalKeyboardKey.digit4,
+      LogicalKeyboardKey.digit5,
+      LogicalKeyboardKey.digit6,
+      LogicalKeyboardKey.digit7,
+      LogicalKeyboardKey.digit8,
+      LogicalKeyboardKey.digit9,
+    ];
+    final keypad = <LogicalKeyboardKey>[
+      LogicalKeyboardKey.numpad0,
+      LogicalKeyboardKey.numpad1,
+      LogicalKeyboardKey.numpad2,
+      LogicalKeyboardKey.numpad3,
+      LogicalKeyboardKey.numpad4,
+      LogicalKeyboardKey.numpad5,
+      LogicalKeyboardKey.numpad6,
+      LogicalKeyboardKey.numpad7,
+      LogicalKeyboardKey.numpad8,
+      LogicalKeyboardKey.numpad9,
+    ];
+    final topIndex = topRow.indexOf(key);
+    if (topIndex >= 0) return topIndex;
+    final keypadIndex = keypad.indexOf(key);
+    return keypadIndex >= 0 ? keypadIndex : null;
   }
 
   bool _handleSaleShortcutKey(KeyEvent event, List<Product> visibleProducts) {
@@ -762,7 +827,7 @@ class _SalesPageState extends State<SalesPage> {
               SnackBar(content: Text(tr.text('shortcut_cart_empty'))));
           return;
         }
-        await _openPaymentPage(printAfterSave: false);
+        await _openPaymentPage();
         break;
       case SaleShortcutAction.clearCart:
         await _confirmClearCart();
@@ -811,22 +876,54 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  Widget _buildPaymentShortcutGuide(BuildContext context, AppLocalizations tr) {
+  Future<void> _editPaymentShortcut(
+      SalePaymentShortcutAction action, AppLocalizations tr) async {
     final settings = SaleShortcutSettings.load();
-    final chips = <Widget>[];
-    for (final action in SalePaymentShortcutAction.values) {
-      final keyName = settings.keyForPaymentAction(action);
-      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
-      chips.add(Padding(
-        padding: const EdgeInsetsDirectional.only(end: 6, bottom: 6),
-        child: Chip(
-          visualDensity: VisualDensity.compact,
-          label: Text('$keyName ${tr.text(action.labelKey)}'),
-        ),
-      ));
+    final currentKey =
+        settings.keyForPaymentAction(action) ?? SaleShortcutSettings.noneKey;
+    final selectedKey = await showShortcutKeyPicker(
+      context: context,
+      title: tr.text('shortcut_change'),
+      currentKey: currentKey,
+      noneLabel: tr.text('shortcut_none'),
+      cancelLabel: tr.text('cancel'),
+      saveLabel: tr.text('save'),
+    );
+    if (selectedKey == null || !mounted) return;
+    if (settings.isPaymentKeyUsedByAnotherAction(selectedKey, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
     }
-    if (chips.isEmpty) return const SizedBox.shrink();
-    return Wrap(children: chips);
+    final next = settings.copyWithPaymentActionKey(action, selectedKey);
+    await next.save();
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildPaymentShortcutGuide(BuildContext context, AppLocalizations tr) {
+    return ValueListenableBuilder<int>(
+      valueListenable: SaleShortcutSettings.revision,
+      builder: (context, _, __) {
+        final settings = SaleShortcutSettings.load();
+        final chips = <Widget>[];
+        for (final action in SalePaymentShortcutAction.values) {
+          final keyName = settings.keyForPaymentAction(action);
+          if (keyName == null || keyName == SaleShortcutSettings.noneKey) {
+            continue;
+          }
+          chips.add(Padding(
+            padding: const EdgeInsetsDirectional.only(end: 6, bottom: 6),
+            child: ShortcutGuideChip(
+              keyName: keyName,
+              label: tr.text(action.labelKey),
+              onPressed: () => _editPaymentShortcut(action, tr),
+            ),
+          ));
+        }
+        if (chips.isEmpty) return const SizedBox.shrink();
+        return Wrap(children: chips);
+      },
+    );
   }
 
   Future<void> _confirmClearCart() async {
@@ -959,37 +1056,48 @@ class _SalesPageState extends State<SalesPage> {
         message: tr.text('no_access_sales_data'),
       );
     }
-    return FutureBuilder<void>(
-      future: _dataFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator.adaptive());
-        }
-        return FutureBuilder<List<Product>?>(
-          future: _visibleProductsFromSqlite(),
-          builder: (context, productSnapshot) {
-            final products = productSnapshot.data ?? _visibleProducts();
-            return Focus(
-              focusNode: _shortcutFocusNode,
-              autofocus: true,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final isWide = constraints.maxWidth > 980;
-                  final pagePadding = VentioResponsive.pagePadding(context);
-
-                  if (!isWide) {
-                    return _buildMobileSalesLayout(
-                        context, tr, products, pagePadding);
-                  }
-
-                  return _buildDesktopSalesLayout(
-                      context, tr, products, pagePadding);
-                },
-              ),
-            );
-          },
-        );
+    return PopScope(
+      canPop: _cart.isEmpty,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop || _cart.isEmpty) return;
+        final navigator = Navigator.of(context);
+        unawaited(_confirmSalesExit().then((canLeave) {
+          if (!canLeave || !mounted) return;
+          navigator.maybePop();
+        }));
       },
+      child: FutureBuilder<void>(
+        future: _dataFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator.adaptive());
+          }
+          return FutureBuilder<List<Product>?>(
+            future: _visibleProductsFromSqlite(),
+            builder: (context, productSnapshot) {
+              final products = productSnapshot.data ?? _visibleProducts();
+              return Focus(
+                focusNode: _shortcutFocusNode,
+                autofocus: true,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isWide = constraints.maxWidth > 980;
+                    final pagePadding = VentioResponsive.pagePadding(context);
+
+                    if (!isWide) {
+                      return _buildMobileSalesLayout(
+                          context, tr, products, pagePadding);
+                    }
+
+                    return _buildDesktopSalesLayout(
+                        context, tr, products, pagePadding);
+                  },
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -1911,7 +2019,6 @@ class _SalesPageState extends State<SalesPage> {
                   icon: const Icon(Icons.assignment_return_outlined),
                   label: Text(tr.text('new_sales_return')),
                 ),
-                _buildSalePriceTypeSelector(context, tr),
               ],
             ),
           ),
@@ -1920,25 +2027,72 @@ class _SalesPageState extends State<SalesPage> {
             child: Column(
               children: [
                 Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        flex: 6,
-                        child: _buildCurrentSalePanel(
-                          context,
-                          tr,
-                          products,
-                          showTotalBar: false,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 4,
-                        child:
-                            _buildQuickProductGridPanel(context, tr, products),
-                      ),
-                    ],
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final totalWidth = constraints.maxWidth;
+                      final minimumQuickWidth =
+                          math.min(280.0, totalWidth * 0.35);
+                      final maximumQuickWidth = math.max(
+                        minimumQuickWidth,
+                        math.min(totalWidth * 0.65, totalWidth - 420),
+                      );
+                      final quickWidth = (totalWidth * _quickPanelFraction)
+                          .clamp(minimumQuickWidth, maximumQuickWidth)
+                          .toDouble();
+
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _buildCurrentSalePanel(
+                              context,
+                              tr,
+                              products,
+                              showTotalBar: false,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Tooltip(
+                            message: tr.text('quick_panel_resize_hint'),
+                            child: MouseRegion(
+                              cursor: SystemMouseCursors.resizeLeftRight,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onHorizontalDragUpdate: (details) =>
+                                    _resizeQuickProductPanel(
+                                        totalWidth, details.delta.dx),
+                                onHorizontalDragEnd: (_) {
+                                  unawaited(LocalDatabaseService.setString(
+                                    _quickPanelFractionStorageKey,
+                                    _quickPanelFraction.toString(),
+                                  ));
+                                },
+                                child: SizedBox(
+                                  width: 16,
+                                  child: Center(
+                                    child: Container(
+                                      width: 4,
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outlineVariant,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          SizedBox(
+                            width: quickWidth,
+                            child: _buildQuickProductGridPanel(
+                                context, tr, products),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -1960,8 +2114,6 @@ class _SalesPageState extends State<SalesPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildSalePriceTypeSelector(context, tr),
-            const SizedBox(height: 10),
             _buildBarcodeStation(context, tr, products: products),
             const SizedBox(height: 12),
             Expanded(
@@ -1995,7 +2147,9 @@ class _SalesPageState extends State<SalesPage> {
                 Expanded(
                     child: Text(tr.text('quick_product_grid'),
                         style: Theme.of(context).textTheme.titleLarge)),
+                _buildQuickTileSizeButton(context, tr),
                 if (_quickGridEditMode) ...[
+                  const SizedBox(width: 4),
                   TextButton.icon(
                     onPressed: _cancelQuickGridEditing,
                     icon: const Icon(Icons.close),
@@ -2015,6 +2169,8 @@ class _SalesPageState extends State<SalesPage> {
                   ),
               ],
             ),
+            const SizedBox(height: 8),
+            _buildSalePriceTypeSelector(context, tr),
             const SizedBox(height: 8),
             SizedBox(
               height: 42,
@@ -2111,7 +2267,7 @@ class _SalesPageState extends State<SalesPage> {
                   : LayoutBuilder(
                       builder: (context, constraints) {
                         final crossAxisCount =
-                            constraints.maxWidth > 520 ? 3 : 2;
+                            _quickTileColumnCount(constraints.maxWidth);
                         return GridView.builder(
                           itemCount: visibleSlotIndexes.length,
                           gridDelegate:
@@ -2119,7 +2275,7 @@ class _SalesPageState extends State<SalesPage> {
                             crossAxisCount: crossAxisCount,
                             mainAxisSpacing: 10,
                             crossAxisSpacing: 10,
-                            childAspectRatio: 1.18,
+                            childAspectRatio: 1,
                           ),
                           itemBuilder: (context, visibleIndex) {
                             final slotIndex = visibleSlotIndexes[visibleIndex];
@@ -2218,27 +2374,44 @@ class _SalesPageState extends State<SalesPage> {
                 padding: const EdgeInsets.all(10),
                 child: isEmpty
                     ? Icon(Icons.add, size: 34, color: scheme.primary)
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final productName =
                               slot.shortName?.trim().isNotEmpty == true
                                   ? slot.shortName!.trim()
-                                  : product!.name,
-                              textAlign: TextAlign.center,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 8),
-                          Text(
-                              formatUsdReferenceAmount(
-                                  product!.price, widget.store.storeProfile),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis),
-                        ],
+                                  : product!.name;
+                          final price = formatUsdReferenceAmount(
+                              product!.price, widget.store.storeProfile);
+                          return Center(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: SizedBox(
+                                width: constraints.maxWidth,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      productName,
+                                      textAlign: TextAlign.center,
+                                      softWrap: true,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w800),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      price,
+                                      textAlign: TextAlign.center,
+                                      softWrap: true,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
               ),
             ),
@@ -2394,6 +2567,95 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
+  void _loadQuickProductPreferences() {
+    final storedTileSize = LocalDatabaseService.getString(
+      _quickTileSizeStorageKey,
+    );
+    _quickTileSize = _QuickProductTileSize.values.firstWhere(
+      (value) => value.name == storedTileSize,
+      orElse: () => _QuickProductTileSize.medium,
+    );
+
+    final storedFraction = double.tryParse(
+      LocalDatabaseService.getString(_quickPanelFractionStorageKey) ?? '',
+    );
+    if (storedFraction != null && storedFraction.isFinite) {
+      _quickPanelFraction = storedFraction.clamp(0.25, 0.65).toDouble();
+    }
+  }
+
+  void _setQuickTileSize(_QuickProductTileSize value) {
+    if (_quickTileSize == value) return;
+    setState(() => _quickTileSize = value);
+    unawaited(LocalDatabaseService.setString(
+      _quickTileSizeStorageKey,
+      value.name,
+    ));
+  }
+
+  void _resizeQuickProductPanel(double totalWidth, double delta) {
+    if (totalWidth <= 0) return;
+    final direction = Directionality.of(context) == TextDirection.rtl ? -1 : 1;
+    final requestedWidth = totalWidth * _quickPanelFraction - delta * direction;
+    final minimumWidth = math.min(280.0, totalWidth * 0.35);
+    final maximumWidth = math.max(
+      minimumWidth,
+      math.min(totalWidth * 0.65, totalWidth - 420),
+    );
+    final nextWidth =
+        requestedWidth.clamp(minimumWidth, maximumWidth).toDouble();
+    setState(() => _quickPanelFraction = nextWidth / totalWidth);
+  }
+
+  int _quickTileColumnCount(double width) {
+    switch (_quickTileSize) {
+      case _QuickProductTileSize.small:
+        return width >= 650
+            ? 4
+            : width >= 420
+                ? 3
+                : 2;
+      case _QuickProductTileSize.medium:
+        return width >= 520 ? 3 : 2;
+      case _QuickProductTileSize.large:
+        return width >= 760
+            ? 3
+            : width >= 500
+                ? 2
+                : 1;
+    }
+  }
+
+  Widget _buildQuickTileSizeButton(
+    BuildContext context,
+    AppLocalizations tr, {
+    VoidCallback? onChanged,
+  }) {
+    return PopupMenuButton<_QuickProductTileSize>(
+      tooltip: tr.text('quick_tile_size'),
+      icon: const Icon(Icons.grid_view_outlined),
+      initialValue: _quickTileSize,
+      onSelected: (value) {
+        _setQuickTileSize(value);
+        onChanged?.call();
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: _QuickProductTileSize.small,
+          child: Text(tr.text('small')),
+        ),
+        PopupMenuItem(
+          value: _QuickProductTileSize.medium,
+          child: Text(tr.text('medium')),
+        ),
+        PopupMenuItem(
+          value: _QuickProductTileSize.large,
+          child: Text(tr.text('large')),
+        ),
+      ],
+    );
+  }
+
   void _ensureQuickPages(List<Product> products, AppLocalizations tr) {
     if (_quickPages.isEmpty) {
       _quickPages.add(
@@ -2403,8 +2665,7 @@ class _SalesPageState extends State<SalesPage> {
             if (index < products.length && index < 6) {
               final product = products[index];
               return _QuickProductSlot(
-                  productId: product.id,
-                  shortName: _shortProductName(product.name));
+                  productId: product.id, shortName: product.name);
             }
             return const _QuickProductSlot();
           }),
@@ -2412,22 +2673,42 @@ class _SalesPageState extends State<SalesPage> {
       );
       unawaited(_saveQuickProductPages());
     }
+    _migrateLegacyQuickProductNames();
     if (_selectedQuickPageIndex >= _quickPages.length) {
       _selectedQuickPageIndex = _quickPages.length - 1;
     }
     if (_selectedQuickPageIndex < 0) _selectedQuickPageIndex = 0;
   }
 
+  void _migrateLegacyQuickProductNames() {
+    var changed = false;
+    for (final page in _quickPages) {
+      for (var index = 0; index < page.slots.length; index += 1) {
+        final slot = page.slots[index];
+        final productId = slot.productId;
+        if (productId == null) continue;
+        final product = _productById(productId);
+        if (product == null) continue;
+        final fullName = product.name.trim();
+        final legacyName =
+            fullName.length <= 14 ? fullName : fullName.substring(0, 14).trim();
+        if (fullName.length > legacyName.length &&
+            slot.shortName?.trim() == legacyName) {
+          page.slots[index] = _QuickProductSlot(
+            productId: productId,
+            shortName: fullName,
+          );
+          changed = true;
+        }
+      }
+    }
+    if (changed) unawaited(_saveQuickProductPages());
+  }
+
   Future<void> _saveQuickProductPages() => LocalDatabaseService.setString(
         _quickPagesStorageKey,
         jsonEncode(_quickPages.map((page) => page.toJson()).toList()),
       );
-
-  String _shortProductName(String name) {
-    final clean = name.trim();
-    if (clean.length <= 14) return clean;
-    return clean.substring(0, 14).trim();
-  }
 
   Product? _productById(String id) {
     final product = widget.store.productById(id);
@@ -2663,8 +2944,7 @@ class _SalesPageState extends State<SalesPage> {
                                   setSheetState(() {
                                     selected = product;
                                     if (nameController.text.trim().isEmpty) {
-                                      nameController.text =
-                                          _shortProductName(product.name);
+                                      nameController.text = product.name;
                                     }
                                   });
                                 },
@@ -2702,11 +2982,10 @@ class _SalesPageState extends State<SalesPage> {
                                       sheetContext,
                                       _QuickProductSlot(
                                         productId: selected!.id,
-                                        shortName: nameController.text
-                                                .trim()
-                                                .isEmpty
-                                            ? _shortProductName(selected!.name)
-                                            : nameController.text.trim(),
+                                        shortName:
+                                            nameController.text.trim().isEmpty
+                                                ? selected!.name
+                                                : nameController.text.trim(),
                                       ),
                                     ),
                             child: Text(tr.text('save')),
@@ -2854,9 +3133,7 @@ class _SalesPageState extends State<SalesPage> {
               const SizedBox(height: 10),
               FilledButton.icon(
                 key: const ValueKey('SalesContinuePaymentMobile'),
-                onPressed: _cart.isEmpty
-                    ? null
-                    : () => _openPaymentPage(printAfterSave: false),
+                onPressed: _cart.isEmpty ? null : _openPaymentPage,
                 icon: const Icon(Icons.payments_outlined),
                 label: Text(tr.text('continue_payment')),
               ),
@@ -2889,9 +3166,7 @@ class _SalesPageState extends State<SalesPage> {
                   minimumSize: const Size(0, 40),
                   visualDensity: VisualDensity.compact,
                 ),
-                onPressed: _cart.isEmpty
-                    ? null
-                    : () => _openPaymentPage(printAfterSave: false),
+                onPressed: _cart.isEmpty ? null : _openPaymentPage,
                 icon: const Icon(Icons.payments_outlined),
                 label: Text(tr.text('continue_payment')),
               ),
@@ -2960,9 +3235,64 @@ class _SalesPageState extends State<SalesPage> {
     return 'Hold ${_heldCarts.length + 1} - $hour:$minute';
   }
 
-  Future<void> _holdCurrentCart() async {
-    if (!widget.store.canSell) return;
-    if (_cart.isEmpty) return;
+  Future<bool> _confirmSalesExit() async {
+    if (_cart.isEmpty) return true;
+    if (_exitPromptOpen) return false;
+    _exitPromptOpen = true;
+    try {
+      final tr = AppLocalizations.of(context);
+      final choice = await showDialog<_SalesExitChoice>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(tr.text('sales_exit_cart_title')),
+          content: Text(tr.text('sales_exit_cart_message')),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_SalesExitChoice.cancel),
+              child: Text(tr.text('cancel')),
+            ),
+            OutlinedButton.icon(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_SalesExitChoice.holdCart),
+              icon: const Icon(Icons.pause_circle_outline),
+              label: Text(tr.text('hold_cart')),
+            ),
+            FilledButton.icon(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_SalesExitChoice.clearCart),
+              icon: const Icon(Icons.delete_sweep_outlined),
+              label: Text(tr.text('clear_cart')),
+            ),
+          ],
+        ),
+      );
+
+      switch (choice) {
+        case _SalesExitChoice.clearCart:
+          if (!mounted) return false;
+          setState(() {
+            _cart.clear();
+            _selectedCartIndex = null;
+            _pendingDeleteCartIndex = null;
+          });
+          _restoreScannerMode();
+          return true;
+        case _SalesExitChoice.holdCart:
+          return _holdCurrentCart();
+        case _SalesExitChoice.cancel:
+        case null:
+          return false;
+      }
+    } finally {
+      _exitPromptOpen = false;
+    }
+  }
+
+  Future<bool> _holdCurrentCart() async {
+    if (!widget.store.canSell) return false;
+    if (_cart.isEmpty) return false;
     final tr = AppLocalizations.of(context);
     final nameController = TextEditingController(text: _defaultHeldCartName());
     final name = await showDialog<String>(
@@ -2987,7 +3317,7 @@ class _SalesPageState extends State<SalesPage> {
       ),
     );
     nameController.dispose();
-    if (name == null) return;
+    if (name == null) return false;
 
     final trimmedName =
         name.trim().isEmpty ? _defaultHeldCartName() : name.trim();
@@ -3004,10 +3334,11 @@ class _SalesPageState extends State<SalesPage> {
       _pendingDeleteCartIndex = null;
     });
     await _saveHeldSaleCarts();
-    if (!mounted) return;
+    if (!mounted) return false;
     ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('cart_held_successfully'))));
     _restoreScannerMode();
+    return true;
   }
 
   Future<void> _restoreHeldCart(_HeldSaleCart heldCart) async {
@@ -3392,6 +3723,7 @@ class _SalesPageState extends State<SalesPage> {
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, index) {
           final item = _cart[index];
+          var editedQuantity = _formatQuantity(item.quantity);
           final itemKey = _cartItemKeys.putIfAbsent(index, GlobalKey.new);
           final isSelected = index == _selectedCartIndex;
           final isPendingDelete = index == _pendingDeleteCartIndex;
@@ -3419,33 +3751,67 @@ class _SalesPageState extends State<SalesPage> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 30, minHeight: 30),
                     tooltip: tr.text('decrease_qty'),
                     onPressed: () => _decreaseOrMarkCartItem(index),
-                    icon: const Icon(Icons.remove_circle_outline),
+                    icon: const Icon(Icons.remove_circle_outline, size: 19),
                   ),
                   SizedBox(
-                      width: 42,
-                      child: Text(_formatQuantity(item.quantity),
-                          textAlign: TextAlign.center)),
+                    width: 54,
+                    child: TextFormField(
+                      key: ValueKey(
+                          'cart_quantity_${item.product.id}_${item.unitName}_${item.quantity}'),
+                      initialValue: editedQuantity,
+                      textAlign: TextAlign.center,
+                      keyboardType: item.product.allowsDecimalQuantity
+                          ? const TextInputType.numberWithOptions(decimal: true)
+                          : TextInputType.number,
+                      inputFormatters: item.product.allowsDecimalQuantity
+                          ? [
+                              FilteringTextInputFormatter.allow(
+                                  RegExp(r'[0-9.]'))
+                            ]
+                          : [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) => editedQuantity = value,
+                      onFieldSubmitted: (value) =>
+                          _commitCartQuantityText(index, value),
+                      onTapOutside: (_) =>
+                          _commitCartQuantityText(index, editedQuantity),
+                    ),
+                  ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 30, minHeight: 30),
                     tooltip: tr.text('increase_qty'),
                     onPressed: () =>
                         _changeCartQuantity(index, item.quantity + 1),
-                    icon: const Icon(Icons.add_circle_outline),
+                    icon: const Icon(Icons.add_circle_outline, size: 19),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 30, minHeight: 30),
                     tooltip: tr.text('delete'),
                     onPressed: () => _removeCartItem(index),
-                    icon: const Icon(Icons.delete_outline),
+                    icon: const Icon(Icons.delete_outline, size: 19),
                   ),
                 ],
               );
               if (constraints.maxWidth < 520) {
                 return InkWell(
-                  onTap: () {
-                    _selectCartIndex(index);
-                    _showQuantitySheet(index);
-                  },
+                  onTap: () => _selectCartIndex(index),
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
                     decoration: BoxDecoration(
@@ -3453,7 +3819,7 @@ class _SalesPageState extends State<SalesPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     padding:
-                        const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                        const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -3476,25 +3842,47 @@ class _SalesPageState extends State<SalesPage> {
                               const SizedBox(width: 6),
                             ],
                             Expanded(
-                                child: Text(item.displayName,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleSmall)),
+                              child: Text(
+                                item.displayName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _cartLineTotalText(item),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelLarge
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                            '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
-                        Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: actions),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ),
+                            actions,
+                          ],
+                        ),
                       ],
                     ),
                   ),
                 );
               }
               return ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                minVerticalPadding: 2,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 6),
                 tileColor: rowColor,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12)),
@@ -3506,13 +3894,27 @@ class _SalesPageState extends State<SalesPage> {
                         color: Theme.of(context).colorScheme.onErrorContainer,
                       )
                     : null,
-                title: Text(item.displayName),
+                title: Row(
+                  children: [
+                    Expanded(
+                      child: Text(item.displayName,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _cartLineTotalText(item),
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelLarge
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
                 subtitle: Text(
-                    '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
-                onTap: () {
-                  _selectCartIndex(index);
-                  _showQuantitySheet(index);
-                },
+                    '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                onTap: () => _selectCartIndex(index),
                 trailing: ConstrainedBox(
                   constraints: BoxConstraints(
                       maxWidth: VentioResponsive.adaptiveWidth(context,
@@ -3619,13 +4021,13 @@ class _SalesPageState extends State<SalesPage> {
                   final primary = FilledButton.icon(
                       onPressed: _cart.isEmpty || !widget.store.canSell
                           ? null
-                          : () => _openPaymentPage(printAfterSave: true),
+                          : _openPaymentPage,
                       icon: const Icon(Icons.payments_outlined),
                       label: Text(tr.text('continue_payment')));
                   final secondary = OutlinedButton.icon(
                       onPressed: _cart.isEmpty || !widget.store.canSell
                           ? null
-                          : () => _openPaymentPage(printAfterSave: false),
+                          : _openPaymentPage,
                       icon: const Icon(Icons.payments_outlined),
                       label: Text(tr.text('continue_payment')));
                   if (constraints.maxWidth < 460) {
@@ -4733,96 +5135,16 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  Future<void> _showQuantitySheet(int index) async {
-    if (index < 0 || index >= _cart.length) return;
-    final tr = AppLocalizations.of(context);
-    final item = _cart[index];
-    final controller =
-        TextEditingController(text: _formatQuantity(item.quantity));
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setModalState) => SafeArea(
-          child: Padding(
-            padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(item.displayName,
-                    style: Theme.of(context).textTheme.titleLarge,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  textAlign: TextAlign.center,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: item.product.allowsDecimalQuantity
-                      ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))]
-                      : [FilteringTextInputFormatter.digitsOnly],
-                  decoration: InputDecoration(labelText: tr.text('quantity')),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          final current =
-                              double.tryParse(controller.text) ?? item.quantity;
-                          controller.text = _formatQuantity(
-                              (current - 1) < 1 ? 1 : (current - 1));
-                          controller.selection = TextSelection.fromPosition(
-                              TextPosition(offset: controller.text.length));
-                        },
-                        icon: const Icon(Icons.remove),
-                        label: Text(tr.text('decrease_qty')),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          final current =
-                              double.tryParse(controller.text) ?? item.quantity;
-                          controller.text = _formatQuantity(
-                              (current + 1) < 1 ? 1 : (current + 1));
-                          controller.selection = TextSelection.fromPosition(
-                              TextPosition(offset: controller.text.length));
-                        },
-                        icon: const Icon(Icons.add),
-                        label: Text(tr.text('increase_qty')),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: () {
-                    final quantity =
-                        double.tryParse(controller.text) ?? item.quantity;
-                    Navigator.pop(sheetContext);
-                    _changeCartQuantity(index, quantity);
-                    FocusScope.of(context).unfocus();
-                  },
-                  child: Text(tr.text('save')),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    controller.dispose();
+  void _commitCartQuantityText(int index, String value) {
+    final quantity = double.tryParse(value.trim());
+    if (quantity == null || !quantity.isFinite) return;
+    _changeCartQuantity(index, quantity);
   }
+
+  String _cartLineTotalText(_DraftSaleItem item) => _formatSaleCurrency(
+        _currencyFromBase(item.lineTotal, _invoiceCurrency),
+        _invoiceCurrency,
+      );
 
   void _showQuickProductsSheet(List<Product> products) {
     final tr = AppLocalizations.of(context);
@@ -4870,6 +5192,11 @@ class _SalesPageState extends State<SalesPage> {
                               child: Text(tr.text('quick_product_grid'),
                                   style:
                                       Theme.of(context).textTheme.titleLarge)),
+                          _buildQuickTileSizeButton(
+                            context,
+                            tr,
+                            onChanged: () => setModalState(() {}),
+                          ),
                           IconButton(
                             tooltip: tr.text('close'),
                             onPressed: () {
@@ -5046,8 +5373,8 @@ class _SalesPageState extends State<SalesPage> {
                             ? Center(child: Text(tr.text('no_products')))
                             : LayoutBuilder(
                                 builder: (context, constraints) {
-                                  final crossAxisCount =
-                                      constraints.maxWidth > 520 ? 3 : 2;
+                                  final crossAxisCount = _quickTileColumnCount(
+                                      constraints.maxWidth);
                                   return GridView.builder(
                                     itemCount: visibleSlotIndexes.length,
                                     gridDelegate:
@@ -5055,7 +5382,7 @@ class _SalesPageState extends State<SalesPage> {
                                       crossAxisCount: crossAxisCount,
                                       mainAxisSpacing: 10,
                                       crossAxisSpacing: 10,
-                                      childAspectRatio: 1.18,
+                                      childAspectRatio: 1,
                                     ),
                                     itemBuilder: (context, visibleIndex) {
                                       final slotIndex =
@@ -5151,8 +5478,151 @@ class _SalesPageState extends State<SalesPage> {
   void _showProductSearchSheet(List<Product> products) {
     final tr = AppLocalizations.of(context);
     final controller = TextEditingController(text: _search);
+    final searchFocusNode = FocusNode(debugLabel: 'sale_product_search');
+    _activeProductSearchFocusNode = searchFocusNode;
+    BuildContext? searchSheetContext;
+    void Function(VoidCallback)? modalSetState;
+    List<({Product product, ProductSaleUnit unit})> currentSearchOptions =
+        const [];
+    int? selectedSearchIndex;
+    final searchResultsScrollController = ScrollController();
+    final searchResultKeys = <int, GlobalKey>{};
     var query = _search;
     final searchIndex = _productSearchIndex();
+
+    void focusSearchField() {
+      searchFocusNode.requestFocus();
+      controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: controller.text.length,
+      );
+    }
+
+    void addSearchOption(int index) {
+      if (index < 0 || index >= currentSearchOptions.length) return;
+      final option = currentSearchOptions[index];
+      selectedSearchIndex = index;
+      modalSetState?.call(() {});
+      _addProduct(option.product, saleUnit: option.unit);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        focusSearchField();
+      });
+    }
+
+    void revealSearchOption(int index) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final optionContext = searchResultKeys[index]?.currentContext;
+        if (optionContext == null) return;
+        Scrollable.ensureVisible(
+          optionContext,
+          alignment: 0.45,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+
+    _activeProductSearchKeyHandler = (event) {
+      if (event is! KeyDownEvent) return false;
+
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        final sheetContext = searchSheetContext;
+        if (sheetContext != null && Navigator.of(sheetContext).canPop()) {
+          Navigator.of(sheetContext).pop();
+        }
+        return true;
+      }
+
+      final keyName =
+          SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
+      final configuredSearchKey = SaleShortcutSettings.load()
+          .keyForSaleAction(SaleShortcutAction.searchProduct);
+      if (keyName != null &&
+          keyName == configuredSearchKey &&
+          keyName != SaleShortcutSettings.noneKey &&
+          keyName != 'Enter' &&
+          keyName != 'Esc') {
+        focusSearchField();
+        return true;
+      }
+
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown ||
+          event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        if (currentSearchOptions.isEmpty) return false;
+        final lastIndex = currentSearchOptions.length - 1;
+        final nextIndex = selectedSearchIndex == null
+            ? (event.logicalKey == LogicalKeyboardKey.arrowDown ? 0 : lastIndex)
+            : event.logicalKey == LogicalKeyboardKey.arrowDown
+                ? math.min(lastIndex, selectedSearchIndex! + 1)
+                : math.max(0, selectedSearchIndex! - 1);
+        selectedSearchIndex = nextIndex;
+        modalSetState?.call(() {});
+        revealSearchOption(nextIndex);
+        return true;
+      }
+
+      final digit = _productSearchDigitIndex(event.logicalKey);
+      if (HardwareKeyboard.instance.isShiftPressed &&
+          digit != null &&
+          digit < currentSearchOptions.length) {
+        selectedSearchIndex = digit;
+        modalSetState?.call(() {});
+        revealSearchOption(digit);
+        return true;
+      }
+
+      if (event.logicalKey == LogicalKeyboardKey.enter ||
+          event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+        final index = selectedSearchIndex;
+        if (index != null && index < currentSearchOptions.length) {
+          addSearchOption(index);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // The global keyboard handler is useful while the sheet is opening, but
+    // the focused text field can consume navigation and digit events first.
+    // Intercept them on the search field as well so they never reach the
+    // result list's scrolling behavior or get inserted into the query.
+    searchFocusNode.onKeyEvent = (node, event) {
+      final handler = _activeProductSearchKeyHandler;
+      if (handler != null && handler(event)) {
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    };
+
+    Future<List<Product>> loadSearchResults(String rawQuery) async {
+      final normalized = rawQuery.trim().toLowerCase();
+      if (normalized.isEmpty) return products;
+
+      // The page itself intentionally loads only a small first page. Search
+      // must query SQLite so products outside that page are still discoverable.
+      final sqlite = await LocalDatabaseService.queryProductsFromSqlite(
+        query: normalized,
+        limit: 250,
+        activeOnly: true,
+      );
+      if (sqlite != null) return sqlite.items;
+
+      // Keep the in-memory path as a fallback for environments where the
+      // business SQLite database is unavailable, but use the complete store
+      // catalog rather than the paged list passed to this sheet.
+      final allActiveProducts = widget.store.products
+          .where((product) => product.isActive && !product.isDeleted)
+          .where((product) =>
+              searchIndex[product.id]?.contains(normalized) ?? false)
+          .take(250)
+          .toList(growable: false);
+      return allActiveProducts;
+    }
+
+    Future<List<Product>>? searchFuture =
+        query.trim().isEmpty ? null : loadSearchResults(query);
     Timer? revealTimer;
     int visibleCount = 100;
     int revealTargetCount = 0;
@@ -5203,23 +5673,9 @@ class _SalesPageState extends State<SalesPage> {
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setModalState) {
+          searchSheetContext = sheetContext;
+          modalSetState = setModalState;
           final q = query.trim().toLowerCase();
-          final filteredProducts = q.isEmpty
-              ? products
-              : products
-                  .where((product) =>
-                      searchIndex[product.id]?.contains(q) ?? false)
-                  .toList(growable: false);
-          syncReveal(filteredProducts.length, setModalState);
-          final visibleProducts = filteredProducts
-              .take(math.min(visibleCount, filteredProducts.length))
-              .toList(growable: false);
-          final searchOptions = <({Product product, ProductSaleUnit unit})>[];
-          for (final product in visibleProducts) {
-            for (final unit in product.effectiveSaleUnits) {
-              searchOptions.add((product: product, unit: unit));
-            }
-          }
           return SafeArea(
             child: Padding(
               padding: EdgeInsets.only(
@@ -5238,19 +5694,12 @@ class _SalesPageState extends State<SalesPage> {
                           child: Text(tr.text('search_product'),
                               style: Theme.of(context).textTheme.titleLarge),
                         ),
-                        PageDataLoadIndicator(
-                          loadedCount: searchOptions.length,
-                          totalCount: filteredProducts.fold<int>(
-                              0,
-                              (total, product) =>
-                                  total + product.effectiveSaleUnits.length),
-                          label: tr.text('preparing_search_results'),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: controller,
+                      focusNode: searchFocusNode,
                       autofocus: true,
                       decoration: InputDecoration(
                         prefixIcon: const Icon(Icons.search),
@@ -5261,53 +5710,120 @@ class _SalesPageState extends State<SalesPage> {
                             final code = await _scanCodeWithCameraOnce();
                             if (code == null) return;
                             controller.text = code;
-                            setModalState(() => query = code);
+                            setModalState(() {
+                              query = code;
+                              searchFuture = loadSearchResults(code);
+                              resetReveal();
+                            });
                           },
                           icon: const Icon(Icons.camera_alt_outlined),
                         ),
                       ),
-                      onChanged: (value) => setModalState(() {
-                        query = value;
-                        resetReveal();
-                      }),
+                      onChanged: (value) {
+                        setModalState(() {
+                          query = value;
+                          currentSearchOptions = const [];
+                          selectedSearchIndex = null;
+                          searchFuture = value.trim().isEmpty
+                              ? null
+                              : loadSearchResults(value);
+                          resetReveal();
+                        });
+                      },
                     ),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: searchOptions.isEmpty
-                          ? Center(child: Text(tr.text('no_products')))
-                          : ListView.separated(
-                              itemCount: searchOptions.length,
-                              separatorBuilder: (_, __) =>
-                                  const Divider(height: 1),
-                              itemBuilder: (context, index) {
-                                final option = searchOptions[index];
-                                final product = option.product;
-                                final unit = option.unit;
-                                final unitName = unit.name.trim().isNotEmpty
-                                    ? unit.name.trim()
-                                    : product.unit;
-                                return ListTile(
-                                  title: Text('${product.name} — $unitName',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                  subtitle: Text(
-                                      '${product.code} • ${_stockAvailabilityLabel(product, tr)}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                  trailing: Text(formatUsdReferenceAmount(
-                                      _salePriceFor(product, unit),
-                                      widget.store.storeProfile)),
-                                  onTap: () {
-                                    Navigator.pop(sheetContext);
-                                    _search = '';
-                                    _searchController.clear();
-                                    _resetProductSearchReveal();
-                                    FocusScope.of(context).unfocus();
-                                    _addProduct(product, saleUnit: unit);
-                                  },
-                                );
-                              },
-                            ),
+                      child: FutureBuilder<List<Product>>(
+                        future: searchFuture,
+                        builder: (context, snapshot) {
+                          if (searchFuture != null &&
+                              snapshot.connectionState !=
+                                  ConnectionState.done) {
+                            return const Center(
+                              child: CircularProgressIndicator.adaptive(),
+                            );
+                          }
+
+                          final filteredProducts = snapshot.data ??
+                              (q.isEmpty ? products : const <Product>[]);
+                          syncReveal(filteredProducts.length, setModalState);
+                          final visibleProducts = filteredProducts
+                              .take(math.min(
+                                  visibleCount, filteredProducts.length))
+                              .toList(growable: false);
+                          final searchOptions =
+                              <({Product product, ProductSaleUnit unit})>[];
+                          for (final product in visibleProducts) {
+                            for (final unit in product.effectiveSaleUnits) {
+                              searchOptions.add((product: product, unit: unit));
+                            }
+                          }
+                          currentSearchOptions = searchOptions;
+                          if (searchOptions.isEmpty) {
+                            selectedSearchIndex = null;
+                          } else if (selectedSearchIndex == null ||
+                              selectedSearchIndex! >= searchOptions.length) {
+                            selectedSearchIndex = 0;
+                          }
+
+                          if (searchOptions.isEmpty) {
+                            return Center(child: Text(tr.text('no_products')));
+                          }
+                          return ListView.separated(
+                            controller: searchResultsScrollController,
+                            itemCount: searchOptions.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final option = searchOptions[index];
+                              final product = option.product;
+                              final unit = option.unit;
+                              final unitName = unit.name.trim().isNotEmpty
+                                  ? unit.name.trim()
+                                  : product.unit;
+                              final barcode = product.barcode.trim();
+                              final codeAndBarcode = barcode.isEmpty
+                                  ? product.code
+                                  : '${product.code} • $barcode';
+                              final isSelected = selectedSearchIndex == index;
+                              final colorScheme = Theme.of(context).colorScheme;
+                              return ListTile(
+                                key: searchResultKeys.putIfAbsent(
+                                    index, GlobalKey.new),
+                                selected: isSelected,
+                                selectedColor: colorScheme.onPrimaryContainer,
+                                selectedTileColor: colorScheme.primaryContainer,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: isSelected
+                                      ? BorderSide(
+                                          color: colorScheme.primary,
+                                          width: 2,
+                                        )
+                                      : BorderSide.none,
+                                ),
+                                leading: index < 10
+                                    ? CircleAvatar(
+                                        radius: 14,
+                                        child: Text('$index'),
+                                      )
+                                    : null,
+                                title: Text('${product.name} — $unitName',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                subtitle: Text(
+                                    '$codeAndBarcode • ${_stockAvailabilityLabel(product, tr)}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                trailing: Text(formatUsdReferenceAmount(
+                                    _salePriceFor(product, unit),
+                                    widget.store.storeProfile)),
+                                onTap: () => addSearchOption(index),
+                              );
+                            },
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),
@@ -5318,7 +5834,14 @@ class _SalesPageState extends State<SalesPage> {
       ),
     ).whenComplete(() {
       revealTimer?.cancel();
+      _activeProductSearchKeyHandler = null;
+      _activeProductSearchFocusNode = null;
+      _search = '';
+      _searchController.clear();
+      _resetProductSearchReveal();
+      searchFocusNode.dispose();
       controller.dispose();
+      searchResultsScrollController.dispose();
     });
   }
 
@@ -5619,7 +6142,7 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  Future<void> _openPaymentPage({required bool printAfterSave}) async {
+  Future<void> _openPaymentPage() async {
     if (!widget.store.canSell) return;
     if (_cart.isEmpty) return;
     await _refreshInvoiceBatchCostPreview();
@@ -5809,7 +6332,7 @@ class _SalesPageState extends State<SalesPage> {
       ),
     );
     if (confirmed == true) {
-      await _saveCurrentInvoice(printAfterSave: printAfterSave);
+      await _saveCurrentInvoice();
     } else if (mounted) {
       setState(() {
         _paymentMethod = originalMethod;
@@ -6421,7 +6944,46 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  Future<void> _saveCurrentInvoice({required bool printAfterSave}) async {
+  Future<bool> _confirmInvoicePrintAfterSave() async {
+    final tr = AppLocalizations.of(context);
+    final shouldPrint = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent &&
+              (event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+            Navigator.of(dialogContext).pop(true);
+            return KeyEventResult.handled;
+          }
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.escape) {
+            Navigator.of(dialogContext).pop(false);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: AlertDialog(
+          title: Text(tr.text('print_invoice_after_save_question')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(tr.text('no')),
+            ),
+            FilledButton(
+              autofocus: true,
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(tr.text('yes')),
+            ),
+          ],
+        ),
+      ),
+    );
+    return shouldPrint == true;
+  }
+
+  Future<void> _saveCurrentInvoice() async {
     if (_cart.isEmpty) return;
     if (_discount > _subtotal) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -6543,7 +7105,11 @@ class _SalesPageState extends State<SalesPage> {
         content: Text(AppLocalizations.of(context)
             .text('invoice_created_successfully'))));
 
-    if (printAfterSave) {
+    final printSettings = widget.store.storeProfile.printSettings;
+    final shouldPrint = printSettings.askBeforeSalesInvoicePrint
+        ? await _confirmInvoicePrintAfterSave()
+        : printSettings.printSalesInvoiceAfterSave;
+    if (shouldPrint && mounted) {
       await _handleInvoiceAction(() => InvoicePdfService.printInvoice(
           context: context,
           sale: sale,
@@ -6700,6 +7266,8 @@ class _PostedSaleEditLine {
   String unitName;
   double conversionToBase;
 }
+
+enum _QuickProductTileSize { small, medium, large }
 
 class _QuickProductSlot {
   const _QuickProductSlot({this.productId, this.shortName});

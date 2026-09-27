@@ -56,6 +56,19 @@ class InvoicePdfService {
       ),
     );
 
+    if (_isReceiptPageFormat(pageFormat)) {
+      _addReceiptInvoicePage(
+        pdf: pdf,
+        sale: documentSale,
+        profile: documentProfile,
+        labels: labels,
+        isArabic: isArabic,
+        logoBytes: logoBytes,
+        pageFormat: pageFormat,
+      );
+      return pdf.save();
+    }
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: pageFormat,
@@ -207,6 +220,555 @@ class InvoicePdfService {
       locale: locale,
       isReturn: true,
       pageFormat: pageFormat,
+    );
+  }
+
+  static bool _isReceiptPageFormat(PdfPageFormat pageFormat) {
+    return pageFormat.width <= 100 * PdfPageFormat.mm;
+  }
+
+  static void _addReceiptInvoicePage({
+    required pw.Document pdf,
+    required Sale sale,
+    required StoreProfile profile,
+    required _InvoicePdfLabels labels,
+    required bool isArabic,
+    required Uint8List? logoBytes,
+    required PdfPageFormat pageFormat,
+  }) {
+    final hasTax = sale.hasTaxBreakdown &&
+        sale.postedSnapshot != null &&
+        sale.postedSnapshot!.lines.length == sale.items.length;
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: pageFormat,
+        margin: const pw.EdgeInsets.fromLTRB(6 * PdfPageFormat.mm,
+            6 * PdfPageFormat.mm, 6 * PdfPageFormat.mm, 5 * PdfPageFormat.mm),
+        textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+        header: (context) => context.pageNumber == 1
+            ? _buildReceiptHeader(
+                sale: sale,
+                profile: profile,
+                labels: labels,
+                isArabic: isArabic,
+                logoBytes: logoBytes,
+              )
+            : _buildReceiptCompactHeader(
+                sale: sale,
+                profile: profile,
+                labels: labels,
+                isArabic: isArabic,
+              ),
+        footer: (context) => _buildReceiptFooter(
+          context: context,
+          profile: profile,
+          labels: labels,
+          isArabic: isArabic,
+        ),
+        build: (_) => <pw.Widget>[
+          _buildReceiptCustomerBlock(
+            sale: sale,
+            labels: labels,
+            isArabic: isArabic,
+          ),
+          pw.SizedBox(height: 8),
+          _buildReceiptItems(
+            sale: sale,
+            profile: profile,
+            labels: labels,
+            isArabic: isArabic,
+            hasTax: hasTax,
+          ),
+          pw.SizedBox(height: 8),
+          _buildReceiptTotals(
+            sale: sale,
+            profile: profile,
+            labels: labels,
+            isArabic: isArabic,
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildReceiptHeader({
+    required Sale sale,
+    required StoreProfile profile,
+    required _InvoicePdfLabels labels,
+    required bool isArabic,
+    required Uint8List? logoBytes,
+  }) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        _brandRule(),
+        pw.SizedBox(height: 7),
+        if (logoBytes != null)
+          pw.Container(
+            height: 38,
+            alignment: pw.Alignment.center,
+            child: pw.Image(
+              pw.MemoryImage(logoBytes),
+              fit: pw.BoxFit.contain,
+            ),
+          )
+        else
+          pw.Text(
+            profile.name,
+            textAlign: pw.TextAlign.center,
+            maxLines: 2,
+            style: pw.TextStyle(
+              fontSize: 14,
+              fontWeight: pw.FontWeight.bold,
+              color: _navy,
+            ),
+          ),
+        pw.SizedBox(height: 4),
+        pw.Text(
+          labels.salesInvoice,
+          textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+          textAlign: pw.TextAlign.center,
+          style: pw.TextStyle(
+            fontSize: 10,
+            fontWeight: pw.FontWeight.bold,
+            color: _gold,
+          ),
+        ),
+        pw.SizedBox(height: 7),
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+          decoration: pw.BoxDecoration(
+            color: _soft,
+            borderRadius: pw.BorderRadius.circular(5),
+          ),
+          child: pw.Column(
+            children: [
+              _receiptMetaRow(
+                labels.invoiceNo,
+                sale.invoiceNo,
+                isArabic: isArabic,
+              ),
+              pw.SizedBox(height: 3),
+              _receiptMetaRow(
+                labels.date,
+                _formatDate(sale.date),
+                isArabic: isArabic,
+              ),
+              pw.SizedBox(height: 3),
+              _receiptMetaRow(
+                labels.time,
+                _formatTime(sale.date),
+                isArabic: isArabic,
+              ),
+            ],
+          ),
+        ),
+        pw.SizedBox(height: 7),
+      ],
+    );
+  }
+
+  static pw.Widget _buildReceiptCompactHeader({
+    required Sale sale,
+    required StoreProfile profile,
+    required _InvoicePdfLabels labels,
+    required bool isArabic,
+  }) {
+    return pw.Column(
+      children: [
+        pw.Text(
+          profile.name,
+          textAlign: pw.TextAlign.center,
+          maxLines: 2,
+          style: pw.TextStyle(
+            fontSize: 10,
+            fontWeight: pw.FontWeight.bold,
+            color: _navy,
+          ),
+        ),
+        pw.SizedBox(height: 3),
+        pw.Container(height: .8, color: _navy),
+        pw.SizedBox(height: 5),
+        _receiptMetaRow(
+          labels.invoiceNo,
+          sale.invoiceNo,
+          isArabic: isArabic,
+        ),
+        pw.SizedBox(height: 5),
+      ],
+    );
+  }
+
+  static pw.Widget _receiptMetaRow(
+    String label,
+    String value, {
+    required bool isArabic,
+  }) {
+    final valueIsArabic = _containsArabic(value);
+    return pw.Directionality(
+      textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+            child: pw.Text(
+              label,
+              textDirection:
+                  isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+              textAlign: isArabic ? pw.TextAlign.right : pw.TextAlign.left,
+              style: const pw.TextStyle(fontSize: 7.2, color: _muted),
+            ),
+          ),
+          pw.SizedBox(width: 6),
+          pw.Text(
+            value,
+            textDirection:
+                valueIsArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+            textAlign: valueIsArabic ? pw.TextAlign.right : pw.TextAlign.left,
+            style: const pw.TextStyle(
+              fontSize: 7.8,
+              fontWeight: pw.FontWeight.bold,
+              color: _ink,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildReceiptCustomerBlock({
+    required Sale sale,
+    required _InvoicePdfLabels labels,
+    required bool isArabic,
+  }) {
+    return pw.Container(
+      padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: _line, width: .6),
+        borderRadius: pw.BorderRadius.circular(5),
+      ),
+      child: pw.Column(
+        children: [
+          _receiptMetaRow(
+            labels.customer,
+            sale.customerName,
+            isArabic: isArabic,
+          ),
+          pw.SizedBox(height: 4),
+          pw.Container(height: .5, color: _line),
+          pw.SizedBox(height: 4),
+          _receiptMetaRow(
+            labels.paymentMethod,
+            _paymentMethodLabel(sale.paymentMethod, labels),
+            isArabic: isArabic,
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildReceiptItems({
+    required Sale sale,
+    required StoreProfile profile,
+    required _InvoicePdfLabels labels,
+    required bool isArabic,
+    required bool hasTax,
+  }) {
+    final rows = <pw.Widget>[];
+    for (var index = 0; index < sale.items.length; index += 1) {
+      final item = sale.items[index];
+      final quantity = item.quantity % 1 == 0
+          ? item.quantity.toStringAsFixed(0)
+          : item.quantity.toStringAsFixed(3);
+      final unitName = item.unitName.trim();
+      final taxText = hasTax
+          ? _taxLineLabel(
+              sale.postedSnapshot!.lines[index].taxCode,
+              sale.postedSnapshot!.lines[index].taxMode,
+              sale.postedSnapshot!.lines[index].taxRate,
+              labels,
+            )
+          : '';
+
+      rows.add(
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 5),
+          decoration: const pw.BoxDecoration(
+            border: pw.Border(
+              bottom: pw.BorderSide(color: _line, width: .55),
+            ),
+          ),
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              pw.Text(
+                item.productName,
+                textDirection:
+                    isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                textAlign: isArabic ? pw.TextAlign.right : pw.TextAlign.left,
+                style: pw.TextStyle(
+                  fontSize: 9,
+                  fontWeight: pw.FontWeight.bold,
+                  color: _ink,
+                  lineSpacing: 1.15,
+                ),
+              ),
+              if (unitName.isNotEmpty) ...[
+                pw.SizedBox(height: 1),
+                pw.Text(
+                  unitName,
+                  textDirection:
+                      isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                  textAlign: isArabic ? pw.TextAlign.right : pw.TextAlign.left,
+                  style: const pw.TextStyle(fontSize: 6.8, color: _muted),
+                ),
+              ],
+              pw.SizedBox(height: 3),
+              pw.Directionality(
+                textDirection: pw.TextDirection.ltr,
+                child: pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text(
+                        '$quantity × ${_formatMoney(item.unitPrice, profile)}',
+                        style: const pw.TextStyle(
+                          fontSize: 7.8,
+                          color: _muted,
+                        ),
+                      ),
+                    ),
+                    pw.SizedBox(width: 4),
+                    pw.Text(
+                      _formatMoney(item.lineTotal, profile),
+                      textAlign: pw.TextAlign.right,
+                      style: pw.TextStyle(
+                        fontSize: 8.4,
+                        fontWeight: pw.FontWeight.bold,
+                        color: _ink,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (taxText.isNotEmpty) ...[
+                pw.SizedBox(height: 2),
+                pw.Directionality(
+                  textDirection: pw.TextDirection.ltr,
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(
+                        child: pw.Text(
+                          taxText,
+                          textDirection: _containsArabic(taxText)
+                              ? pw.TextDirection.rtl
+                              : pw.TextDirection.ltr,
+                          textAlign: pw.TextAlign.left,
+                          style: const pw.TextStyle(
+                            fontSize: 6.7,
+                            color: _muted,
+                          ),
+                        ),
+                      ),
+                      pw.SizedBox(width: 4),
+                      pw.Text(
+                        labels.tax,
+                        textDirection: isArabic
+                            ? pw.TextDirection.rtl
+                            : pw.TextDirection.ltr,
+                        textAlign: pw.TextAlign.right,
+                        style: const pw.TextStyle(
+                          fontSize: 6.7,
+                          color: _muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        pw.Text(
+          labels.item,
+          textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+          textAlign: isArabic ? pw.TextAlign.right : pw.TextAlign.left,
+          style: pw.TextStyle(
+            fontSize: 8.5,
+            fontWeight: pw.FontWeight.bold,
+            color: _navy,
+          ),
+        ),
+        pw.SizedBox(height: 2),
+        ...rows,
+      ],
+    );
+  }
+
+  static pw.Widget _buildReceiptTotals({
+    required Sale sale,
+    required StoreProfile profile,
+    required _InvoicePdfLabels labels,
+    required bool isArabic,
+  }) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        _receiptTotalsLine(
+          labels.subtotal,
+          _formatMoney(sale.subtotal, profile),
+          isArabic: isArabic,
+        ),
+        if (sale.discount > 0) ...[
+          pw.SizedBox(height: 3),
+          _receiptTotalsLine(
+            labels.discount,
+            _formatMoney(sale.discount, profile),
+            isArabic: isArabic,
+          ),
+        ],
+        if (sale.hasTaxBreakdown) ...[
+          pw.SizedBox(height: 3),
+          _receiptTotalsLine(
+            labels.netAmount,
+            _formatMoney(sale.taxableAmount, profile),
+            isArabic: isArabic,
+          ),
+          pw.SizedBox(height: 3),
+          _receiptTotalsLine(
+            labels.vat,
+            _formatMoney(sale.taxAmount, profile),
+            isArabic: isArabic,
+          ),
+        ],
+        pw.SizedBox(height: 6),
+        pw.Container(height: .7, color: _line),
+        pw.SizedBox(height: 6),
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: pw.BoxDecoration(
+            color: _navy,
+            borderRadius: pw.BorderRadius.circular(3),
+          ),
+          child: pw.Directionality(
+            textDirection: pw.TextDirection.ltr,
+            child: pw.Row(
+              children: [
+                pw.Container(width: 3, height: 20, color: _gold),
+                pw.SizedBox(width: 6),
+                pw.Expanded(
+                  child: pw.Text(
+                    _formatMoney(sale.total, profile),
+                    style: pw.TextStyle(
+                      fontSize: 13,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.white,
+                    ),
+                  ),
+                ),
+                pw.SizedBox(width: 5),
+                pw.Text(
+                  labels.total,
+                  textDirection:
+                      isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                  textAlign: pw.TextAlign.right,
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (sale.note.trim().isNotEmpty) ...[
+          pw.SizedBox(height: 6),
+          pw.Text(
+            sale.note.trim(),
+            textDirection:
+                isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+            textAlign: isArabic ? pw.TextAlign.right : pw.TextAlign.left,
+            style: const pw.TextStyle(fontSize: 7, color: _muted),
+          ),
+        ],
+      ],
+    );
+  }
+
+  static pw.Widget _receiptTotalsLine(
+    String label,
+    String value, {
+    required bool isArabic,
+  }) {
+    return pw.Directionality(
+      textDirection: pw.TextDirection.ltr,
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+            child: pw.Text(
+              value,
+              style: const pw.TextStyle(fontSize: 8.2, color: _ink),
+            ),
+          ),
+          pw.SizedBox(width: 5),
+          pw.Text(
+            label,
+            textDirection:
+                isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+            textAlign: pw.TextAlign.right,
+            style: const pw.TextStyle(fontSize: 7.8, color: _ink),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildReceiptFooter({
+    required pw.Context context,
+    required StoreProfile profile,
+    required _InvoicePdfLabels labels,
+    required bool isArabic,
+  }) {
+    final contact = <String>[
+      if (profile.phone.trim().isNotEmpty) profile.phone.trim(),
+      if (profile.address.trim().isNotEmpty) profile.address.trim(),
+    ].join(' • ');
+    return pw.Column(
+      children: [
+        pw.SizedBox(height: 5),
+        pw.Container(height: .7, color: _line),
+        pw.SizedBox(height: 4),
+        pw.Text(
+          labels.thankYou,
+          textDirection: isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+          textAlign: pw.TextAlign.center,
+          style: const pw.TextStyle(fontSize: 7, color: _muted),
+        ),
+        if (contact.isNotEmpty) ...[
+          pw.SizedBox(height: 2),
+          pw.Text(
+            contact,
+            textDirection: _containsArabic(contact)
+                ? pw.TextDirection.rtl
+                : pw.TextDirection.ltr,
+            textAlign: pw.TextAlign.center,
+            style: const pw.TextStyle(fontSize: 6.2, color: _muted),
+          ),
+        ],
+        pw.SizedBox(height: 2),
+        pw.Text(
+          '${context.pageNumber} / ${context.pagesCount}',
+          textDirection: pw.TextDirection.ltr,
+          textAlign: pw.TextAlign.center,
+          style: const pw.TextStyle(fontSize: 5.8, color: _muted),
+        ),
+      ],
     );
   }
 
@@ -669,17 +1231,26 @@ class InvoicePdfService {
     double rate,
     _InvoicePdfLabels labels,
   ) {
-    if (mode == 'exempt')
-      return code.isEmpty ? labels.exempt : '$code ${labels.exempt}';
-    if (mode == 'out_of_scope') {
-      return code.isEmpty ? labels.outOfScope : '$code ${labels.outOfScope}';
+    final displayCode =
+        labels.isArabic && code.trim().toUpperCase() == 'VAT' ? '' : code;
+    if (mode == 'exempt') {
+      return displayCode.isEmpty
+          ? labels.exempt
+          : '$displayCode ${labels.exempt}';
     }
-    if (mode == 'zero_rated') return code.isEmpty ? '0%' : '$code 0%';
+    if (mode == 'out_of_scope') {
+      return displayCode.isEmpty
+          ? labels.outOfScope
+          : '$displayCode ${labels.outOfScope}';
+    }
+    if (mode == 'zero_rated') {
+      return displayCode.isEmpty ? '0%' : '$displayCode 0%';
+    }
     if (mode == 'standard') {
       final value = rate == rate.roundToDouble()
           ? rate.toStringAsFixed(0)
           : rate.toStringAsFixed(2);
-      return code.isEmpty ? '$value%' : '$code $value%';
+      return displayCode.isEmpty ? '$value%' : '$displayCode $value%';
     }
     return '-';
   }
@@ -1034,12 +1605,12 @@ class _InvoicePdfLabels {
           ? 'TVA'
           : 'Tax';
   String get netAmount => isArabic
-      ? 'الصافي قبل VAT'
+      ? 'الصافي قبل الضريبة'
       : isFrench
           ? 'Montant net avant TVA'
           : 'Net before VAT';
   String get vat => isArabic
-      ? 'VAT'
+      ? 'ضريبة القيمة المضافة'
       : isFrench
           ? 'TVA'
           : 'VAT';

@@ -17,6 +17,7 @@ import '../../core/services/purchase_pdf_service.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../data/app_store.dart';
 import '../../widgets/page_data_load_indicator.dart';
+import '../../widgets/shortcut_key_picker.dart';
 import '../../models/product.dart';
 import '../../models/purchase.dart';
 import '../../models/purchase_item.dart';
@@ -255,53 +256,116 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
   }
 
+  Future<void> _editPurchasesShortcut(
+      PurchasesShortcutAction action, AppLocalizations tr) async {
+    final settings = SaleShortcutSettings.load();
+    final currentKey =
+        settings.keyForPurchasesAction(action) ?? SaleShortcutSettings.noneKey;
+    final selectedKey = await showShortcutKeyPicker(
+      context: context,
+      title: tr.text('shortcut_change'),
+      currentKey: currentKey,
+      noneLabel: tr.text('shortcut_none'),
+      cancelLabel: tr.text('cancel'),
+      saveLabel: tr.text('save'),
+    );
+    if (selectedKey == null || !mounted) return;
+    if (settings.isPurchasesKeyUsedByAnotherAction(selectedKey, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
+    }
+    final next = settings.copyWithPurchasesActionKey(action, selectedKey);
+    await next.save();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _editPurchaseDialogShortcut(
+      PurchaseDialogShortcutAction action, AppLocalizations tr) async {
+    final settings = SaleShortcutSettings.load();
+    final currentKey = settings.keyForPurchaseDialogAction(action) ??
+        SaleShortcutSettings.noneKey;
+    final selectedKey = await showShortcutKeyPicker(
+      context: context,
+      title: tr.text('shortcut_change'),
+      currentKey: currentKey,
+      noneLabel: tr.text('shortcut_none'),
+      cancelLabel: tr.text('cancel'),
+      saveLabel: tr.text('save'),
+    );
+    if (selectedKey == null || !mounted) return;
+    if (settings.isPurchaseDialogKeyUsedByAnotherAction(selectedKey, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
+    }
+    final next = settings.copyWithPurchaseDialogActionKey(action, selectedKey);
+    await next.save();
+    if (mounted) setState(() {});
+  }
+
   Widget _buildPurchasesShortcutGuide(
       BuildContext context, AppLocalizations tr) {
-    final settings = SaleShortcutSettings.load();
-    final chips = <Widget>[];
-    for (final action in PurchasesShortcutAction.values) {
-      final keyName = settings.keyForPurchasesAction(action);
-      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
-      chips.add(Chip(
-        visualDensity: VisualDensity.compact,
-        avatar: const Icon(Icons.keyboard_outlined, size: 16),
-        label: Text('$keyName ${tr.text(action.labelKey)}'),
-      ));
-    }
-    if (chips.isEmpty) {
-      return Align(
-        alignment: AlignmentDirectional.centerStart,
-        child: Text(tr.text('shortcuts_disabled_for_page'),
-            style: Theme.of(context).textTheme.bodySmall),
-      );
-    }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: [
-        Text('${tr.text('shortcut_guide')}: ',
-            style: Theme.of(context).textTheme.bodySmall),
-        ...chips.expand((chip) => [chip, const SizedBox(width: 6)]),
-      ]),
+    return ValueListenableBuilder<int>(
+      valueListenable: SaleShortcutSettings.revision,
+      builder: (context, _, __) {
+        final settings = SaleShortcutSettings.load();
+        final chips = <Widget>[];
+        for (final action in PurchasesShortcutAction.values) {
+          final keyName = settings.keyForPurchasesAction(action);
+          if (keyName == null || keyName == SaleShortcutSettings.noneKey) {
+            continue;
+          }
+          chips.add(ShortcutGuideChip(
+            keyName: keyName,
+            label: tr.text(action.labelKey),
+            onPressed: () => _editPurchasesShortcut(action, tr),
+          ));
+        }
+        if (chips.isEmpty) {
+          return Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(tr.text('shortcuts_disabled_for_page'),
+                style: Theme.of(context).textTheme.bodySmall),
+          );
+        }
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            Text('${tr.text('shortcut_guide')}: ',
+                style: Theme.of(context).textTheme.bodySmall),
+            ...chips.expand((chip) => [chip, const SizedBox(width: 6)]),
+          ]),
+        );
+      },
     );
   }
 
   Widget _buildPurchaseDialogShortcutGuide(
       BuildContext context, AppLocalizations tr) {
-    final settings = SaleShortcutSettings.load();
-    final chips = <Widget>[];
-    for (final action in PurchaseDialogShortcutAction.values) {
-      final keyName = settings.keyForPurchaseDialogAction(action);
-      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
-      chips.add(Padding(
-        padding: const EdgeInsetsDirectional.only(end: 6, bottom: 6),
-        child: Chip(
-          visualDensity: VisualDensity.compact,
-          label: Text('$keyName ${tr.text(action.labelKey)}'),
-        ),
-      ));
-    }
-    if (chips.isEmpty) return const SizedBox.shrink();
-    return Wrap(children: chips);
+    return ValueListenableBuilder<int>(
+      valueListenable: SaleShortcutSettings.revision,
+      builder: (context, _, __) {
+        final settings = SaleShortcutSettings.load();
+        final chips = <Widget>[];
+        for (final action in PurchaseDialogShortcutAction.values) {
+          final keyName = settings.keyForPurchaseDialogAction(action);
+          if (keyName == null || keyName == SaleShortcutSettings.noneKey) {
+            continue;
+          }
+          chips.add(Padding(
+            padding: const EdgeInsetsDirectional.only(end: 6, bottom: 6),
+            child: ShortcutGuideChip(
+              keyName: keyName,
+              label: tr.text(action.labelKey),
+              onPressed: () => _editPurchaseDialogShortcut(action, tr),
+            ),
+          ));
+        }
+        if (chips.isEmpty) return const SizedBox.shrink();
+        return Wrap(children: chips);
+      },
+    );
   }
 
   @override

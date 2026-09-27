@@ -552,51 +552,137 @@ class _ExpensesPageState extends State<ExpensesPage> {
     })) return;
     final tr = AppLocalizations.of(context);
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-    final settlement = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-            isArabic ? 'تحديد حالة الصرف' : 'Select expense payment status'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              isArabic
-                  ? 'كيف تريد اعتماد هذا المصروف؟'
-                  : 'How do you want to post this expense?',
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              key: const ValueKey('ExpensePostCashButton'),
-              onPressed: () => Navigator.pop(context, 'cash'),
-              icon: const Icon(Icons.payments_outlined),
-              label: Text(isArabic ? 'نقداً' : 'Cash'),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              key: const ValueKey('ExpensePostCreditButton'),
-              onPressed: () => Navigator.pop(context, 'credit'),
-              icon: const Icon(Icons.schedule_outlined),
-              label: Text(isArabic ? 'آجل' : 'Credit'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(tr.text('cancel')),
-          ),
-        ],
-      ),
+    final cashAmountController = TextEditingController(
+      text: expense.amount.toStringAsFixed(2),
     );
+    final formKey = GlobalKey<FormState>();
+    final settlement = await showDialog<_ExpensePostingSelection>(
+      context: context,
+      builder: (dialogContext) {
+        var paymentMode = 'cash';
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text(isArabic
+                ? 'تحديد حالة الصرف'
+                : 'Select expense payment status'),
+            content: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      isArabic
+                          ? 'كيف تريد اعتماد هذا المصروف؟'
+                          : 'How do you want to post this expense?',
+                    ),
+                    const SizedBox(height: 12),
+                    RadioListTile<String>(
+                      key: const ValueKey('ExpensePostCashButton'),
+                      value: 'cash',
+                      groupValue: paymentMode,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(isArabic ? 'نقداً' : 'Cash'),
+                      subtitle: Text(isArabic
+                          ? 'يمكن دفع كامل المصروف أو جزء منه'
+                          : 'Pay the full expense or only part of it'),
+                      onChanged: (value) =>
+                          setDialogState(() => paymentMode = value ?? 'cash'),
+                    ),
+                    if (paymentMode == 'cash') ...[
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        key: const ValueKey('ExpensePaidAmountField'),
+                        controller: cashAmountController,
+                        decoration: InputDecoration(
+                          labelText: isArabic
+                              ? 'المبلغ المدفوع نقداً (USD)'
+                              : 'Amount paid in cash (USD)',
+                          helperText: isArabic
+                              ? 'إجمالي المصروف: ${formatUsdReferenceAmount(expense.amount, widget.store.storeProfile)}'
+                              : 'Expense total: ${formatUsdReferenceAmount(expense.amount, widget.store.storeProfile)}',
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d*\.?\d{0,2}$'),
+                          ),
+                        ],
+                        validator: (value) {
+                          final amount = double.tryParse(value?.trim() ?? '');
+                          if (amount == null ||
+                              !amount.isFinite ||
+                              amount <= 0) {
+                            return isArabic
+                                ? 'أدخل مبلغاً نقدياً أكبر من صفر'
+                                : 'Enter a cash amount greater than zero';
+                          }
+                          if (amount > expense.amount + 0.005) {
+                            return isArabic
+                                ? 'المبلغ لا يجوز أن يتجاوز إجمالي المصروف'
+                                : 'The amount cannot exceed the expense total';
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
+                    RadioListTile<String>(
+                      key: const ValueKey('ExpensePostCreditButton'),
+                      value: 'credit',
+                      groupValue: paymentMode,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(isArabic ? 'آجل' : 'Credit'),
+                      subtitle: Text(isArabic
+                          ? 'يسجل كامل المصروف كذمة مستحقة'
+                          : 'Records the full expense as payable'),
+                      onChanged: (value) =>
+                          setDialogState(() => paymentMode = value ?? 'credit'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel')),
+              ),
+              FilledButton(
+                onPressed: () {
+                  if (paymentMode == 'cash' &&
+                      !(formKey.currentState?.validate() ?? false)) {
+                    return;
+                  }
+                  final paid = paymentMode == 'cash'
+                      ? double.parse(cashAmountController.text.trim())
+                      : 0.0;
+                  Navigator.pop(
+                    dialogContext,
+                    _ExpensePostingSelection(
+                      paidInCash: paymentMode == 'cash',
+                      cashPaidAmount: paid,
+                    ),
+                  );
+                },
+                child: Text(isArabic ? 'ترحيل' : 'Post'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    cashAmountController.dispose();
     if (settlement == null) {
       return;
     }
     try {
       await widget.store.postExpense(
         expense.id,
-        paidInCash: settlement == 'cash',
+        paidInCash: settlement.paidInCash,
+        cashPaidAmount: settlement.cashPaidAmount,
       );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -746,6 +832,16 @@ class _ExpenseQueryResult {
   final double filteredPostedTotal;
 
   bool get hasMore => items.length < totalCount;
+}
+
+class _ExpensePostingSelection {
+  const _ExpensePostingSelection({
+    required this.paidInCash,
+    required this.cashPaidAmount,
+  });
+
+  final bool paidInCash;
+  final double cashPaidAmount;
 }
 
 class _AccessDeniedScaffold extends StatelessWidget {

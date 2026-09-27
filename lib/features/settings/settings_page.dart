@@ -9179,6 +9179,19 @@ class _KeyboardShortcutsSettingsCardState
   void initState() {
     super.initState();
     _settings = SaleShortcutSettings.load();
+    SaleShortcutSettings.revision.addListener(_handleShortcutSettingsChanged);
+  }
+
+  void _handleShortcutSettingsChanged() {
+    if (!mounted) return;
+    setState(() => _settings = SaleShortcutSettings.load());
+  }
+
+  @override
+  void dispose() {
+    SaleShortcutSettings.revision
+        .removeListener(_handleShortcutSettingsChanged);
+    super.dispose();
   }
 
   String _keyLabel(AppLocalizations tr, String keyName) {

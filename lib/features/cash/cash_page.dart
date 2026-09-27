@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/accounting_service.dart';
@@ -16,6 +17,16 @@ import '../../models/purchase.dart';
 import '../../models/sale.dart';
 import '../../models/user_role.dart';
 import 'cash_history_panel.dart';
+
+class _ExpenseSettlementSelection {
+  const _ExpenseSettlementSelection({
+    required this.expenseId,
+    required this.amount,
+  });
+
+  final String expenseId;
+  final double amount;
+}
 
 class CashPage extends StatefulWidget {
   const CashPage({super.key, required this.store});
@@ -57,6 +68,7 @@ class _CashPageState extends State<CashPage> {
     Sale selectedSale = openSales.first;
     final amountController =
         TextEditingController(text: selectedSale.balanceDue.toStringAsFixed(2));
+    final discountController = TextEditingController(text: '0.00');
     final notesController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -85,20 +97,39 @@ class _CashPageState extends State<CashPage> {
                       selectedSale = found.first;
                       amountController.text =
                           selectedSale.balanceDue.toStringAsFixed(2);
+                      discountController.text = '0.00';
                     });
                   },
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  key: const ValueKey('CashReceiptAmountField'),
-                  controller: amountController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: tr.text('amount'),
-                    helperText:
-                        '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedSale.balanceDue, widget.store.storeProfile)}',
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('CashReceiptAmountField'),
+                        controller: amountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: tr.text('amount'),
+                          helperText:
+                              '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedSale.balanceDue, widget.store.storeProfile)}',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('CashReceiptDiscountField'),
+                        controller: discountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: tr.text('discount'),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -123,17 +154,24 @@ class _CashPageState extends State<CashPage> {
     );
     if (confirmed != true) {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
       return;
     }
     if (!mounted) {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
       return;
     }
     final amount = double.tryParse(amountController.text.trim()) ?? 0;
-    if (amount <= 0 || amount > selectedSale.balanceDue + 0.0001) {
+    final discount = double.tryParse(discountController.text.trim()) ?? 0;
+    if (amount < 0 ||
+        discount < 0 ||
+        amount + discount <= 0 ||
+        amount + discount > selectedSale.balanceDue + 0.0001) {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('invalid_cash_received_amount'))),
@@ -144,6 +182,7 @@ class _CashPageState extends State<CashPage> {
       await widget.store.settleSalePayment(
         saleId: selectedSale.id,
         amount: amount,
+        discount: discount,
         paymentMethod: 'Cash',
         notes: notesController.text.trim(),
       );
@@ -154,6 +193,7 @@ class _CashPageState extends State<CashPage> {
       );
     } finally {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
     }
     _refresh();
@@ -180,6 +220,7 @@ class _CashPageState extends State<CashPage> {
     Purchase selectedPurchase = openPurchases.first;
     final amountController = TextEditingController(
         text: selectedPurchase.balanceDue.toStringAsFixed(2));
+    final discountController = TextEditingController(text: '0.00');
     final notesController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -209,19 +250,39 @@ class _CashPageState extends State<CashPage> {
                       selectedPurchase = found.first;
                       amountController.text =
                           selectedPurchase.balanceDue.toStringAsFixed(2);
+                      discountController.text = '0.00';
                     });
                   },
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: amountController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: tr.text('amount'),
-                    helperText:
-                        '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedPurchase.balanceDue, widget.store.storeProfile)}',
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('CashPaymentAmountField'),
+                        controller: amountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: tr.text('amount'),
+                          helperText:
+                              '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedPurchase.balanceDue, widget.store.storeProfile)}',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('CashPaymentDiscountField'),
+                        controller: discountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          labelText: tr.text('discount'),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -246,17 +307,24 @@ class _CashPageState extends State<CashPage> {
     );
     if (confirmed != true) {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
       return;
     }
     if (!mounted) {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
       return;
     }
     final amount = double.tryParse(amountController.text.trim()) ?? 0;
-    if (amount <= 0 || amount > selectedPurchase.balanceDue + 0.0001) {
+    final discount = double.tryParse(discountController.text.trim()) ?? 0;
+    if (amount < 0 ||
+        discount < 0 ||
+        amount + discount <= 0 ||
+        amount + discount > selectedPurchase.balanceDue + 0.0001) {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('invalid_paid_amount'))),
@@ -267,6 +335,7 @@ class _CashPageState extends State<CashPage> {
       await widget.store.settlePurchasePayment(
         purchaseId: selectedPurchase.id,
         amount: amount,
+        discount: discount,
         paymentMethod: 'Cash',
         notes: notesController.text.trim(),
       );
@@ -277,6 +346,7 @@ class _CashPageState extends State<CashPage> {
       );
     } finally {
       amountController.dispose();
+      discountController.dispose();
       notesController.dispose();
     }
     _refresh();
@@ -754,15 +824,15 @@ class _CashPageState extends State<CashPage> {
     // The cash-page Expenses action is reserved for expenses that were already
     // approved as credit. Draft expenses must stay in the Expenses module until
     // they are approved, and cash-approved expenses have already affected cash.
-    final creditExpenseIds =
-        await AccountingService.readOutstandingCreditExpenseIds();
+    final creditExpenseBalances =
+        await AccountingService.readOutstandingCreditExpenseBalances();
     if (!mounted) return;
     final creditExpenses = widget.store.expenses
         .where((expense) =>
             !expense.isDeleted &&
             expense.isPosted &&
             expense.amount > 0 &&
-            creditExpenseIds.contains(expense.id.trim()))
+            creditExpenseBalances.containsKey(expense.id.trim()))
         .toList(growable: false);
     if (creditExpenses.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -780,7 +850,13 @@ class _CashPageState extends State<CashPage> {
     }
 
     Expense selectedExpense = creditExpenses.first;
-    final confirmed = await showDialog<bool>(
+    var selectedOutstanding =
+        creditExpenseBalances[selectedExpense.id.trim()] ?? 0;
+    final amountController = TextEditingController(
+      text: selectedOutstanding.toStringAsFixed(2),
+    );
+    final formKey = GlobalKey<FormState>();
+    final selection = await showDialog<_ExpenseSettlementSelection>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
@@ -811,7 +887,13 @@ class _CashPageState extends State<CashPage> {
                         .where((expense) => expense.id == value)
                         .toList(growable: false);
                     if (found.isEmpty) return;
-                    setDialogState(() => selectedExpense = found.first);
+                    setDialogState(() {
+                      selectedExpense = found.first;
+                      selectedOutstanding =
+                          creditExpenseBalances[selectedExpense.id.trim()] ?? 0;
+                      amountController.text =
+                          selectedOutstanding.toStringAsFixed(2);
+                    });
                   },
                 ),
                 const SizedBox(height: 12),
@@ -819,6 +901,46 @@ class _CashPageState extends State<CashPage> {
                   alignment: AlignmentDirectional.centerStart,
                   child: Text(
                     '${tr.text('amount')}: ${formatUsdReferenceAmount(selectedExpense.amount, widget.store.storeProfile)}',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Form(
+                  key: formKey,
+                  child: TextFormField(
+                    key: const ValueKey('ExpenseDisbursementAmountField'),
+                    controller: amountController,
+                    decoration: InputDecoration(
+                      labelText: _l(tr, 'Amount paid now (USD)',
+                          'المبلغ المدفوع الآن (USD)'),
+                      helperText: _l(
+                        tr,
+                        'Remaining payable: ${selectedOutstanding.toStringAsFixed(2)} USD',
+                        'المتبقي المستحق: ${selectedOutstanding.toStringAsFixed(2)} USD',
+                      ),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        RegExp(r'^\d*\.?\d{0,2}$'),
+                      ),
+                    ],
+                    validator: (value) {
+                      final amount = double.tryParse(value?.trim() ?? '');
+                      if (amount == null || !amount.isFinite || amount <= 0) {
+                        return _l(tr, 'Enter an amount greater than zero.',
+                            'أدخل مبلغاً أكبر من صفر.');
+                      }
+                      if (amount > selectedOutstanding + 0.005) {
+                        return _l(
+                          tr,
+                          'Amount cannot exceed the remaining payable.',
+                          'المبلغ لا يجوز أن يتجاوز المتبقي المستحق.',
+                        );
+                      }
+                      return null;
+                    },
                   ),
                 ),
               ],
@@ -830,14 +952,24 @@ class _CashPageState extends State<CashPage> {
               child: Text(tr.text('cancel')),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
+              onPressed: () {
+                if (!(formKey.currentState?.validate() ?? false)) return;
+                Navigator.pop(
+                  dialogContext,
+                  _ExpenseSettlementSelection(
+                    expenseId: selectedExpense.id,
+                    amount: double.parse(amountController.text.trim()),
+                  ),
+                );
+              },
               child: Text(_l(tr, 'Disburse', 'صرف')),
             ),
           ],
         ),
       ),
     );
-    if (confirmed != true || !mounted) return;
+    amountController.dispose();
+    if (selection == null || !mounted) return;
 
     try {
       if (currentDrawer == null || currentSession == null) {
@@ -864,7 +996,7 @@ class _CashPageState extends State<CashPage> {
         cashLocationId: currentDrawer.id,
         cashDrawerSessionId: currentSession.id,
         counterpartAccountId: payableAccountId,
-        amount: selectedExpense.amount,
+        amount: selection.amount,
         notes:
             'Expense credit settlement: ${selectedExpense.id} - ${selectedExpense.title}',
         createdBy: user?.fullName.trim().isNotEmpty == true
@@ -874,7 +1006,8 @@ class _CashPageState extends State<CashPage> {
         deviceId: widget.store.appIdentity.deviceId,
         branchId: widget.store.appIdentity.branchId,
         storeId: widget.store.appIdentity.storeId,
-        idempotencyKey: 'expense-credit-settlement:${selectedExpense.id}',
+        idempotencyKey:
+            'expense-credit-settlement:${selectedExpense.id}:${selection.amount.toStringAsFixed(2)}',
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -122,6 +122,14 @@ class AccountingAccountRole {
       group: 'sales',
     ),
     AccountingAccountRole(
+      key: 'customer_settlement_discount',
+      titleAr: 'خصومات تسوية العملاء',
+      descriptionAr:
+          'الخصومات الممنوحة عند تسوية ذمم العملاء نقدًا أو بوسيلة دفع أخرى.',
+      defaultAccountId: 'acc_customer_settlement_discount',
+      group: 'sales',
+    ),
+    AccountingAccountRole(
       key: 'cogs',
       titleAr: 'تكلفة البضاعة المباعة',
       descriptionAr: 'الحساب الذي يستقبل تكلفة المنتجات عند البيع.',
@@ -151,6 +159,13 @@ class AccountingAccountRole {
       defaultAccountId: 'acc_general_expenses',
       group: 'expenses',
       legacySettingKey: 'default_expense_account_id',
+    ),
+    AccountingAccountRole(
+      key: 'supplier_settlement_discount',
+      titleAr: 'خصومات تسوية الموردين',
+      descriptionAr: 'الخصومات المكتسبة عند تسوية ذمم الموردين.',
+      defaultAccountId: 'acc_supplier_settlement_discount',
+      group: 'expenses',
     ),
     AccountingAccountRole(
       key: 'rent_expense',

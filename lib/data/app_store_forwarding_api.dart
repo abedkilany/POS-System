@@ -1617,9 +1617,16 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
       _AppStoreSplitCatalogPartiesExpenses(this as AppStore)
           .addOrUpdateExpense(expense);
 
-  Future<void> postExpense(String id, {bool paidInCash = true}) =>
-      _AppStoreSplitCatalogPartiesExpenses(this as AppStore)
-          .postExpense(id, paidInCash: paidInCash);
+  Future<void> postExpense(
+    String id, {
+    bool paidInCash = true,
+    double? cashPaidAmount,
+  }) =>
+      _AppStoreSplitCatalogPartiesExpenses(this as AppStore).postExpense(
+        id,
+        paidInCash: paidInCash,
+        cashPaidAmount: cashPaidAmount,
+      );
 
   Future<void> createAndPostExpensesBulk(List<Expense> expenses) =>
       _AppStoreSplitCatalogPartiesExpenses(this as AppStore)
@@ -1812,6 +1819,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
     required String accountId,
     required String accountName,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String referenceNo = '',
     String notes = '',
@@ -1824,6 +1832,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
           accountId: accountId,
           accountName: accountName,
           amount: amount,
+          discount: discount,
           paymentMethod: paymentMethod,
           referenceNo: referenceNo,
           notes: notes,
@@ -1892,6 +1901,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
   Future<Sale> settleSalePayment({
     required String saleId,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String notes = '',
     String idempotencyKey = '',
@@ -1900,6 +1910,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
       _AppStoreSplitWarehouseCash(this as AppStore).settleSalePayment(
           saleId: saleId,
           amount: amount,
+          discount: discount,
           paymentMethod: paymentMethod,
           notes: notes,
           idempotencyKey: idempotencyKey,
@@ -1908,6 +1919,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
   Future<Sale> _settleSalePaymentInternal({
     required String saleId,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String notes = '',
     String idempotencyKey = '',
@@ -1916,6 +1928,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
       _AppStoreSplitWarehouseCash(this as AppStore)._settleSalePaymentInternal(
           saleId: saleId,
           amount: amount,
+          discount: discount,
           paymentMethod: paymentMethod,
           notes: notes,
           idempotencyKey: idempotencyKey,
@@ -1924,6 +1937,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
   Future<Purchase> settlePurchasePayment({
     required String purchaseId,
     required double amount,
+    double discount = 0,
     String paymentMethod = 'Cash',
     String notes = '',
     String idempotencyKey = '',
@@ -1932,6 +1946,7 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
       _AppStoreSplitWarehouseCash(this as AppStore).settlePurchasePayment(
           purchaseId: purchaseId,
           amount: amount,
+          discount: discount,
           paymentMethod: paymentMethod,
           notes: notes,
           idempotencyKey: idempotencyKey,

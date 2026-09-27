@@ -580,7 +580,9 @@ class CashPhase7MigrationService {
       }
     }
     for (final purchase in purchases) {
-      if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) {
+      if (purchase.isDeleted ||
+          purchase.isCancelled ||
+          purchase.subtotal <= 0) {
         continue;
       }
       if (!await _invoiceNeedsPaymentSeparation('purchase', purchase.id)) {
@@ -786,12 +788,12 @@ class CashPhase7MigrationService {
       ),
       (
         'missing_receipt_cash_ledger',
-        "SELECT id, voucher_no AS ref FROM receipt_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'receipt_voucher' AND (clt.reference_id = v.id OR instr(clt.reference_id, v.id || ':receipt_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions rev WHERE rev.reversal_of_id = clt.id AND rev.deleted_at = ''))",
+        "SELECT id, voucher_no AS ref FROM receipt_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND v.amount > 0 AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'receipt_voucher' AND (clt.reference_id = v.id OR instr(clt.reference_id, v.id || ':receipt_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions rev WHERE rev.reversal_of_id = clt.id AND rev.deleted_at = ''))",
         'Posted cash receipt voucher has no Cash Ledger transaction.'
       ),
       (
         'missing_payment_cash_ledger',
-        "SELECT id, voucher_no AS ref FROM payment_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'payment_voucher' AND (clt.reference_id = v.id OR instr(clt.reference_id, v.id || ':payment_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions rev WHERE rev.reversal_of_id = clt.id AND rev.deleted_at = ''))",
+        "SELECT id, voucher_no AS ref FROM payment_vouchers v WHERE v.deleted_at = '' AND v.status = 'posted' AND v.amount > 0 AND lower(trim(v.payment_method)) = 'cash' AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions clt WHERE clt.deleted_at = '' AND clt.reference_type = 'payment_voucher' AND (clt.reference_id = v.id OR instr(clt.reference_id, v.id || ':payment_edit:') = 1) AND NOT EXISTS (SELECT 1 FROM cash_ledger_transactions rev WHERE rev.reversal_of_id = clt.id AND rev.deleted_at = ''))",
         'Posted cash payment voucher has no Cash Ledger transaction.'
       ),
     ];

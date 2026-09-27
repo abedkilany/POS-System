@@ -205,6 +205,113 @@ void main() {
     expect((lines[1].data['credit'] as num).toDouble(), 80);
   });
 
+  test('discounted customer receipt posts cash, discount, and full receivable',
+      () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedDrawer(db);
+    await _seedSale(db,
+        id: 'sale-discount',
+        invoiceNo: 'INV-DISC',
+        customerId: 'cust-disc',
+        total: 203);
+
+    final receipt = await PaymentVoucherService(db).createReceipt(
+      id: 'receipt-discount',
+      voucherNo: 'RC-DISC',
+      customerId: 'cust-disc',
+      customerName: 'Customer',
+      amount: 200,
+      discount: 3,
+      cashLocationId: 'drawer-1',
+      cashDrawerSessionId: 'shift-1',
+      deviceId: 'dev-1',
+      allocations: const <PaymentAllocationDraft>[
+        PaymentAllocationDraft(
+          referenceId: 'sale-discount',
+          amount: 200,
+          referenceAmount: 203,
+        ),
+      ],
+    );
+
+    expect(receipt.amount, 200);
+    expect(receipt.discount, 3);
+    final sale = await db
+        .customSelect(
+            "SELECT paid_amount FROM sales WHERE id = 'sale-discount'")
+        .getSingle();
+    expect((sale.data['paid_amount'] as num).toDouble(), 203);
+    final journal = await db
+        .customSelect(
+          "SELECT id FROM journal_entries WHERE reference_type = 'receipt_voucher' AND reference_id = 'receipt-discount' AND status = 'posted' AND deleted_at = ''",
+        )
+        .getSingle();
+    final lines = await db.customSelect(
+      'SELECT account_id, debit, credit FROM journal_lines WHERE entry_id = ? ORDER BY line_no',
+      variables: <Variable<Object>>[
+        Variable<String>(journal.data['id'].toString()),
+      ],
+    ).get();
+    expect(lines, hasLength(3));
+    expect((lines[0].data['debit'] as num).toDouble(), 200);
+    expect(lines[1].data['account_id'], 'acc_customer_settlement_discount');
+    expect((lines[1].data['debit'] as num).toDouble(), 3);
+    expect(lines[2].data['account_id'], 'acc_customers');
+    expect((lines[2].data['credit'] as num).toDouble(), 203);
+  });
+
+  test('discount-only receipt closes the debt without a cash movement',
+      () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedDrawer(db);
+    await _seedSale(db,
+        id: 'sale-discount-only',
+        invoiceNo: 'INV-DISC-ONLY',
+        customerId: 'cust-disc-only',
+        total: 3);
+
+    final receipt = await PaymentVoucherService(db).createReceipt(
+      id: 'receipt-discount-only',
+      voucherNo: 'RC-DISC-ONLY',
+      customerId: 'cust-disc-only',
+      customerName: 'Customer',
+      amount: 0,
+      discount: 3,
+      cashLocationId: 'drawer-1',
+      cashDrawerSessionId: 'shift-1',
+      deviceId: 'dev-1',
+      allocations: const <PaymentAllocationDraft>[
+        PaymentAllocationDraft(
+          referenceId: 'sale-discount-only',
+          amount: 0,
+          referenceAmount: 3,
+        ),
+      ],
+    );
+
+    expect(receipt.amount, 0);
+    expect(receipt.discount, 3);
+    final sale = await db
+        .customSelect(
+          "SELECT paid_amount FROM sales WHERE id = 'sale-discount-only'",
+        )
+        .getSingle();
+    expect((sale.data['paid_amount'] as num).toDouble(), 3);
+    final ledger = await CashLedgerService(db).list(
+      referenceType: 'receipt_voucher',
+      referenceId: 'receipt-discount-only',
+    );
+    expect(ledger, isEmpty);
+    final location = await db
+        .customSelect(
+          "SELECT current_balance FROM cash_locations WHERE id = 'drawer-1'",
+        )
+        .getSingle();
+    expect((location.data['current_balance'] as num).toDouble(), 100);
+  });
+
   test(
       'cash supplier payment allocates purchase and writes one cash-out movement',
       () async {
@@ -538,17 +645,21 @@ void main() {
       idempotencyKey: 'receipt-account-1-key',
     );
 
-    final compatibility = await db.customSelect(
-      "SELECT id FROM account_transactions WHERE id = 'receipt-account-1-customer-account-payment' AND deleted_at = ''",
-    ).getSingleOrNull();
+    final compatibility = await db
+        .customSelect(
+          "SELECT id FROM account_transactions WHERE id = 'receipt-account-1-customer-account-payment' AND deleted_at = ''",
+        )
+        .getSingleOrNull();
     expect(compatibility, isNotNull);
 
     await service.backfillLegacyCashLedger();
     await service.backfillLegacyCashLedger();
 
-    var activeLegacy = await db.customSelect(
-      "SELECT id FROM cash_ledger_transactions WHERE reference_type = 'legacy_account_transaction' AND reference_id = 'receipt-account-1-customer-account-payment' AND deleted_at = ''",
-    ).get();
+    var activeLegacy = await db
+        .customSelect(
+          "SELECT id FROM cash_ledger_transactions WHERE reference_type = 'legacy_account_transaction' AND reference_id = 'receipt-account-1-customer-account-payment' AND deleted_at = ''",
+        )
+        .get();
     expect(activeLegacy, isEmpty,
         reason: 'voucher-backed account payments are not legacy history');
 
@@ -739,7 +850,8 @@ void main() {
     expect((supplierMovement!.data['debit'] as num).toDouble(), 15);
   });
 
-  test('multi-invoice receipt splits compatibility account movements', () async {
+  test('multi-invoice receipt splits compatibility account movements',
+      () async {
     final db = await _openDb();
     addTearDown(db.close);
     await _seedDrawer(db);

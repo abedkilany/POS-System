@@ -113,6 +113,54 @@ void main() {
     expect((accountRows.data['c'] as num).toInt(), 2);
   });
 
+  test('partial cash expense posts the remainder to accounts payable',
+      () async {
+    final db = await _openDb();
+    addTearDown(db.close);
+    await _seedExpenseDrawer(db);
+
+    await AccountingService.recordExpense(
+      _expense('expense-partial-p9'),
+      cashPaidAmount: 7.5,
+    );
+
+    expect(await _balance(db), 92.5);
+    final cashOperation = await db
+        .customSelect(
+          "SELECT amount FROM cash_operations WHERE idempotency_key = 'expense:expense-partial-p9'",
+        )
+        .getSingle();
+    expect((cashOperation.data['amount'] as num).toDouble(), 7.5);
+
+    final payableAccount =
+        await AccountingService.resolveAccountRole('accounts_payable');
+    final lines = await db.customSelect(
+      '''
+        SELECT account_id, debit, credit
+        FROM journal_lines
+        WHERE entry_id IN (
+        SELECT id FROM journal_entries
+        WHERE reference_type = 'expense' AND reference_id = 'expense-partial-p9'
+          AND deleted_at = '' AND status = 'posted'
+      )
+      ''',
+    ).get();
+    expect(
+      lines.any((row) =>
+          row.data['account_id']?.toString() == payableAccount &&
+          (row.data['credit'] as num).toDouble() == 12.5),
+      isTrue,
+    );
+    expect(
+      lines.any((row) => (row.data['credit'] as num).toDouble() == 7.5),
+      isTrue,
+    );
+
+    final outstanding =
+        await AccountingService.readOutstandingCreditExpenseBalances();
+    expect(outstanding['expense-partial-p9'], 12.5);
+  });
+
   test(
       'expense post rolls back every side effect when compatibility ledger insert fails',
       () async {

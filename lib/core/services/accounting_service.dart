@@ -1831,14 +1831,23 @@ class AccountingService {
   /// A posted expense is committed atomically as journal + cash_operations +
   /// Cash Ledger + cash_locations balance. No expense caller is allowed to
   /// mutate the drawer balance separately from its immutable ledger movement.
-  static Future<void> recordExpense(Expense expense) async {
+  static Future<void> recordExpense(
+    Expense expense, {
+    double? cashPaidAmount,
+  }) async {
     if (expense.isDeleted || !expense.isPosted || expense.amount <= 0) return;
     if (!isAvailable) return;
     await _db.transaction(() async {
       // Phase 4: Expense status and all financial effects commit together.
       await _upsertExpenseRowInExistingTransaction(expense);
-      await _recordExpenseInExistingTransaction(expense);
-      await _recordExpenseCompatibilityLedgerInExistingTransaction(expense);
+      await _recordExpenseInExistingTransaction(
+        expense,
+        cashPaidAmount: cashPaidAmount,
+      );
+      await _recordExpenseCompatibilityLedgerInExistingTransaction(
+        expense,
+        cashPaidAmount: cashPaidAmount,
+      );
     });
     _notifyMutation();
   }
@@ -1864,6 +1873,7 @@ class AccountingService {
   static Future<void> repostEditedExpenseInExistingTransaction(
     Expense expense, {
     required bool paidInCash,
+    double? cashPaidAmount,
     required String technicalReferenceId,
   }) async {
     if (expense.isDeleted || !expense.isPosted || expense.amount <= 0) {
@@ -1877,10 +1887,12 @@ class AccountingService {
     if (paidInCash) {
       await _recordExpenseInExistingTransaction(
         expense,
+        cashPaidAmount: cashPaidAmount,
         accountingReferenceId: ref,
       );
       await _recordExpenseCompatibilityLedgerInExistingTransaction(
         expense,
+        cashPaidAmount: cashPaidAmount,
         movementVersionSuffix: 'edit-v${expense.version}',
       );
     } else {
@@ -1900,28 +1912,53 @@ class AccountingService {
   /// [recordExpenseOnCredit]. A successful cash settlement is identified by the
   /// stable cash-operation idempotency key used by the Cash page.
   static Future<Set<String>> readOutstandingCreditExpenseIds() async {
-    if (!isAvailable) return <String>{};
+    return (await readOutstandingCreditExpenseBalances()).keys.toSet();
+  }
+
+  /// Returns each posted credit expense and the amount that is still payable.
+  /// This also understands partial cash settlements performed later from the
+  /// Cash page, so the same expense can be settled over more than one payment.
+  static Future<Map<String, double>>
+      readOutstandingCreditExpenseBalances() async {
+    if (!isAvailable) return <String, double>{};
     final rows = await _db.customSelect(
       '''
-      SELECT DISTINCT at.reference_id AS expense_id
+      SELECT at.reference_id AS expense_id,
+             SUM(CASE WHEN at.credit > 0 THEN at.credit ELSE 0 END) AS payable,
+             COALESCE((
+               SELECT SUM(co.amount)
+               FROM cash_operations co
+               WHERE co.deleted_at = ''
+                 AND LOWER(co.status) = 'posted'
+                 AND (
+                   co.idempotency_key =
+                     ('expense-credit-settlement:' || at.reference_id)
+                   OR co.idempotency_key LIKE
+                     ('expense-credit-settlement:' || at.reference_id || ':%')
+                 )
+             ), 0) AS settled
       FROM account_transactions at
+      JOIN expenses e
+        ON e.id = at.reference_id
+       AND e.deleted_at = ''
+       AND LOWER(e.expense_status) = 'posted'
       WHERE at.deleted_at = ''
         AND LOWER(at.transaction_type) = 'expense'
         AND LOWER(at.payment_method) = 'credit'
         AND TRIM(at.reference_id) <> ''
-        AND NOT EXISTS (
-          SELECT 1
-          FROM cash_operations co
-          WHERE co.deleted_at = ''
-            AND LOWER(co.status) = 'posted'
-            AND co.idempotency_key = ('expense-credit-settlement:' || at.reference_id)
-        )
+      GROUP BY at.reference_id
+      HAVING payable - settled > 0.005
       ''',
     ).get();
-    return rows
-        .map((row) => row.data['expense_id']?.toString().trim() ?? '')
-        .where((id) => id.isNotEmpty)
-        .toSet();
+    final result = <String, double>{};
+    for (final row in rows) {
+      final id = row.data['expense_id']?.toString().trim() ?? '';
+      final payable = (row.data['payable'] as num?)?.toDouble() ?? 0;
+      final settled = (row.data['settled'] as num?)?.toDouble() ?? 0;
+      final remaining = _roundMoney(payable - settled);
+      if (id.isNotEmpty && remaining > 0) result[id] = remaining;
+    }
+    return result;
   }
 
   /// Atomically posts a batch of legacy expenses through the Phase 5 cash path.
@@ -2027,6 +2064,7 @@ class AccountingService {
 
   static Future<void> _recordExpenseCompatibilityLedgerInExistingTransaction(
     Expense expense, {
+    double? cashPaidAmount,
     String movementVersionSuffix = '',
   }) async {
     final accountId = expense.id.trim();
@@ -2090,10 +2128,23 @@ class AccountingService {
     final suffix = movementVersionSuffix.trim().isEmpty
         ? ''
         : '-${movementVersionSuffix.trim()}';
-    await insertMovement('${expense.id}-expense-debit$suffix', 'expense',
-        expense.amount, 0, '', 'Expense ${expense.title}');
-    await insertMovement('${expense.id}-expense-credit$suffix', 'paymentPaid',
-        0, expense.amount, 'Cash', 'Expense settlement ${expense.title}');
+    final total = _roundMoney(expense.amount);
+    final paid = _normalizedExpenseCashAmount(
+      total: total,
+      requested: cashPaidAmount,
+      requireCash: true,
+    );
+    final payable = _roundMoney(total - paid);
+    await insertMovement('${expense.id}-expense-debit$suffix', 'expense', total,
+        0, '', 'Expense ${expense.title}');
+    if (paid > 0) {
+      await insertMovement('${expense.id}-expense-credit$suffix', 'paymentPaid',
+          0, paid, 'Cash', 'Expense settlement ${expense.title}');
+    }
+    if (payable > 0) {
+      await insertMovement('${expense.id}-expense-credit-payable$suffix',
+          'expense', 0, payable, 'Credit', 'Expense payable ${expense.title}');
+    }
   }
 
   static Future<void>
@@ -2209,6 +2260,7 @@ class AccountingService {
 
   static Future<void> _recordExpenseInExistingTransaction(
     Expense expense, {
+    double? cashPaidAmount,
     String accountingReferenceId = '',
   }) async {
     final cashExpenseLocation = await _openCashDrawerLocationForDevice(
@@ -2232,6 +2284,12 @@ class AccountingService {
       expense,
     );
     final amount = _roundMoney(expense.amount);
+    final paidAmount = _normalizedExpenseCashAmount(
+      total: amount,
+      requested: cashPaidAmount,
+      requireCash: true,
+    );
+    final payableAmount = _roundMoney(amount - paidAmount);
     final referenceId = accountingReferenceId.trim().isEmpty
         ? expense.id.trim()
         : accountingReferenceId.trim();
@@ -2247,11 +2305,13 @@ class AccountingService {
     ).getSingleOrNull();
     if (existing != null) return;
 
-    await ensureCashOutflowAllowed(
-      cashLocationId: cashExpenseLocation.id,
-      amount: amount,
-      database: _db,
-    );
+    if (paidAmount > 0) {
+      await ensureCashOutflowAllowed(
+        cashLocationId: cashExpenseLocation.id,
+        amount: paidAmount,
+        database: _db,
+      );
+    }
 
     final entryId = await createPostedEntry(
       JournalEntryDraft(
@@ -2274,10 +2334,20 @@ class AccountingService {
           JournalLineDraft(
             accountId: cashExpenseLocation.accountId,
             debit: 0,
-            credit: amount,
-            memo: 'دفعة مصروف',
+            credit: paidAmount,
+            memo: 'دفعة مصروف نقدية',
           ),
-        ],
+          if (payableAmount > 0)
+            JournalLineDraft(
+              accountId: await _resolveAccountRoleForDatabase(
+                _db,
+                'accounts_payable',
+              ),
+              debit: 0,
+              credit: payableAmount,
+              memo: 'الجزء المتبقي من المصروف مستحق الدفع',
+            ),
+        ].where((line) => line.debit > 0 || line.credit > 0).toList(),
       ),
       database: _db,
       withinExistingTransaction: true,
@@ -2302,7 +2372,7 @@ class AccountingService {
         Variable<String>(now),
         Variable<String>(cashExpenseLocation.id),
         Variable<String>(sessionId),
-        Variable<double>(amount),
+        Variable<double>(paidAmount),
         const Variable<String>('USD'),
         Variable<String>(entryId),
         Variable<String>(expense.notes),
@@ -2322,7 +2392,7 @@ class AccountingService {
       id: 'cashledger_expense_$referenceId',
       type: 'expense',
       direction: 'out',
-      amount: amount,
+      amount: paidAmount,
       currency: 'USD',
       cashLocationId: cashExpenseLocation.id,
       cashDrawerSessionId: sessionId,
@@ -2348,7 +2418,7 @@ class AccountingService {
 
     await applyCashLocationDelta(
       cashLocationId: cashExpenseLocation.id,
-      delta: -amount,
+      delta: -paidAmount,
       updatedAt: now,
       database: _db,
     );
@@ -2385,6 +2455,7 @@ class AccountingService {
     required String voucherNo,
     required DateTime date,
     required double amount,
+    double discount = 0,
     required String paymentMethod,
     required String partyId,
     required String partyName,
@@ -2409,8 +2480,13 @@ class AccountingService {
         ? cleanVoucherId
         : accountingReferenceId.trim();
     final cleanAmount = _cleanAmount(amount);
-    if (cleanAmount <= 0) {
-      throw ArgumentError('مبلغ السند يجب أن يكون أكبر من صفر.');
+    final cleanDiscount = _cleanAmount(discount);
+    if (cleanDiscount < 0) {
+      throw ArgumentError('قيمة الخصم لا يمكن أن تكون سالبة.');
+    }
+    final settlementAmount = _roundMoney(cleanAmount + cleanDiscount);
+    if (cleanAmount < 0 || settlementAmount <= 0) {
+      throw ArgumentError('يجب أن يكون المقبوض أو الخصم أكبر من صفر.');
     }
 
     final referenceType = isReceipt ? 'receipt_voucher' : 'payment_voucher';
@@ -2490,6 +2566,14 @@ class AccountingService {
       database,
       isReceipt ? 'accounts_receivable' : 'accounts_payable',
     );
+    final discountAccount = cleanDiscount > 0
+        ? await _resolveAccountRoleForDatabase(
+            database,
+            isReceipt
+                ? 'customer_settlement_discount'
+                : 'supplier_settlement_discount',
+          )
+        : '';
     return createPostedEntry(
       JournalEntryDraft(
         entryDate: date,
@@ -2505,19 +2589,30 @@ class AccountingService {
         branchId: branchId.trim(),
         lines: isReceipt
             ? <JournalLineDraft>[
-                JournalLineDraft(
-                  accountId: paymentAccount,
-                  debit: cleanAmount,
-                  credit: 0,
-                  memo: 'سند قبض عميل',
-                  partyType: 'customer',
-                  partyId: partyId.trim(),
-                  partyName: partyName.trim(),
-                ),
+                if (cleanAmount > 0)
+                  JournalLineDraft(
+                    accountId: paymentAccount,
+                    debit: cleanAmount,
+                    credit: 0,
+                    memo: 'سند قبض عميل',
+                    partyType: 'customer',
+                    partyId: partyId.trim(),
+                    partyName: partyName.trim(),
+                  ),
+                if (cleanDiscount > 0)
+                  JournalLineDraft(
+                    accountId: discountAccount,
+                    debit: cleanDiscount,
+                    credit: 0,
+                    memo: 'خصم تسوية ممنوح للعميل',
+                    partyType: 'customer',
+                    partyId: partyId.trim(),
+                    partyName: partyName.trim(),
+                  ),
                 JournalLineDraft(
                   accountId: controlAccount,
                   debit: 0,
-                  credit: cleanAmount,
+                  credit: settlementAmount,
                   memo: 'تخفيض ذمة العميل المدينة',
                   partyType: 'customer',
                   partyId: partyId.trim(),
@@ -2527,22 +2622,33 @@ class AccountingService {
             : <JournalLineDraft>[
                 JournalLineDraft(
                   accountId: controlAccount,
-                  debit: cleanAmount,
+                  debit: settlementAmount,
                   credit: 0,
                   memo: 'تخفيض ذمة المورد الدائنة',
                   partyType: 'supplier',
                   partyId: partyId.trim(),
                   partyName: partyName.trim(),
                 ),
-                JournalLineDraft(
-                  accountId: paymentAccount,
-                  debit: 0,
-                  credit: cleanAmount,
-                  memo: 'سند دفع مورد',
-                  partyType: 'supplier',
-                  partyId: partyId.trim(),
-                  partyName: partyName.trim(),
-                ),
+                if (cleanAmount > 0)
+                  JournalLineDraft(
+                    accountId: paymentAccount,
+                    debit: 0,
+                    credit: cleanAmount,
+                    memo: 'سند دفع مورد',
+                    partyType: 'supplier',
+                    partyId: partyId.trim(),
+                    partyName: partyName.trim(),
+                  ),
+                if (cleanDiscount > 0)
+                  JournalLineDraft(
+                    accountId: discountAccount,
+                    debit: 0,
+                    credit: cleanDiscount,
+                    memo: 'خصم تسوية مكتسب من المورد',
+                    partyType: 'supplier',
+                    partyId: partyId.trim(),
+                    partyName: partyName.trim(),
+                  ),
               ],
       ),
       database: database,
@@ -8330,6 +8436,23 @@ class AccountingService {
         currency ?? _moneyProfile.baseCurrency,
         _moneyProfile,
       );
+
+  static double _normalizedExpenseCashAmount({
+    required double total,
+    required double? requested,
+    required bool requireCash,
+  }) {
+    final normalizedTotal = _roundMoney(total);
+    final value = _roundMoney(requested ?? normalizedTotal);
+    if (!value.isFinite || value < 0 || value > normalizedTotal + 0.005) {
+      throw ArgumentError(
+          'مبلغ الدفع النقدي يجب أن يكون بين صفر وإجمالي المصروف.');
+    }
+    if (requireCash && value <= 0) {
+      throw ArgumentError('مبلغ الدفع النقدي يجب أن يكون أكبر من صفر.');
+    }
+    return value > normalizedTotal ? normalizedTotal : value;
+  }
 
   static String _newId(String prefix) =>
       '${prefix}_${DateTime.now().toUtc().microsecondsSinceEpoch}_${_random.nextInt(1 << 32)}';

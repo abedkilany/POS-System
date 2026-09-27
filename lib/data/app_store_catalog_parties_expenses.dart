@@ -1,7 +1,7 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitCatalogPartiesExpenses on AppStore {
-void _indexProductAt(int index, Product product, {Product? previousProduct}) {
+  void _indexProductAt(int index, Product product, {Product? previousProduct}) {
     _productIndexById[product.id] = index;
     if (previousProduct != null) {
       final previousCode = previousProduct.code.trim().toLowerCase();
@@ -25,7 +25,7 @@ void _indexProductAt(int index, Product product, {Product? previousProduct}) {
     }
   }
 
-void _unindexProduct(Product product) {
+  void _unindexProduct(Product product) {
     final index = _productIndexById[product.id];
     if (index != null && index >= 0 && index < _products.length) {
       _productIndexById[product.id] = index;
@@ -41,7 +41,7 @@ void _unindexProduct(Product product) {
     }
   }
 
-void _indexCustomerAt(int index, Customer customer,
+  void _indexCustomerAt(int index, Customer customer,
       {Customer? previousCustomer}) {
     _customerIndexById[customer.id] = index;
     if (previousCustomer != null) {
@@ -58,7 +58,7 @@ void _indexCustomerAt(int index, Customer customer,
     }
   }
 
-void _indexSupplierAt(int index, Supplier supplier,
+  void _indexSupplierAt(int index, Supplier supplier,
       {Supplier? previousSupplier}) {
     _supplierIndexById[supplier.id] = index;
     if (previousSupplier != null) {
@@ -75,7 +75,7 @@ void _indexSupplierAt(int index, Supplier supplier,
     }
   }
 
-Future<void> addOrUpdateProduct(Product product) async {
+  Future<void> addOrUpdateProduct(Product product) async {
     final section = 'product.addOrUpdate';
     final index = _productIndexById[product.id];
     final exists = index != null;
@@ -96,9 +96,8 @@ Future<void> addOrUpdateProduct(Product product) async {
     if (requestedInitialStock < -0.000001) {
       throw ArgumentError('Opening stock cannot be negative.');
     }
-    final authoritativeStock = isCreate
-        ? 0.0
-        : await totalWarehouseStockFromSqlite(product.id);
+    final authoritativeStock =
+        isCreate ? 0.0 : await totalWarehouseStockFromSqlite(product.id);
     final sourceNeutralProduct = product.copyWith(stock: authoritativeStock);
     final normalizedProduct = sourceNeutralProduct.code.trim().isEmpty
         ? sourceNeutralProduct.copyWith(
@@ -223,10 +222,12 @@ Future<void> addOrUpdateProduct(Product product) async {
     notifyListeners();
   }
 
-Future<void> addOrUpdateProductsBulk(List<Product> products) async {
+  Future<void> addOrUpdateProductsBulk(List<Product> products) async {
     if (products.isEmpty) return;
-    final hasCreates = products.any((item) => _productIndexById[item.id] == null);
-    final hasUpdates = products.any((item) => _productIndexById[item.id] != null);
+    final hasCreates =
+        products.any((item) => _productIndexById[item.id] == null);
+    final hasUpdates =
+        products.any((item) => _productIndexById[item.id] != null);
     if (hasCreates) {
       requireAnyPermission(<String>{
         AppPermission.productsManage,
@@ -304,7 +305,7 @@ Future<void> addOrUpdateProductsBulk(List<Product> products) async {
     notifyListeners();
   }
 
-bool isProductReferenced(String productId) {
+  bool isProductReferenced(String productId) {
     if (productId.trim().isEmpty) return false;
     final usedInSales = _sales.any(
       (sale) =>
@@ -321,7 +322,7 @@ bool isProductReferenced(String productId) {
     return _stockMovements.any((movement) => movement.productId == productId);
   }
 
-Future<void> _createOpeningStockForNewProduct(
+  Future<void> _createOpeningStockForNewProduct(
     Product product,
     double quantity,
   ) async {
@@ -462,7 +463,7 @@ Future<void> _createOpeningStockForNewProduct(
     );
   }
 
-Future<void> deleteProduct(String id) async {
+  Future<void> deleteProduct(String id) async {
     requireAnyPermission(<String>{
       AppPermission.productsManage,
       AppPermission.productsDelete,
@@ -540,7 +541,7 @@ Future<void> deleteProduct(String id) async {
     notifyListeners();
   }
 
-int _softDeleteSupplierProductPrices({
+  int _softDeleteSupplierProductPrices({
     String? productId,
     String? supplierId,
     required DateTime now,
@@ -579,7 +580,7 @@ int _softDeleteSupplierProductPrices({
     return affected;
   }
 
-Future<void> addOrUpdateCustomer(Customer customer) async {
+  Future<void> addOrUpdateCustomer(Customer customer) async {
     final section = 'customer.addOrUpdate';
     requirePermission(AppPermission.customersManage);
     if (customer.name.trim().isEmpty) {
@@ -598,7 +599,8 @@ Future<void> addOrUpdateCustomer(Customer customer) async {
     }
     final now = DateTime.now();
     final incoming = (customer.id == AppStore.walkInCustomerId ||
-            normalizedName.toLowerCase() == AppStore.walkInCustomerName.toLowerCase())
+            normalizedName.toLowerCase() ==
+                AppStore.walkInCustomerName.toLowerCase())
         ? _withSyncMeta<Customer>(walkInCustomer, now, isCreate: false)
         : _withSyncMeta<Customer>(
             customer.copyWith(name: normalizedName),
@@ -694,7 +696,7 @@ Future<void> addOrUpdateCustomer(Customer customer) async {
     notifyListeners();
   }
 
-Future<void> addOrUpdateCustomersBulk(List<Customer> customers) async {
+  Future<void> addOrUpdateCustomersBulk(List<Customer> customers) async {
     if (customers.isEmpty) return;
     requirePermission(AppPermission.customersManage);
     final section = 'customer.addOrUpdateBulk';
@@ -756,14 +758,15 @@ Future<void> addOrUpdateCustomersBulk(List<Customer> customers) async {
     notifyListeners();
   }
 
-Future<void> deleteCustomer(String id) async {
+  Future<void> deleteCustomer(String id) async {
     requirePermission(AppPermission.customersManage);
     final index = _customerIndexById[id];
     if (index == null) return;
     final previousCustomer = _customers[index];
     final customer = previousCustomer;
     final isWalkIn = customer.id == AppStore.walkInCustomerId ||
-        customer.name.trim().toLowerCase() == AppStore.walkInCustomerName.toLowerCase();
+        customer.name.trim().toLowerCase() ==
+            AppStore.walkInCustomerName.toLowerCase();
     if (isWalkIn) return;
     final now = DateTime.now();
     final deletedCustomer = _withSyncMeta<Customer>(
@@ -823,7 +826,7 @@ Future<void> deleteCustomer(String id) async {
     notifyListeners();
   }
 
-Future<void> addOrUpdateSupplier(Supplier supplier) async {
+  Future<void> addOrUpdateSupplier(Supplier supplier) async {
     final section = 'supplier.addOrUpdate';
     requirePermission(AppPermission.suppliersManage);
     if (supplier.name.trim().isEmpty) {
@@ -917,7 +920,7 @@ Future<void> addOrUpdateSupplier(Supplier supplier) async {
     notifyListeners();
   }
 
-Future<void> addOrUpdateSuppliersBulk(List<Supplier> suppliers) async {
+  Future<void> addOrUpdateSuppliersBulk(List<Supplier> suppliers) async {
     if (suppliers.isEmpty) return;
     requirePermission(AppPermission.suppliersManage);
     final section = 'supplier.addOrUpdateBulk';
@@ -976,7 +979,7 @@ Future<void> addOrUpdateSuppliersBulk(List<Supplier> suppliers) async {
     notifyListeners();
   }
 
-Future<void> deleteSupplier(String id) async {
+  Future<void> deleteSupplier(String id) async {
     requirePermission(AppPermission.suppliersManage);
     final index = _supplierIndexById[id];
     if (index == null) return;
@@ -1009,7 +1012,7 @@ Future<void> deleteSupplier(String id) async {
     notifyListeners();
   }
 
-Future<void> addOrUpdateCategory(CatalogItem item) async {
+  Future<void> addOrUpdateCategory(CatalogItem item) async {
     requirePermission(AppPermission.catalogManage);
     final previousItem = _categories
         .where((existing) => existing.id == item.id)
@@ -1038,7 +1041,7 @@ Future<void> addOrUpdateCategory(CatalogItem item) async {
     notifyListeners();
   }
 
-Future<void> addOrUpdateBrand(CatalogItem item) async {
+  Future<void> addOrUpdateBrand(CatalogItem item) async {
     requirePermission(AppPermission.catalogManage);
     final previousItem = _brands
         .where((existing) => existing.id == item.id)
@@ -1062,7 +1065,7 @@ Future<void> addOrUpdateBrand(CatalogItem item) async {
     notifyListeners();
   }
 
-Future<void> addOrUpdateUnit(CatalogItem item) async {
+  Future<void> addOrUpdateUnit(CatalogItem item) async {
     requirePermission(AppPermission.catalogManage);
     final previousItem = _units
         .where((existing) => existing.id == item.id)
@@ -1086,7 +1089,7 @@ Future<void> addOrUpdateUnit(CatalogItem item) async {
     notifyListeners();
   }
 
-CatalogItem _addOrUpdateCatalogItem(
+  CatalogItem _addOrUpdateCatalogItem(
     List<CatalogItem> list,
     CatalogItem item,
   ) {
@@ -1115,13 +1118,13 @@ CatalogItem _addOrUpdateCatalogItem(
     return syncedItem;
   }
 
-bool _catalogReferenceChanged(CatalogItem? previous, CatalogItem current) {
+  bool _catalogReferenceChanged(CatalogItem? previous, CatalogItem current) {
     if (previous == null) return false;
     return _catalogReferenceValue(previous).trim().toLowerCase() !=
         _catalogReferenceValue(current).trim().toLowerCase();
   }
 
-bool _catalogItemMatchesValue(CatalogItem item, String value) {
+  bool _catalogItemMatchesValue(CatalogItem item, String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized.isEmpty) return false;
     return item.code.trim().toLowerCase() == normalized ||
@@ -1129,7 +1132,7 @@ bool _catalogItemMatchesValue(CatalogItem item, String value) {
         item.nameAr.trim().toLowerCase() == normalized;
   }
 
-int productsUsingCatalogItem(String type, CatalogItem item) {
+  int productsUsingCatalogItem(String type, CatalogItem item) {
     if (type != 'category' && type != 'unit' && type != 'brand') return 0;
     return _products.where((product) {
       if (product.isDeleted) return false;
@@ -1142,7 +1145,7 @@ int productsUsingCatalogItem(String type, CatalogItem item) {
     }).length;
   }
 
-bool _propagateCatalogRename(
+  bool _propagateCatalogRename(
     String type,
     CatalogItem? previous,
     CatalogItem current,
@@ -1180,14 +1183,14 @@ bool _propagateCatalogRename(
     return changed;
   }
 
-bool _valueMatchesCatalogReference(String value, String reference) {
+  bool _valueMatchesCatalogReference(String value, String reference) {
     final normalizedValue = value.trim().toLowerCase();
     final normalizedReference = reference.trim().toLowerCase();
     if (normalizedValue.isEmpty || normalizedReference.isEmpty) return false;
     return normalizedValue == normalizedReference;
   }
 
-Future<void> replaceAndDeleteCatalogItem({
+  Future<void> replaceAndDeleteCatalogItem({
     required String type,
     required CatalogItem item,
     CatalogItem? replacement,
@@ -1266,7 +1269,7 @@ Future<void> replaceAndDeleteCatalogItem({
     notifyListeners();
   }
 
-Future<Expense> editPostedExpense({
+  Future<Expense> editPostedExpense({
     required String expenseId,
     required int expectedVersion,
     String? title,
@@ -1286,6 +1289,7 @@ Future<Expense> editPostedExpense({
       throw StateError('Posted expense editing requires SQLite storage.');
     }
     late bool wasCash;
+    double? wasCashPaidAmount;
     late Expense edited;
     if (await _expenseByIdFromSqlite(id) == null) {
       throw ArgumentError('Expense not found.');
@@ -1314,7 +1318,7 @@ Future<Expense> editPostedExpense({
         validateDependencies: (current) async {
           final activeCash = await sqliteDb.customSelect(
             '''
-            SELECT tx.id
+            SELECT tx.id, tx.amount
             FROM cash_ledger_transactions tx
             WHERE tx.reference_type = 'expense'
               AND (tx.reference_id = ? OR instr(tx.reference_id, ?) = 1)
@@ -1331,17 +1335,23 @@ Future<Expense> editPostedExpense({
             ],
           ).getSingleOrNull();
           wasCash = activeCash != null;
+          wasCashPaidAmount = (activeCash?.data['amount'] as num?)?.toDouble();
           final settledCredit = await sqliteDb.customSelect(
             '''
             SELECT id FROM cash_operations
-            WHERE idempotency_key = ? AND deleted_at = '' AND status = 'posted'
+            WHERE deleted_at = '' AND status = 'posted'
+              AND (
+                idempotency_key = ?
+                OR idempotency_key LIKE ?
+              )
             LIMIT 1
             ''',
             variables: <Variable<Object>>[
               Variable<String>('expense-credit-settlement:${current.id}'),
+              Variable<String>('expense-credit-settlement:${current.id}:%'),
             ],
           ).getSingleOrNull();
-          if (!wasCash && settledCredit != null) {
+          if (settledCredit != null) {
             throw StateError(
               'A settled credit expense cannot be edited. Reverse its settlement first.',
             );
@@ -1405,7 +1415,8 @@ Future<Expense> editPostedExpense({
             ''',
             variables: <Variable<Object>>[
               Variable<String>(now),
-              Variable<String>('Expense edited from version ${current.version}'),
+              Variable<String>(
+                  'Expense edited from version ${current.version}'),
               Variable<String>(_actorName()),
               Variable<String>(_activeUser?.id ?? ''),
               Variable<String>(now),
@@ -1487,6 +1498,7 @@ Future<Expense> editPostedExpense({
           await AccountingService.repostEditedExpenseInExistingTransaction(
             updated,
             paidInCash: wasCash,
+            cashPaidAmount: wasCashPaidAmount,
             technicalReferenceId:
                 '${updated.id}:expense_edit:v${updated.version}',
           );
@@ -1502,7 +1514,8 @@ Future<Expense> editPostedExpense({
           ).getSingleOrNull();
           if (row == null ||
               (row.data['version'] as num?)?.toInt() != updated.version ||
-              row.data['expense_status']?.toString().toLowerCase() != 'posted' ||
+              row.data['expense_status']?.toString().toLowerCase() !=
+                  'posted' ||
               (((row.data['amount'] as num?)?.toDouble() ?? 0) - updated.amount)
                       .abs() >
                   0.000001) {
@@ -1541,7 +1554,8 @@ Future<Expense> editPostedExpense({
               ],
             ).getSingleOrNull();
             if (cash == null) {
-              throw StateError('Edited expense Cash Ledger movement is missing.');
+              throw StateError(
+                  'Edited expense Cash Ledger movement is missing.');
             }
           }
         },
@@ -1564,7 +1578,7 @@ Future<Expense> editPostedExpense({
     return edited;
   }
 
-Future<void> _reverseExpenseCompatibilityForEditInTransaction(
+  Future<void> _reverseExpenseCompatibilityForEditInTransaction(
     VentioDriftDatabase db, {
     required String expenseId,
     required String reason,
@@ -1579,6 +1593,7 @@ Future<void> _reverseExpenseCompatibilityForEditInTransaction(
         AND transaction_type NOT IN ('cancel', 'paymentReversal')
         AND (
           id = ? OR id LIKE ? OR id = ? OR id LIKE ?
+          OR id = ? OR id LIKE ?
         )
       ORDER BY transaction_date, created_at, id
       ''',
@@ -1587,6 +1602,8 @@ Future<void> _reverseExpenseCompatibilityForEditInTransaction(
         Variable<String>('$expenseId-expense-debit-edit-v%'),
         Variable<String>('$expenseId-expense-credit'),
         Variable<String>('$expenseId-expense-credit-edit-v%'),
+        Variable<String>('$expenseId-expense-credit-payable'),
+        Variable<String>('$expenseId-expense-credit-payable-edit-v%'),
       ],
     ).get();
     for (final original in originals) {
@@ -1598,9 +1615,11 @@ Future<void> _reverseExpenseCompatibilityForEditInTransaction(
         variables: <Variable<Object>>[Variable<String>(reversalId)],
       ).getSingleOrNull();
       if (already != null) continue;
-      final nextSort = await db.customSelect(
-        'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
-      ).getSingle();
+      final nextSort = await db
+          .customSelect(
+            'SELECT COALESCE(MAX(sort_index), 0) + 1 AS next_sort FROM account_transactions',
+          )
+          .getSingle();
       final sortIndex = (nextSort.data['next_sort'] as num?)?.toInt() ?? 1;
       final debit = (original.data['debit'] as num?)?.toDouble() ?? 0.0;
       final credit = (original.data['credit'] as num?)?.toDouble() ?? 0.0;
@@ -1624,12 +1643,16 @@ Future<void> _reverseExpenseCompatibilityForEditInTransaction(
           Variable<String>(original.data['store_id']?.toString() ?? ''),
           Variable<String>(original.data['branch_id']?.toString() ?? ''),
           Variable<int>(sortIndex),
-          Variable<String>(original.data['account_type']?.toString() ?? 'supplier'),
-          Variable<String>(original.data['account_id']?.toString() ?? expenseId),
-          Variable<String>(original.data['account_name']?.toString() ?? 'Expense'),
+          Variable<String>(
+              original.data['account_type']?.toString() ?? 'supplier'),
+          Variable<String>(
+              original.data['account_id']?.toString() ?? expenseId),
+          Variable<String>(
+              original.data['account_name']?.toString() ?? 'Expense'),
           Variable<String>(now),
           Variable<String>(credit > 0 ? 'paymentReversal' : 'cancel'),
-          Variable<String>(original.data['reference_id']?.toString() ?? expenseId),
+          Variable<String>(
+              original.data['reference_id']?.toString() ?? expenseId),
           Variable<String>(original.data['reference_no']?.toString() ?? ''),
           Variable<double>(credit),
           Variable<double>(debit),
@@ -1642,7 +1665,7 @@ Future<void> _reverseExpenseCompatibilityForEditInTransaction(
     }
   }
 
-Future<void> addOrUpdateExpense(Expense expense) async {
+  Future<void> addOrUpdateExpense(Expense expense) async {
     requirePermission(AppPermission.expensesManage);
     if (expense.title.trim().isEmpty ||
         expense.category.trim().isEmpty ||
@@ -1721,7 +1744,11 @@ Future<void> addOrUpdateExpense(Expense expense) async {
     notifyListeners();
   }
 
-Future<void> postExpense(String id, {bool paidInCash = true}) async {
+  Future<void> postExpense(
+    String id, {
+    bool paidInCash = true,
+    double? cashPaidAmount,
+  }) async {
     requireAnyPermission(<String>{
       AppPermission.expensesManage,
       AppPermission.expensesApprove,
@@ -1744,7 +1771,10 @@ Future<void> postExpense(String id, {bool paidInCash = true}) async {
     // The preview above has no dirty-row side effect, so a failure cannot leave
     // a latent Posted row that might be persisted by a later unrelated save.
     if (paidInCash) {
-      await AccountingService.recordExpense(candidate);
+      await AccountingService.recordExpense(
+        candidate,
+        cashPaidAmount: cashPaidAmount,
+      );
     } else {
       await AccountingService.recordExpenseOnCredit(candidate);
     }
@@ -1767,7 +1797,7 @@ Future<void> postExpense(String id, {bool paidInCash = true}) async {
     notifyListeners();
   }
 
-Future<void> createAndPostExpensesBulk(List<Expense> expenses) async {
+  Future<void> createAndPostExpensesBulk(List<Expense> expenses) async {
     if (expenses.isEmpty) return;
     requirePermission(AppPermission.expensesManage);
     final section = 'expense.createAndPostBulk';
@@ -1851,7 +1881,7 @@ Future<void> createAndPostExpensesBulk(List<Expense> expenses) async {
     notifyListeners();
   }
 
-Future<void> deleteDraftExpense(String id) async {
+  Future<void> deleteDraftExpense(String id) async {
     requireAnyPermission(<String>{
       AppPermission.expensesManage,
       AppPermission.expensesDelete,
@@ -1885,7 +1915,7 @@ Future<void> deleteDraftExpense(String id) async {
     notifyListeners();
   }
 
-Future<void> cancelExpense(String id, {String reason = ''}) async {
+  Future<void> cancelExpense(String id, {String reason = ''}) async {
     requireAnyPermission(<String>{
       AppPermission.expensesManage,
       AppPermission.expensesCancel,
@@ -1951,7 +1981,7 @@ Future<void> cancelExpense(String id, {String reason = ''}) async {
     notifyListeners();
   }
 
-Future<void> permanentlyDeleteCancelledExpense(String id) async {
+  Future<void> permanentlyDeleteCancelledExpense(String id) async {
     requirePermission(AppPermission.databaseManage);
     final index = _expenseIndexForId(id);
     if (index == -1) return;
@@ -1963,5 +1993,4 @@ Future<void> permanentlyDeleteCancelledExpense(String id) async {
       'Posted/cancelled expenses are retained for audit and cannot be permanently deleted. Use reversal/correction instead.',
     );
   }
-
 }

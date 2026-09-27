@@ -126,6 +126,30 @@ extension _SettingsPrinterSection on SettingsPage {
                             settings.copyWith(showOptionsBeforePrint: value);
                       }),
                     ),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(tr.text('ask_before_sales_invoice_print')),
+                      subtitle:
+                          Text(tr.text('ask_before_sales_invoice_print_desc')),
+                      value: settings.askBeforeSalesInvoicePrint,
+                      onChanged: (value) => setState(() {
+                        settings = settings.copyWith(
+                            askBeforeSalesInvoicePrint: value);
+                      }),
+                    ),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(tr.text('print_sales_invoice_after_save')),
+                      subtitle:
+                          Text(tr.text('print_sales_invoice_after_save_desc')),
+                      value: settings.printSalesInvoiceAfterSave,
+                      onChanged: settings.askBeforeSalesInvoicePrint
+                          ? null
+                          : (value) => setState(() {
+                                settings = settings.copyWith(
+                                    printSalesInvoiceAfterSave: value);
+                              }),
+                    ),
                     const Divider(),
                     Row(
                       children: [
