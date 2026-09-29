@@ -101,6 +101,15 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
           refundMethod: refundMethod,
           note: note);
 
+  Future<CreditNote> cancelSaleReturn({
+    required String creditNoteId,
+    required int expectedVersion,
+  }) =>
+      _AppStoreSplitSalesReturns(this as AppStore).cancelSaleReturn(
+        creditNoteId: creditNoteId,
+        expectedVersion: expectedVersion,
+      );
+
   List<SaleQuotation> get saleQuotations =>
       _AppStoreSplitCoreLoading(this as AppStore).saleQuotations;
 

@@ -5047,6 +5047,13 @@ class _SalesPageState extends State<SalesPage> {
                         '${tr.text('edit')} ${_saleReturnLabel(tr)}',
                       ),
                     ),
+                  if (isLatestActive &&
+                      widget.store.hasPermission(AppPermission.salesCancel))
+                    OutlinedButton.icon(
+                      onPressed: () => _cancelSaleReturn(context, note),
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: Text(tr.text('cancel_sales_return')),
+                    ),
                 ],
               ),
             ],
@@ -5082,6 +5089,59 @@ class _SalesPageState extends State<SalesPage> {
       return;
     }
     await _editLatestSaleReturn(context, sale);
+  }
+
+  Future<void> _cancelSaleReturn(
+    BuildContext context,
+    CreditNote note,
+  ) async {
+    if (!widget.store.hasPermission(AppPermission.salesCancel)) return;
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('cancel_sales_return')),
+        content: Text(
+          tr.format('cancel_sales_return_confirm', {
+            'invoice': note.creditNoteNo,
+          }),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(tr.text('confirm')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await widget.store.cancelSaleReturn(
+        creditNoteId: note.id,
+        expectedVersion: note.version,
+      );
+      if (!mounted) return;
+      setState(() {
+        _salesQueryFuture = null;
+        _salesQueryFutureKey = '';
+        _invoiceDetailsFutureById.clear();
+        _invoiceSearchIndexCache.invalidate();
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('sales_return_cancelled'))),
+        );
+      }
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizedErrorText(tr, error))),
+      );
+    }
   }
 
   Map<String, String> _invoiceSearchIndex(List<Sale> sales) {
