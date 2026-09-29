@@ -5119,6 +5119,13 @@ class _SalesPageState extends State<SalesPage> {
       ),
     );
     if (confirmed != true || !context.mounted) return;
+    if (!await requestSensitiveActionAuthorization(
+      context,
+      widget.store,
+      action: SensitiveAction.saleReverse,
+    )) {
+      return;
+    }
     try {
       await widget.store.cancelSaleReturn(
         creditNoteId: note.id,
