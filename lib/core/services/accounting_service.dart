@@ -1921,10 +1921,37 @@ class AccountingService {
   static Future<Map<String, double>>
       readOutstandingCreditExpenseBalances() async {
     if (!isAvailable) return <String, double>{};
+    final payableAccountId = await resolveAccountRole('accounts_payable');
     final rows = await _db.customSelect(
       '''
-      SELECT at.reference_id AS expense_id,
-             SUM(CASE WHEN at.credit > 0 THEN at.credit ELSE 0 END) AS payable,
+      SELECT balances.expense_id, balances.payable, balances.settled
+      FROM (
+      SELECT e.id AS expense_id,
+             MAX(
+               COALESCE((
+                 SELECT SUM(jl.credit - jl.debit)
+                 FROM journal_entries je
+                 JOIN journal_lines jl ON jl.entry_id = je.id
+                 WHERE je.reference_type = 'expense'
+                   AND (je.reference_id = e.id OR
+                        instr(je.reference_id, e.id || ':expense_edit:') = 1)
+                   AND je.deleted_at = '' AND je.status = 'posted'
+                   AND jl.account_id = ?
+                   AND NOT EXISTS (
+                     SELECT 1 FROM journal_entries rev
+                     WHERE rev.reversed_entry_id = je.id
+                       AND rev.deleted_at = '' AND rev.status = 'posted'
+                   )
+               ), 0),
+               COALESCE((
+                 SELECT SUM(CASE WHEN at.credit > 0 THEN at.credit ELSE 0 END)
+                 FROM account_transactions at
+                 WHERE at.reference_id = e.id
+                   AND at.deleted_at = ''
+                   AND LOWER(at.transaction_type) = 'expense'
+                   AND LOWER(at.payment_method) = 'credit'
+               ), 0)
+             ) AS payable,
              COALESCE((
                SELECT SUM(co.amount)
                FROM cash_operations co
@@ -1932,23 +1959,18 @@ class AccountingService {
                  AND LOWER(co.status) = 'posted'
                  AND (
                    co.idempotency_key =
-                     ('expense-credit-settlement:' || at.reference_id)
+                     ('expense-credit-settlement:' || e.id)
                    OR co.idempotency_key LIKE
-                     ('expense-credit-settlement:' || at.reference_id || ':%')
+                     ('expense-credit-settlement:' || e.id || ':%')
                  )
              ), 0) AS settled
-      FROM account_transactions at
-      JOIN expenses e
-        ON e.id = at.reference_id
-       AND e.deleted_at = ''
-       AND LOWER(e.expense_status) = 'posted'
-      WHERE at.deleted_at = ''
-        AND LOWER(at.transaction_type) = 'expense'
-        AND LOWER(at.payment_method) = 'credit'
-        AND TRIM(at.reference_id) <> ''
-      GROUP BY at.reference_id
-      HAVING payable - settled > 0.005
+      FROM expenses e
+      WHERE e.deleted_at = ''
+        AND LOWER(e.expense_status) = 'posted'
+      ) balances
+      WHERE balances.payable - balances.settled > 0.005
       ''',
+      variables: <Variable<Object>>[Variable<String>(payableAccountId)],
     ).get();
     final result = <String, double>{};
     for (final row in rows) {

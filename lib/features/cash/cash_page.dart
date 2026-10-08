@@ -948,7 +948,8 @@ class _CashPageState extends State<CashPage> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
+              onPressed: () =>
+                  Navigator.pop<_ExpenseSettlementSelection>(dialogContext),
               child: Text(tr.text('cancel')),
             ),
             FilledButton(

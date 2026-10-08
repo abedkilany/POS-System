@@ -1503,6 +1503,51 @@ class _MovementsListState extends State<_MovementsList> {
   Future<_StockMovementsQueryResult?>? _movementsFuture;
   String _movementsFutureKey = '';
   int _visibleMovementCount = 100;
+  String _movementQuery = '';
+  String _movementType = 'all';
+  String _movementWarehouseId = '';
+  final TextEditingController _movementSearchController =
+      TextEditingController();
+
+  static const List<String> _commonMovementTypes = <String>[
+    'purchase_receive',
+    'purchase_return',
+    'purchase_cancel',
+    'sale',
+    'sale_return',
+    'sale_restore',
+    'sale_cancel',
+    'transfer_in',
+    'transfer_out',
+    'count_adjustment',
+    'inventory_loss',
+    'inventory_adjustment',
+    'manufacturing_consume',
+    'manufacturing_produce',
+    'auto_correction',
+  ];
+
+  List<String> _movementTypeOptions() {
+    final types = <String>{..._commonMovementTypes};
+    types.addAll(widget.store.stockMovements.map((movement) => movement.type));
+    return <String>['all', ...types.where((type) => type.trim().isNotEmpty)];
+  }
+
+  List<Warehouse> _warehouseOptions() => widget.store.warehouses
+      .where((warehouse) => !warehouse.isDeleted)
+      .toList(growable: false);
+
+  void _resetMovementFilters() {
+    setState(() {
+      _movementQuery = '';
+      _movementType = 'all';
+      _movementWarehouseId = '';
+      _movementSearchController.clear();
+      _visibleMovementCount = 100;
+      _movementsFuture = null;
+      _movementsFutureKey = '';
+    });
+  }
 
   @override
   void didUpdateWidget(covariant _MovementsList oldWidget) {
@@ -1514,13 +1559,24 @@ class _MovementsListState extends State<_MovementsList> {
     }
   }
 
+  @override
+  void dispose() {
+    _movementSearchController.dispose();
+    super.dispose();
+  }
+
   Future<_StockMovementsQueryResult?> _queryMovementsFromSqlite() {
     final limit = _visibleMovementCount.clamp(1, 500).toInt();
-    final key = '${widget.store.stockMovementsRevision}|$limit';
+    final query = _movementQuery.trim();
+    final key =
+        '${widget.store.stockMovementsRevision}|$query|$_movementType|$_movementWarehouseId|$limit';
     if (_movementsFuture == null || _movementsFutureKey != key) {
       _movementsFutureKey = key;
       _movementsFuture = () async {
         final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          query: query,
+          type: _movementType,
+          warehouseId: _movementWarehouseId,
           limit: limit,
           sortMode: 'newest',
         );
@@ -1773,12 +1829,149 @@ class _MovementsListState extends State<_MovementsList> {
       widget.store.appIdentity.storeId,
       () => widget.store.stockMovements.toList(growable: false),
     );
-    final visible = movements.take(200).toList(growable: false);
+    final filtered =
+        movements.where(_matchesMovementFilters).toList(growable: false);
+    final visible =
+        filtered.take(_visibleMovementCount).toList(growable: false);
     return _buildMovementsView(
       context,
       tr,
       visible,
-      totalCount: movements.length,
+      totalCount: filtered.length,
+      onLoadMore: visible.length < filtered.length
+          ? () => _loadMoreMovements(filtered.length)
+          : null,
+    );
+  }
+
+  bool _matchesMovementFilters(StockMovement movement) {
+    if (_movementType != 'all' && movement.type != _movementType) {
+      return false;
+    }
+    if (_movementWarehouseId.isNotEmpty &&
+        movement.warehouseId != _movementWarehouseId) {
+      return false;
+    }
+    final query = _movementQuery.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    final searchable = [
+      movement.productName,
+      movement.warehouseName,
+      movement.referenceNo,
+      movement.referenceId,
+      movement.reason,
+      movement.notes,
+      movement.type,
+      _movementTypeLabel(AppLocalizations.of(context), movement.type),
+    ].join(' ').toLowerCase();
+    return searchable.contains(query);
+  }
+
+  Widget _buildMovementFilters(BuildContext context, AppLocalizations tr) {
+    final warehouses = _warehouseOptions();
+    final movementTypes = _movementTypeOptions();
+    final selectedWarehouseId = warehouses.any(
+      (warehouse) => warehouse.id == _movementWarehouseId,
+    )
+        ? _movementWarehouseId
+        : 'all';
+    final filterWidth =
+        math.min(420.0, math.max(220.0, MediaQuery.sizeOf(context).width - 40));
+    final hasFilters = _movementQuery.trim().isNotEmpty ||
+        _movementType != 'all' ||
+        _movementWarehouseId.isNotEmpty;
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SizedBox(
+          width: filterWidth,
+          child: TextField(
+            controller: _movementSearchController,
+            decoration: InputDecoration(
+              labelText: tr.text('search_stock_movements'),
+              hintText: tr.text('search_stock_movements_hint'),
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _movementQuery.trim().isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: tr.text('clear_filters'),
+                      onPressed: () {
+                        _movementSearchController.clear();
+                        setState(() {
+                          _movementQuery = '';
+                          _visibleMovementCount = 100;
+                          _movementsFuture = null;
+                        });
+                      },
+                      icon: const Icon(Icons.clear),
+                    ),
+            ),
+            onChanged: (value) => setState(() {
+              _movementQuery = value;
+              _visibleMovementCount = 100;
+              _movementsFuture = null;
+            }),
+          ),
+        ),
+        SizedBox(
+          width: 230,
+          child: DropdownButtonFormField<String>(
+            initialValue:
+                movementTypes.contains(_movementType) ? _movementType : 'all',
+            decoration: InputDecoration(
+              labelText: tr.text('movement_type_filter'),
+              prefixIcon: const Icon(Icons.swap_vert),
+            ),
+            items: movementTypes
+                .map((type) => DropdownMenuItem<String>(
+                      value: type,
+                      child: Text(type == 'all'
+                          ? tr.text('all_movement_types')
+                          : _movementTypeLabel(tr, type)),
+                    ))
+                .toList(growable: false),
+            onChanged: (value) => setState(() {
+              _movementType = value ?? 'all';
+              _visibleMovementCount = 100;
+              _movementsFuture = null;
+            }),
+          ),
+        ),
+        SizedBox(
+          width: 230,
+          child: DropdownButtonFormField<String>(
+            initialValue: selectedWarehouseId,
+            decoration: InputDecoration(
+              labelText: tr.text('warehouse_filter'),
+              prefixIcon: const Icon(Icons.warehouse_outlined),
+            ),
+            items: <DropdownMenuItem<String>>[
+              DropdownMenuItem<String>(
+                value: 'all',
+                child: Text(tr.text('all_warehouses')),
+              ),
+              ...warehouses.map((warehouse) => DropdownMenuItem<String>(
+                    value: warehouse.id,
+                    child: Text(warehouse.name),
+                  )),
+            ],
+            onChanged: (value) => setState(() {
+              _movementWarehouseId =
+                  value == null || value == 'all' ? '' : value;
+              _visibleMovementCount = 100;
+              _movementsFuture = null;
+            }),
+          ),
+        ),
+        if (hasFilters)
+          OutlinedButton.icon(
+            onPressed: _resetMovementFilters,
+            icon: const Icon(Icons.filter_alt_off_outlined),
+            label: Text(tr.text('clear_filters')),
+          ),
+      ],
     );
   }
 
@@ -1797,6 +1990,8 @@ class _MovementsListState extends State<_MovementsList> {
           loadedCount: movements.length,
           totalCount: totalCount,
         ),
+        const SizedBox(height: 12),
+        _buildMovementFilters(context, tr),
         const SizedBox(height: 12),
         Card(
           child: loading

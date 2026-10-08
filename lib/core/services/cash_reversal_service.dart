@@ -221,7 +221,8 @@ class CashReversalService {
       FROM account_transactions
       WHERE deleted_at = ''
         AND transaction_type NOT IN ('cancel', 'paymentReversal')
-        AND (id = ? OR id LIKE ? OR id = ? OR id LIKE ?)
+        AND (id = ? OR id LIKE ? OR id = ? OR id LIKE ?
+             OR id = ? OR id LIKE ?)
       ORDER BY transaction_date, created_at, id
       ''',
       variables: <Variable<Object>>[
@@ -229,6 +230,8 @@ class CashReversalService {
         Variable<String>('$expenseId-expense-debit-edit-v%'),
         Variable<String>('$expenseId-expense-credit'),
         Variable<String>('$expenseId-expense-credit-edit-v%'),
+        Variable<String>('$expenseId-expense-credit-payable'),
+        Variable<String>('$expenseId-expense-credit-payable-edit-v%'),
       ],
     ).get();
 
