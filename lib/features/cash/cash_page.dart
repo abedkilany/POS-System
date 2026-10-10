@@ -979,9 +979,10 @@ class _CashPageState extends State<CashPage> {
               'يجب وجود وردية صندوق مفتوحة.'),
         );
       }
-      final defaults = await AccountingService.readDefaultAccountMap();
       final payableAccountId =
-          (defaults['default_suppliers_account_id'] ?? '').trim();
+          await AccountingService.resolveCreditExpensePayableAccount(
+        selection.expenseId,
+      );
       if (payableAccountId.isEmpty) {
         throw StateError(
           _l(
@@ -1008,7 +1009,8 @@ class _CashPageState extends State<CashPage> {
         branchId: widget.store.appIdentity.branchId,
         storeId: widget.store.appIdentity.storeId,
         idempotencyKey:
-            'expense-credit-settlement:${selectedExpense.id}:${selection.amount.toStringAsFixed(2)}',
+            'expense-credit-settlement:${selection.expenseId}:'
+                '$_deviceId:${DateTime.now().microsecondsSinceEpoch}',
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

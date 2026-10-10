@@ -1916,12 +1916,13 @@ class AccountingService {
   }
 
   /// Returns each posted credit expense and the amount that is still payable.
+  /// Expense payables can be posted to the default suppliers account or to a
+  /// dedicated accrued liability account, so include all liability accounts.
   /// This also understands partial cash settlements performed later from the
   /// Cash page, so the same expense can be settled over more than one payment.
   static Future<Map<String, double>>
       readOutstandingCreditExpenseBalances() async {
     if (!isAvailable) return <String, double>{};
-    final payableAccountId = await resolveAccountRole('accounts_payable');
     final rows = await _db.customSelect(
       '''
       SELECT balances.expense_id, balances.payable, balances.settled
@@ -1932,11 +1933,12 @@ class AccountingService {
                  SELECT SUM(jl.credit - jl.debit)
                  FROM journal_entries je
                  JOIN journal_lines jl ON jl.entry_id = je.id
+                 JOIN accounts a ON a.id = jl.account_id
                  WHERE je.reference_type = 'expense'
                    AND (je.reference_id = e.id OR
                         instr(je.reference_id, e.id || ':expense_edit:') = 1)
                    AND je.deleted_at = '' AND je.status = 'posted'
-                   AND jl.account_id = ?
+                   AND LOWER(a.type) = 'liability'
                    AND NOT EXISTS (
                      SELECT 1 FROM journal_entries rev
                      WHERE rev.reversed_entry_id = je.id
@@ -1970,7 +1972,6 @@ class AccountingService {
       ) balances
       WHERE balances.payable - balances.settled > 0.005
       ''',
-      variables: <Variable<Object>>[Variable<String>(payableAccountId)],
     ).get();
     final result = <String, double>{};
     for (final row in rows) {
@@ -1981,6 +1982,48 @@ class AccountingService {
       if (id.isNotEmpty && remaining > 0) result[id] = remaining;
     }
     return result;
+  }
+
+  /// Resolves the liability account that holds a posted expense's payable.
+  /// Older expenses may have been credited to accrued-expense or accrued-
+  /// payroll accounts instead of the current default suppliers account.
+  static Future<String> resolveCreditExpensePayableAccount(
+    String expenseId,
+  ) async {
+    final id = expenseId.trim();
+    if (id.isEmpty) return '';
+    if (!isAvailable) return '';
+    final row = await _db.customSelect(
+      '''
+      SELECT jl.account_id, SUM(jl.credit - jl.debit) AS outstanding
+      FROM journal_entries je
+      JOIN journal_lines jl ON jl.entry_id = je.id
+      JOIN accounts a ON a.id = jl.account_id
+      WHERE je.reference_type = 'expense'
+        AND (je.reference_id = ? OR
+             instr(je.reference_id, ? || ':expense_edit:') = 1)
+        AND je.deleted_at = '' AND je.status = 'posted'
+        AND LOWER(a.type) = 'liability'
+        AND NOT EXISTS (
+          SELECT 1 FROM journal_entries rev
+          WHERE rev.reversed_entry_id = je.id
+            AND rev.deleted_at = '' AND rev.status = 'posted'
+        )
+      GROUP BY jl.account_id
+      HAVING SUM(jl.credit - jl.debit) > 0.005
+      ORDER BY outstanding DESC, jl.account_id
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(id),
+        Variable<String>(id),
+      ],
+    ).getSingleOrNull();
+    final accountId = row?.data['account_id']?.toString().trim() ?? '';
+    if (accountId.isNotEmpty) return accountId;
+
+    // Compatibility-only legacy entries do not retain a liability account id.
+    return resolveAccountRole('accounts_payable');
   }
 
   /// Atomically posts a batch of legacy expenses through the Phase 5 cash path.
