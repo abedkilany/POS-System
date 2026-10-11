@@ -40,6 +40,7 @@ class PrintDocumentKeys {
   static const cashShiftReport = 'cash_shift_report';
   static const expense = 'expense';
   static const accountStatement = 'account_statement';
+  static const customerReceivables = 'customer_receivables';
   static const expenseStatement = 'expense_statement';
   static const report = 'report';
   static const quotation = 'quotation';
@@ -61,6 +62,7 @@ class PrintDocumentKeys {
     cashShiftReport,
     expense,
     accountStatement,
+    customerReceivables,
     expenseStatement,
     report,
     quotation,

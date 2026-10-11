@@ -696,6 +696,7 @@
   "customer_saved": "تم حفظ العميل",
   "customer_updated": "تم تحديث العميل",
   "customers": "الزبائن",
+  "print_unpaid_customer_accounts": "طباعة حسابات الزبائن غير المسددة",
   "customers_page_desc": "إدارة بيانات العملاء لاستخدامها في الفواتير والمتابعة.",
   "customers_receivable_account": "حساب ذمم العملاء",
   "customers_receivable_account_desc": "يُستخدم عندما تترك الفاتورة مبلغاً مستحقاً من العميل.",

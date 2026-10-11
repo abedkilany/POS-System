@@ -660,6 +660,7 @@
   "customer_saved": "Customer saved",
   "customer_updated": "Customer updated",
   "customers": "Customers",
+  "print_unpaid_customer_accounts": "Print Unpaid Customer Accounts",
   "customers_page_desc": "Manage customer records for invoices and follow-up.",
   "customers_receivable_account": "Customers Receivable Account",
   "customers_receivable_account_desc": "Used when a sale leaves an amount due from the customer.",

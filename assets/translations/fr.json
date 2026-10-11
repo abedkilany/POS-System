@@ -659,6 +659,7 @@
   "customer_saved": "Client enregistré",
   "customer_updated": "Client mis à jour",
   "customers": "Clients",
+  "print_unpaid_customer_accounts": "Imprimer les comptes clients impayés",
   "customers_page_desc": "Gérer les dossiers clients pour les factures et le suivi.",
   "customers_receivable_account": "Compte clients",
   "customers_receivable_account_desc": "Utilisé lorsqu'une vente laisse un montant dû au client.",

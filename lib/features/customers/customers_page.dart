@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/customer_receivables_pdf_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/revision_cache.dart';
@@ -30,6 +31,7 @@ class CustomersPage extends StatefulWidget {
 
 class _CustomersPageState extends State<CustomersPage> {
   String query = '';
+  bool _printingReceivables = false;
   Timer? _customerRevealTimer;
   int _visibleCustomerCount = 100;
   int _customerRevealTargetCount = 0;
@@ -226,6 +228,61 @@ class _CustomersPageState extends State<CustomersPage> {
     setState(() {});
   }
 
+  Future<void> _printUnpaidCustomerAccounts() async {
+    if (_printingReceivables) return;
+    setState(() => _printingReceivables = true);
+    try {
+      var allCustomers = widget.store.customers;
+      if (LocalDatabaseService.canQueryBusinessSqlite) {
+        final queriedCustomers = <Customer>[];
+        var offset = 0;
+        var totalCount = 0;
+        do {
+          final page = await LocalDatabaseService.queryCustomersFromSqlite(
+            limit: 500,
+            offset: offset,
+          );
+          if (page == null) break;
+          queriedCustomers.addAll(page.items);
+          totalCount = page.totalCount;
+          offset += page.items.length;
+          if (page.items.isEmpty) break;
+        } while (offset < totalCount);
+        if (queriedCustomers.isNotEmpty || totalCount == 0) {
+          allCustomers = queriedCustomers;
+        }
+      }
+      final customers = allCustomers
+          .where((customer) =>
+              customer.id != AppStore.walkInCustomerId &&
+              customer.name.trim().toLowerCase() !=
+                  AppStore.walkInCustomerName.toLowerCase())
+          .map((customer) => CustomerReceivableRow(
+                name: customer.name,
+                phone: customer.phone,
+                balance: widget.store.accountBalance('customer', customer.id),
+              ))
+          .where((customer) => customer.balance > 0.0001)
+          .toList(growable: false)
+        ..sort((a, b) => b.balance.compareTo(a.balance));
+      await CustomerReceivablesPdfService.print(
+        context: context,
+        customers: customers,
+        profile: widget.store.storeProfile,
+        locale: Localizations.localeOf(context),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text(AppLocalizations.of(context).text('pdf_action_failed'))),
+      );
+    } finally {
+      if (mounted) setState(() => _printingReceivables = false);
+    }
+  }
+
   Widget _buildCustomersView(
     BuildContext context,
     AppLocalizations tr, {
@@ -251,6 +308,25 @@ class _CustomersPageState extends State<CustomersPage> {
                   loadedCount: customers.length,
                   totalCount: totalCount,
                 ),
+                if (widget.store.hasAnyPermission(<String>{
+                  AppPermission.customersLedgerView,
+                  AppPermission.customersManage,
+                }))
+                  FilledButton.tonalIcon(
+                    onPressed: _printingReceivables
+                        ? null
+                        : _printUnpaidCustomerAccounts,
+                    icon: _printingReceivables
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator.adaptive(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.print_outlined),
+                    label: Text(tr.text('print_unpaid_customer_accounts')),
+                  ),
                 FilledButton.icon(
                   onPressed: widget.store.canManageCustomers
                       ? () => _openCustomerForm(context)
