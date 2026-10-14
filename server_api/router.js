@@ -1,41 +1,33 @@
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '25mb',
-    },
-  },
-};
-
-import health from '../server_api/health.js';
-import deployHealth from '../server_api/deploy-health.js';
-import authRegister from '../server_api/auth/register.js';
-import authLogin from '../server_api/auth/login.js';
-import authSession from '../server_api/auth/session.js';
-import authLogout from '../server_api/auth/logout.js';
-import authPasswordReset from '../server_api/auth/password-reset.js';
-import accountChangePassword from '../server_api/account/change-password.js';
-import accountOwnerProfile from '../server_api/account/owner-profile.js';
-import adminSubscribers from '../server_api/admin/subscribers.js';
-import adminPasswordReset from '../server_api/admin/password-reset.js';
-import deviceRevoke from '../server_api/sync/device-revoke.js';
-import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
-import deviceSuspend from '../server_api/sync/device-suspend.js';
-import deviceAccess from '../server_api/sync/device-access.js';
-import deviceKey from '../server_api/sync/device-key.js';
-import iceConfig from '../server_api/sync/ice-config.js';
-import devices from '../server_api/sync/devices.js';
-import entitlement from '../server_api/sync/entitlement.js';
-import hostHeartbeat from '../server_api/sync/host-heartbeat.js';
-import pairingClaim from '../server_api/sync/pairing/claim.js';
-import pairingCreate from '../server_api/sync/pairing/create.js';
-import pairingStatus from '../server_api/sync/pairing/status.js';
-import recoveryClaim from '../server_api/sync/recovery/claim.js';
-import signal from '../server_api/sync/signal.js';
-import { directRealtimeTicketHandler, realtimeTicketHandler } from '../server_api/sync/realtime.js';
-import googleDriveAuthStart from '../server_api/google-drive/auth-start.js';
-import googleDriveCallback from '../server_api/google-drive/callback.js';
-import googleDriveStatus from '../server_api/google-drive/status.js';
-import googleDriveRefresh from '../server_api/google-drive/refresh.js';
+import health from './health.js';
+import deployHealth from './deploy-health.js';
+import authRegister from './auth/register.js';
+import authLogin from './auth/login.js';
+import authSession from './auth/session.js';
+import authLogout from './auth/logout.js';
+import authPasswordReset from './auth/password-reset.js';
+import accountChangePassword from './account/change-password.js';
+import accountOwnerProfile from './account/owner-profile.js';
+import adminSubscribers from './admin/subscribers.js';
+import adminPasswordReset from './admin/password-reset.js';
+import deviceRevoke from './sync/device-revoke.js';
+import deviceWipeAck from './sync/device-wipe-ack.js';
+import deviceSuspend from './sync/device-suspend.js';
+import deviceAccess from './sync/device-access.js';
+import deviceKey from './sync/device-key.js';
+import iceConfig from './sync/ice-config.js';
+import devices from './sync/devices.js';
+import entitlement from './sync/entitlement.js';
+import hostHeartbeat from './sync/host-heartbeat.js';
+import pairingClaim from './sync/pairing/claim.js';
+import pairingCreate from './sync/pairing/create.js';
+import pairingStatus from './sync/pairing/status.js';
+import recoveryClaim from './sync/recovery/claim.js';
+import signal from './sync/signal.js';
+import { directRealtimeTicketHandler, realtimeTicketHandler } from './sync/realtime.js';
+import googleDriveAuthStart from './google-drive/auth-start.js';
+import googleDriveCallback from './google-drive/callback.js';
+import googleDriveStatus from './google-drive/status.js';
+import googleDriveRefresh from './google-drive/refresh.js';
 
 const routes = new Map([
   ['health', health],

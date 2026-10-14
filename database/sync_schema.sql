@@ -1,5 +1,5 @@
--- Ventio Sync Engine v1 schema for Neon PostgreSQL
--- Run this once in Neon SQL Editor.
+-- Ventio Sync Engine v1 schema for PostgreSQL
+-- Run this once against the Ventio PostgreSQL database.
 
 -- Accurate Host status for web/online clients.
 -- The Windows Host updates this table periodically through /api/sync/host-heartbeat.

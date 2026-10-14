@@ -17,7 +17,7 @@ async function ensureTable() {
 }
 
 function apiBaseUrl(req) {
-  const configured = String(process.env.PUBLIC_API_BASE_URL || process.env.VERCEL_URL || '').trim();
+  const configured = String(process.env.PUBLIC_API_BASE_URL || '').trim();
   if (configured) {
     return configured.startsWith('http') ? configured.replace(/\/+$/, '') : `https://${configured.replace(/\/+$/, '')}`;
   }

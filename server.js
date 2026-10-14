@@ -1,5 +1,5 @@
 import http from 'http';
-import apiHandler from './api/[...path].js';
+import apiHandler from './server_api/router.js';
 import { attachRealtimeServer } from './server_api/sync/realtime.js';
 import { attachStunServer } from './server_api/sync/stun.js';
 

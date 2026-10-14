@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import { neon } from '@neondatabase/serverless';
 import pg from 'pg';
 
 if (!process.env.DATABASE_URL) {
@@ -7,28 +6,18 @@ if (!process.env.DATABASE_URL) {
 }
 
 const databaseUrl = process.env.DATABASE_URL;
-const isLocalDatabase =
-  databaseUrl.includes('@localhost') ||
-  databaseUrl.includes('@127.0.0.1');
+const { Pool } = pg;
+const pool = new Pool({ connectionString: databaseUrl });
 
-let sql;
-
-if (isLocalDatabase) {
-  const { Pool } = pg;
-  const pool = new Pool({ connectionString: databaseUrl });
-
-  sql = async (strings, ...values) => {
-    let text = '';
-    for (let i = 0; i < strings.length; i++) {
-      text += strings[i];
-      if (i < values.length) text += `$${i + 1}`;
-    }
-    const result = await pool.query(text, values);
-    return result.rows;
-  };
-} else {
-  sql = neon(databaseUrl);
-}
+const sql = async (strings, ...values) => {
+  let text = '';
+  for (let i = 0; i < strings.length; i++) {
+    text += strings[i];
+    if (i < values.length) text += `$${i + 1}`;
+  }
+  const result = await pool.query(text, values);
+  return result.rows;
+};
 
 export { sql };
 
