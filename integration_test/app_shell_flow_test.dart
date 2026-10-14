@@ -74,6 +74,31 @@ Future<AppStore> _readyStore() async {
   return store;
 }
 
+Future<void> _pumpMainShell(WidgetTester tester, AppStore store) async {
+  await tester.pumpWidget(_testApp(store: store));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _navigateToDrawerSection(
+  WidgetTester tester,
+  String section,
+) async {
+  await tester.tap(find.byTooltip('Open navigation menu'));
+  await tester.pumpAndSettle();
+  final drawer = find.byType(Drawer);
+  final navigationItem =
+      find.descendant(of: drawer, matching: find.text(section)).last;
+  final drawerList =
+      find.descendant(of: drawer, matching: find.byType(Scrollable)).first;
+  await tester.scrollUntilVisible(
+    navigationItem,
+    300,
+    scrollable: drawerList,
+  );
+  await tester.tap(navigationItem);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -82,8 +107,12 @@ void main() {
         (tester) async {
       await binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() async => binding.setSurfaceSize(null));
-      await tester.pumpWidget(_testApp(store: await _readyStore()));
-      await tester.pumpAndSettle();
+      final store = await _readyStore();
+      addTearDown(() {
+        store.dispose();
+        LocalDatabaseService.clearInMemoryStoreForTesting();
+      });
+      await _pumpMainShell(tester, store);
 
       expect(find.textContaining('Ventio • Dashboard'), findsOneWidget);
 
@@ -100,14 +129,64 @@ void main() {
         (tester) async {
       await binding.setSurfaceSize(const Size(1280, 900));
       addTearDown(() async => binding.setSurfaceSize(null));
+      final store = await _readyStore();
+      addTearDown(() {
+        store.dispose();
+        LocalDatabaseService.clearInMemoryStoreForTesting();
+      });
       await tester.pumpWidget(
-        _testApp(store: await _readyStore(), locale: const Locale('ar')),
+        _testApp(store: store, locale: const Locale('ar')),
       );
       await tester.pumpAndSettle();
 
       final directionality =
           tester.widget<Directionality>(find.byType(Directionality).first);
       expect(directionality.textDirection, TextDirection.rtl);
+    });
+
+    testWidgets('wide layout navigates through core business sections',
+        (tester) async {
+      await binding.setSurfaceSize(const Size(1280, 900));
+      addTearDown(() async => binding.setSurfaceSize(null));
+      final store = await _readyStore();
+      addTearDown(() {
+        store.dispose();
+        LocalDatabaseService.clearInMemoryStoreForTesting();
+      });
+      await _pumpMainShell(tester, store);
+
+      expect(find.textContaining('Ventio • Dashboard'), findsOneWidget);
+      for (final section in <String>['Products', 'Sales', 'Reports']) {
+        await _navigateToDrawerSection(tester, section);
+        expect(find.textContaining('Ventio • $section'), findsOneWidget);
+      }
+    });
+
+    testWidgets('core navigation can be traced across desktop sections',
+        (tester) async {
+      await binding.setSurfaceSize(const Size(1280, 900));
+      addTearDown(() async => binding.setSurfaceSize(null));
+      final store = await _readyStore();
+      addTearDown(() {
+        store.dispose();
+        LocalDatabaseService.clearInMemoryStoreForTesting();
+      });
+
+      await binding.traceAction(() async {
+        await _pumpMainShell(tester, store);
+        for (final section in <String>[
+          'Products',
+          'Sales',
+          'Inventory',
+          'Reports',
+          'Settings',
+          'Dashboard',
+        ]) {
+          await _navigateToDrawerSection(tester, section);
+        }
+      }, reportKey: 'core_navigation_performance');
+
+      expect(find.textContaining('Ventio • Dashboard'), findsOneWidget);
     });
   });
 }

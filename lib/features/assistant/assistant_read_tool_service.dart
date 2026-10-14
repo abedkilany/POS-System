@@ -1567,7 +1567,7 @@ class AssistantReadToolService {
             : 'Credit minus debit; a positive amount is due to the supplier.',
         'comparisonStatus': status,
         'comparisonIsValid': comparable,
-        if (comparable) 'differenceAgingMinusSubledger': agingTotal - netOwed!,
+        if (comparable) 'differenceAgingMinusSubledger': agingTotal - netOwed,
         'comparisonNote': comparable
             ? 'Both figures are in the base currency and have a non-credit net balance. Aging shows open documents; the subledger value is its signed net balance.'
             : 'The comparison is withheld because the subledger is empty, has multiple currencies, uses a different currency, or has a net credit/advance balance. Source values are shown separately.',

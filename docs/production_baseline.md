@@ -55,4 +55,4 @@ Generated evidence is written under `quality_baseline/<UTC timestamp>/` with `ma
 
 ## Acceptance rule
 
-Phase 0 is accepted only when the baseline runner reports PASS on the Windows release machine and the generated evidence is retained with the release work. The two currently disabled critical integration tests remain explicit baseline debt and must be re-enabled by the final Production Release Gate phase.
+Phase 0 is accepted only when the baseline runner reports PASS on the Windows release machine and the generated evidence is retained with the release work. The Phase 0 capture recorded two disabled critical integration tests; their current desktop navigation and trace coverage is maintained in `integration_test/app_shell_flow_test.dart` and remains part of the Windows integration release gate.

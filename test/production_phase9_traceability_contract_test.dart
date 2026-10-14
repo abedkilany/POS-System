@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/schema_version_contract.dart';
 
 void main() {
   test('Phase 9 traceability service covers production invariants', () {
@@ -29,7 +30,7 @@ void main() {
     expect(transfers, contains('assertTransferTraceabilityInTransaction'));
     expect(appStore, contains('traceInventoryBatch'));
     expect(appStore, contains('verifyInventoryTraceabilityIntegrity'));
-    expect(database, contains('schemaVersion => 33'));
+    expectSchemaVersionAtLeast(database, 33);
     expect(database, contains('idx_stock_movements_reference_type_batch'));
     expect(database, contains('idx_inventory_batches_source_trace'));
   });

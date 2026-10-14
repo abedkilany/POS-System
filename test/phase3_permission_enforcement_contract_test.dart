@@ -119,12 +119,12 @@ void main() {
 
     test('derived manage flags do not grant unrelated permissions', () {
       final store = readAppStoreImplementationSource();
+      final normalizedStore = store.replaceAll(RegExp(r'\s+'), ' ');
 
       expect(
-        store,
+        normalizedStore,
         contains(
-          'bool get canManagePurchases =>\n'
-          '      hasPermission(AppPermission.purchasesManage);',
+          'bool get canManagePurchases => hasPermission(AppPermission.purchasesManage);',
         ),
       );
       final inventoryStart = store.indexOf('bool get canManageInventory =>');

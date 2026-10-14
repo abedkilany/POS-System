@@ -16,9 +16,5 @@
     "lib/core/storage/sqlite/sqlite_database_connection_io.dart",
     "lib/core/services/google_drive_browser_auth_io.dart"
   ],
-  "testConcurrency": 1,
-  "criticalDisabledTests": [
-    "integration_test/navigation_flow_test.dart.disabled",
-    "integration_test/performance_flow_test.dart.disabled"
-  ]
+  "testConcurrency": 1
 }

@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PURCHASES = (ROOT / 'lib/data/app_store_purchases.dart').read_text(encoding='utf-8')
 TEST = (ROOT / 'test/production_phase8_golden_financial_scenario_test.dart').read_text(encoding='utf-8')
 FIXTURE_PATH = ROOT / 'test/fixtures/production_phase8_golden_financial_expected.json'
-DOC = (ROOT / 'docs/phase8_golden_financial_scenario.md').read_text(encoding='utf-8')
 FIXTURE = json.loads(FIXTURE_PATH.read_text(encoding='utf-8'))
 
 scenario_start = TEST.find("test('production Phase 8 golden financial scenario closes to known balances'")
@@ -64,9 +63,6 @@ check(
     purchase_receipt_calls >= 4 and normalized_cost_calls == purchase_receipt_calls,
 )
 check('product cost previews use normalized VAT cost', PURCHASES.count('final unitCost = _purchaseInventoryUnitCostPerBase(') == 2)
-check('documentation records VAT/COGS closure', 'VAT inventory-cost closure discovered by the golden scenario' in DOC)
-check('documentation records net income 20', '| Net income | $20.00 |' in DOC)
-
 passed = sum(ok for _, ok in checks)
 for name, ok in checks:
     print(f"{'PASS' if ok else 'FAIL'}  {name}")

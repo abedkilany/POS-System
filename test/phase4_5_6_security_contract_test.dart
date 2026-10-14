@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ventio/core/security/audit_integrity.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/schema_version_contract.dart';
 
 String _source(String path) =>
     File(path).readAsStringSync().replaceAll('\r\n', '\n');
@@ -120,7 +121,7 @@ void main() {
   group('Phase 6 append-only audit contracts', () {
     test('SQLite schema seals audit rows and blocks update/delete', () {
       final db = _source('lib/core/storage/sqlite/ventio_drift_database.dart');
-      expect(db, contains('int get schemaVersion => 33;'));
+      expectSchemaVersionAtLeast(db, 33);
       expect(db, contains("previous_hash TEXT NOT NULL DEFAULT ''"));
       expect(db, contains("record_hash TEXT NOT NULL DEFAULT ''"));
       expect(db, contains('hash_version INTEGER NOT NULL DEFAULT 1'));

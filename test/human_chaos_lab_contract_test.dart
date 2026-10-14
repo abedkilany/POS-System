@@ -2,6 +2,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+bool _containsStableValueKey(String source, String key) => RegExp(
+      r"ValueKey(?:<[^>]+>)?\s*\(\s*'" + RegExp.escape(key) + r"'\s*\)",
+    ).hasMatch(source);
+
 void main() {
   final stressLab = File('lib/features/dev_tools/stress_lab_page.dart');
   final salesPage = File('lib/features/sales/sales_page.dart');
@@ -116,7 +120,7 @@ void main() {
       'SalesConfirmPaymentButton',
       'SalesReturnConfirmButton',
     ]) {
-      expect(sales, contains("ValueKey('$key')"), reason: key);
+      expect(_containsStableValueKey(sales, key), isTrue, reason: key);
     }
     for (final key in const <String>[
       'PurchaseBatchSaveButton',
@@ -124,7 +128,7 @@ void main() {
       'PurchaseReturnReasonField',
       'PurchaseReturnConfirmButton',
     ]) {
-      expect(purchases, contains("ValueKey('$key')"), reason: key);
+      expect(_containsStableValueKey(purchases, key), isTrue, reason: key);
     }
 
     final cash = cashPage.readAsStringSync();
@@ -133,7 +137,7 @@ void main() {
       'CashRefundAmountField',
       'CashRefundConfirmButton',
     ]) {
-      expect(cash, contains("ValueKey('$key')"), reason: key);
+      expect(_containsStableValueKey(cash, key), isTrue, reason: key);
     }
 
     final expenses = expensesPage.readAsStringSync();

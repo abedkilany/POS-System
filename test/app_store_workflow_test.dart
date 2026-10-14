@@ -183,9 +183,10 @@ Future<AppStore> readySqliteStore({
     await sqliteDb.customStatement('DELETE FROM costing_method_history');
     await sqliteDb.customStatement('DELETE FROM warehouses');
   });
-  // Clear through LocalDatabaseService as well as SQLite so its hydrated scalar
-  // mirror cannot retain the prior test's costing method after the DB cleanup.
+  // Clear scalar mirrors as well as SQLite so the next store cannot hydrate
+  // the prior test's costing method or return history.
   await LocalDatabaseService.deleteString('inventory_costing_method_v1');
+  await LocalDatabaseService.deleteString('credit_notes_v1');
   final store = AppStore();
   await store.initialize();
   await store.recoverOnlineStoreOwnerIdentity(
@@ -981,7 +982,8 @@ void main() {
         ],
       );
       await store.returnSale(sale.id);
-      final note = store.creditNotes.single;
+      final note = store.creditNotes
+          .singleWhere((item) => item.originalSaleId == sale.id);
 
       final edited = await store.editSaleReturn(
         creditNoteId: note.id,
@@ -3034,7 +3036,9 @@ void main() {
       expect(store.roles.map((r) => r.id), contains(remoteRole.id));
       expect(store.users.map((u) => u.id), contains(remoteUser.id));
       expect(store.products.singleWhere((p) => p.id == 'remote_p').stock, 4);
-      expect(store.products.singleWhere((p) => p.id == 'remote_p').cost, 8);
+      // Remote stock movements change quantity, while reference cost remains
+      // the value sent with the product record.
+      expect(store.products.singleWhere((p) => p.id == 'remote_p').cost, 7);
     });
 
     test(

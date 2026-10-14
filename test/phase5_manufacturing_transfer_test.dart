@@ -108,6 +108,8 @@ Future<AppStore> readyPhase5SqliteStore() async {
     await db.customStatement('DELETE FROM sale_item_batch_allocations');
     await db.customStatement('DELETE FROM purchase_item_batch_allocations');
     await db.customStatement('DELETE FROM inventory_batch_balances');
+    await db.customStatement('DELETE FROM inventory_deficit_settlements');
+    await db.customStatement('DELETE FROM inventory_stock_deficits');
     await db.customStatement('DELETE FROM inventory_batches');
     await db.customStatement('DELETE FROM unified_batch_cutovers');
     await db.customStatement('DELETE FROM purchase_items');

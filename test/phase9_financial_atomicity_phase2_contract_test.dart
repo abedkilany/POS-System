@@ -12,7 +12,7 @@ void main() {
       final source =
           File('lib/core/services/accounting_service.dart').readAsStringSync();
       final start =
-          source.indexOf('static Future<void> recordExpense(Expense expense)');
+          source.indexOf('static Future<void> recordExpense(');
       final end =
           source.indexOf('static Future<void> recordExpensesBulk', start);
       expect(start, greaterThanOrEqualTo(0));
@@ -21,12 +21,12 @@ void main() {
       expect(body, contains('await _db.transaction(() async {'));
       expect(body,
           contains('await _upsertExpenseRowInExistingTransaction(expense);'));
-      expect(body,
-          contains('await _recordExpenseInExistingTransaction(expense);'));
+      expect(body, contains('await _recordExpenseInExistingTransaction('));
       expect(
           body,
           contains(
-              'await _recordExpenseCompatibilityLedgerInExistingTransaction(expense);'));
+              'await _recordExpenseCompatibilityLedgerInExistingTransaction('));
+      expect(body, contains('cashPaidAmount: cashPaidAmount,'));
     });
 
     test(

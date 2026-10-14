@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/schema_version_contract.dart';
 
 void main() {
   test('Phase 12 keeps AppStore as a thin facade with domain state ownership', () {
@@ -83,7 +84,11 @@ void main() {
     expect(settings, contains('store.recovery.exportRecoveryFileJson('));
     expect(guard, contains('store.security.authorizeSensitiveAction('));
     expect(accounting, contains('widget.store.accounting.revision'));
-    expect(accounting, contains('store.accounting.accountBalance('));
+    expect(
+      RegExp(r'store\s*\.\s*accounting\s*\.\s*accountBalance\s*\(')
+          .hasMatch(accounting),
+      isTrue,
+    );
     expect(accounting, contains('store.accounting.transactions'));
     expect(dashboard, contains('store.catalog.products'));
     expect(dashboard, contains('store.commerce.sales'));
@@ -118,7 +123,7 @@ void main() {
       expect(source, contains(api), reason: api);
     }
 
-    expect(database, contains('schemaVersion => 33'));
+    expectSchemaVersionAtLeast(database, 33);
     expect(database, contains('idx_stock_movements_reference_type_batch'));
     expect(database, contains('idx_inventory_batches_source_trace'));
   });
