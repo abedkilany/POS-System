@@ -204,7 +204,7 @@ Windows remains the required environment for the desktop integration suite. Also
 
 ## Current release
 
-- Version: `1.0.61+61`
+- Version: `1.0.62+62`
 - Primary client: Flutter.
 - Local operational database: SQLite.
 - Direct control plane: Ventio VPS API.
