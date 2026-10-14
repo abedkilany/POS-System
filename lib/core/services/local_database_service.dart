@@ -250,7 +250,8 @@ class LocalDatabaseService {
         if (existingSqliteStatus.lastStatus == 'failed') {
           final reason = existingSqliteStatus.message
               .replaceFirst(RegExp(r'^Bad state: '), '');
-          throw StateError('SQLite database failed to initialize. Reason: $reason');
+          throw StateError(
+              'SQLite database failed to initialize. Reason: $reason');
         }
         if (!existingSqliteStatus.sqliteFoundationReady || db == null) {
           final freshSqliteStatus = await StartupTimingService.measure(
@@ -285,7 +286,8 @@ class LocalDatabaseService {
         await StartupTimingService.measure(
           'retire_legacy_product_stock',
           () async {
-            await InventoryReconciliationRepository.backfillFromLegacyData(activeDb);
+            await InventoryReconciliationRepository.backfillFromLegacyData(
+                activeDb);
             await activeDb.dropLegacyProductStockColumn();
           },
           category: 'database',
@@ -780,8 +782,8 @@ class LocalDatabaseService {
 
   /// Backward-compatible alias for older callers. The report is now the
   /// complete Unified Batch ledger, not expiry-only.
-  static Future<List<Map<String, dynamic>>?>
-      getExpiryBatchReportFromSqlite() => getInventoryBatchReportFromSqlite();
+  static Future<List<Map<String, dynamic>>?> getExpiryBatchReportFromSqlite() =>
+      getInventoryBatchReportFromSqlite();
 
   static Future<void> replaceInventoryBatchRowsImmediate({
     required List<Map<String, dynamic>> batches,
@@ -1148,6 +1150,14 @@ class LocalDatabaseService {
     );
   }
 
+  static Future<Map<String, Object?>?> assistantSalesSummaryFromSqlite({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return SaleRepository.assistantSummary(from: from, to: to);
+  }
+
   static Future<Sale?> getSaleFromSqliteById(String id) async {
     if (!canQueryBusinessSqlite) return null;
     return SaleRepository.getById(id);
@@ -1230,6 +1240,14 @@ class LocalDatabaseService {
     );
   }
 
+  static Future<Map<String, Object?>?> assistantPurchaseSummaryFromSqlite({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return PurchaseRepository.assistantSummary(from: from, to: to);
+  }
+
   static Future<Map<String, Object?>?> buildPurchasesOverviewFromSqlite({
     DateTime? reference,
   }) async {
@@ -1250,6 +1268,38 @@ class LocalDatabaseService {
       return null;
     }
     return InventoryRepository.getInventoryCounts();
+  }
+
+  static Future<Map<String, Object?>?> assistantStockBalancesFromSqlite({
+    required String storeId,
+    String productQuery = '',
+    String warehouseQuery = '',
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return InventoryRepository.assistantStockBalances(
+      storeId: storeId,
+      productQuery: productQuery,
+      warehouseQuery: warehouseQuery,
+    );
+  }
+
+  static Future<Map<String, Object?>?> assistantStockMovementSummaryFromSqlite({
+    required String storeId,
+    required DateTime from,
+    required DateTime to,
+    String productQuery = '',
+    String warehouseQuery = '',
+    String type = 'all',
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return InventoryRepository.assistantStockMovementSummary(
+      from: from,
+      to: to,
+      storeId: storeId,
+      productQuery: productQuery,
+      warehouseQuery: warehouseQuery,
+      type: type,
+    );
   }
 
   static Future<BusinessQueryPage<StockMovement>?>
@@ -1345,7 +1395,8 @@ class LocalDatabaseService {
     return InventoryRepository.getProductPrices();
   }
 
-  static Future<List<ProductPriceHistoryEntry>?> getProductPriceHistoryFromSqlite({
+  static Future<List<ProductPriceHistoryEntry>?>
+      getProductPriceHistoryFromSqlite({
     String productId = '',
     int limit = 200,
   }) async {
@@ -1439,6 +1490,14 @@ class LocalDatabaseService {
       query: query,
       status: status,
     );
+  }
+
+  static Future<Map<String, Object?>?> assistantExpenseSummaryFromSqlite({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return ExpenseRepository.assistantSummary(from: from, to: to);
   }
 
   static Future<BusinessQueryPage<Product>?> queryProductsFromSqlite({
@@ -1752,7 +1811,6 @@ class LocalDatabaseService {
     });
   }
 
-
   /// Rehydrates the SQLite scalar mirror from the committed database state.
   ///
   /// Immediate snapshot writes update the in-memory mirror while a Drift
@@ -1762,7 +1820,10 @@ class LocalDatabaseService {
   /// state again.
   static Future<void> refreshSqliteMirrorAfterRollback() async {
     final db = SqliteMigrationManager.database;
-    if (db == null || !_sqliteReady || _memoryStore != null || _webStore != null) {
+    if (db == null ||
+        !_sqliteReady ||
+        _memoryStore != null ||
+        _webStore != null) {
       return;
     }
     _sqliteMirror

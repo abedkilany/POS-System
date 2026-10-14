@@ -12,6 +12,7 @@ class SqlResultExportService {
     required List<Map<String, Object?>> rows,
     required String format,
     required String baseFileName,
+    String? dialogTitle,
   }) async {
     if (rows.isEmpty) {
       throw StateError('No rows available to export.');
@@ -25,7 +26,7 @@ class SqlResultExportService {
           filename: '$baseFileName.json',
           bytes: Uint8List.fromList(
               utf8.encode(const JsonEncoder.withIndent('  ').convert(rows))),
-          dialogTitle: 'Export SQL result as JSON',
+          dialogTitle: dialogTitle ?? 'Export SQL result as JSON',
           allowedExtensions: const ['json'],
         );
         return;
@@ -33,7 +34,7 @@ class SqlResultExportService {
         await downloadSqlResultFile(
           filename: '$baseFileName.csv',
           bytes: Uint8List.fromList(utf8.encode(_toCsv(rows, columns))),
-          dialogTitle: 'Export SQL result as CSV',
+          dialogTitle: dialogTitle ?? 'Export SQL result as CSV',
           allowedExtensions: const ['csv'],
         );
         return;
@@ -41,7 +42,7 @@ class SqlResultExportService {
         await downloadSqlResultFile(
           filename: '$baseFileName.xlsx',
           bytes: _toXlsx(rows, columns),
-          dialogTitle: 'Export SQL result as XLSX',
+          dialogTitle: dialogTitle ?? 'Export SQL result as XLSX',
           allowedExtensions: const ['xlsx'],
         );
         return;

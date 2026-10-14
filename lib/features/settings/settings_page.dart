@@ -43,6 +43,7 @@ import '../shared/sync_monitoring_section.dart';
 import '../security/sensitive_action_guard.dart';
 import '../maintenance/phase10_health_service.dart';
 import '../barcode/barcode_scanner_page.dart';
+import '../assistant/assistant_provider_settings_page.dart';
 import 'users_permissions_page.dart';
 
 part 'settings_page_backup.dart';
@@ -103,6 +104,14 @@ class SettingsPage extends StatelessWidget {
               description: tr.text('settings_general_desc')),
           pageBuilder: (context) =>
               _settingsList(context, _organizedGeneralCards(context)),
+        ),
+      if (canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.auto_awesome_outlined,
+              label: tr.text('assistant_settings_title'),
+              description: tr.text('assistant_settings_description')),
+          pageBuilder: (context) => AssistantProviderSettingsPage(store: store),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
@@ -4965,50 +4974,65 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Future<void> _createDirectPairingCode() => _run(() async {
-        widget.store.requirePermission(AppPermission.syncManage);
-        final identity = widget.store.appIdentity;
-        if (!_directEnabled ||
-            !_effectiveDirectEnabled ||
-            !identity.isDirectEnabled) {
-          throw StateError(tr.text('enable_direct_before_pairing_code'));
+        var stage = 'validate';
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] directPairingCode:start device=${widget.store.deviceId}');
+        try {
+          widget.store.requirePermission(AppPermission.syncManage);
+          final identity = widget.store.appIdentity;
+          if (!_directEnabled ||
+              !_effectiveDirectEnabled ||
+              !identity.isDirectEnabled) {
+            throw StateError(tr.text('enable_direct_before_pairing_code'));
+          }
+          final settings = VpsControlPlaneSettings.load();
+          if (!identity.isHost || settings.apiBaseUrl.trim().isEmpty) {
+            throw StateError(
+                'Direct pairing needs the Ventio server address.');
+          }
+          final existingDirect = DirectSyncSettings.load();
+          stage = 'save_settings';
+          await DirectSyncSettings(
+            apiBaseUrl: settings.apiBaseUrl.trim(),
+            peerDeviceId: identity.deviceId,
+            setupComplete: true,
+            autoSyncEnabled: existingDirect.autoSyncEnabled,
+            stunServer: existingDirect.stunServer,
+            stunServers: existingDirect.stunServers,
+            turnServers: existingDirect.turnServers,
+            iceTransportPolicy: existingDirect.iceTransportPolicy,
+            iceCandidatePoolSize: existingDirect.iceCandidatePoolSize,
+          ).save();
+          stage = 'request_code';
+          final result = await UnifiedSyncFactory.directEngine(widget.store)
+              .createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
+          if (!result.ok) {
+            throw StateError(result.message);
+          }
+          final expiresAt =
+              result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
+          stage = 'save_code';
+          await LocalDatabaseService.setString(
+              _directPairingCodeStorageKey, result.code);
+          await LocalDatabaseService.setString(
+              _directPairingExpiryStorageKey, expiresAt.toIso8601String());
+          if (!mounted) return;
+          setState(() {
+            _latestPairingTransport = 'direct';
+            _latestDirectPairingCode = result.code;
+            _latestDirectPairingExpiresAt = expiresAt;
+            _latestDirectPairingConsumed = false;
+            _latestDirectPairingInvalid = false;
+            _showDirectPairingCode = true;
+            _status = 'Direct pairing code created.';
+          });
+          SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] directPairingCode:success expiresAt=${expiresAt.toIso8601String()}');
+        } catch (error) {
+          SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] directPairingCode:failed stage=$stage error=$error');
+          rethrow;
         }
-        final settings = VpsControlPlaneSettings.load();
-        if (!identity.isHost || settings.apiBaseUrl.trim().isEmpty) {
-          throw StateError('Direct pairing needs the Ventio server address.');
-        }
-        final existingDirect = DirectSyncSettings.load();
-        await DirectSyncSettings(
-          apiBaseUrl: settings.apiBaseUrl.trim(),
-          peerDeviceId: identity.deviceId,
-          setupComplete: true,
-          autoSyncEnabled: existingDirect.autoSyncEnabled,
-          stunServer: existingDirect.stunServer,
-          stunServers: existingDirect.stunServers,
-          turnServers: existingDirect.turnServers,
-          iceTransportPolicy: existingDirect.iceTransportPolicy,
-          iceCandidatePoolSize: existingDirect.iceCandidatePoolSize,
-        ).save();
-        final result = await UnifiedSyncFactory.directEngine(widget.store)
-            .createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
-        if (!result.ok) {
-          throw StateError(result.message);
-        }
-        final expiresAt =
-            result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
-        await LocalDatabaseService.setString(
-            _directPairingCodeStorageKey, result.code);
-        await LocalDatabaseService.setString(
-            _directPairingExpiryStorageKey, expiresAt.toIso8601String());
-        if (!mounted) return;
-        setState(() {
-          _latestPairingTransport = 'direct';
-          _latestDirectPairingCode = result.code;
-          _latestDirectPairingExpiresAt = expiresAt;
-          _latestDirectPairingConsumed = false;
-          _latestDirectPairingInvalid = false;
-          _showDirectPairingCode = true;
-          _status = 'Direct pairing code created.';
-        });
       });
 
   Future<void> _clearInvalidPendingChanges() async {

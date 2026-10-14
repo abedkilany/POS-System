@@ -18,7 +18,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 34;
+  int get schemaVersion => 35;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -144,6 +144,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
     }
     await _ensureWarehouseInventoryTable();
     await _ensureWarehouseTransferOrderColumns();
+    await _ensureAssistantChatHistorySchema();
     await _ensureStockOperationsTable();
     await _ensureInventoryMigrationAdjustmentsTable();
     await _ensureInventoryReconciliationsTable();
@@ -4752,6 +4753,41 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_date ON warehouse_transfer_orders(document_date DESC);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_warehouse_transfer_orders_route ON warehouse_transfer_orders(from_warehouse_id, to_warehouse_id, document_date DESC);');
+  }
+
+  Future<void> _ensureAssistantChatHistorySchema() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS assistant_conversations (
+        id TEXT PRIMARY KEY NOT NULL,
+        scope_hash TEXT NOT NULL,
+        title TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_assistant_conversations_scope_updated ON assistant_conversations(scope_hash, updated_at DESC);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS assistant_chat_turns (
+        id TEXT PRIMARY KEY NOT NULL,
+        conversation_id TEXT NOT NULL,
+        scope_hash TEXT NOT NULL,
+        user_content TEXT NOT NULL,
+        assistant_content TEXT NOT NULL DEFAULT '',
+        assistant_status TEXT NOT NULL DEFAULT 'pending',
+        attachment_name TEXT NOT NULL DEFAULT '',
+        reports_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (conversation_id) REFERENCES assistant_conversations(id)
+          ON DELETE CASCADE
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_assistant_chat_turns_conversation_created ON assistant_chat_turns(conversation_id, created_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_assistant_chat_turns_scope_status ON assistant_chat_turns(scope_hash, assistant_status);');
   }
 
   Future<void> _createBusinessEntityTable(String tableName) async {

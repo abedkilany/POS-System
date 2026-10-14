@@ -295,6 +295,8 @@ class BusinessSqliteStore {
     String query = '',
     String status = 'all',
     bool postedOnly = false,
+    DateTime? from,
+    DateTime? to,
   }) {
     final conditions = <String>["deleted_at = ''"];
     final variables = <Variable<Object>>[];
@@ -306,6 +308,16 @@ class BusinessSqliteStore {
     if (postedOnly && normalizedStatus != 'posted') {
       conditions.add('lower(expense_status) = ?');
       variables.add(const Variable<String>('posted'));
+    }
+    if (from != null) {
+      conditions.add('expense_date >= ?');
+      variables.add(Variable<String>(_iso(from.toLocal())));
+    }
+    if (to != null) {
+      conditions.add('expense_date < ?');
+      variables.add(
+        Variable<String>(_iso(to.toLocal().add(const Duration(days: 1)))),
+      );
     }
     final normalized = query.trim().toLowerCase();
     if (normalized.isNotEmpty) {
@@ -395,6 +407,59 @@ class BusinessSqliteStore {
       WHERE ${filter.whereSql}
     ''', variables: filter.variables).getSingle();
     return (row.data['total'] as num?)?.toDouble() ?? 0;
+  }
+
+  static Future<Map<String, Object?>> assistantExpenseSummary(
+    VentioDriftDatabase db, {
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final filter = _expenseFilter(
+      status: 'posted',
+      postedOnly: true,
+      from: from,
+      to: to,
+    );
+    final totals = await db.customSelect('''
+      SELECT COUNT(*) AS expense_count,
+             COALESCE(SUM(amount), 0) AS total_amount
+      FROM expenses
+      WHERE ${filter.whereSql}
+    ''', variables: filter.variables).getSingle();
+    final categoryRows = await db.customSelect('''
+      SELECT COALESCE(NULLIF(trim(category), ''), 'Uncategorized') AS category,
+             COUNT(*) AS expense_count,
+             COALESCE(SUM(amount), 0) AS total_amount
+      FROM expenses
+      WHERE ${filter.whereSql}
+      GROUP BY COALESCE(NULLIF(trim(category), ''), 'Uncategorized')
+      ORDER BY total_amount DESC, lower(category) ASC
+      LIMIT 51
+    ''', variables: filter.variables).get();
+    final categoryCountRow = await db.customSelect('''
+      SELECT COUNT(DISTINCT COALESCE(NULLIF(trim(category), ''), 'Uncategorized'))
+        AS category_count
+      FROM expenses
+      WHERE ${filter.whereSql}
+    ''', variables: filter.variables).getSingle();
+    final categories = categoryRows.take(50).map((row) {
+      return <String, Object?>{
+        'category': row.data['category']?.toString() ?? 'Uncategorized',
+        'expenseCount': (row.data['expense_count'] as num?)?.toInt() ?? 0,
+        'amountUsdReference':
+            (row.data['total_amount'] as num?)?.toDouble() ?? 0,
+      };
+    }).toList(growable: false);
+    final categoryCount =
+        (categoryCountRow.data['category_count'] as num?)?.toInt() ?? 0;
+    return <String, Object?>{
+      'expenseCount': (totals.data['expense_count'] as num?)?.toInt() ?? 0,
+      'totalAmountUsdReference':
+          (totals.data['total_amount'] as num?)?.toDouble() ?? 0,
+      'categoryCount': categoryCount,
+      'categories': categories,
+      'categoriesTruncated': categoryCount > categories.length,
+    };
   }
 
   static Future<BusinessQueryPage<Product>> queryProducts(
@@ -2042,6 +2107,192 @@ class BusinessSqliteStore {
       limit: safeLimit,
       offset: safeOffset,
     );
+  }
+
+  static Future<Map<String, Object?>> assistantStockBalances(
+    VentioDriftDatabase db, {
+    String storeId = '',
+    String productQuery = '',
+    String warehouseQuery = '',
+  }) async {
+    final conditions = <String>[];
+    final variables = <Variable<Object>>[];
+    if (storeId.trim().isNotEmpty) {
+      conditions.add('wi.store_id = ?');
+      variables.add(Variable<String>(storeId.trim()));
+    }
+    final normalizedProduct = productQuery.trim().toLowerCase();
+    if (normalizedProduct.isNotEmpty) {
+      conditions.add(
+        "(lower(COALESCE(p.name, '')) LIKE ? OR lower(wi.product_id) LIKE ?)",
+      );
+      final pattern = _likePattern(normalizedProduct);
+      variables
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern));
+    }
+    final normalizedWarehouse = warehouseQuery.trim().toLowerCase();
+    if (normalizedWarehouse.isNotEmpty) {
+      conditions.add(
+        "(lower(COALESCE(w.name, '')) LIKE ? OR lower(wi.warehouse_id) LIKE ?)",
+      );
+      final pattern = _likePattern(normalizedWarehouse);
+      variables
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern));
+    }
+    final whereSql = conditions.isEmpty ? '1=1' : conditions.join(' AND ');
+    final totalRow = await db.customSelect('''
+      SELECT COUNT(*) AS balance_count
+      FROM warehouse_inventory wi
+      LEFT JOIN products p
+        ON p.id = wi.product_id AND p.store_id = wi.store_id
+      LEFT JOIN warehouses w
+        ON w.id = wi.warehouse_id AND w.store_id = wi.store_id
+      WHERE $whereSql
+    ''', variables: variables).getSingle();
+    final rows = await db.customSelect('''
+      SELECT wi.branch_id AS branch_id,
+             wi.product_id AS product_id,
+             COALESCE(NULLIF(trim(p.name), ''), wi.product_id) AS product_name,
+             wi.warehouse_id AS warehouse_id,
+             COALESCE(NULLIF(trim(w.name), ''), wi.warehouse_id)
+               AS warehouse_name,
+             wi.quantity AS quantity
+      FROM warehouse_inventory wi
+      LEFT JOIN products p
+        ON p.id = wi.product_id AND p.store_id = wi.store_id
+      LEFT JOIN warehouses w
+        ON w.id = wi.warehouse_id AND w.store_id = wi.store_id
+      WHERE $whereSql
+      ORDER BY ABS(wi.quantity) DESC, lower(product_name) ASC,
+               lower(warehouse_name) ASC
+      LIMIT 101
+    ''', variables: variables).get();
+    final balances = rows.take(100).map((row) {
+      return <String, Object?>{
+        'branchId': row.data['branch_id']?.toString() ?? '',
+        'productId': row.data['product_id']?.toString() ?? '',
+        'productName': row.data['product_name']?.toString() ?? '',
+        'warehouseId': row.data['warehouse_id']?.toString() ?? '',
+        'warehouseName': row.data['warehouse_name']?.toString() ?? '',
+        'quantity': (row.data['quantity'] as num?)?.toDouble() ?? 0,
+      };
+    }).toList(growable: false);
+    final balanceCount = (totalRow.data['balance_count'] as num?)?.toInt() ?? 0;
+    return <String, Object?>{
+      'productWarehouseCount': balanceCount,
+      'balances': balances,
+      'balancesTruncated': balanceCount > balances.length,
+      'quantityTotalsCombined': false,
+    };
+  }
+
+  static Future<Map<String, Object?>> assistantStockMovementSummary(
+    VentioDriftDatabase db, {
+    required DateTime from,
+    required DateTime to,
+    String storeId = '',
+    String productQuery = '',
+    String warehouseQuery = '',
+    String type = 'all',
+  }) async {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    conditions.add('movement_date >= ?');
+    variables.add(Variable<String>(_iso(from.toLocal())));
+    conditions.add('movement_date < ?');
+    variables.add(
+      Variable<String>(_iso(to.toLocal().add(const Duration(days: 1)))),
+    );
+    if (storeId.trim().isNotEmpty) {
+      conditions.add('store_id = ?');
+      variables.add(Variable<String>(storeId.trim()));
+    }
+    final normalizedType = type.trim().toLowerCase();
+    if (normalizedType.isNotEmpty && normalizedType != 'all') {
+      conditions.add('lower(movement_type) = ?');
+      variables.add(Variable<String>(normalizedType));
+    }
+    final normalizedProduct = productQuery.trim().toLowerCase();
+    if (normalizedProduct.isNotEmpty) {
+      conditions.add('lower(product_name) LIKE ?');
+      variables.add(Variable<String>(_likePattern(normalizedProduct)));
+    }
+    final normalizedWarehouse = warehouseQuery.trim().toLowerCase();
+    if (normalizedWarehouse.isNotEmpty) {
+      conditions.add('lower(warehouse_name) LIKE ?');
+      variables.add(Variable<String>(_likePattern(normalizedWarehouse)));
+    }
+    final whereSql = conditions.join(' AND ');
+    final totals = await db.customSelect('''
+      SELECT COUNT(*) AS movement_count,
+             COALESCE(SUM(quantity * unit_cost), 0)
+               AS recorded_value_change_usd_reference,
+             SUM(CASE WHEN unit_cost <= 0 THEN 1 ELSE 0 END)
+               AS movements_without_recorded_cost
+      FROM stock_movements
+      WHERE $whereSql
+    ''', variables: variables).getSingle();
+    final groupCountRow = await db.customSelect('''
+      SELECT COUNT(*) AS group_count
+      FROM (
+        SELECT branch_id, product_id, product_name, warehouse_id,
+               warehouse_name, lower(movement_type)
+        FROM stock_movements
+        WHERE $whereSql
+        GROUP BY branch_id, product_id, product_name, warehouse_id,
+                 warehouse_name, lower(movement_type)
+      ) movement_groups
+    ''', variables: variables).getSingle();
+    final rows = await db.customSelect('''
+      SELECT branch_id, product_id, product_name, warehouse_id, warehouse_name,
+             lower(movement_type) AS movement_type,
+             COUNT(*) AS movement_count,
+             COALESCE(SUM(quantity), 0) AS net_quantity,
+             COALESCE(SUM(quantity * unit_cost), 0)
+               AS recorded_value_change_usd_reference
+      FROM stock_movements
+      WHERE $whereSql
+      GROUP BY branch_id, product_id, product_name, warehouse_id,
+               warehouse_name, lower(movement_type)
+      ORDER BY ABS(COALESCE(SUM(quantity * unit_cost), 0)) DESC,
+               lower(product_name) ASC, lower(warehouse_name) ASC,
+               movement_type ASC
+      LIMIT 101
+    ''', variables: variables).get();
+    final groups = rows.take(100).map((row) {
+      return <String, Object?>{
+        'branchId': row.data['branch_id']?.toString() ?? '',
+        'productId': row.data['product_id']?.toString() ?? '',
+        'productName': row.data['product_name']?.toString() ?? '',
+        'warehouseId': row.data['warehouse_id']?.toString() ?? '',
+        'warehouseName': row.data['warehouse_name']?.toString() ?? '',
+        'movementType': row.data['movement_type']?.toString() ?? '',
+        'movementCount': (row.data['movement_count'] as num?)?.toInt() ?? 0,
+        'netQuantity': (row.data['net_quantity'] as num?)?.toDouble() ?? 0,
+        'recordedValueChangeUsdReference':
+            (row.data['recorded_value_change_usd_reference'] as num?)
+                    ?.toDouble() ??
+                0,
+      };
+    }).toList(growable: false);
+    final groupCount =
+        (groupCountRow.data['group_count'] as num?)?.toInt() ?? 0;
+    return <String, Object?>{
+      'movementCount': (totals.data['movement_count'] as num?)?.toInt() ?? 0,
+      'recordedValueChangeUsdReference':
+          (totals.data['recorded_value_change_usd_reference'] as num?)
+                  ?.toDouble() ??
+              0,
+      'movementsWithoutRecordedCost':
+          (totals.data['movements_without_recorded_cost'] as num?)?.toInt() ??
+              0,
+      'productWarehouseTypeGroupCount': groupCount,
+      'groups': groups,
+      'groupsTruncated': groupCount > groups.length,
+      'quantitiesAreGroupedByProductAndWarehouse': true,
+    };
   }
 
   static Future<BusinessQueryPage<StockMovement>> queryWasteLossMovements(
@@ -3790,6 +4041,105 @@ class BusinessSqliteStore {
       limit: safeLimit,
       offset: safeOffset,
     );
+  }
+
+  static Future<Map<String, Object?>> assistantSalesSummary(
+    VentioDriftDatabase db, {
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final filter = _saleFilter(from: from, to: to);
+    final rows = await db.customSelect('''
+      SELECT COALESCE(NULLIF(upper(trim(base_currency)), ''), 'USD')
+               AS base_currency,
+             COUNT(*) AS invoice_count,
+             COALESCE(SUM(CASE WHEN base_amount > 0 THEN base_amount ELSE 0 END), 0)
+               AS gross_base_amount,
+             SUM(CASE WHEN base_amount <= 0 THEN 1 ELSE 0 END)
+               AS missing_base_amount_count
+      FROM sales
+      WHERE ${filter.whereSql}
+        AND lower(status) NOT IN ('cancelled', 'returned')
+      GROUP BY COALESCE(NULLIF(upper(trim(base_currency)), ''), 'USD')
+      ORDER BY base_currency ASC
+    ''', variables: filter.variables).get();
+    final totals = await db.customSelect('''
+      SELECT COUNT(*) AS invoice_count,
+             SUM(CASE WHEN base_amount <= 0 THEN 1 ELSE 0 END)
+               AS missing_base_amount_count
+      FROM sales
+      WHERE ${filter.whereSql}
+        AND lower(status) NOT IN ('cancelled', 'returned')
+    ''', variables: filter.variables).getSingle();
+    return <String, Object?>{
+      'invoiceCount': (totals.data['invoice_count'] as num?)?.toInt() ?? 0,
+      'missingRecordedBaseAmountCount':
+          (totals.data['missing_base_amount_count'] as num?)?.toInt() ?? 0,
+      'grossBaseAmountsByCurrency': rows.map((row) {
+        return <String, Object?>{
+          'currency': row.data['base_currency']?.toString() ?? 'USD',
+          'invoiceCount': (row.data['invoice_count'] as num?)?.toInt() ?? 0,
+          'grossAmount':
+              (row.data['gross_base_amount'] as num?)?.toDouble() ?? 0,
+          'missingRecordedBaseAmountCount':
+              (row.data['missing_base_amount_count'] as num?)?.toInt() ?? 0,
+        };
+      }).toList(growable: false),
+    };
+  }
+
+  static Future<Map<String, Object?>> assistantPurchaseSummary(
+    VentioDriftDatabase db, {
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final filter = _purchaseFilter(
+      status: 'received',
+      from: from,
+      to: to,
+    );
+    final rows = await db.customSelect('''
+      SELECT lower(purchases.document_type) AS document_type,
+             COUNT(DISTINCT purchases.id) AS document_count,
+             COALESCE(SUM(purchase_items.quantity * purchase_items.unit_cost), 0)
+               AS amount_usd_reference
+      FROM purchases
+      LEFT JOIN purchase_items ON purchase_items.purchase_id = purchases.id
+      WHERE ${filter.whereSql}
+      GROUP BY lower(purchases.document_type)
+      ORDER BY document_type ASC
+    ''', variables: filter.variables).get();
+    final documents = rows.map((row) {
+      final documentType = row.data['document_type']?.toString() ?? 'purchase';
+      final amountUsdReference =
+          (row.data['amount_usd_reference'] as num?)?.toDouble() ?? 0;
+      return <String, Object?>{
+        'documentType': documentType,
+        'documentCount': (row.data['document_count'] as num?)?.toInt() ?? 0,
+        'amountUsdReference': amountUsdReference,
+        'signedAmountUsdReference': documentType == 'purchase_return'
+            ? -amountUsdReference
+            : amountUsdReference,
+      };
+    }).toList(growable: false);
+    final purchaseAmount = documents
+        .where((row) => row['documentType'] == 'purchase')
+        .fold<double>(
+          0,
+          (sum, row) => sum + (row['amountUsdReference'] as double),
+        );
+    final purchaseReturnAmount = documents
+        .where((row) => row['documentType'] == 'purchase_return')
+        .fold<double>(
+          0,
+          (sum, row) => sum + (row['amountUsdReference'] as double),
+        );
+    return <String, Object?>{
+      'purchaseAmountUsdReference': purchaseAmount,
+      'purchaseReturnAmountUsdReference': purchaseReturnAmount,
+      'netPurchaseAmountUsdReference': purchaseAmount - purchaseReturnAmount,
+      'documents': documents,
+    };
   }
 
   static Future<Map<String, Object?>> buildPurchasesOverview(

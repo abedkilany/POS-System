@@ -173,6 +173,19 @@ class SaleRepository {
     );
   }
 
+  static Future<Map<String, Object?>?> assistantSummary({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.assistantSalesSummary(
+      db,
+      from: from,
+      to: to,
+    );
+  }
+
   static Future<List<Sale>?> getAll() async {
     final db = _businessDb();
     if (db == null) return null;
@@ -254,6 +267,19 @@ class ExpenseRepository {
       status: status,
     );
   }
+
+  static Future<Map<String, Object?>?> assistantSummary({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.assistantExpenseSummary(
+      db,
+      from: from,
+      to: to,
+    );
+  }
 }
 
 class PurchaseRepository {
@@ -281,6 +307,19 @@ class PurchaseRepository {
       limit: limit,
       offset: offset,
       sortMode: sortMode,
+    );
+  }
+
+  static Future<Map<String, Object?>?> assistantSummary({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.assistantPurchaseSummary(
+      db,
+      from: from,
+      to: to,
     );
   }
 
@@ -312,6 +351,42 @@ class PurchaseRepository {
 
 class InventoryRepository {
   InventoryRepository._();
+
+  static Future<Map<String, Object?>?> assistantStockBalances({
+    String storeId = '',
+    String productQuery = '',
+    String warehouseQuery = '',
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.assistantStockBalances(
+      db,
+      storeId: storeId,
+      productQuery: productQuery,
+      warehouseQuery: warehouseQuery,
+    );
+  }
+
+  static Future<Map<String, Object?>?> assistantStockMovementSummary({
+    required DateTime from,
+    required DateTime to,
+    String storeId = '',
+    String productQuery = '',
+    String warehouseQuery = '',
+    String type = 'all',
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.assistantStockMovementSummary(
+      db,
+      from: from,
+      to: to,
+      storeId: storeId,
+      productQuery: productQuery,
+      warehouseQuery: warehouseQuery,
+      type: type,
+    );
+  }
 
   static Future<BusinessQueryPage<StockMovement>?> queryStockMovementsPage({
     String query = '',

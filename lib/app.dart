@@ -46,6 +46,7 @@ import 'features/security/login_gate_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/admin/admin_subscribers_page.dart';
 import 'features/suppliers/suppliers_page.dart';
+import 'features/assistant/assistant_chat_page.dart';
 
 class _AutoSnapshotProgressState {
   const _AutoSnapshotProgressState({
@@ -88,6 +89,7 @@ class _VentioAppState extends State<VentioApp> {
   Future<bool> Function()? _activeExitGuard;
   static const MethodChannel _windowLifecycleChannel =
       MethodChannel('ventio/window_lifecycle');
+  static const Duration _gracefulShutdownTimeout = Duration(seconds: 30);
   bool _shutdownInProgress = false;
 
   @override
@@ -281,25 +283,41 @@ class _VentioAppState extends State<VentioApp> {
     if (_shutdownInProgress) return;
     _shutdownInProgress = true;
     try {
-      // Stop producers first so no sync/background task can enqueue a write
-      // while SQLite is being checkpointed and closed.
-      await _autoSyncController.stop();
-      _autoDirectSyncController.stop();
-      await UnifiedSyncFactory.disposeDirect(_store);
-
-      await _store.prepareForShutdown();
-      await SqliteMigrationManager.shutdown();
+      await _drainAndCloseStorage().timeout(_gracefulShutdownTimeout);
+    } on TimeoutException catch (error, stackTrace) {
+      // A stalled sync/socket/database shutdown must not leave the native
+      // window permanently alive. Committed SQLite WAL data remains
+      // recoverable if the process exits before the final checkpoint.
+      debugPrint(
+        'Graceful shutdown exceeded $_gracefulShutdownTimeout; '
+        'allowing the window to close: $error\n$stackTrace',
+      );
     } catch (error, stackTrace) {
       debugPrint('Graceful shutdown failed: $error\n$stackTrace');
       // Never delete WAL on failure. SQLite keeps committed WAL data durable
       // and will recover it on the next launch.
     } finally {
       try {
-        await _windowLifecycleChannel.invokeMethod<void>('allowClose');
-      } on MissingPluginException {
+        await _windowLifecycleChannel
+            .invokeMethod<void>('allowClose')
+            .timeout(const Duration(seconds: 3));
+      } on Object catch (error, stackTrace) {
         // Non-Windows platforms don't install the native close interceptor.
+        debugPrint(
+            'Could not release the native close request: $error\n$stackTrace');
       }
     }
+  }
+
+  Future<void> _drainAndCloseStorage() async {
+    // Stop producers first so no sync/background task can enqueue a write
+    // while SQLite is being checkpointed and closed.
+    await _autoSyncController.stop();
+    _autoDirectSyncController.stop();
+    await UnifiedSyncFactory.disposeDirect(_store);
+
+    await _store.prepareForShutdown();
+    await SqliteMigrationManager.shutdown();
   }
 
   @override
@@ -1094,6 +1112,12 @@ class _MainShellState extends State<MainShell> {
         : storeName;
     final authCache = _authCache;
     final isPlatformAdmin = authCache?.accountType == 'platform_admin';
+    final canUseAssistant = widget.store.canViewAccounting ||
+        widget.store.canViewSales ||
+        widget.store.canViewPurchases ||
+        widget.store.canViewExpenses ||
+        widget.store.canViewCashBox ||
+        widget.store.canViewInventory;
     final items = [
       if (isPlatformAdmin)
         _ShellItem(
@@ -1220,6 +1244,15 @@ class _MainShellState extends State<MainShell> {
             selectedIcon: Icons.bar_chart,
             page: timedPage('ReportsPage', tr.text('reports'),
                 ReportsPage(store: widget.store))),
+      if (canUseAssistant)
+        _ShellItem(
+            label: tr.text('assistant_chat_title'),
+            icon: Icons.auto_awesome_outlined,
+            selectedIcon: Icons.auto_awesome,
+            page: timedPage(
+                'AssistantChatPage',
+                tr.text('assistant_chat_title'),
+                AssistantChatPage(store: widget.store))),
       if (widget.store.canAccessPage('maintenance'))
         _ShellItem(
             label: tr.text('maintenance'),

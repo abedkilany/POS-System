@@ -31,6 +31,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   DirectPeerRequestSession? _session;
   Future<DirectPeerRequestSession>? _sessionFuture;
   DirectPeerHostManager? _hostManager;
+  Object? _lastHostListenerError;
   final Map<String, DirectPeerHostEndpoint> _hostEndpoints =
       <String, DirectPeerHostEndpoint>{};
   bool _hostListenerStarting = false;
@@ -292,7 +293,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedPairingCodeResult> createPairingCode(
       {int ttlMinutes = 5}) async {
-    SyncDiagnosticsLog.add('[DIRECT_PAIRING] create start ttl=$ttlMinutes');
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] [DIRECT_PAIRING] create start role=${store.appIdentity.deviceRole.name} ttl=$ttlMinutes');
     if (store.appIdentity.isHost) {
       // Do not expose a one-time pairing code until the Host signaling/WebRTC
       // listener is actually ready. Otherwise a fast Client can claim the code
@@ -300,6 +302,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       // the Client to time out with no answer.
       await _startHostListener();
       if (_hostManager == null) {
+        final listenerError = _lastHostListenerError;
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] [DIRECT_PAIRING] create failed stage=host_listener error=${listenerError ?? 'listener_not_ready'}');
         return const UnifiedPairingCodeResult(
           ok: false,
           message:
@@ -312,7 +317,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       ttlMinutes: ttlMinutes,
     );
     SyncDiagnosticsLog.add(
-        '[DIRECT_PAIRING] create result ok=${result.ok} transport=direct');
+        '[SYNC_TRACE] [DIRECT_PAIRING] create result ok=${result.ok} transport=direct message=${result.message.replaceAll(RegExp(r'\s+'), ' ').trim()}');
     return UnifiedPairingCodeResult(
       ok: result.ok,
       message: result.message,
@@ -539,6 +544,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   Future<void> _openHostManager() async {
+    _lastHostListenerError = null;
     try {
       final dynamicIceServers = await _coordination.fetchIceServers(
         DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl),
@@ -566,11 +572,14 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       _hostManager = manager;
       await manager.start();
       if (identical(_hostManager, manager) && !_hostRestartScheduled) {
+        _lastHostListenerError = null;
         _hostListenerStarting = false;
       }
     } catch (error) {
       _hostManager = null;
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host listener retry=$error');
+      _lastHostListenerError = error;
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_WEBRTC] host listener retry=$error');
       _hostListenerStarting = false;
       _scheduleHostRestart();
     }

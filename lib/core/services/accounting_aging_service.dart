@@ -32,7 +32,13 @@ class AccountingAgingService {
       FROM journal_lines jl
       INNER JOIN journal_entries je ON je.id = jl.entry_id
       INNER JOIN accounting_settings s ON s.key = 'default_customers_account_id' AND s.account_id = jl.account_id
-      WHERE je.status = 'posted' AND jl.party_type = 'customer'
+      WHERE je.status = 'posted' AND je.deleted_at = ''
+        AND je.reversed_entry_id = '' AND jl.party_type = 'customer'
+        AND NOT EXISTS (
+          SELECT 1 FROM journal_entries rev
+          WHERE rev.reversed_entry_id = je.id
+            AND rev.deleted_at = '' AND rev.status = 'posted'
+        )
       GROUP BY je.reference_id, je.reference_no, je.entry_date, jl.party_id, jl.party_name
       HAVING ABS(amount) > 0.0001
       ORDER BY datetime(je.entry_date), je.reference_no
@@ -58,7 +64,13 @@ class AccountingAgingService {
       FROM journal_lines jl
       INNER JOIN journal_entries je ON je.id = jl.entry_id
       INNER JOIN accounting_settings s ON s.key = 'default_suppliers_account_id' AND s.account_id = jl.account_id
-      WHERE je.status = 'posted' AND jl.party_type = 'supplier'
+      WHERE je.status = 'posted' AND je.deleted_at = ''
+        AND je.reversed_entry_id = '' AND jl.party_type = 'supplier'
+        AND NOT EXISTS (
+          SELECT 1 FROM journal_entries rev
+          WHERE rev.reversed_entry_id = je.id
+            AND rev.deleted_at = '' AND rev.status = 'posted'
+        )
       GROUP BY je.reference_id, je.reference_no, je.entry_date, jl.party_id, jl.party_name
       HAVING ABS(amount) > 0.0001
       ORDER BY datetime(je.entry_date), je.reference_no
