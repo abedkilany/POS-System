@@ -23,6 +23,13 @@ void main() {
     await SqliteMigrationManager.resetForTesting();
   });
 
+  test('inventory count variance report prepares against the current schema',
+      () async {
+    final rows = await AccountingService.inventoryCountVarianceReport();
+
+    expect(rows, isEmpty);
+  });
+
   test('Phase 2 seeds every semantic account role idempotently', () async {
     await db.initializeFoundation();
     final roles = await AccountingService.readAccountRoleMap();

@@ -5,8 +5,7 @@ Business operations are stored locally in SQLite and shared between authorized d
 
 ## Documentation policy
 
-`README.md` is the canonical project-level documentation for the current Ventio architecture and operating rules.
-Do not create phase-completion, fix-report, audit-report, or temporary implementation Markdown files in the project root or in a `docs/` folder. Historical implementation detail belongs in version control; durable behavior belongs here and in executable tests.
+`README.md` is the canonical project-level documentation for the current Ventio architecture, operating rules, and release gates. Do not add phase-completion, fix-report, audit-report, or temporary implementation Markdown files in the project root or a separate `docs/` folder. Historical implementation detail belongs in version control; durable behavior belongs here and in executable tests.
 
 ## Pure DB-First Contract
 
@@ -180,13 +179,27 @@ TURN_SHARED_SECRET=choose-a-long-random-turn-secret
 
 ## Quality and release gate
 
-Phase 0 establishes a reproducible production baseline before posted-document behavior changes. On the Windows release machine, run:
+The Phase 0 baseline process captures a reproducible production baseline before posted-document behavior changes. To create a new baseline capture, run this on the Windows release machine:
 
 ```powershell
 .\tool\run_phase0_baseline.ps1
 ```
 
-The baseline runner writes evidence under `quality_baseline/<UTC timestamp>/`. The shared coverage policy lives in `tool/quality_gate_config.json`, and both PowerShell and Bash use the same Dart coverage evaluator so the same `lcov.info` cannot produce platform-dependent coverage results.
+The baseline runner records the Flutter version, dependency resolution, analysis, tests with coverage, the shared coverage result, Windows integration tests when available, and app/schema/protocol versions. It writes `manifest.json`, `summary.md`, and per-step logs under `quality_baseline/<UTC timestamp>/`. Retain that evidence with the release record. The shared coverage policy lives in `tool/quality_gate_config.json`; PowerShell and Bash use the same Dart coverage evaluator so the same `lcov.info` produces the same result on both platforms.
+
+### Phase 0 historical snapshot
+
+The original Phase 0 review captured source archive version `1.0.26+26`. These values describe that archive and are not the current project inventory:
+
+- 88 unit/widget test files and 2 enabled desktop integration test files.
+- The navigation and performance integration tests were disabled at the time: `integration_test/navigation_flow_test.dart.disabled` and `integration_test/performance_flow_test.dart.disabled`.
+- Legacy AppStore schema marker 17; Drift schema version 27.
+- Direct peer handshake protocol version 1; authenticated peer session protocol version 1; unified snapshot version 1.
+- No single authoritative Sync Protocol Version constant was found in that snapshot. This was recorded as a gap at the time; review current protocol ownership before making incompatible sync changes.
+
+The baseline policy set an enforced coverage minimum of 35% and a progressive target of 75%. The 35% minimum preserved the Windows release gate already in use at the time; raising it requires measuring coverage and adding tests rather than silently changing the gate. Coverage exclusions are maintained in `tool/quality_gate_config.json` and evaluated by `tool/check_coverage.dart`.
+
+Phase 0 acceptance required a passing baseline run on the Windows release machine and retention of its generated evidence. The two disabled integration scenarios' then-current navigation and trace coverage was maintained by the desktop integration suite.
 
 For the normal release gate, run on the appropriate Flutter SDK machine:
 
@@ -200,11 +213,11 @@ On Windows, use:
 .\tool\run_full_quality_gate.ps1
 ```
 
-Windows remains the required environment for the desktop integration suite. Also require API syntax checks, a production-target build, and real-device/network validation appropriate to the release. For accounting-sensitive releases, run `AccountingProductionIntegrityService(database).audit()` against a copy of the production database and require zero critical issues. See `docs/production_baseline.md` for the Phase 0 acceptance rule and recorded static baseline.
+Windows remains the required environment for the desktop integration suite. Also require API syntax checks, a production-target build, and real-device/network validation appropriate to the release. For accounting-sensitive releases, run `AccountingProductionIntegrityService(database).audit()` against a copy of the production database and require zero critical issues.
 
 ## Current release
 
-- Version: `1.0.62+62`
+- Version: `1.0.63+63`
 - Primary client: Flutter.
 - Local operational database: SQLite.
 - Direct control plane: Ventio VPS API.

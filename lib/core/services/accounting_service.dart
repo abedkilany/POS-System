@@ -4381,7 +4381,7 @@ class AccountingService {
       FROM inventory_counts ic
       INNER JOIN inventory_count_lines l ON l.inventory_count_id = ic.id
       WHERE ic.deleted_at = '' AND COALESCE(l.difference_qty, 0) != 0
-      ORDER BY ic.document_date, ic.count_no, l.line_no
+      ORDER BY ic.created_at, ic.count_no, l.line_no
     ''').get();
     return rows
         .map((row) => InventoryCountVarianceReportRow.fromRow(row.data))
