@@ -295,6 +295,22 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       {int ttlMinutes = 5}) async {
     SyncDiagnosticsLog.add(
         '[SYNC_TRACE] [DIRECT_PAIRING] create start role=${store.appIdentity.deviceRole.name} ttl=$ttlMinutes');
+    // Create the code first: the server can use the Host recovery key to
+    // register or restore this Host's device token. ICE-config authorization
+    // requires that registration, so starting the listener first prevents an
+    // unregistered Host from ever reaching the recovery-aware pairing route.
+    final result = await _pairing.createPairingCode(
+      _pairingSettings,
+      ttlMinutes: ttlMinutes,
+    );
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] [DIRECT_PAIRING] create result ok=${result.ok} transport=direct message=${result.message.replaceAll(RegExp(r'\s+'), ' ').trim()}');
+    if (!result.ok) {
+      return UnifiedPairingCodeResult(
+        ok: false,
+        message: result.message,
+      );
+    }
     if (store.appIdentity.isHost) {
       // Do not expose a one-time pairing code until the Host signaling/WebRTC
       // listener is actually ready. Otherwise a fast Client can claim the code
@@ -312,14 +328,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
         );
       }
     }
-    final result = await _pairing.createPairingCode(
-      _pairingSettings,
-      ttlMinutes: ttlMinutes,
-    );
-    SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] [DIRECT_PAIRING] create result ok=${result.ok} transport=direct message=${result.message.replaceAll(RegExp(r'\s+'), ' ').trim()}');
     return UnifiedPairingCodeResult(
-      ok: result.ok,
+      ok: true,
       message: result.message,
       code: result.code,
       expiresAt: result.expiresAt,
