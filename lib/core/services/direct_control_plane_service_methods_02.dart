@@ -6,7 +6,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
       VpsControlPlaneSettings settings, String code,
       {DirectSyncProgressCallback? onProgress,
       void Function(String message)? onDiagnostic}) async {
-    final current = store.appIdentity;
+    final current = store.runtime.identity;
     if (!UnifiedSyncPolicy.canClaimDirectPairingCode(current)) {
       return const DirectPairingClaimResult(
           ok: false,
@@ -32,7 +32,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
             headers: _headers(settings),
             body: jsonEncode({
               'code': code.trim(),
-              'deviceId': store.deviceId,
+              'deviceId': store.sync.deviceId,
               'deviceName': current.deviceName,
               'platform': current.platform.name,
               'appVersion': AppBrand.directAppVersion,
@@ -108,7 +108,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
             : (isDirect ? 'direct' : 'direct'),
       );
       onProgress?.call(0.22, 'Registering this device...');
-      await store.updateAppIdentityDuringSetup(identity);
+      await store.runtime.updateIdentityDuringSetup(identity);
       deviceRegistered = true;
       if (isDirect) {
         final existingDirect = DirectSyncSettings.load();
@@ -231,7 +231,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
               ok: false,
               message:
                   'Store data was downloaded, but Direct could not confirm this device sync state. Keep the Host online and try again. ${registration.message}',
-              identity: store.appIdentity,
+              identity: store.runtime.identity,
             );
           }
           onProgress?.call(1.0, 'Direct snapshot is ready.');
@@ -241,7 +241,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
           return DirectPairingClaimResult(
             ok: true,
             message: successMessage,
-            identity: store.appIdentity,
+            identity: store.runtime.identity,
           );
         }
 
@@ -263,7 +263,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
             return DirectPairingClaimResult(
               ok: false,
               message: '${request.message} Snapshot error: $failure',
-              identity: store.appIdentity,
+              identity: store.runtime.identity,
             );
           }
         }
@@ -277,7 +277,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
           message: request.ok
               ? 'Device registered, but the full Store snapshot is not complete yet. Keep the Host online and try again. Snapshot error: ${retryResult.lastFailure ?? 'unknown'}'
               : '${request.message} Snapshot error: ${retryResult.lastFailure ?? 'unknown'}',
-          identity: store.appIdentity,
+          identity: store.runtime.identity,
         );
       }
       return DirectPairingClaimResult(
@@ -292,7 +292,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
           ok: false,
           message:
               'Device registered, but the full Store snapshot is not complete. Keep the Host online and try again. Details: $error',
-          identity: store.appIdentity,
+          identity: store.runtime.identity,
         );
       }
       return const DirectPairingClaimResult(
@@ -309,7 +309,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
     String? branchId,
     DirectSyncProgressCallback? onProgress,
   }) async {
-    final previousIdentity = store.appIdentity;
+    final previousIdentity = store.runtime.identity;
     final cleanStoreId = storeId.trim().toUpperCase();
     final cleanBranchId = (branchId == null || branchId.trim().isEmpty)
         ? ''
@@ -343,9 +343,9 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
               'storeId': cleanStoreId,
               'branchId': cleanBranchId,
               if (cleanRecoveryKey.isNotEmpty) 'recoveryKey': cleanRecoveryKey,
-              'deviceId': store.deviceId,
-              'deviceName': store.appIdentity.deviceName,
-              'platform': store.appIdentity.platform.name,
+              'deviceId': store.sync.deviceId,
+              'deviceName': store.runtime.identity.deviceName,
+              'platform': store.runtime.identity.platform.name,
               'appVersion': AppBrand.directAppVersion,
             }),
           )
@@ -377,18 +377,18 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
       final deviceToken =
           (claim['deviceToken'] ?? claim['device_token'] ?? '').toString();
       final hostDeviceId =
-          (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId)
+          (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.sync.deviceId)
               .toString();
       final controlPlaneTenantId =
           (claim['controlPlaneTenantId'] ?? claim['direct_tenant_id'] ?? '')
               .toString();
 
       onProgress?.call(0.25, 'Recovering permanent Store identity...');
-      await store.recoverExistingStoreIdentity(
+      await store.runtime.recoverExistingStoreIdentity(
         storeId: cleanStoreId,
         branchId: recoveredBranchId,
         recoveryKey: cleanRecoveryKey,
-        hostDeviceId: hostDeviceId.isEmpty ? store.deviceId : hostDeviceId,
+        hostDeviceId: hostDeviceId.isEmpty ? store.sync.deviceId : hostDeviceId,
         deviceToken: deviceToken,
         controlPlaneTenantId: controlPlaneTenantId,
         deviceRole: DeviceRole.host,
@@ -425,7 +425,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
           ok: false,
           message:
               'Store identity recovered, but snapshot restore failed: ${applied.message}',
-          identity: store.appIdentity,
+          identity: store.runtime.identity,
         );
       }
       final pulled = applied.pulled;
@@ -445,7 +445,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
       return DirectStoreRecoveryResult(
         ok: true,
         message: 'Current Store recovered successfully.',
-        identity: store.appIdentity,
+        identity: store.runtime.identity,
         restoredSnapshot: restoredSnapshot,
         pulled: pulled,
         username: (claim['username'] ?? '').toString(),
@@ -470,7 +470,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
     String? branchId,
     DirectSyncProgressCallback? onProgress,
   }) async {
-    final previousIdentity = store.appIdentity;
+    final previousIdentity = store.runtime.identity;
     final cleanStoreId = storeId.trim().toUpperCase();
     final cleanBranchId = (branchId == null || branchId.trim().isEmpty)
         ? ''
@@ -505,9 +505,9 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
               'storeId': cleanStoreId,
               'branchId': cleanBranchId,
               if (cleanRecoveryKey.isNotEmpty) 'recoveryKey': cleanRecoveryKey,
-              'deviceId': store.deviceId,
-              'deviceName': store.appIdentity.deviceName,
-              'platform': store.appIdentity.platform.name,
+              'deviceId': store.sync.deviceId,
+              'deviceName': store.runtime.identity.deviceName,
+              'platform': store.runtime.identity.platform.name,
               'appVersion': AppBrand.directAppVersion,
             }),
           )
@@ -540,7 +540,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
       final deviceToken =
           (claim['deviceToken'] ?? claim['device_token'] ?? '').toString();
       final hostDeviceId =
-          (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId)
+          (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.sync.deviceId)
               .toString();
       final controlPlaneTenantId =
           (claim['controlPlaneTenantId'] ?? claim['direct_tenant_id'] ?? '')
@@ -552,11 +552,11 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
           : null;
 
       onProgress?.call(0.25, 'Recovering permanent Store identity...');
-      await store.recoverExistingStoreIdentity(
+      await store.runtime.recoverExistingStoreIdentity(
         storeId: cleanStoreId,
         branchId: recoveredBranchId,
         recoveryKey: cleanRecoveryKey,
-        hostDeviceId: hostDeviceId.isEmpty ? store.deviceId : hostDeviceId,
+        hostDeviceId: hostDeviceId.isEmpty ? store.sync.deviceId : hostDeviceId,
         deviceToken: deviceToken,
         controlPlaneTenantId: controlPlaneTenantId,
         deviceRole: DeviceRole.host,
@@ -569,7 +569,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
       return DirectStoreRecoveryResult(
         ok: true,
         message: 'Store identity recovered.',
-        identity: store.appIdentity,
+        identity: store.runtime.identity,
         username: (claim['username'] ?? '').toString(),
         loginName: (claim['loginName'] ?? claim['login_name'] ?? '').toString(),
         storeName: (claim['storeName'] ?? claim['store_name'] ?? '').toString(),
@@ -623,7 +623,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
 
   String _newDirectRebuildRequestId() {
     final now = DateTime.now().toUtc().microsecondsSinceEpoch;
-    final device = store.deviceId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    final device = store.sync.deviceId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
     return 'direct-rebuild-$now-${device.isEmpty ? 'device' : device}';
   }
 
@@ -631,7 +631,7 @@ extension DirectControlPlaneServiceSplitPart2 on DirectControlPlaneService {
       VpsControlPlaneSettings settings,
       {DateTime? requestedAt,
       String snapshotGeneration = ''}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (identity.isHost) {
       return const DirectSyncResult(
           ok: true, message: 'Host can publish its snapshot directly.');

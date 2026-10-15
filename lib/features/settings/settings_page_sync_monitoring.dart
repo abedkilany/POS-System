@@ -23,7 +23,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 
   void _refreshDirectDevices() {
     final directSettings = VpsControlPlaneSettings.load();
-    if (widget.store.appIdentity.isHost && directSettings.isConfigured) {
+    if (widget.store.runtime.identity.isHost && directSettings.isConfigured) {
       _directMonitoringFuture = _loadAndAdoptDirectDevices(directSettings)
           .catchError((_) => const _DirectMonitoringSnapshot(
                 devices: <DirectDeviceStatus>[],
@@ -32,7 +32,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
       _directMonitoringFuture = Future<_DirectMonitoringSnapshot>.value(
         _DirectMonitoringSnapshot(
           devices: const <DirectDeviceStatus>[],
-          limit: widget.store.appIdentity.isHost
+          limit: widget.store.runtime.identity.isHost
               ? _localClientDeviceLimitStatus(
                   widget.store,
                   LanSyncSettings.load(),
@@ -67,9 +67,9 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     VpsControlPlaneSettings directSettings,
     List<DirectDeviceStatus> devices,
   ) async {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (!identity.isHost) return false;
-    final hostDeviceId = widget.store.deviceId.trim();
+    final hostDeviceId = widget.store.sync.deviceId.trim();
     if (hostDeviceId.isEmpty) return false;
 
     final settings =
@@ -107,9 +107,9 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 
   Future<void> _adoptDirectRegistryDevices(
       List<DirectDeviceStatus> devices) async {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (!identity.isHost) return;
-    final hostDeviceId = widget.store.deviceId.trim();
+    final hostDeviceId = widget.store.sync.deviceId.trim();
     if (hostDeviceId.isEmpty) return;
 
     final loadedSettings = LanSyncSettings.load();
@@ -175,7 +175,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   }
 
   Future<void> _toggleSuspend(String deviceId, bool suspended) async {
-    widget.store.requirePermission(AppPermission.syncManage);
+    widget.store.security.requirePermission(AppPermission.syncManage);
     final shouldResume = suspended;
     if (shouldResume) {
       await SyncDeviceAccessStore.resume(deviceId);
@@ -232,7 +232,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   }
 
   Future<void> _deleteDevice(String deviceId) async {
-    widget.store.requirePermission(AppPermission.syncManage);
+    widget.store.security.requirePermission(AppPermission.syncManage);
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -273,7 +273,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   }
 
   Future<void> _permanentDeleteDevice(String deviceId) async {
-    widget.store.requirePermission(AppPermission.syncManage);
+    widget.store.security.requirePermission(AppPermission.syncManage);
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -306,14 +306,14 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isHost = widget.store.appIdentity.isHost;
+    final isHost = widget.store.runtime.identity.isHost;
     final lanSettings = LanSyncSettings.load();
     final directSettings = VpsControlPlaneSettings.load();
     final peers = SyncDeviceStateStore.loadPeerStates();
     final peerById = <String, HostPeerSyncState>{
       for (final peer in peers) peer.deviceId: peer
     };
-    final selfState = SyncDeviceStateStore.load(widget.store.appIdentity);
+    final selfState = SyncDeviceStateStore.load(widget.store.runtime.identity);
 
     return Card(
       child: ExpansionTile(
@@ -701,7 +701,7 @@ class _HostStatusMonitoringCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final activeTransport = identity.activeSyncTransportNormalized;
     final lanReady = activeTransport == 'lan' &&
         lanSettings.setupComplete &&
@@ -753,7 +753,7 @@ class _HostStatusMonitoringCard extends StatelessWidget {
           _Line(title: tr.text('device_id'), value: identity.deviceId),
           _Line(
               title: tr.text('host_sequence'),
-              value: '${store.latestStoredAuthoritativeSequence}'),
+              value: '${store.sync.latestStoredAuthoritativeSequence}'),
         ],
       ),
     );
@@ -922,7 +922,7 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
     final connection = _connectionStatusForClient(context,
         state: state, lanSettings: lanSettings, directSettings: directSettings);
     final status = _syncStatusForClient(context, state,
-        pendingCount: store.activeClientPendingSyncCount);
+        pendingCount: store.sync.activeClientPendingCount);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -950,14 +950,14 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _Line(title: tr.text('role'), value: tr.text('client')),
-        _Line(title: tr.text('device_id'), value: store.appIdentity.deviceId),
+        _Line(title: tr.text('device_id'), value: store.runtime.identity.deviceId),
         _Line(
             title: tr.text('active_transport'),
             value: _transportLabel(
                 context,
                 state.activeTransport.isNotEmpty
                     ? state.activeTransport
-                    : store.appIdentity.activeSyncTransport)),
+                    : store.runtime.identity.activeSyncTransport)),
         _Line(title: tr.text('connection_status'), value: connection.label),
         _Line(title: tr.text('sync_status'), value: status.label),
         _Line(
@@ -966,7 +966,7 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
                 _formatDateTime(context, _lastSuccessfulSyncForClient(state))),
         _Line(
             title: tr.text('pending_changes'),
-            value: '${store.activeClientPendingSyncCount}'),
+            value: '${store.sync.activeClientPendingCount}'),
         _Line(
             title: tr.text('last_ack_sequence'),
             value: '${state.lastAckSequence}'),

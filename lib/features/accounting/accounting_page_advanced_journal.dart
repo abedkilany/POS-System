@@ -2,7 +2,7 @@ part of 'accounting_page.dart';
 
 extension _AdvancedJournal on _AdvancedAccountingTabState {
   Future<void> _manualJournalDialog() async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final description =
         TextEditingController(text: tr.text('manual_journal_entry'));

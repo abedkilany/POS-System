@@ -2,7 +2,7 @@ part of 'accounting_page.dart';
 
 extension _AdvancedAssets on _AdvancedAccountingTabState {
   Future<void> _runDepreciationForAllDialog() async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -31,7 +31,7 @@ extension _AdvancedAssets on _AdvancedAccountingTabState {
 
   Future<void> _runDepreciationForAssetDialog(
       AdvancedAccountingItem item) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -61,7 +61,7 @@ extension _AdvancedAssets on _AdvancedAccountingTabState {
   }
 
   Future<void> _createFixedAssetDialog() async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final name = TextEditingController();
     final purchaseValue = TextEditingController(text: '0');
@@ -282,7 +282,7 @@ extension _AdvancedAssets on _AdvancedAccountingTabState {
     try {
       final paidFromCashDrawer = paymentMode == 'cash_drawer';
       if (paidFromCashDrawer) {
-        widget.store.requirePermission(AppPermission.cashBoxManage);
+        widget.store.security.requirePermission(AppPermission.cashBoxManage);
       }
       if (!paidFromCashDrawer && paymentAccount == null) {
         throw StateError(_accountingUiText(
@@ -292,10 +292,10 @@ extension _AdvancedAssets on _AdvancedAccountingTabState {
           'Un compte de contrepartie est requis.',
         ));
       }
-      final user = widget.store.activeUser;
+      final user = widget.store.security.activeUser;
       final actor = user?.fullName.trim().isNotEmpty == true
           ? user!.fullName.trim()
-          : widget.store.currentRole;
+          : widget.store.security.currentRole;
       await AccountingService.createFixedAsset(
         code: '',
         name: name.text,
@@ -309,9 +309,9 @@ extension _AdvancedAssets on _AdvancedAccountingTabState {
         notes: notes.text,
         createdBy: actor,
         createdByUserId: user?.id ?? '',
-        deviceId: widget.store.appIdentity.deviceId,
-        storeId: widget.store.appIdentity.storeId,
-        branchId: widget.store.appIdentity.branchId,
+        deviceId: widget.store.runtime.identity.deviceId,
+        storeId: widget.store.runtime.identity.storeId,
+        branchId: widget.store.runtime.identity.branchId,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

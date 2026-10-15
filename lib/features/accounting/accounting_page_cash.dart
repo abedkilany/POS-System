@@ -394,7 +394,7 @@ class _CashLedgerTransactionRow extends StatelessWidget {
     final isIn = transaction.isCashIn;
     final amountText = formatUsdReferenceAmount(
       transaction.amount,
-      store.storeProfile,
+      store.runtime.profile,
     );
     final party = transaction.partyName.trim().isNotEmpty
         ? transaction.partyName.trim()

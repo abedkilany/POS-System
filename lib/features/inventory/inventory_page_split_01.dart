@@ -80,7 +80,7 @@ class _InventoryOverviewMetrics {
   final int pendingAutoCorrectionCount;
 
   factory _InventoryOverviewMetrics.fromStore(AppStore store) {
-    final products = store.stockTrackedProducts;
+    final products = store.catalog.stockTrackedProducts;
     var totalUnits = 0.0;
     var lowStockCount = 0;
     var inventoryRetailValue = 0.0;
@@ -92,11 +92,12 @@ class _InventoryOverviewMetrics {
       }
     }
     return _InventoryOverviewMetrics(
-      productCount: store.products.length,
+      productCount: store.catalog.products.length,
       totalUnits: totalUnits,
       lowStockCount: lowStockCount,
       inventoryRetailValue: inventoryRetailValue,
-      pendingAutoCorrectionCount: store.pendingAutoCorrectionCount,
+      pendingAutoCorrectionCount:
+          store.inventory.pendingAutoCorrectionMovements.length,
     );
   }
 }
@@ -115,7 +116,8 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
   String status = 'all';
 
   Future<void> _changeStatus(Map<String, dynamic> row, String value) async {
-    await widget.store.setExpiryBatchStatus(row['batchId'].toString(), value);
+    await widget.store.inventory
+        .setExpiryBatchStatus(row['batchId'].toString(), value);
     if (mounted) setState(() {});
   }
 
@@ -154,7 +156,7 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
     final current = (row['quantity'] as num? ?? 0).toDouble();
     final delta = dispose ? -value : value - current;
     if (delta == 0) return;
-    await widget.store.adjustExpiryBatchStock(
+    await widget.store.inventory.adjustExpiryBatchStock(
       productId: row['productId'].toString(),
       warehouseId: row['warehouseId'].toString(),
       batchId: row['batchId'].toString(),
@@ -163,7 +165,7 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
       adjustmentCategory: dispose ? 'expired' : 'stock_count_adjustment',
     );
     if (dispose && value >= current) {
-      await widget.store
+      await widget.store.inventory
           .setExpiryBatchStatus(row['batchId'].toString(), 'disposed');
     }
     if (mounted) setState(() {});
@@ -172,7 +174,7 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
   Future<void> _reverseLatestBatchAdjustment(Map<String, dynamic> row) async {
     final tr = AppLocalizations.of(context);
     final batchId = row['batchId']?.toString() ?? '';
-    final candidates = widget.store.stockMovements
+    final candidates = widget.store.inventory.stockMovements
         .where((movement) =>
             movement.batchId == batchId &&
             movement.reversalOfMovementId.isEmpty &&
@@ -202,8 +204,7 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
       },
     );
     if (reason == null) return;
-    await widget.store
-        .reverseExpiryBatchAdjustment(candidates.first.id, reason: reason);
+    await widget.store.inventory.reverseExpiryBatchAdjustment(candidates.first.id, reason: reason);
     if (mounted) setState(() {});
   }
 
@@ -218,10 +219,10 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
         }
         final allRows = snapshot.data ?? const <Map<String, dynamic>>[];
         final normalizedQuery = query.trim().toLowerCase();
-        final canManageCorrections = widget.store.hasPermission(
+        final canManageCorrections = widget.store.security.hasPermission(
           AppPermission.inventoryCorrectionsManage,
         );
-        final canExport = widget.store.hasPermission(
+        final canExport = widget.store.security.hasPermission(
           AppPermission.reportsExport,
         );
         final rows = allRows.where((row) {
@@ -284,7 +285,7 @@ class _InventoryBatchesTabState extends State<_InventoryBatchesTab> {
               Chip(
                   avatar: const Icon(Icons.payments_outlined),
                   label: Text(
-                      '${tr.text('estimated_value')}: ${formatUsdReferenceAmount(atRiskValue, widget.store.storeProfile)}')),
+                      '${tr.text('estimated_value')}: ${formatUsdReferenceAmount(atRiskValue, widget.store.runtime.profile)}')),
             ]),
           ),
           Padding(

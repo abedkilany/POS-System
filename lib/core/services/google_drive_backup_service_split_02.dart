@@ -362,7 +362,7 @@ class GoogleDriveBackupService {
 
   static Future<void> runDueBackup(AppStore store) async {
     if (_isRunning || kIsWeb) return;
-    if (store.appIdentity.isClient) return;
+    if (store.runtime.identity.isClient) return;
     final settings = await loadSettings();
     if (!settings.enabled || !settings.hasClient || !settings.isAuthorized) {
       return;
@@ -387,7 +387,7 @@ class GoogleDriveBackupService {
     if (kIsWeb) {
       throw UnsupportedError('Google Drive backup is not supported on Web.');
     }
-    if (store.appIdentity.isClient) {
+    if (store.runtime.identity.isClient) {
       throw StateError(
           'Google Drive backup is only available on the Host device.');
     }
@@ -415,7 +415,7 @@ class GoogleDriveBackupService {
       final now = DateTime.now();
       status.value = const GoogleDriveBackupStatus(
           isRunning: true, message: 'Compressing backup...');
-      final recoverySecret = store.appIdentity.recoveryKey.trim();
+      final recoverySecret = store.runtime.identity.recoveryKey.trim();
       if (recoverySecret.length < 8) {
         throw StateError(
           'A valid Store Recovery Key is required before encrypted automatic backups can run.',

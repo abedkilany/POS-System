@@ -534,18 +534,18 @@ class _CatalogManagerDialog extends StatefulWidget {
 
 class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
   List<CatalogItem> get _items {
-    if (widget.type == 'category') return widget.store.categories;
-    if (widget.type == 'brand') return widget.store.brands;
-    return widget.store.units;
+    if (widget.type == 'category') return widget.store.catalog.categories;
+    if (widget.type == 'brand') return widget.store.catalog.brands;
+    return widget.store.catalog.units;
   }
 
   Future<void> _saveItem(CatalogItem item) async {
     if (widget.type == 'category') {
-      await widget.store.addOrUpdateCategory(item);
+      await widget.store.catalog.addOrUpdateCategory(item);
     } else if (widget.type == 'brand') {
-      await widget.store.addOrUpdateBrand(item);
+      await widget.store.catalog.addOrUpdateBrand(item);
     } else {
-      await widget.store.addOrUpdateUnit(item);
+      await widget.store.catalog.addOrUpdateUnit(item);
     }
     setState(() {});
   }
@@ -573,7 +573,7 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     if (!_supportsDelete) return;
     final tr = AppLocalizations.of(context);
     final language = tr.locale.languageCode;
-    final usageCount = widget.store.productsUsingCatalogItem(widget.type, item);
+    final usageCount = widget.store.catalog.productsUsingCatalogItem(widget.type, item);
     final alternatives = _items.where((entry) => entry.id != item.id).toList();
 
     if (alternatives.isEmpty) {
@@ -646,7 +646,7 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     if (confirmed != true) return;
 
     try {
-      await widget.store.replaceAndDeleteCatalogItem(
+      await widget.store.catalog.replaceAndDeleteCatalogItem(
         type: widget.type,
         item: item,
         replacement: usageCount > 0 ? replacement : null,

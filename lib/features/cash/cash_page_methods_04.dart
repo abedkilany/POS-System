@@ -85,9 +85,9 @@ extension _CashPageStatePart4 on _CashPageState {
                             ),
                             subtitle: Text(
                               '${_l(tr, 'Closed', 'أغلقت')}: ${date(session.closedAt)} • '
-                              '${_l(tr, 'Expected', 'المتوقع')}: ${formatUsdReferenceAmount(session.expectedCash, widget.store.storeProfile)} • '
-                              '${_l(tr, 'Counted', 'المعدود')}: ${formatUsdReferenceAmount(session.countedCash, widget.store.storeProfile)} • '
-                              '${_l(tr, 'Difference', 'الفرق')}: ${formatUsdReferenceAmount(session.difference, widget.store.storeProfile)}',
+                              '${_l(tr, 'Expected', 'المتوقع')}: ${formatUsdReferenceAmount(session.expectedCash, widget.store.runtime.profile)} • '
+                              '${_l(tr, 'Counted', 'المعدود')}: ${formatUsdReferenceAmount(session.countedCash, widget.store.runtime.profile)} • '
+                              '${_l(tr, 'Difference', 'الفرق')}: ${formatUsdReferenceAmount(session.difference, widget.store.runtime.profile)}',
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -109,7 +109,7 @@ extension _CashPageStatePart4 on _CashPageState {
                                           session: session,
                                           movements: movements,
                                           detailed: printDetailed,
-                                          profile: widget.store.storeProfile,
+                                          profile: widget.store.runtime.profile,
                                           locale: Localizations.localeOf(
                                               dialogContext),
                                         );
@@ -322,21 +322,21 @@ extension _CashPageStatePart4 on _CashPageState {
                     label: Text(tr.text('open_shift')),
                   ),
                 OutlinedButton.icon(
-                  onPressed: enabled && widget.store.canManageCustomerPayments
+                  onPressed: enabled && widget.store.security.canManageCustomerPayments
                       ? () => _settleSaleInvoiceDialog(currentDrawer)
                       : null,
                   icon: const Icon(Icons.arrow_downward_rounded),
                   label: Text(_l(tr, 'Receipt', 'قبض')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: enabled && widget.store.canManageSupplierPayments
+                  onPressed: enabled && widget.store.security.canManageSupplierPayments
                       ? () => _settlePurchaseInvoiceDialog(currentDrawer)
                       : null,
                   icon: const Icon(Icons.arrow_upward_rounded),
                   label: Text(_l(tr, 'Payment', 'دفع')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: enabled && widget.store.canManageSupplierPayments
+                  onPressed: enabled && widget.store.security.canManageSupplierPayments
                       ? _refundPurchaseReturnDialog
                       : null,
                   icon: const Icon(Icons.assignment_return_outlined),
@@ -348,16 +348,16 @@ extension _CashPageStatePart4 on _CashPageState {
                 ),
                 OutlinedButton.icon(
                   onPressed: enabled &&
-                          (widget.store.canDeleteOrCancel ||
-                              widget.store.canManageSupplierPayments ||
-                              widget.store.canManageExpenses)
+                          (widget.store.security.canDeleteOrCancel ||
+                              widget.store.security.canManageSupplierPayments ||
+                              widget.store.security.canManageExpenses)
                       ? _refundDialog
                       : null,
                   icon: const Icon(Icons.currency_exchange_rounded),
                   label: Text(_l(tr, 'Refund', 'استرداد')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: enabled && widget.store.canManageExpenses
+                  onPressed: enabled && widget.store.security.canManageExpenses
                       ? () =>
                           _settleExpenseDialog(currentDrawer, currentSession)
                       : null,
@@ -447,7 +447,7 @@ extension _CashPageStatePart4 on _CashPageState {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     String money(double value) =>
-        formatUsdReferenceAmount(value, widget.store.storeProfile);
+        formatUsdReferenceAmount(value, widget.store.runtime.profile);
     if (currentSession == null) {
       return Card(
         elevation: 0,

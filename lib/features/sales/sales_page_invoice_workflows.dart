@@ -14,14 +14,14 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
   }
 
   Future<void> _openSaleReturnDialog(BuildContext context) async {
-    if (!widget.store.hasPermission(AppPermission.salesCancel)) return;
+    if (!widget.store.security.hasPermission(AppPermission.salesCancel)) return;
     final tr = AppLocalizations.of(context);
-    await widget.store.ensureCreditNotesLoaded();
+    await widget.store.commerce.ensureCreditNotesLoaded();
     if (!mounted || !context.mounted) return;
     const epsilon = 0.000001;
     Map<String, double> returnedFor(Sale sale) {
       final returned = <String, double>{};
-      for (final note in widget.store.creditNotes) {
+      for (final note in widget.store.commerce.creditNotes) {
         if (note.originalSaleId != sale.id ||
             <String>{'cancelled', 'reversed', 'void'}
                 .contains(note.status.trim().toLowerCase())) {
@@ -35,7 +35,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
       return returned;
     }
 
-    final sources = widget.store.sales.where((sale) {
+    final sources = widget.store.commerce.sales.where((sale) {
       if (sale.isDeleted || sale.isCancelled || sale.items.isEmpty) {
         return false;
       }
@@ -104,7 +104,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                             .clamp(0, double.infinity)
                             .toDouble(),
                         source.invoiceCurrency,
-                        widget.store.storeProfile);
+                        widget.store.runtime.profile);
                 final content = <Widget>[
                   DropdownButtonFormField<Sale>(
                       initialValue: selected,
@@ -272,7 +272,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
       return;
     }
     try {
-      await widget.store.returnSale(result.sourceId,
+      await widget.store.commerce.returnSale(result.sourceId,
           restoreStock: true, returnedQuantities: result.quantities);
       if (!mounted) return;
       setState(() {
@@ -293,7 +293,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
 
   Future<void> _showInvoicesSheet() async {
     final tr = AppLocalizations.of(context);
-    await widget.store.ensureCreditNotesLoaded();
+    await widget.store.commerce.ensureCreditNotesLoaded();
     if (!mounted) return;
     await showModalBottomSheet<void>(
         context: context,
@@ -314,8 +314,8 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
               return SizedBox(
                   height: MediaQuery.sizeOf(sheetContext).height * 0.85,
                   child: _buildInvoicesPanelFromSales(
-                      sheetContext, tr, widget.store.sales,
-                      creditNotes: widget.store.creditNotes,
+                      sheetContext, tr, widget.store.commerce.sales,
+                      creditNotes: widget.store.commerce.creditNotes,
                       onSearchChanged: resetSearchState));
             }
             return FutureBuilder<_SalesQueryResult?>(
@@ -327,7 +327,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                         height: MediaQuery.sizeOf(sheetContext).height * 0.85,
                         child: _buildInvoicesPanelFromSummaries(
                             sheetContext, tr, result.items,
-                            creditNotes: widget.store.creditNotes,
+                            creditNotes: widget.store.commerce.creditNotes,
                             setSheetState: setModalState,
                             totalCount: result.totalCount,
                             onSearchChanged: resetSearchState,
@@ -351,8 +351,8 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                   return SizedBox(
                       height: MediaQuery.sizeOf(sheetContext).height * 0.85,
                       child: _buildInvoicesPanelFromSales(
-                          sheetContext, tr, widget.store.sales,
-                          creditNotes: widget.store.creditNotes,
+                          sheetContext, tr, widget.store.commerce.sales,
+                          creditNotes: widget.store.commerce.creditNotes,
                           onSearchChanged: resetSearchState));
                 });
           });
@@ -361,7 +361,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
 
   Future<_SalesQueryResult?> _queryInvoicesFromSqlite() async {
     final query = _invoiceSearchController.text.trim().toLowerCase();
-    final key = '${widget.store.salesRevision}|$_visibleInvoiceCount|$query';
+    final key = '${widget.store.commerce.salesRevision}|$_visibleInvoiceCount|$query';
     if (_salesQueryFuture == null || _salesQueryFutureKey != key) {
       _salesQueryFutureKey = key;
       _salesQueryFuture = () async {
@@ -448,16 +448,16 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                 trailing: Text(sale.isCancelled
                                     ? sale.status
                                     : formatUsdReferenceAmount(
-                                        sale.total, widget.store.storeProfile)),
+                                        sale.total, widget.store.runtime.profile)),
                                 children: [
                                   ...sale.items.map((item) => ListTile(
                                       dense: true,
                                       title: Text(item.productName),
                                       subtitle: Text(
-                                          '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}'),
+                                          '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.runtime.profile)}'),
                                       trailing: Text(formatUsdReferenceAmount(
                                           item.lineTotal,
-                                          widget.store.storeProfile)))),
+                                          widget.store.runtime.profile)))),
                                   const Divider(height: 1),
                                   Padding(
                                       padding: const EdgeInsets.fromLTRB(
@@ -468,7 +468,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                           children: [
                                             OutlinedButton.icon(
                                                 onPressed: widget.store
-                                                        .hasPermission(
+                                                        .security.hasPermission(
                                                             AppPermission
                                                                 .salesPrint)
                                                     ? () => _handleInvoiceAction(() =>
@@ -477,7 +477,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                                             sale: sale,
                                                             profile: widget
                                                                 .store
-                                                                .storeProfile,
+                                                                .runtime.profile,
                                                             locale:
                                                                 AppLocalizations.of(
                                                                         context)
@@ -488,7 +488,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                                 label: Text(tr.text('print_invoice'))),
                                             OutlinedButton.icon(
                                                 onPressed: widget.store
-                                                        .hasPermission(
+                                                        .security.hasPermission(
                                                             AppPermission
                                                                 .salesExport)
                                                     ? () => _handleInvoiceAction(() =>
@@ -496,7 +496,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                                             sale: sale,
                                                             profile: widget
                                                                 .store
-                                                                .storeProfile,
+                                                                .runtime.profile,
                                                             locale:
                                                                 AppLocalizations.of(
                                                                         context)
@@ -507,7 +507,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                             OutlinedButton.icon(
                                                 onPressed: (!sale.isCancelled &&
                                                         widget.store
-                                                            .hasPermission(
+                                                            .security.hasPermission(
                                                                 AppPermission
                                                                     .salesEdit))
                                                     ? () => _editPostedSale(
@@ -520,7 +520,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                             OutlinedButton.icon(
                                                 onPressed: (!sale.isCancelled &&
                                                         widget.store
-                                                            .hasPermission(
+                                                            .security.hasPermission(
                                                                 AppPermission
                                                                     .salesCancel))
                                                     ? () => _returnSale(
@@ -532,10 +532,10 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                                     Text(_saleReturnLabel(tr))),
                                             OutlinedButton.icon(
                                                 onPressed: (widget.store
-                                                            .hasPermission(
+                                                            .security.hasPermission(
                                                                 AppPermission
                                                                     .salesEdit) &&
-                                                        widget.store.hasPermission(
+                                                        widget.store.security.hasPermission(
                                                             AppPermission
                                                                 .salesCancel) &&
                                                         _latestActiveCreditNoteForSale(
@@ -551,11 +551,11 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                             OutlinedButton.icon(
                                                 onPressed: (!sale.isCancelled &&
                                                         widget.store
-                                                                .deliveryNoteForSale(
+                                                                .commerce.deliveryNoteForSale(
                                                                     sale.id) ==
                                                             null &&
                                                         widget.store
-                                                            .canManageDeliveryNotes)
+                                                            .security.canManageDeliveryNotes)
                                                     ? () => _createDeliveryNote(
                                                         context, sale)
                                                     : null,
@@ -661,7 +661,7 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                                 trailing: Text(summary.isCancelled
                                     ? summary.status
                                     : formatUsdReferenceAmount(summary.total,
-                                        widget.store.storeProfile)),
+                                        widget.store.runtime.profile)),
                                 children: [
                                   if (!expanded)
                                     Padding(
@@ -723,52 +723,52 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
           dense: true,
           title: Text(item.productName),
           subtitle: Text(
-              '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}'),
+              '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.runtime.profile)}'),
           trailing: Text(formatUsdReferenceAmount(
-              item.lineTotal, widget.store.storeProfile)))),
+              item.lineTotal, widget.store.runtime.profile)))),
       const Divider(height: 1),
       Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: Wrap(spacing: 8, runSpacing: 8, children: [
             OutlinedButton.icon(
-                onPressed: widget.store.hasPermission(AppPermission.salesPrint)
+                onPressed: widget.store.security.hasPermission(AppPermission.salesPrint)
                     ? () => _handleInvoiceAction(() =>
                         InvoicePdfService.printInvoice(
                             context: context,
                             sale: sale,
-                            profile: widget.store.storeProfile,
+                            profile: widget.store.runtime.profile,
                             locale: AppLocalizations.of(context).locale))
                     : null,
                 icon: const Icon(Icons.print_outlined),
                 label: Text(tr.text('print_invoice'))),
             OutlinedButton.icon(
-                onPressed: widget.store.hasPermission(AppPermission.salesExport)
+                onPressed: widget.store.security.hasPermission(AppPermission.salesExport)
                     ? () => _handleInvoiceAction(() =>
                         InvoicePdfService.shareInvoice(
                             sale: sale,
-                            profile: widget.store.storeProfile,
+                            profile: widget.store.runtime.profile,
                             locale: AppLocalizations.of(context).locale))
                     : null,
                 icon: const Icon(Icons.share_outlined),
                 label: Text(tr.text('share_pdf'))),
             OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
-                        widget.store.hasPermission(AppPermission.salesEdit))
+                        widget.store.security.hasPermission(AppPermission.salesEdit))
                     ? () => _editPostedSale(context, sale)
                     : null,
                 icon: const Icon(Icons.edit_outlined),
                 label: Text(tr.text('edit_sale'))),
             OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
-                        widget.store.hasPermission(AppPermission.salesCancel))
+                        widget.store.security.hasPermission(AppPermission.salesCancel))
                     ? () => _returnSale(context, sale)
                     : null,
                 icon: const Icon(Icons.assignment_return_outlined),
                 label: Text(_saleReturnLabel(tr))),
             OutlinedButton.icon(
                 onPressed: (widget.store
-                            .hasPermission(AppPermission.salesEdit) &&
-                        widget.store.hasPermission(AppPermission.salesCancel) &&
+                            .security.hasPermission(AppPermission.salesEdit) &&
+                        widget.store.security.hasPermission(AppPermission.salesCancel) &&
                         _latestActiveCreditNoteForSale(sale.id) != null)
                     ? () => _editLatestSaleReturn(context, sale)
                     : null,
@@ -776,8 +776,8 @@ extension _SalesPageInvoiceWorkflows on _SalesPageState {
                 label: Text('${tr.text('edit')} ${_saleReturnLabel(tr)}')),
             OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
-                        widget.store.deliveryNoteForSale(sale.id) == null &&
-                        widget.store.canManageDeliveryNotes)
+                        widget.store.commerce.deliveryNoteForSale(sale.id) == null &&
+                        widget.store.security.canManageDeliveryNotes)
                     ? () => _createDeliveryNote(context, sale)
                     : null,
                 icon: const Icon(Icons.local_shipping_outlined),

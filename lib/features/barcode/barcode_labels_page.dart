@@ -45,7 +45,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
     final query = _query.trim().toLowerCase();
     final targets = <_BarcodeTarget>[];
     final seen = <String>{};
-    for (final product in widget.store.products) {
+    for (final product in widget.store.catalog.products) {
       if (product.isDeleted) continue;
       final units = <ProductSaleUnit>[
         ProductSaleUnit(
@@ -118,7 +118,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
   }
 
   String _newBarcode() {
-    final used = widget.store.products
+    final used = widget.store.catalog.products
         .map((item) => item.barcode.trim())
         .where((item) => item.isNotEmpty)
         .toSet();
@@ -136,7 +136,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
   }
 
   Future<void> _generateMissing() async {
-    if (!widget.store.canManageProducts || _generating) return;
+    if (!widget.store.security.canManageProducts || _generating) return;
     final confirmed = await _confirmGeneration(
       title:
           AppLocalizations.of(context).text('confirm_generate_missing_title'),
@@ -146,9 +146,9 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
     if (!confirmed || !mounted) return;
     setState(() => _generating = true);
     try {
-      for (final product in widget.store.products) {
+      for (final product in widget.store.catalog.products) {
         if (!product.isDeleted && product.barcode.trim().isEmpty) {
-          await widget.store.addOrUpdateProduct(
+          await widget.store.catalog.addOrUpdateProduct(
             product.copyWith(barcode: _newBarcode()),
           );
         }
@@ -203,7 +203,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
       builder: (dialogContext) => _BarcodePrintOptionsDialog(
         initial: lastOptions,
         previewItem: selected.first,
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
       ),
     );
     if (!mounted || options == null) return;
@@ -213,7 +213,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
     await BarcodeLabelPdfService.printLabels(
       context: context,
       items: selected,
-      profile: widget.store.storeProfile,
+      profile: widget.store.runtime.profile,
       locale: locale,
       options: options,
     );
@@ -324,7 +324,7 @@ class _BarcodeLabelsPageState extends State<BarcodeLabelsPage> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: widget.store.canManageProducts && !_generating
+                  onPressed: widget.store.security.canManageProducts && !_generating
                       ? _generateMissing
                       : null,
                   icon: _generating

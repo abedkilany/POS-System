@@ -280,7 +280,7 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
   }
 
   Future<Map<String, Object?>?> _queryPurchasesOverviewMapFromSqlite() async {
-    final key = '${widget.store.purchasesRevision}';
+    final key = '${widget.store.commerce.purchasesRevision}';
     if (_purchaseOverviewFuture == null || _purchaseOverviewFutureKey != key) {
       _purchaseOverviewFutureKey = key;
       _purchaseOverviewFuture =
@@ -327,7 +327,7 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
   ) async {
     final limit = math.max(1, _visiblePurchaseCount);
     final key =
-        '${widget.store.purchasesRevision}|$_statusFilter|$_sortMode|$normalizedQuery|$limit';
+        '${widget.store.commerce.purchasesRevision}|$_statusFilter|$_sortMode|$normalizedQuery|$limit';
     if (_purchaseQueryFuture == null || _purchaseQueryFutureKey != key) {
       _purchaseQueryFutureKey = key;
       _purchaseQueryFuture = () async {
@@ -397,14 +397,14 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
               runSpacing: 8,
               children: [
                 FilledButton.icon(
-                  onPressed: widget.store.canManagePurchases
+                  onPressed: widget.store.security.canManagePurchases
                       ? () => _openPurchaseDialog(context)
                       : null,
                   icon: const Icon(Icons.add_shopping_cart),
                   label: Text(tr.text('new_purchase')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: widget.store.canManagePurchases
+                  onPressed: widget.store.security.canManagePurchases
                       ? () => _openPurchaseReturnDialog(context)
                       : null,
                   icon: const Icon(Icons.assignment_return_outlined),
@@ -444,22 +444,22 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
               _MetricCard(
                   label: tr.text('purchase_total'),
                   value: formatUsdReferenceAmount(
-                      overview.totalPurchasesAmount, widget.store.storeProfile),
+                      overview.totalPurchasesAmount, widget.store.runtime.profile),
                   icon: Icons.shopping_cart_checkout),
               _MetricCard(
                   label: tr.text('purchases_this_month'),
                   value: formatUsdReferenceAmount(
-                      overview.monthlyTotal, widget.store.storeProfile),
+                      overview.monthlyTotal, widget.store.runtime.profile),
                   icon: Icons.calendar_month_outlined),
               _MetricCard(
                   label: tr.text('draft_purchases'),
                   value: formatUsdReferenceAmount(
-                      overview.draftTotal, widget.store.storeProfile),
+                      overview.draftTotal, widget.store.runtime.profile),
                   icon: Icons.pending_actions),
               _MetricCard(
                   label: tr.text('avg_purchase'),
                   value: formatUsdReferenceAmount(
-                      averagePurchase, widget.store.storeProfile),
+                      averagePurchase, widget.store.runtime.profile),
                   icon: Icons.insights_outlined),
             ],
           ),
@@ -578,28 +578,28 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
                       final purchase = purchases[index];
                       return _PurchaseTile(
                         purchase: purchase,
-                        storeProfile: widget.store.storeProfile,
+                        storeProfile: widget.store.runtime.profile,
                         onTap: () => _showPurchaseDetails(context, purchase),
                         onReceive: purchase.status == 'Draft'
-                            ? (widget.store.canManagePurchases
+                            ? (widget.store.security.canManagePurchases
                                 ? () => _receivePurchase(context, purchase.id)
                                 : null)
                             : null,
                         onCancel: purchase.isReceived &&
                                 !purchase.isReturned &&
                                 !purchase.isPurchaseReturn
-                            ? (widget.store.hasPermission(
+                            ? (widget.store.security.hasPermission(
                                     AppPermission.purchasesCancel)
                                 ? () => _returnPurchase(context, purchase.id)
                                 : null)
                             : null,
                         onDeleteDraft: !purchase.isReceived &&
                                 !purchase.isCancelled &&
-                                widget.store.canManagePurchases
+                                widget.store.security.canManagePurchases
                             ? () => _deleteDraftPurchase(context, purchase.id)
                             : null,
                         onPermanentDelete: null,
-                        onDuplicate: widget.store.canManagePurchases &&
+                        onDuplicate: widget.store.security.canManagePurchases &&
                                 !purchase.isPurchaseReturn
                             ? () =>
                                 _openPurchaseDialog(context, template: purchase)
@@ -608,10 +608,10 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
                                     !purchase.isCancelled &&
                                     !purchase.isReturned &&
                                     !purchase.isPurchaseReturn &&
-                                    widget.store.canManagePurchases) ||
+                                    widget.store.security.canManagePurchases) ||
                                 (purchase.isReturned &&
-                                    widget.store.canManagePurchases &&
-                                    widget.store.hasPermission(
+                                    widget.store.security.canManagePurchases &&
+                                    widget.store.security.hasPermission(
                                         AppPermission.purchasesCancel))
                             ? () => _openPurchaseDialog(context,
                                 editPurchase: purchase)
@@ -638,9 +638,9 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
   }
 
   Future<void> _receivePurchase(BuildContext context, String id) async {
-    if (!widget.store.canManagePurchases) return;
+    if (!widget.store.security.canManagePurchases) return;
     try {
-      final matches = widget.store.purchases.where((item) => item.id == id);
+      final matches = widget.store.commerce.purchases.where((item) => item.id == id);
       final purchase = matches.isEmpty ? null : matches.first;
       final allocationsByLine = <int, List<BatchAllocation>>{};
       if (purchase != null) {
@@ -648,8 +648,8 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
             lineIndex < purchase.items.length;
             lineIndex += 1) {
           final item = purchase.items[lineIndex];
-          final products =
-              widget.store.products.where((p) => p.id == item.productId);
+          final products = widget.store.catalog.products
+              .where((p) => p.id == item.productId);
           final product = products.isEmpty ? null : products.first;
           if (product == null || !product.expiryTrackingEnabled) continue;
           final existing = item.batchAllocations.length == 1 &&
@@ -674,7 +674,7 @@ extension _PurchasesPageStateMethods1 on _PurchasesPageState {
           allocationsByLine[lineIndex] = allocations;
         }
       }
-      await widget.store.receivePurchase(
+      await widget.store.commerce.receivePurchase(
         id,
         batchAllocationsByLine: allocationsByLine,
       );

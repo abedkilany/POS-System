@@ -148,7 +148,7 @@ extension _SalesPageCartPanel on _SalesPageState {
                                   Row(children: [
                                     Expanded(
                                         child: Text(
-                                            '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}',
+                                            '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.runtime.profile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: Theme.of(context)
@@ -187,7 +187,7 @@ extension _SalesPageCartPanel on _SalesPageState {
                                 ?.copyWith(fontWeight: FontWeight.w800))
                       ]),
                       subtitle: Text(
-                          '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}',
+                          '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.runtime.profile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis),
                       onTap: () => _selectCartIndex(index),
@@ -237,18 +237,18 @@ extension _SalesPageCartPanel on _SalesPageState {
                     if (_cart.isNotEmpty)
                       TextButton.icon(
                           onPressed:
-                              widget.store.canSell ? _confirmClearCart : null,
+                              widget.store.security.canSell ? _confirmClearCart : null,
                           icon: const Icon(Icons.delete_sweep_outlined),
                           label: Text(tr.text('clear_cart'))),
                     if (_cart.isNotEmpty)
                       TextButton.icon(
                           onPressed:
-                              widget.store.canSell ? _holdCurrentCart : null,
+                              widget.store.security.canSell ? _holdCurrentCart : null,
                           icon: const Icon(Icons.pause_circle_outline),
                           label: Text(tr.text('hold'))),
                     if (_heldCarts.isNotEmpty)
                       TextButton.icon(
-                          onPressed: widget.store.canSell
+                          onPressed: widget.store.security.canSell
                               ? _showHeldCartsDialog
                               : null,
                           icon: const Icon(
@@ -285,13 +285,13 @@ extension _SalesPageCartPanel on _SalesPageState {
                 const SizedBox(height: 12),
                 LayoutBuilder(builder: (context, constraints) {
                   final primary = FilledButton.icon(
-                      onPressed: _cart.isEmpty || !widget.store.canSell
+                      onPressed: _cart.isEmpty || !widget.store.security.canSell
                           ? null
                           : _openPaymentPage,
                       icon: const Icon(Icons.payments_outlined),
                       label: Text(tr.text('continue_payment')));
                   final secondary = OutlinedButton.icon(
-                      onPressed: _cart.isEmpty || !widget.store.canSell
+                      onPressed: _cart.isEmpty || !widget.store.security.canSell
                           ? null
                           : _openPaymentPage,
                       icon: const Icon(Icons.payments_outlined),

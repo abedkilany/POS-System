@@ -7,7 +7,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
     WebSocketChannel channel,
     Map<String, dynamic> decoded,
   ) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final type = (decoded['type'] ?? '').toString();
     if (type == 'realtime_welcome') return null;
 
@@ -212,14 +212,14 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
           'rejected': accepted.rejected.entries
               .map((entry) => {'id': entry.key, 'reason': entry.value})
               .toList(),
-          'latestSequence': store.latestStoredAuthoritativeSequence,
+          'latestSequence': store.sync.latestStoredAuthoritativeSequence,
           'serverTime': DateTime.now().toIso8601String(),
         };
         channel.sink.add(jsonEncode(response));
         channel.sink.add(jsonEncode({
           'type': 'sync_changed',
           'changed': true,
-          'latestSequence': store.latestStoredAuthoritativeSequence,
+          'latestSequence': store.sync.latestStoredAuthoritativeSequence,
           'pendingRequests': 0,
           'relayKind': 'direct_client_push',
         }));
@@ -251,7 +251,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
         }
         final response = Map<String, dynamic>.from(
           jsonDecode(
-            store.exportSyncChangesJson(
+            store.sync.exportChangesJson(
               since: since,
               sinceSequence: sinceSequence,
             ),
@@ -299,8 +299,8 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
             appliedCursor: appliedCursor,
             ackCursor: ackCursor,
           );
-          await store.settleHostQueueThroughPeerAck();
-          await store.compactSyncedSyncHistoryForMaintenance();
+          await store.sync.settleHostQueueThroughPeerAck();
+          await store.sync.compactSyncedHistoryForMaintenance();
         }
         channel.sink.add(jsonEncode({
           'type': 'relay_response',
@@ -356,7 +356,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              if (store.appIdentity.isHost &&
+              if (store.runtime.identity.isHost &&
                   settings.accountToken.trim().isNotEmpty)
                 'Authorization': 'Bearer ${settings.accountToken.trim()}',
               'X-Device-Id': deviceId,
@@ -383,7 +383,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
   Future<DirectSyncResult> registerCurrentDevice(
       VpsControlPlaneSettings settings,
       {String transport = 'direct'}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!settings.isConfigured) {
       return const DirectSyncResult(
           ok: false, message: 'Direct API URL and token are required.');
@@ -425,7 +425,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'deviceId': store.deviceId,
+              'deviceId': store.sync.deviceId,
               'deviceName': identity.deviceName,
               'platform': identity.platform.name,
               'role': identity.deviceRole.name,
@@ -459,7 +459,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
 
   Future<DirectSyncResult> requestHostTransfer(VpsControlPlaneSettings settings,
       {String reason = ''}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canRequestDirectHostTransfer(identity)) {
       return const DirectSyncResult(
           ok: false, message: 'Only Clients can request Host transfer.');
@@ -476,7 +476,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'requestingDeviceId': store.deviceId,
+              'requestingDeviceId': store.sync.deviceId,
               'currentHostDeviceId': identity.hostDeviceId,
               'reason': reason,
             }),
@@ -496,7 +496,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
 
   Future<DirectSyncResult> approveHostTransfer(
       VpsControlPlaneSettings settings, String requestingDeviceId) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canApproveDirectHostTransfer(identity)) {
       return const DirectSyncResult(
           ok: false, message: 'Only Hosts can approve Host transfer.');
@@ -514,7 +514,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
               'storeId': identity.storeId,
               'branchId': identity.branchId,
               'requestingDeviceId': requestingDeviceId,
-              'approvedByHostDeviceId': store.deviceId,
+              'approvedByHostDeviceId': store.sync.deviceId,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -532,7 +532,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
 
   Future<DirectSyncResult> activateHostTransfer(
       VpsControlPlaneSettings settings) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!settings.isConfigured && settings.apiBaseUrl.trim().isEmpty) {
       return const DirectSyncResult(
           ok: false, message: 'Direct API URL is required.');
@@ -545,7 +545,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'newHostDeviceId': store.deviceId,
+              'newHostDeviceId': store.sync.deviceId,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -572,7 +572,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
     String? storeIdOverride,
     String? branchIdOverride,
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!settings.isConfigured) {
       return const DirectDevicesResult(devices: <DirectDeviceStatus>[]);
     }
@@ -627,7 +627,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
     VpsControlPlaneSettings settings, {
     required Iterable<String> clientDeviceIds,
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canRepairDirectDeviceLinks(identity)) {
       return const DirectSyncResult(
           ok: false, message: 'Only the Host can repair Direct device links.');
@@ -638,7 +638,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
     }
     final cleanClientIds = clientDeviceIds
         .map((id) => id.trim())
-        .where((id) => id.isNotEmpty && id != store.deviceId)
+        .where((id) => id.isNotEmpty && id != store.sync.deviceId)
         .toSet()
         .toList();
     if (cleanClientIds.isEmpty) {
@@ -653,7 +653,7 @@ extension DirectControlPlaneServiceSplitPart4 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'hostDeviceId': store.deviceId,
+              'hostDeviceId': store.sync.deviceId,
               'clientDeviceIds': cleanClientIds,
             }),
           )

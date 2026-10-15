@@ -208,21 +208,16 @@ extension _AppStoreSplitSyncApplyPart4 on AppStore {
   }
 
   Future<void> retryFailedSyncQueue({String? target}) async {
-    await ensureSyncDataLoaded();
-    final now = DateTime.now();
-    var changed = false;
-    for (var i = 0; i < _syncQueue.length; i++) {
-      final item = _syncQueue[i];
-      if (item.status == 'failed' &&
-          (target == null || item.target == target)) {
-        _syncQueue[i] = item.copyWith(
-          status: 'pending',
-          updatedAt: now,
-          clearNextRetryAt: true,
-        );
-        changed = true;
-      }
-    }
+    await _retryFailedSyncQueueDomainImpl(target: target);
+  }
+
+  Future<void> _retryFailedSyncQueueDomainImpl({String? target}) async {
+    await _requestSyncDataLoad();
+    final changed = const SyncQueueRecoveryService().retryFailed(
+      queue: _syncQueue,
+      now: DateTime.now(),
+      target: target,
+    );
     if (!changed) return;
     await _saveSyncStateOnly();
     notifyListeners();
@@ -232,30 +227,33 @@ extension _AppStoreSplitSyncApplyPart4 on AppStore {
     String? target,
     Duration staleAfter = const Duration(seconds: 45),
   }) async {
+    await _recoverStaleInProgressSyncQueueDomainImpl(
+      target: target,
+      staleAfter: staleAfter,
+    );
+  }
+
+  Future<void> _recoverStaleInProgressSyncQueueDomainImpl({
+    String? target,
+    Duration staleAfter = const Duration(seconds: 45),
+  }) async {
     final now = DateTime.now();
-    final cutoff = now.subtract(staleAfter);
-    var changed = false;
-    for (var i = 0; i < _syncQueue.length; i++) {
-      final item = _syncQueue[i];
-      if (item.status == 'inProgress' &&
-          item.updatedAt.isBefore(cutoff) &&
-          (target == null || item.target == target)) {
-        _syncQueue[i] = item.copyWith(
-          status: 'pending',
-          lastError:
-              'Recovered stale in-progress sync item after timeout/crash.',
-          updatedAt: now,
-          clearNextRetryAt: true,
-        );
-        changed = true;
-      }
-    }
+    final changed = const SyncQueueRecoveryService().recoverStaleInProgress(
+      queue: _syncQueue,
+      now: now,
+      staleAfter: staleAfter,
+      target: target,
+    );
     if (!changed) return;
     await _saveSyncStateOnly();
     notifyListeners();
   }
 
   Future<void> recoverSubmittedSyncQueue({String? target}) async {
+    await _recoverSubmittedSyncQueueDomainImpl(target: target);
+  }
+
+  Future<void> _recoverSubmittedSyncQueueDomainImpl({String? target}) async {
     final now = DateTime.now();
     var changed = false;
     for (var i = 0; i < _syncQueue.length; i++) {

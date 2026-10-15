@@ -57,13 +57,13 @@ Future<AppStore> _readyStore() async {
   LocalDatabaseService.clearInMemoryStoreForTesting();
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
-  await store.initialize();
-  await store.completeInitialAdminSetup(
+  await store.runtime.initialize();
+  await store.security.completeInitialAdminSetup(
     fullName: 'Admin',
     username: 'admin',
     password: 'AdminPass123',
   );
-  await store.addOrUpdateProduct(
+  await store.catalog.addOrUpdateProduct(
     Product(
       id: 'p1',
       name: 'Coffee',
@@ -75,10 +75,10 @@ Future<AppStore> _readyStore() async {
       barcode: '111',
     ),
   );
-  await store.addOrUpdateCustomer(
+  await store.commerce.addOrUpdateCustomer(
     Customer(id: 'c1', name: 'Alice', phone: '111', address: 'Main St'),
   );
-  await store.addOrUpdateSupplier(
+  await store.commerce.addOrUpdateSupplier(
     Supplier(
         id: 's1',
         name: 'Supplier',
@@ -86,7 +86,7 @@ Future<AppStore> _readyStore() async {
         address: 'Warehouse',
         notes: ''),
   );
-  await store.addOrUpdateExpense(
+  await store.commerce.addOrUpdateExpense(
     Expense(
       id: 'e1',
       title: 'Rent',

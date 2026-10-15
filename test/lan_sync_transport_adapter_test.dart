@@ -88,7 +88,7 @@ void main() {
       });
 
       store = AppStore();
-      await store.initialize();
+      await store.runtime.initialize();
       service = _FakeLanSyncService(store);
       adapter = LanSyncTransportAdapter(
         service: service,

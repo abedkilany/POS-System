@@ -7,7 +7,7 @@ extension _SettingsPrinterSection on SettingsPage {
 
   Widget _printSettingsCard(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final settings = store.storeProfile.printSettings;
+    final settings = store.runtime.profile.printSettings;
     final configuredDefaults = settings.documents.values
         .where((item) => item.printerId.trim().isNotEmpty)
         .length;
@@ -16,7 +16,7 @@ extension _SettingsPrinterSection on SettingsPage {
       title: tr.text('print_settings'),
       subtitle: tr.text('print_settings_desc'),
       trailing: FilledButton.icon(
-        onPressed: store.hasPermission(AppPermission.settingsManage)
+        onPressed: store.security.hasPermission(AppPermission.settingsManage)
             ? () => _editPrintSettings(context)
             : null,
         icon: const Icon(Icons.settings_outlined),
@@ -73,7 +73,7 @@ extension _SettingsPrinterSection on SettingsPage {
 
   Future<void> _editPrintSettings(BuildContext context) async {
     final tr = AppLocalizations.of(context);
-    final current = store.storeProfile.printSettings;
+    final current = store.runtime.profile.printSettings;
     var detected = List<PrintPrinterProfile>.of(current.printers);
     var settings = current;
 
@@ -196,8 +196,8 @@ extension _SettingsPrinterSection on SettingsPage {
     );
 
     if (result != null) {
-      await store.updateStoreProfile(
-        store.storeProfile.copyWith(printSettings: result),
+      await store.runtime.updateStoreProfile(
+        store.runtime.profile.copyWith(printSettings: result),
       );
     }
   }

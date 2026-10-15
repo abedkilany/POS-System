@@ -37,10 +37,11 @@ Future<void> printAccountStatementForAccount({
       context: context,
       accountType: accountType,
       accountName: accountName,
-      transactions: store.accountTransactionsForAccount(accountType, accountId),
+      transactions:
+          store.accounting.transactionsForAccount(accountType, accountId),
       from: _startOfDay(range.start),
       to: _endOfDay(range.end),
-      profile: store.storeProfile,
+      profile: store.runtime.profile,
       locale: Localizations.localeOf(context),
     );
   } catch (error) {
@@ -61,11 +62,11 @@ Future<void> printExpenseStatementForPeriod({
     final selection = await _pickExpenseAccount(context, accounts);
     if (selection == null || !context.mounted) return;
 
-    final accountIds = await _resolveExpenseAccountIds(store.expenses);
+    final accountIds = await _resolveExpenseAccountIds(store.commerce.expenses);
     if (!context.mounted) return;
     final selectedExpenses = selection.accountIds == null
-        ? store.expenses
-        : store.expenses
+        ? store.commerce.expenses
+        : store.commerce.expenses
             .where((expense) =>
                 selection.accountIds!.contains(accountIds[expense.id]))
             .toList(growable: false);
@@ -74,7 +75,7 @@ Future<void> printExpenseStatementForPeriod({
       expenses: selectedExpenses,
       from: _startOfDay(range.start),
       to: _endOfDay(range.end),
-      profile: store.storeProfile,
+      profile: store.runtime.profile,
       accountName: selection.label,
       locale: Localizations.localeOf(context),
     );

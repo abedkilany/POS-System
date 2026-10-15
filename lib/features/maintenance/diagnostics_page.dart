@@ -213,7 +213,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
     final auditCounts = await AuditLogger.counts();
     return jsonEncode(<String, dynamic>{
       'generatedAt': DateTime.now().toUtc().toIso8601String(),
-      'store': widget.store.appIdentity.toJson(),
+      'store': widget.store.runtime.identity.toJson(),
       'maintenance': summary.toJson(),
       'startupTiming': StartupTimingService.snapshotJson(),
       'logCounts': <String, dynamic>{

@@ -3,8 +3,7 @@ part of 'purchases_page.dart';
 extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
   Future<void> showPurchaseDialog() async {
     if (!context.mounted) return;
-    HardwareKeyboard.instance
-        .addHandler(handlePurchaseDialogHardwareShortcut);
+    HardwareKeyboard.instance.addHandler(handlePurchaseDialogHardwareShortcut);
     try {
       await showModalBottomSheet<void>(
         context: context,
@@ -209,7 +208,7 @@ extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
                                               decoration: InputDecoration(
                                                   labelText:
                                                       tr.text('warehouse')),
-                                              items: widget.store.warehouses
+                                              items: widget.store.inventory.warehouses
                                                   .map(
                                                     (warehouse) =>
                                                         DropdownMenuItem<
@@ -221,7 +220,8 @@ extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
                                                   )
                                                   .toList(),
                                               onChanged: (value) {
-                                                final selected = widget.store
+                                                final selected = widget
+                                                    .store.inventory
                                                     .resolveWarehouseForPurchase(
                                                   warehouseId: value ?? '',
                                                 );
@@ -401,7 +401,7 @@ extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
                                                         .isNotEmpty)
                                                       selectedProduct!.barcode
                                                           .trim(),
-                                                    '${tr.text('stock')}: ${_formatQuantity(widget.store.stockForWarehouse(selectedProduct!.id, selectedWarehouseId))}',
+                                                    '${tr.text('stock')}: ${_formatQuantity(widget.store.inventory.stockForWarehouse(selectedProduct!.id, selectedWarehouseId))}',
                                                   ].join(' • ');
                                         return sectionCard(
                                           title: tr.text('add_product'),
@@ -759,7 +759,7 @@ extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
                                                           formatUsdReferenceAmount(
                                                               item.lineTotal,
                                                               widget.store
-                                                                  .storeProfile))),
+                                                                  .runtime.profile))),
                                                       DataCell(
                                                           lineActions(item)),
                                                     ]))
@@ -776,7 +776,7 @@ extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
                                                       title: Text(
                                                           item.productName),
                                                       subtitle: Text(
-                                                          '${unitConversionSummary(item)} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} • ${formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)}'),
+                                                          '${unitConversionSummary(item)} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} • ${formatUsdReferenceAmount(item.lineTotal, widget.store.runtime.profile)}'),
                                                       trailing:
                                                           lineActions(item),
                                                     ),
@@ -820,7 +820,7 @@ extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
                                                         .textTheme
                                                         .bodyMedium),
                                                 Text(
-                                                    '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}',
+                                                    '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.runtime.profile)}',
                                                     style: Theme.of(context)
                                                         .textTheme
                                                         .titleMedium),
@@ -891,7 +891,7 @@ extension _PurchaseDialogSessionUi on _PurchaseDialogSession {
                                   final compactFooter =
                                       footerConstraints.maxWidth < 520;
                                   final totalText = Text(
-                                    '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}',
+                                    '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.runtime.profile)}',
                                     style:
                                         Theme.of(context).textTheme.titleMedium,
                                   );

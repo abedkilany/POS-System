@@ -38,15 +38,15 @@ void _registerAppStoreWorkflowSalesPart1() {
         isEmpty);
 
     final store = await readySqliteStore(storeId: 'ST-SALEFLOW');
-    await store.addOrUpdateProduct(
+    await store.catalog.addOrUpdateProduct(
         product(id: 'p-sale-flow', stock: 0, price: 10, cost: 4));
-    await store.adjustStock(
+    await store.inventory.adjustStock(
         productId: 'p-sale-flow',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 5,
         reason: 'test seed');
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-bob-flow',
       customerName: 'Bob',
       paymentMethod: 'Credit',
@@ -69,32 +69,32 @@ void _registerAppStoreWorkflowSalesPart1() {
       await sqliteWarehouseQuantity(
         productId: 'p-sale-flow',
         warehouseId: Warehouse.defaultId,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       3,
     );
     expect(
-      store.stockMovements.where(
+      store.inventory.stockMovements.where(
         (m) => m.referenceId == sale.id && m.quantity < 0,
       ),
       isNotEmpty,
     );
-    expect(store.totalSalesAmount, 20);
-    expect(store.estimateProfit(), 12);
+    expect(store.commerce.totalSalesAmount, 20);
+    expect(store.commerce.estimateProfit(), 12);
 
-    await store.cancelSale(sale.id);
+    await store.commerce.cancelSale(sale.id);
     final cancelledSale = await SqliteMigrationManager.database!.customSelect(
       'SELECT status FROM sales WHERE id = ?',
       variables: <Variable<Object>>[Variable<String>(sale.id)],
     ).getSingle();
     expect(cancelledSale.read<String>('status'), 'Cancelled');
-    expect(store.sales.single.paidAmount, 0);
-    expect(store.sales.single.cashReceivedAmount, 0);
-    expect(store.totalSalesAmount, 0);
-    expect(store.products.single.stock, 5);
+    expect(store.commerce.sales.single.paidAmount, 0);
+    expect(store.commerce.sales.single.cashReceivedAmount, 0);
+    expect(store.commerce.totalSalesAmount, 0);
+    expect(store.catalog.products.single.stock, 5);
 
-    await store.cancelSale(sale.id);
-    expect(store.sales.length, 1);
+    await store.commerce.cancelSale(sale.id);
+    expect(store.commerce.sales.length, 1);
   });
 
   test('phase 6 cancellation never auto-refunds cash; refund is explicit',
@@ -104,21 +104,21 @@ void _registerAppStoreWorkflowSalesPart1() {
       branchId: 'BR-P6-CANCEL',
     );
     final drawerId = await seedOpenCashDrawerForStore(store);
-    await store.addOrUpdateProduct(product(id: 'p-p6-cancel', stock: 0));
-    final warehouse = store.resolveWarehouseForSale();
+    await store.catalog.addOrUpdateProduct(product(id: 'p-p6-cancel', stock: 0));
+    final warehouse = store.inventory.resolveWarehouseForSale();
     await StockTransactionService(
       SqliteMigrationManager.database!,
-      defaultStoreId: store.appIdentity.storeId,
-      defaultBranchId: store.appIdentity.branchId,
+      defaultStoreId: store.runtime.identity.storeId,
+      defaultBranchId: store.runtime.identity.branchId,
     ).applyDelta(
-      storeId: store.appIdentity.storeId,
+      storeId: store.runtime.identity.storeId,
       warehouseId: warehouse.id,
       productId: 'p-p6-cancel',
       delta: 5,
-      branchId: store.appIdentity.branchId,
+      branchId: store.runtime.identity.branchId,
     );
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerName: 'Phase 6 Customer',
       customerId: 'customer-p6-cancel',
       paymentMethod: 'Credit',
@@ -133,7 +133,7 @@ void _registerAppStoreWorkflowSalesPart1() {
       ],
       warehouseId: warehouse.id,
     );
-    await store.settleSalePayment(
+    await store.commerce.settleSalePayment(
       saleId: sale.id,
       amount: 20,
       paymentMethod: 'Cash',
@@ -148,7 +148,7 @@ void _registerAppStoreWorkflowSalesPart1() {
         .getSingle();
     expect((beforeCancel.data['current_balance'] as num).toDouble(), 1020);
 
-    await store.cancelSale(sale.id);
+    await store.commerce.cancelSale(sale.id);
 
     final autoRefunds = await db
         .customSelect(
@@ -173,7 +173,7 @@ void _registerAppStoreWorkflowSalesPart1() {
         .getSingle();
     expect((customerCreditAfterCancel.data['balance'] as num).toDouble(), -20);
 
-    final refunded = await store.refundSaleCash(
+    final refunded = await store.commerce.refundSaleCash(
       saleId: sale.id,
       amount: 20,
       idempotencyKey: 'p6-explicit-refund',
@@ -198,7 +198,7 @@ void _registerAppStoreWorkflowSalesPart1() {
       reason: 'Customer kept the cash refund',
       createdBy: 'Phase 6 Tester',
       createdByUserId: 'user-p6-test',
-      deviceId: store.appIdentity.deviceId,
+      deviceId: store.runtime.identity.deviceId,
     );
     expect(reversedRefund, 1);
     final afterRefundReversal = await db
@@ -221,14 +221,14 @@ void _registerAppStoreWorkflowSalesPart1() {
   test('returns a sale, restores stock, and records a sale return movement',
       () async {
     final store = await readySqliteStore(storeId: 'ST-SALERET1');
-    await store.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
-    await store.adjustStock(
+    await store.catalog.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
+    await store.inventory.adjustStock(
         productId: 'p1',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 5,
         reason: 'test seed');
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-bob-return-one',
       customerName: 'Bob',
       paymentMethod: 'Credit',
@@ -239,28 +239,28 @@ void _registerAppStoreWorkflowSalesPart1() {
       ],
     );
 
-    expect(store.products.single.stock, 3);
-    await store.returnSale(sale.id);
+    expect(store.catalog.products.single.stock, 3);
+    await store.commerce.returnSale(sale.id);
 
-    expect(store.sales.single.status, 'Returned');
-    expect(store.sales.single.isCancelled, isTrue);
-    expect(store.sales.single.paidAmount, 0);
-    expect(store.sales.single.cashReceivedAmount, 0);
-    expect(store.totalSalesAmount, 0);
-    expect(store.products.single.stock, 5);
+    expect(store.commerce.sales.single.status, 'Returned');
+    expect(store.commerce.sales.single.isCancelled, isTrue);
+    expect(store.commerce.sales.single.paidAmount, 0);
+    expect(store.commerce.sales.single.cashReceivedAmount, 0);
+    expect(store.commerce.totalSalesAmount, 0);
+    expect(store.catalog.products.single.stock, 5);
   });
 
   test('edits a sale return after rebuilding stock and accounting effects',
       () async {
     final store = await readySqliteStore(storeId: 'ST-SALERET-EDIT');
-    await store.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
-    await store.adjustStock(
+    await store.catalog.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
+    await store.inventory.adjustStock(
         productId: 'p1',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 5,
         reason: 'test seed');
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-sale-return-edit',
       customerName: 'Return Edit Customer',
       paymentMethod: 'Credit',
@@ -274,11 +274,11 @@ void _registerAppStoreWorkflowSalesPart1() {
         ),
       ],
     );
-    await store.returnSale(sale.id);
+    await store.commerce.returnSale(sale.id);
     final note =
-        store.creditNotes.singleWhere((item) => item.originalSaleId == sale.id);
+        store.commerce.creditNotes.singleWhere((item) => item.originalSaleId == sale.id);
 
-    final edited = await store.editSaleReturn(
+    final edited = await store.commerce.editSaleReturn(
       creditNoteId: note.id,
       expectedVersion: note.version,
       returnedQuantities: const <String, double>{'p1': 1},
@@ -286,22 +286,22 @@ void _registerAppStoreWorkflowSalesPart1() {
 
     expect(edited.items.single.quantity, 1);
     expect(edited.version, 2);
-    expect(store.products.single.stock, 4);
-    expect(store.sales.single.status, 'Partially Returned');
+    expect(store.catalog.products.single.stock, 4);
+    expect(store.commerce.sales.single.status, 'Partially Returned');
   });
 
   test(
       'partial sale returns are cumulative and cannot return the same units twice',
       () async {
     final store = await readySqliteStore(storeId: 'ST-SALERET2');
-    await store.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
-    await store.adjustStock(
+    await store.catalog.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
+    await store.inventory.adjustStock(
         productId: 'p1',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 20,
         reason: 'test seed');
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-partial-return',
       customerName: 'Partial Return Customer',
       paymentMethod: 'Credit',
@@ -316,23 +316,23 @@ void _registerAppStoreWorkflowSalesPart1() {
       ],
     );
 
-    final first = await store.returnSale(
+    final first = await store.commerce.returnSale(
       sale.id,
       returnedQuantities: const <String, double>{'p1': 4},
     );
     expect(first.items.single.quantity, 4);
-    expect(store.sales.single.status, 'Partially Returned');
-    expect(store.sales.single.items.single.quantity, 10);
-    expect(store.products.single.stock, 14);
+    expect(store.commerce.sales.single.status, 'Partially Returned');
+    expect(store.commerce.sales.single.items.single.quantity, 10);
+    expect(store.catalog.products.single.stock, 14);
 
-    final second = await store.returnSale(
+    final second = await store.commerce.returnSale(
       sale.id,
       returnedQuantities: const <String, double>{'p1': 4},
     );
     expect(second.items.single.quantity, 4);
-    expect(store.sales.single.status, 'Partially Returned');
-    expect(store.sales.single.items.single.quantity, 10);
-    expect(store.products.single.stock, 18);
+    expect(store.commerce.sales.single.status, 'Partially Returned');
+    expect(store.commerce.sales.single.items.single.quantity, 10);
+    expect(store.catalog.products.single.stock, 18);
     final partialReturnJournals =
         await SqliteMigrationManager.database!.customSelect(
       "SELECT COUNT(*) AS c FROM journal_entries WHERE reference_type = 'sale_return' AND reference_no = ? AND status = 'posted'",
@@ -343,22 +343,22 @@ void _registerAppStoreWorkflowSalesPart1() {
     expect(partialReturnJournals.read<int>('c'), 2);
 
     await expectLater(
-      store.returnSale(
+      store.commerce.returnSale(
         sale.id,
         returnedQuantities: const <String, double>{'p1': 3},
       ),
       throwsArgumentError,
     );
-    expect(store.products.single.stock, 18);
+    expect(store.catalog.products.single.stock, 18);
 
-    final finalReturn = await store.returnSale(
+    final finalReturn = await store.commerce.returnSale(
       sale.id,
       returnedQuantities: const <String, double>{'p1': 2},
     );
     expect(finalReturn.items.single.quantity, 2);
-    expect(store.sales.single.status, 'Returned');
-    expect(store.sales.single.items.single.quantity, 10);
-    expect(store.products.single.stock, 20);
+    expect(store.commerce.sales.single.status, 'Returned');
+    expect(store.commerce.sales.single.items.single.quantity, 10);
+    expect(store.catalog.products.single.stock, 20);
     final allReturnJournals =
         await SqliteMigrationManager.database!.customSelect(
       "SELECT COUNT(*) AS c FROM journal_entries WHERE reference_type = 'sale_return' AND reference_no = ? AND status = 'posted'",
@@ -371,9 +371,9 @@ void _registerAppStoreWorkflowSalesPart1() {
     // Regression: the final partial slice must credit only its own value.
     // A cumulative full-return state must not credit the original invoice
     // total again in the customer subledger.
-    await store.refreshAccountTransactionsFromSqlite();
+    await store.accounting.refreshFromSqlite();
     expect(
-      store.accountBalance('customer', 'customer-partial-return'),
+      store.accounting.accountBalance('customer', 'customer-partial-return'),
       closeTo(0, 0.0001),
     );
     final returnLedger = await SqliteMigrationManager.database!
@@ -404,10 +404,10 @@ void _registerAppStoreWorkflowSalesPart1() {
       expiryTrackingEnabled: true,
       expiryEntryRequired: true,
     );
-    await store.addOrUpdateProduct(tracked);
-    final warehouse = store.resolveWarehouseForSale();
+    await store.catalog.addOrUpdateProduct(tracked);
+    final warehouse = store.inventory.resolveWarehouseForSale();
 
-    final firstPurchase = await store.createPurchase(
+    final firstPurchase = await store.commerce.createPurchase(
       supplierId: 'sup-p6-1',
       supplierName: 'Supplier 1',
       items: const <PurchaseItem>[
@@ -424,7 +424,7 @@ void _registerAppStoreWorkflowSalesPart1() {
       warehouseId: warehouse.id,
       warehouseName: warehouse.name,
     );
-    await store.receivePurchase(
+    await store.commerce.receivePurchase(
       firstPurchase.id,
       batchAllocationsByLine: <int, List<BatchAllocation>>{
         0: <BatchAllocation>[
@@ -438,7 +438,7 @@ void _registerAppStoreWorkflowSalesPart1() {
       },
     );
 
-    final secondPurchase = await store.createPurchase(
+    final secondPurchase = await store.commerce.createPurchase(
       supplierId: 'sup-p6-2',
       supplierName: 'Supplier 2',
       items: const <PurchaseItem>[
@@ -455,7 +455,7 @@ void _registerAppStoreWorkflowSalesPart1() {
       warehouseId: warehouse.id,
       warehouseName: warehouse.name,
     );
-    await store.receivePurchase(
+    await store.commerce.receivePurchase(
       secondPurchase.id,
       batchAllocationsByLine: <int, List<BatchAllocation>>{
         0: <BatchAllocation>[
@@ -489,7 +489,7 @@ void _registerAppStoreWorkflowSalesPart1() {
     final earlyBatchId = await batchIdForPurchase(firstPurchase.id);
     final lateBatchId = await batchIdForPurchase(secondPurchase.id);
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'cust-p6-return',
       customerName: 'Return Customer',
       paymentMethod: 'Credit',
@@ -515,7 +515,7 @@ void _registerAppStoreWorkflowSalesPart1() {
     expect(await batchQuantity(earlyBatchId), closeTo(0, 0.000001));
     expect(await batchQuantity(lateBatchId), closeTo(3, 0.000001));
 
-    final firstReturn = await store.returnSale(
+    final firstReturn = await store.commerce.returnSale(
       sale.id,
       returnedQuantities: const <String, double>{'p-p6-batch-return': 2},
     );
@@ -527,7 +527,7 @@ void _registerAppStoreWorkflowSalesPart1() {
     expect(await batchQuantity(earlyBatchId), closeTo(2, 0.000001));
     expect(await batchQuantity(lateBatchId), closeTo(3, 0.000001));
 
-    final secondReturn = await store.returnSale(
+    final secondReturn = await store.commerce.returnSale(
       sale.id,
       returnedQuantities: const <String, double>{'p-p6-batch-return': 3},
     );
@@ -559,9 +559,9 @@ void _registerAppStoreWorkflowSalesPart1() {
       expiryTrackingEnabled: true,
       expiryEntryRequired: true,
     );
-    await store.addOrUpdateProduct(tracked);
-    final warehouse = store.resolveWarehouseForPurchase();
-    final draft = await store.createPurchase(
+    await store.catalog.addOrUpdateProduct(tracked);
+    final warehouse = store.inventory.resolveWarehouseForPurchase();
+    final draft = await store.commerce.createPurchase(
       supplierId: 'supplier-p1-batch-return',
       supplierName: 'Atomic Batch Supplier',
       receiveNow: false,
@@ -584,7 +584,7 @@ void _registerAppStoreWorkflowSalesPart1() {
         ),
       ],
     );
-    await store.receivePurchase(
+    await store.commerce.receivePurchase(
       draft.id,
       batchAllocationsByLine: <int, List<BatchAllocation>>{
         0: <BatchAllocation>[
@@ -617,18 +617,18 @@ void _registerAppStoreWorkflowSalesPart1() {
       await sqliteWarehouseQuantity(
         productId: tracked.id,
         warehouseId: warehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(5, 0.000001),
     );
 
-    await store.returnPurchase(draft.id);
+    await store.commerce.returnPurchase(draft.id);
 
     expect(
       await sqliteWarehouseQuantity(
         productId: tracked.id,
         warehouseId: warehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(0, 0.000001),
     );

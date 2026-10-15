@@ -19,12 +19,12 @@ class _InventoryPageState extends State<InventoryPage>
     String warehouseId,
   ) async {
     if (LocalDatabaseService.canQueryBusinessSqlite) {
-      return widget.store.warehouseStockFromSqlite(
+      return widget.store.inventory.warehouseStockFromSqlite(
         productId,
         warehouseId: warehouseId,
       );
     }
-    return widget.store.stockForWarehouse(productId, warehouseId);
+    return widget.store.inventory.stockForWarehouse(productId, warehouseId);
   }
 
   void _handleStoreChanged() {
@@ -81,44 +81,44 @@ class _InventoryPageState extends State<InventoryPage>
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewInventory) {
+    if (!widget.store.security.canViewInventory) {
       return _InventoryAccessDenied(
         title: tr.text('inventory'),
         message: tr.text('no_access_current_role'),
       );
     }
-    if (!widget.store.isCoreDataLoaded) {
+    if (!widget.store.runtime.isCoreDataLoaded) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
     final normalizedQuery = query.trim().toLowerCase();
     final overview = _overviewCache.getOrCompute(
-      widget.store.inventoryRevision,
+      widget.store.inventory.revision,
       () => _InventoryOverviewMetrics.fromStore(widget.store),
     );
     final canViewOverview =
-        widget.store.hasPermission(AppPermission.inventoryView) ||
-            widget.store.hasPermission(AppPermission.reportsView) ||
-            widget.store.hasPermission(AppPermission.productsCreate) ||
-            widget.store.hasPermission(AppPermission.productsEdit) ||
-            widget.store.hasPermission(AppPermission.productsDelete);
-    final canManageWarehouses =
-        widget.store.hasPermission(AppPermission.inventoryWarehousesManage);
-    final canViewMovements = widget.store.hasAnyPermission(<String>{
+        widget.store.security.hasPermission(AppPermission.inventoryView) ||
+            widget.store.security.hasPermission(AppPermission.reportsView) ||
+            widget.store.security.hasPermission(AppPermission.productsCreate) ||
+            widget.store.security.hasPermission(AppPermission.productsEdit) ||
+            widget.store.security.hasPermission(AppPermission.productsDelete);
+    final canManageWarehouses = widget.store.security
+        .hasPermission(AppPermission.inventoryWarehousesManage);
+    final canViewMovements = widget.store.security.hasAnyPermission(<String>{
       AppPermission.inventoryMovementsView,
       AppPermission.reportsView,
     });
-    final canViewCorrections = widget.store.hasAnyPermission(<String>{
+    final canViewCorrections = widget.store.security.hasAnyPermission(<String>{
       AppPermission.inventoryCorrectionsManage,
       AppPermission.inventoryMovementsView,
       AppPermission.reportsView,
     });
-    final canManageCounts =
-        widget.store.hasPermission(AppPermission.inventoryCountsManage);
-    final canViewWasteLoss = widget.store.hasAnyPermission(<String>{
+    final canManageCounts = widget.store.security
+        .hasPermission(AppPermission.inventoryCountsManage);
+    final canViewWasteLoss = widget.store.security.hasAnyPermission(<String>{
       AppPermission.inventoryWasteView,
       AppPermission.reportsView,
     });
-    final canManageWaste = widget.store.hasPermission(
+    final canManageWaste = widget.store.security.hasPermission(
       AppPermission.inventoryWasteManage,
     );
 
@@ -208,9 +208,10 @@ class _InventoryPageState extends State<InventoryPage>
 
   List<Product> _productsFromMemory(String normalizedQuery) {
     return _filteredProductsCache.getOrCompute(
-      widget.store.inventoryRevision,
+      widget.store.inventory.revision,
       normalizedQuery,
-      () => _filterProducts(widget.store.stockTrackedProducts, normalizedQuery),
+      () => _filterProducts(
+          widget.store.catalog.stockTrackedProducts, normalizedQuery),
     );
   }
 
@@ -218,7 +219,7 @@ class _InventoryPageState extends State<InventoryPage>
     String normalizedQuery,
   ) {
     final limit = _visibleInventoryProductCount.clamp(1, 500).toInt();
-    final key = '${widget.store.inventoryRevision}|$normalizedQuery|$limit';
+    final key = '${widget.store.inventory.revision}|$normalizedQuery|$limit';
     if (_inventoryProductsFuture == null ||
         _inventoryProductsFutureKey != key) {
       _inventoryProductsFutureKey = key;
@@ -292,11 +293,10 @@ class _InventoryPageState extends State<InventoryPage>
                   query = value;
                   _visibleInventoryProductCount = 100;
                 }),
-                onAdjust: widget.store
-                        .hasPermission(AppPermission.inventoryCorrectionsManage)
+                onAdjust: widget.store.security.hasPermission(AppPermission.inventoryCorrectionsManage)
                     ? _openAdjustmentDialog
                     : null,
-                canAdjust: widget.store.hasPermission(
+                canAdjust: widget.store.security.hasPermission(
                   AppPermission.inventoryCorrectionsManage,
                 ),
                 loading: loadingProducts,
@@ -320,12 +320,13 @@ class _InventoryPageState extends State<InventoryPage>
 
   Future<void> _openAdjustmentDialog(String productId) async {
     final tr = AppLocalizations.of(context);
-    final product = widget.store.stockTrackedProducts
+    final product = widget.store.catalog.stockTrackedProducts
         .firstWhere((item) => item.id == productId);
     final qtyController = TextEditingController();
     final notesController = TextEditingController();
     final evidenceController = TextEditingController();
-    var selectedWarehouseId = widget.store.resolveWarehouseForPurchase().id;
+    var selectedWarehouseId =
+        widget.store.inventory.resolveWarehouseForPurchase().id;
     var category = 'damage';
     final categories = <String, String>{
       'damage': tr.text('adjustment_damage'),
@@ -349,7 +350,7 @@ class _InventoryPageState extends State<InventoryPage>
                   future: _warehouseStock(product.id, selectedWarehouseId),
                   builder: (context, snapshot) {
                     final currentStock = snapshot.data ??
-                        widget.store.stockForWarehouse(
+                        widget.store.inventory.stockForWarehouse(
                           product.id,
                           selectedWarehouseId,
                         );
@@ -362,7 +363,7 @@ class _InventoryPageState extends State<InventoryPage>
                 DropdownButtonFormField<String>(
                   initialValue: selectedWarehouseId,
                   decoration: InputDecoration(labelText: tr.text('warehouse')),
-                  items: widget.store.warehouses
+                  items: widget.store.inventory.warehouses
                       .map((warehouse) => DropdownMenuItem<String>(
                             value: warehouse.id,
                             child: Text(warehouse.name),
@@ -370,7 +371,7 @@ class _InventoryPageState extends State<InventoryPage>
                       .toList(),
                   onChanged: (value) {
                     setDialogState(() {
-                      selectedWarehouseId = widget.store
+                      selectedWarehouseId = widget.store.inventory
                           .resolveWarehouseForPurchase(warehouseId: value ?? '')
                           .id;
                     });
@@ -435,7 +436,7 @@ class _InventoryPageState extends State<InventoryPage>
                       allocations == null) {
                     return;
                   }
-                  await widget.store.adjustStock(
+                  await widget.store.inventory.adjustStock(
                     productId: productId,
                     warehouseId: selectedWarehouseId,
                     quantityDelta: delta,
@@ -546,7 +547,7 @@ class _InventoryOverview extends StatelessWidget {
                   SummaryCard(
                       title: tr.text('inventory_value'),
                       value: formatUsdReferenceAmount(
-                          overview.inventoryRetailValue, store.storeProfile),
+                          overview.inventoryRetailValue, store.runtime.profile),
                       icon: Icons.payments_outlined),
                   SummaryCard(
                       title: tr.text('pending_auto_corrections'),
@@ -684,7 +685,7 @@ class _InventoryProductTile extends StatelessWidget {
       runSpacing: 6,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Text(formatUsdReferenceAmount(product.price, store.storeProfile)),
+        Text(formatUsdReferenceAmount(product.price, store.runtime.profile)),
         Chip(
             avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null,
             label: Text('${tr.text('stock')}: ${product.stock}')),

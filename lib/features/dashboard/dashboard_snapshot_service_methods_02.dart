@@ -39,7 +39,7 @@ extension DashboardSnapshotServiceMethods2 on DashboardSnapshotService {
     Map<String, ProductCostSnapshot> inventoryCostSnapshots =
         const <String, ProductCostSnapshot>{};
     try {
-      inventoryCostSnapshots = await store.productCostSnapshotsForProducts(
+      inventoryCostSnapshots = await store.catalog.productCostSnapshotsForProducts(
         products.where((product) => product.trackStock && !product.isDeleted),
       );
     } catch (_) {

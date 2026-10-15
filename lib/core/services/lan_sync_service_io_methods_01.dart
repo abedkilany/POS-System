@@ -9,8 +9,8 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
   }
 
   void _onStoreChanged() {
-    if (!store.appIdentity.isHost) return;
-    final sequence = store.latestStoredAuthoritativeSequence;
+    if (!store.runtime.identity.isHost) return;
+    final sequence = store.sync.latestStoredAuthoritativeSequence;
     if (sequence <= 0) return;
     final payload = jsonEncode({
       'type': 'sync_changed',
@@ -59,28 +59,28 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
   }
 
   String _snapshotGenerationKey(String transport) =>
-      'applied_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'applied_host_snapshot_generation_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationInProgressKey(String transport) =>
-      'in_progress_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'in_progress_host_snapshot_generation_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationFailedKey(String transport) =>
-      'failed_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'failed_host_snapshot_generation_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationInProgressAtKey(String transport) =>
-      'in_progress_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'in_progress_host_snapshot_generation_at_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationFailedAtKey(String transport) =>
-      'failed_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'failed_host_snapshot_generation_at_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _restoreCommandExecutedKey(String transport) =>
-      'executed_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'executed_host_restore_command_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _restoreCommandInProgressKey(String transport) =>
-      'in_progress_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'in_progress_host_restore_command_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationLockId(String transport, String generation) =>
-      '${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_$generation';
+      '${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}_$generation';
 
   String _remoteHostSnapshotGeneration(Map<String, dynamic> decoded) {
     return (decoded['hostSnapshotGeneration'] ??
@@ -125,7 +125,7 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
   bool _needsHostSnapshotGenerationRebuild(
       String transport, Map<String, dynamic> decoded) {
     if (!UnifiedSyncPolicy.shouldTrackRemoteSnapshotGeneration(
-        store.appIdentity)) {
+        store.runtime.identity)) {
       return false;
     }
     final remote = _remoteHostSnapshotGeneration(decoded);
@@ -290,7 +290,7 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
           0.72, 'Host restore detected. Rebuilding from LAN Host snapshot...');
       final settings = LanSyncSettings.load();
       await settings.copyWith(clearLastPullCursor: true).save();
-      await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+      await SyncDeviceStateStore.resetClientProgress(store.runtime.identity,
           transport: 'lan');
       result = await repairFromHostSnapshot(
         host,
@@ -355,7 +355,7 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
                 decoded['type'] != 'discover') {
               continue;
             }
-            final identity = store.appIdentity;
+            final identity = store.runtime.identity;
             final requestedStore = '${decoded['storeId'] ?? ''}'.trim();
             final requestedBranch = '${decoded['branchId'] ?? ''}'.trim();
             if (requestedStore != identity.storeId.trim() ||
@@ -367,7 +367,7 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
               'type': 'host',
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'hostDeviceId': store.deviceId,
+              'hostDeviceId': store.sync.deviceId,
               'port': LanSyncService._sharedPort ?? 8787,
             });
             socket.send(utf8.encode(response), packet.address, packet.port);
@@ -384,7 +384,7 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
 
   Future<void> _ensureHostRegistryMigration() async {
     final settings = LanSyncSettings.load();
-    final hostDeviceId = store.deviceId.trim();
+    final hostDeviceId = store.sync.deviceId.trim();
     if (!settings.hostRegistryNeedsMigration(hostDeviceId)) return;
     await settings.withMigratedHostRegistry(hostDeviceId).save();
   }
@@ -498,8 +498,8 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
     // real data, which would produce an apparently successful but empty
     // Client bootstrap. Always hydrate the data before building a fresh
     // snapshot (pairing uses force=true).
-    await store.ensureHeavyDataLoaded();
-    final envelope = await store.exportUnifiedSnapshotEnvelope(
+    await store.runtime.ensureHeavyDataLoaded();
+    final envelope = await store.recovery.exportUnifiedSnapshotEnvelope(
       kind: 'full_store',
       maxItemsPerChunk: 300,
     );
@@ -531,7 +531,7 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
     DateTime? since,
     int sinceSequence = 0,
   }) {
-    final decoded = jsonDecode(store.exportSyncChangesJson(
+    final decoded = jsonDecode(store.sync.exportChangesJson(
         since: since, sinceSequence: sinceSequence)) as Map<String, dynamic>;
     final changes = decoded['changes'] as List<dynamic>? ?? const <dynamic>[];
     return {
@@ -551,7 +551,7 @@ extension LanSyncServiceSplitPart1 on LanSyncService {
     final allowed = AccountAuthCache.load()?.devicesLimit;
     if (allowed == null) return false;
     final normalizedAllowed = allowed < 0 ? 0 : allowed;
-    final hostDeviceId = store.deviceId.trim();
+    final hostDeviceId = store.sync.deviceId.trim();
     final excluded = excludeDeviceId.trim();
     final linked = settings.hostRegistry.values.where((device) {
       final id = device.clientDeviceId.trim();

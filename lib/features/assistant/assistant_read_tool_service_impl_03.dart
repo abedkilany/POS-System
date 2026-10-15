@@ -44,10 +44,9 @@ extension _AssistantReadToolServicePart3
       );
     }
 
-    await store.ensureAccountTransactionsLoaded();
+    await store.accounting.ensureLoaded();
     final party = matches.single;
-    final allTransactions = store
-        .accountTransactionsForAccount(partyType, party.id)
+    final allTransactions = store.accounting.transactionsForAccount(partyType, party.id)
         .where((transaction) => !transaction.isDeleted)
         .toList(growable: false)
       ..sort(_compareAccountTransactions);
@@ -69,7 +68,7 @@ extension _AssistantReadToolServicePart3
         .toSet()
         .toList()
       ..sort();
-    if (currencies.isEmpty) currencies.add(store.storeProfile.baseCurrency);
+    if (currencies.isEmpty) currencies.add(store.runtime.profile.baseCurrency);
     final transactionsByCurrency = <String, List<AccountTransaction>>{
       for (final currency in currencies)
         currency: allTransactions
@@ -207,8 +206,8 @@ extension _AssistantReadToolServicePart3
     final normalized = _normalizePartyName(query);
     final matches = <Object>[];
     if (isSales) {
-      await store.ensureSalesLoaded();
-      final documents = store.sales.where((sale) {
+      await store.commerce.ensureSalesLoaded();
+      final documents = store.commerce.sales.where((sale) {
         if (sale.isDeleted || !_dateMatches(sale.date, from, to)) return false;
         return _invoiceMatches(
           query: query,
@@ -226,8 +225,8 @@ extension _AssistantReadToolServicePart3
           .toList(growable: false);
       matches.addAll(exact.isEmpty ? documents : exact);
     } else {
-      await store.ensurePurchasesLoaded();
-      final documents = store.purchases.where((purchase) {
+      await store.commerce.ensurePurchasesLoaded();
+      final documents = store.commerce.purchases.where((purchase) {
         if (purchase.isDeleted || !_dateMatches(purchase.date, from, to)) {
           return false;
         }
@@ -578,10 +577,9 @@ extension _AssistantReadToolServicePart3
       );
     }
     final party = matches.single;
-    await store.ensureAccountTransactionsLoaded();
+    await store.accounting.ensureLoaded();
     final asOfInclusive = _endOfDay(asOf);
-    final transactions = store
-        .accountTransactionsForAccount(partyType, party.id)
+    final transactions = store.accounting.transactionsForAccount(partyType, party.id)
         .where((transaction) =>
             !transaction.isDeleted && !transaction.date.isAfter(asOfInclusive))
         .toList(growable: false);
@@ -606,7 +604,7 @@ extension _AssistantReadToolServicePart3
         .where(
             (document) => belongsToParty(document.partyId, document.partyName))
         .toList(growable: false);
-    final baseCurrency = store.storeProfile.baseCurrency.toUpperCase();
+    final baseCurrency = store.runtime.profile.baseCurrency.toUpperCase();
     final onlyCurrency =
         amountsByCurrency.length == 1 ? amountsByCurrency.keys.single : null;
     final ledgerTotals =
@@ -697,14 +695,14 @@ extension _AssistantReadToolServicePart3
     String partyType,
   ) async {
     if (partyType == 'customer') {
-      await store.ensureCustomersLoaded();
-      return store.customers
+      await store.commerce.ensureCustomersLoaded();
+      return store.commerce.customers
           .where((customer) => !customer.isDeleted)
           .map((customer) => _AssistantParty(customer.id, customer.name))
           .toList(growable: false);
     }
-    await store.ensureSuppliersLoaded();
-    return store.suppliers
+    await store.commerce.ensureSuppliersLoaded();
+    return store.commerce.suppliers
         .where((supplier) => !supplier.isDeleted)
         .map((supplier) => _AssistantParty(supplier.id, supplier.name))
         .toList(growable: false);

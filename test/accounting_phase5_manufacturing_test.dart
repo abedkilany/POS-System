@@ -33,7 +33,7 @@ void main() {
       quantityDelta: 10,
       reason: 'Opening raw inventory',
     );
-    final bom = await store.createBillOfMaterials(
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Accounting BOM',
       outputProductId: 'fg-accounting',
       outputQuantity: 1,
@@ -46,13 +46,13 @@ void main() {
         ),
       ],
     );
-    final started = await store.startManufacturingOrder(
+    final started = await store.inventory.startManufacturingOrder(
       bomId: bom.id,
       quantity: 1,
       rawMaterialsWarehouseId: rawWarehouse.id,
       finishedGoodsWarehouseId: finishedWarehouse.id,
     );
-    final completed = await store.finishManufacturingOrder(
+    final completed = await store.inventory.finishManufacturingOrder(
       orderId: started.id,
       actualQuantity: 1,
       actualConsumedQuantities: const <String, double>{'raw-accounting': 4},
@@ -101,7 +101,7 @@ void main() {
         (line(finishedAccount)['debit'] as num).toDouble(), closeTo(6, 0.0001));
     expect((line(wasteAccount)['debit'] as num).toDouble(), closeTo(2, 0.0001));
 
-    final retried = await store.finishManufacturingOrder(
+    final retried = await store.inventory.finishManufacturingOrder(
       orderId: started.id,
       actualQuantity: 1,
     );

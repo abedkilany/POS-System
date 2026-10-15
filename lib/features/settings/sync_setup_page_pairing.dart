@@ -159,7 +159,7 @@ extension _SyncSetupPairing on _SyncSetupPageState {
 
   Future<void> _connectDirect() async {
     _beginConnectionAttempt('Connecting directly to Host...');
-    final previousIdentity = widget.store.appIdentity;
+    final previousIdentity = widget.store.runtime.identity;
     final previousDirectSettings = DirectSyncSettings.load();
     var provisionalPairingCreated = false;
 
@@ -178,7 +178,7 @@ extension _SyncSetupPairing on _SyncSetupPageState {
                 setupComplete: false,
               );
         await restoreSettings.save();
-        await widget.store.updateAppIdentityDuringSetup(previousIdentity);
+        await widget.store.runtime.updateIdentityDuringSetup(previousIdentity);
         SyncDiagnosticsLog.add(
             '[DIRECT_PAIRING] provisional bootstrap rolled back after failed snapshot');
       } catch (rollbackError) {

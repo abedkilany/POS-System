@@ -51,8 +51,8 @@ class _DashboardPageState extends State<DashboardPage> {
   void _handleStoreChanged() {
     if (!mounted) return;
     final hasHydratedState = _state?.isHydrated ?? false;
-    if (hasHydratedState && !widget.store.isReady) return;
-    if (widget.store.isReady && _suppressStartupRefresh) {
+    if (hasHydratedState && !widget.store.runtime.isReady) return;
+    if (widget.store.runtime.isReady && _suppressStartupRefresh) {
       _suppressStartupRefresh = false;
       if (hasHydratedState) return;
     }
@@ -61,7 +61,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _bootstrapDashboard({bool forceRefresh = false}) async {
     final cachedSummary = await _service.loadCachedSummary(
-      storeId: widget.store.appIdentity.storeId,
+      storeId: widget.store.runtime.identity.storeId,
     );
     if (!mounted) return;
     if (cachedSummary != null) {
@@ -95,7 +95,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void _scheduleRefresh({bool immediate = false}) {
     if (!mounted) return;
     if (_refreshInProgress) return;
-    if ((_state?.isHydrated ?? false) && !widget.store.isReady) {
+    if ((_state?.isHydrated ?? false) && !widget.store.runtime.isReady) {
       return;
     }
     _refreshDebounce?.cancel();
@@ -153,7 +153,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   String _money(double value) {
-    return formatUsdReferenceAmount(value, widget.store.storeProfile);
+    return formatUsdReferenceAmount(value, widget.store.runtime.profile);
   }
 
   IconData _operationIcon(DashboardOperationType type) {
@@ -441,13 +441,13 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
               _SystemStatusData(
                 title: tr.text('products'),
-                value: '${widget.store.allProductsForDiagnostics.length}',
+                value: '${widget.store.catalog.allProductsForDiagnostics.length}',
                 icon: Icons.inventory_2_outlined,
                 color: const Color(0xFF2563EB),
               ),
               _SystemStatusData(
                 title: tr.text('customers'),
-                value: '${widget.store.allCustomersForDiagnostics.length}',
+                value: '${widget.store.commerce.allCustomersForDiagnostics.length}',
                 icon: Icons.people_alt_outlined,
                 color: const Color(0xFF16A34A),
               ),

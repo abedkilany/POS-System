@@ -32,7 +32,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   }
 
   Future<void> _createRecoveryCheckpoint() async {
-    if (_recoveryRunning || !widget.store.canManageMaintenance) return;
+    if (_recoveryRunning || !widget.store.security.canManageMaintenance) return;
     final tr = AppLocalizations.of(context);
     setState(() => _recoveryRunning = true);
     try {
@@ -60,7 +60,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   }
 
   Future<void> _verifyLatestRecoveryBackup() async {
-    if (_recoveryRunning || !widget.store.canManageMaintenance) return;
+    if (_recoveryRunning || !widget.store.security.canManageMaintenance) return;
     final tr = AppLocalizations.of(context);
     setState(() => _recoveryRunning = true);
     try {
@@ -99,7 +99,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   }
 
   Future<void> _repairProductCosts() async {
-    if (_costRepairRunning || !widget.store.canManageMaintenance) return;
+    if (_costRepairRunning || !widget.store.security.canManageMaintenance) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -207,7 +207,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   }
 
   Future<void> _showRecoveryReadiness() async {
-    if (!widget.store.canManageMaintenance) return;
+    if (!widget.store.security.canManageMaintenance) return;
     final tr = AppLocalizations.of(context);
     setState(() => _recoveryRunning = true);
     try {
@@ -426,7 +426,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   }
 
   Future<void> _runCashPhase7Migration() async {
-    if (_phase7Running || !widget.store.canManageMaintenance) return;
+    if (_phase7Running || !widget.store.security.canManageMaintenance) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
           context: context,
@@ -501,7 +501,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewMaintenance) {
+    if (!widget.store.security.canViewMaintenance) {
       return _AccessDeniedScaffold(
         title: tr.text('maintenance'),
         message: tr.text('no_access_maintenance_tools'),
@@ -699,7 +699,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   ) {
     final canRepairProductCosts = availableRepairActions
             .contains(MaintenanceRepairAction.repairProductCosts) ||
-        widget.store.stockTrackedProducts.isNotEmpty;
+        widget.store.catalog.stockTrackedProducts.isNotEmpty;
     return _SectionCard(
       title: tr.text('maintenance_actions'),
       icon: Icons.build_outlined,
@@ -709,14 +709,14 @@ class _MaintenancePageState extends State<MaintenancePage> {
           runSpacing: 12,
           children: [
             FilledButton.icon(
-              onPressed: (!_loading && widget.store.canManageMaintenance)
+              onPressed: (!_loading && widget.store.security.canManageMaintenance)
                   ? () => _refresh(deep: false)
                   : null,
               icon: const Icon(Icons.cleaning_services_outlined),
               label: Text(tr.text('quick_recheck')),
             ),
             OutlinedButton.icon(
-              onPressed: (!_loading && widget.store.canManageMaintenance)
+              onPressed: (!_loading && widget.store.security.canManageMaintenance)
                   ? () => _refresh(deep: true)
                   : null,
               icon: const Icon(Icons.fact_check_outlined),
@@ -725,7 +725,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
             FilledButton.icon(
               onPressed: (!_loading &&
                       !_costRepairRunning &&
-                      widget.store.canManageMaintenance &&
+                      widget.store.security.canManageMaintenance &&
                       canRepairProductCosts)
                   ? _repairProductCosts
                   : null,
@@ -740,7 +740,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
             OutlinedButton.icon(
               onPressed:
-                  (!_recoveryRunning && widget.store.canManageMaintenance)
+                  (!_recoveryRunning && widget.store.security.canManageMaintenance)
                       ? _showRecoveryReadiness
                       : null,
               icon: const Icon(Icons.health_and_safety_outlined),
@@ -748,8 +748,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
             FilledButton.icon(
               onPressed: (!_recoveryRunning &&
-                      widget.store.canManageMaintenance &&
-                      widget.store.hasPermission(AppPermission.backupExport))
+                      widget.store.security.canManageMaintenance &&
+                      widget.store.security.hasPermission(AppPermission.backupExport))
                   ? _createRecoveryCheckpoint
                   : null,
               icon: _recoveryRunning
@@ -763,22 +763,22 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
             OutlinedButton.icon(
               onPressed: (!_recoveryRunning &&
-                      widget.store.canManageMaintenance &&
-                      widget.store.hasPermission(AppPermission.backupExport))
+                      widget.store.security.canManageMaintenance &&
+                      widget.store.security.hasPermission(AppPermission.backupExport))
                   ? _verifyLatestRecoveryBackup
                   : null,
               icon: const Icon(Icons.verified_user_outlined),
               label: Text(tr.text('verify_latest_backup')),
             ),
             OutlinedButton.icon(
-              onPressed: summary == null || !widget.store.canManageMaintenance
+              onPressed: summary == null || !widget.store.security.canManageMaintenance
                   ? null
                   : _exportDiagnosticReport,
               icon: const Icon(Icons.description_outlined),
               label: Text(tr.text('export_technical_report')),
             ),
             OutlinedButton.icon(
-              onPressed: widget.store.canManageMaintenance
+              onPressed: widget.store.security.canManageMaintenance
                   ? () => Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => PageTimingScope(
@@ -794,14 +794,14 @@ class _MaintenancePageState extends State<MaintenancePage> {
               label: Text(tr.text('diagnostics')),
             ),
             OutlinedButton.icon(
-              onPressed: widget.store.canManageDatabase
+              onPressed: widget.store.security.canManageDatabase
                   ? () => setState(() => _showDatabaseExplorer = true)
                   : null,
               icon: const Icon(Icons.storage_outlined),
               label: Text(tr.text('database_explorer')),
             ),
             OutlinedButton.icon(
-              onPressed: widget.store.canManageMaintenance
+              onPressed: widget.store.security.canManageMaintenance
                   ? _showWindowsInstallerReleases
                   : null,
               icon: const Icon(Icons.download_for_offline_outlined),
@@ -809,7 +809,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
             FilledButton.icon(
               key: const ValueKey('CashPhase7MigrationButton'),
-              onPressed: widget.store.canManageMaintenance && !_phase7Running
+              onPressed: widget.store.security.canManageMaintenance && !_phase7Running
                   ? _runCashPhase7Migration
                   : null,
               icon: _phase7Running

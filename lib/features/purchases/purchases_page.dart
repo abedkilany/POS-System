@@ -101,7 +101,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewPurchases) {
+    if (!widget.store.security.canViewPurchases) {
       return _AccessDeniedScaffold(
         title: tr.text('purchases'),
         message: tr.text('no_access_purchase_records'),
@@ -134,8 +134,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator.adaptive());
         }
-        final allPurchases = widget.store.purchases;
-        final overview = widget.store.purchasesOverview;
+        final allPurchases = widget.store.commerce.purchases;
+        final overview = widget.store.commerce.purchasesOverview;
         final monthlyTotal = overview.monthlyTotal;
         final monthlyCount = overview.monthlyCount;
         final draftTotal = overview.draftTotal;
@@ -145,7 +145,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
         final purchases = useDefaultView
             ? allPurchases
             : _filteredPurchasesCache.getOrCompute(
-                widget.store.purchasesRevision,
+                widget.store.commerce.purchasesRevision,
                 '$_statusFilter|$_sortMode|$query',
                 () {
                   final filtered = allPurchases.where((p) {
@@ -221,14 +221,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           runSpacing: 8,
                           children: [
                             FilledButton.icon(
-                              onPressed: widget.store.canManagePurchases
+                              onPressed: widget.store.security.canManagePurchases
                                   ? () => _openPurchaseDialog(context)
                                   : null,
                               icon: const Icon(Icons.add_shopping_cart),
                               label: Text(tr.text('new_purchase')),
                             ),
                             OutlinedButton.icon(
-                              onPressed: widget.store.canManagePurchases
+                              onPressed: widget.store.security.canManagePurchases
                                   ? () => _openPurchaseReturnDialog(context)
                                   : null,
                               icon:
@@ -270,22 +270,22 @@ class _PurchasesPageState extends State<PurchasesPage> {
                               label: tr.text('purchase_total'),
                               value: formatUsdReferenceAmount(
                                   overview.totalPurchasesAmount,
-                                  widget.store.storeProfile),
+                                  widget.store.runtime.profile),
                               icon: Icons.shopping_cart_checkout),
                           _MetricCard(
                               label: tr.text('purchases_this_month'),
                               value: formatUsdReferenceAmount(
-                                  monthlyTotal, widget.store.storeProfile),
+                                  monthlyTotal, widget.store.runtime.profile),
                               icon: Icons.calendar_month_outlined),
                           _MetricCard(
                               label: tr.text('draft_purchases'),
                               value: formatUsdReferenceAmount(
-                                  draftTotal, widget.store.storeProfile),
+                                  draftTotal, widget.store.runtime.profile),
                               icon: Icons.pending_actions),
                           _MetricCard(
                               label: tr.text('avg_purchase'),
                               value: formatUsdReferenceAmount(
-                                  averagePurchase, widget.store.storeProfile),
+                                  averagePurchase, widget.store.runtime.profile),
                               icon: Icons.insights_outlined),
                         ],
                       ),
@@ -425,28 +425,28 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         final purchase = purchases[index];
                         return _PurchaseTile(
                           purchase: purchase,
-                          storeProfile: widget.store.storeProfile,
+                          storeProfile: widget.store.runtime.profile,
                           onTap: () => _showPurchaseDetails(context, purchase),
                           onReceive: purchase.status == 'Draft'
-                              ? (widget.store.canManagePurchases
+                              ? (widget.store.security.canManagePurchases
                                   ? () => _receivePurchase(context, purchase.id)
                                   : null)
                               : null,
                           onCancel: purchase.isReceived &&
                                   !purchase.isReturned &&
                                   !purchase.isPurchaseReturn
-                              ? (widget.store.hasPermission(
+                              ? (widget.store.security.hasPermission(
                                       AppPermission.purchasesCancel)
                                   ? () => _returnPurchase(context, purchase.id)
                                   : null)
                               : null,
                           onDeleteDraft: !purchase.isReceived &&
                                   !purchase.isCancelled &&
-                                  widget.store.canManagePurchases
+                                  widget.store.security.canManagePurchases
                               ? () => _deleteDraftPurchase(context, purchase.id)
                               : null,
                           onPermanentDelete: null,
-                          onDuplicate: widget.store.canManagePurchases &&
+                          onDuplicate: widget.store.security.canManagePurchases &&
                                   !purchase.isPurchaseReturn
                               ? () => _openPurchaseDialog(context,
                                   template: purchase)
@@ -455,10 +455,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                       !purchase.isCancelled &&
                                       !purchase.isReturned &&
                                       !purchase.isPurchaseReturn &&
-                                      widget.store.canManagePurchases) ||
+                                      widget.store.security.canManagePurchases) ||
                                   (purchase.isReturned &&
-                                      widget.store.canManagePurchases &&
-                                      widget.store.hasPermission(
+                                      widget.store.security.canManagePurchases &&
+                                      widget.store.security.hasPermission(
                                           AppPermission.purchasesCancel))
                               ? () => _openPurchaseDialog(context,
                                   editPurchase: purchase)

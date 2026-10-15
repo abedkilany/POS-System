@@ -29,7 +29,7 @@ class StoreBootstrapService {
       throw ArgumentError('Password must be at least 6 characters.');
     }
 
-    final existingUsers = store.users;
+    final existingUsers = store.security.users;
     final activeUsers = existingUsers.where((user) => user.isActive).toList();
     final legacyPassword = String.fromCharCodes(const [
       97,
@@ -53,23 +53,23 @@ class StoreBootstrapService {
       throw StateError('Initial administrator setup is already complete.');
     }
 
-    final platform = store.appIdentity.platform;
+    final platform = store.runtime.identity.platform;
     if (platform == AppPlatformType.web) {
       throw StateError(
         'Web devices cannot create a Host. Use Connect to Store from Web.',
       );
     }
     final now = DateTime.now();
-    final hostIdentity = store.appIdentity.copyWith(
+    final hostIdentity = store.runtime.identity.copyWith(
       deviceRole: DeviceRole.host,
-      syncMode: store.appIdentity.syncMode == SyncMode.directConnected ||
-              store.appIdentity.syncMode == SyncMode.marketplaceEnabled
-          ? store.appIdentity.syncMode
+      syncMode: store.runtime.identity.syncMode == SyncMode.directConnected ||
+              store.runtime.identity.syncMode == SyncMode.marketplaceEnabled
+          ? store.runtime.identity.syncMode
           : SyncMode.lanOnly,
       hostDeviceId: '',
       updatedAt: now,
     );
-    await store.updateAppIdentityDuringSetup(hostIdentity);
+    await store.runtime.updateIdentityDuringSetup(hostIdentity);
 
     final passwordHash = await PasswordHashing.hashPassword(cleanPassword);
     final adminUser = onlyLegacyAdmin
@@ -94,7 +94,7 @@ class StoreBootstrapService {
             lastLoginAt: now,
           );
     await LocalDatabaseService.runSqliteAuthoritativeTransaction(() async {
-      final existingRoles = store.roles;
+      final existingRoles = store.security.roles;
       if (existingRoles.indexWhere((role) => role.id == 'admin') == -1) {
         await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
           BusinessSqliteStore.rolesKey,
@@ -112,7 +112,7 @@ class StoreBootstrapService {
         );
       }
 
-      final existingUsers = store.users;
+      final existingUsers = store.security.users;
       final users = <Map<String, dynamic>>[
         ...existingUsers
             .where((user) => user.id != adminUser.id)
@@ -125,7 +125,7 @@ class StoreBootstrapService {
       );
       await _seedCatalogDefaultsIfMissing(store);
     });
-    await store.applySessionUser(
+    await store.security.applySessionUser(
       activeUser: adminUser,
       currentRole: 'Admin',
       permissions: Set<String>.from(AppPermission.all),
@@ -164,7 +164,7 @@ class StoreBootstrapService {
     }
 
     final now = DateTime.now();
-    final platform = store.appIdentity.platform;
+    final platform = store.runtime.identity.platform;
     if (platform == AppPlatformType.web) {
       throw StateError(
         'Web devices cannot recover a Host. Use a desktop device, then import the backup.',
@@ -172,7 +172,7 @@ class StoreBootstrapService {
     }
 
     final role = deviceRole ?? DeviceRole.host;
-    final recoveredIdentity = store.appIdentity.copyWith(
+    final recoveredIdentity = store.runtime.identity.copyWith(
       storeId: cleanStoreId,
       branchId: cleanBranchId,
       deviceRole: role,
@@ -180,34 +180,34 @@ class StoreBootstrapService {
       activeSyncTransport: syncMode == SyncMode.directConnected ? 'direct' : '',
       hostDeviceId: hostDeviceId ??
           (role == DeviceRole.host
-              ? store.deviceId
-              : store.appIdentity.hostDeviceId),
+              ? store.sync.deviceId
+              : store.runtime.identity.hostDeviceId),
       deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)
-          ? store.appIdentity.deviceToken
+          ? store.runtime.identity.deviceToken
           : deviceToken.trim(),
       controlPlaneTenantId:
           (controlPlaneTenantId == null || controlPlaneTenantId.trim().isEmpty)
-              ? store.appIdentity.controlPlaneTenantId
+              ? store.runtime.identity.controlPlaneTenantId
               : controlPlaneTenantId.trim(),
-      deviceId: store.deviceId,
+      deviceId: store.sync.deviceId,
       platform: platform,
       updatedAt: now,
     );
-    await store.updateAppIdentityDuringSetup(recoveredIdentity);
+    await store.runtime.updateIdentityDuringSetup(recoveredIdentity);
 
     final cleanStoreName = storeName.trim();
     if (cleanStoreName.isNotEmpty) {
       await LocalDatabaseService.setString(
         'store_profile_v5',
         jsonEncode(
-          store.storeProfile.copyWith(name: cleanStoreName).toJson(),
+          store.runtime.profile.copyWith(name: cleanStoreName).toJson(),
         ),
       );
-      await store.refreshAfterDatabaseChange('store_profile_v5');
+      await store.runtime.refreshAfterDatabaseChange('store_profile_v5');
     }
 
     final passwordHash = await PasswordHashing.hashPassword(cleanPassword);
-    final existingAdminRole = store.roleById('admin');
+    final existingAdminRole = store.security.roleById('admin');
     if (existingAdminRole == null) {
       await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
         BusinessSqliteStore.rolesKey,
@@ -220,10 +220,10 @@ class StoreBootstrapService {
           ).toJson(),
         ],
       );
-      await store.refreshAfterDatabaseChange(BusinessSqliteStore.rolesKey);
+      await store.runtime.refreshAfterDatabaseChange(BusinessSqliteStore.rolesKey);
     }
     AppUser? existingUser;
-    for (final user in store.users) {
+    for (final user in store.security.users) {
       if (user.username.trim().toLowerCase() == cleanUsername) {
         existingUser = user;
         break;
@@ -248,7 +248,7 @@ class StoreBootstrapService {
             lastLoginAt: now,
             isSystem: true,
           );
-    final currentUsers = store.users.toList(growable: false);
+    final currentUsers = store.security.users.toList(growable: false);
     final updatedUsers = currentUsers
         .where((user) => user.id != recoveredUser.id)
         .map((user) => user.toJson())
@@ -260,8 +260,8 @@ class StoreBootstrapService {
         recoveredUser.toJson(),
       ],
     );
-    await store.refreshAfterDatabaseChange(BusinessSqliteStore.usersKey);
-    await store.applySessionUser(
+    await store.runtime.refreshAfterDatabaseChange(BusinessSqliteStore.usersKey);
+    await store.security.applySessionUser(
       activeUser: recoveredUser,
       currentRole: 'Admin',
       permissions: Set<String>.from(AppPermission.all),
@@ -275,7 +275,7 @@ class StoreBootstrapService {
     required String password,
     String? fullName,
   }) async {
-    final owner = store.activeUser;
+    final owner = store.security.activeUser;
     if (owner == null) return;
     final cleanPassword = password.trim();
     if (cleanPassword.length < 6) {
@@ -302,18 +302,18 @@ class StoreBootstrapService {
     await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
       BusinessSqliteStore.usersKey,
       <Map<String, dynamic>>[
-        ...store.users
+        ...store.security.users
             .where((user) => user.id != updated.id)
             .map((user) => user.toJson()),
         updated.toJson(),
       ],
     );
-    await store.refreshAfterDatabaseChange(BusinessSqliteStore.usersKey);
-    await store.applySessionUser(
+    await store.runtime.refreshAfterDatabaseChange(BusinessSqliteStore.usersKey);
+    await store.security.applySessionUser(
       activeUser: updated,
       currentRole: 'Admin',
       permissions: Set<String>.from(AppPermission.all),
-      rememberLogin: store.rememberLogin,
+      rememberLogin: store.security.rememberLogin,
     );
   }
 

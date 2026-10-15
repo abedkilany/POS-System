@@ -78,19 +78,19 @@ class _AccountsTabMemory extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final normalizedQuery = _normalizedSearchQuery(query);
     final dataRevision = accountType == 'customer'
-        ? store.customersRevision
-        : store.suppliersRevision;
+        ? store.commerce.customersRevision
+        : store.commerce.suppliersRevision;
     final rowsRevision = Object.hashAll(<Object?>[
       dataRevision,
       store.accounting.ledgerRevision,
     ]);
     final index = _searchIndexCache.getOrCompute(
       dataRevision,
-      '${store.appIdentity.storeId}|$accountType',
+      '${store.runtime.identity.storeId}|$accountType',
       () {
         final map = <String, String>{};
         if (accountType == 'customer') {
-          for (final customer in store.customers) {
+          for (final customer in store.commerce.customers) {
             map[customer.id] = [
               customer.name,
               customer.phone,
@@ -98,7 +98,7 @@ class _AccountsTabMemory extends StatelessWidget {
             ].join(' ').toLowerCase();
           }
         } else {
-          for (final supplier in store.suppliers) {
+          for (final supplier in store.commerce.suppliers) {
             map[supplier.id] = [
               supplier.name,
               supplier.nameEn,
@@ -113,10 +113,10 @@ class _AccountsTabMemory extends StatelessWidget {
     );
     final rows = _rowsCache.getOrCompute(
       rowsRevision,
-      '${store.appIdentity.storeId}|$accountType|$normalizedQuery',
+      '${store.runtime.identity.storeId}|$accountType|$normalizedQuery',
       () {
         final computed = accountType == 'customer'
-            ? store.customers
+            ? store.commerce.customers
                 .where((customer) =>
                     normalizedQuery.isEmpty ||
                     (index[customer.id]?.contains(normalizedQuery) ?? false))
@@ -130,7 +130,7 @@ class _AccountsTabMemory extends StatelessWidget {
                           .accountBalance('customer', customer.id),
                     ))
                 .toList()
-            : store.suppliers
+            : store.commerce.suppliers
                 .where((supplier) =>
                     normalizedQuery.isEmpty ||
                     (index[supplier.id]?.contains(normalizedQuery) ?? false))
@@ -393,7 +393,7 @@ class _AccountListRow extends StatelessWidget {
                             ?.copyWith(fontWeight: FontWeight.w700))),
                 Text(
                     formatUsdReferenceAmount(
-                        row.balance.abs(), store.storeProfile),
+                        row.balance.abs(), store.runtime.profile),
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium
@@ -462,7 +462,7 @@ class _AccountListRow extends StatelessWidget {
           Expanded(
             flex: 2,
             child: Text(
-                formatUsdReferenceAmount(row.balance.abs(), store.storeProfile),
+                formatUsdReferenceAmount(row.balance.abs(), store.runtime.profile),
                 style: Theme.of(context)
                     .textTheme
                     .titleSmall

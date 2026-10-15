@@ -116,7 +116,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewSuppliers) {
+    if (!widget.store.security.canViewSuppliers) {
       return _AccessDeniedScaffold(
         title: tr.text('suppliers'),
         message: tr.text('no_access_supplier_records'),
@@ -163,9 +163,9 @@ class _SuppliersPageState extends State<SuppliersPage> {
     String value,
   ) {
     final suppliers = _filteredSuppliersCache.getOrCompute(
-      widget.store.suppliersRevision,
+      widget.store.commerce.suppliersRevision,
       value,
-      () => widget.store.suppliers.where((supplier) {
+      () => widget.store.commerce.suppliers.where((supplier) {
         return supplier.name.toLowerCase().contains(value) ||
             supplier.phone.toLowerCase().contains(value);
       }).toList(growable: false),
@@ -186,7 +186,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
 
   Future<_SupplierQueryResult?> _querySuppliersFromSqlite(String value) {
     final limit = math.max(1, _visibleSupplierCount);
-    final key = '${widget.store.suppliersRevision}|$value|$limit';
+    final key = '${widget.store.commerce.suppliersRevision}|$value|$limit';
     if (_supplierQueryFuture == null || _supplierQueryFutureKey != key) {
       _supplierQueryFutureKey = key;
       _supplierQueryFuture = () async {
@@ -250,7 +250,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                   totalCount: totalCount,
                 ),
                 FilledButton.icon(
-                  onPressed: widget.store.canManageSuppliers
+                  onPressed: widget.store.security.canManageSuppliers
                       ? () => _openSupplierForm(context)
                       : null,
                   icon: const Icon(Icons.local_shipping_outlined),
@@ -348,8 +348,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                           tooltip: tr.text('actions'),
                                           onSelected: (value) {
                                             if (value == 'ledger' &&
-                                                widget.store
-                                                    .hasAnyPermission(<String>{
+                                                widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .suppliersLedgerView,
                                                   AppPermission.suppliersManage,
@@ -362,8 +361,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                   accountName: supplier.name);
                                             }
                                             if (value == 'statement' &&
-                                                widget.store
-                                                    .hasAnyPermission(<String>{
+                                                widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .suppliersLedgerView,
                                                   AppPermission.suppliersManage,
@@ -379,8 +377,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                               );
                                             }
                                             if (value == 'payment' &&
-                                                widget.store
-                                                    .hasAnyPermission(<String>{
+                                                widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .suppliersPaymentManage,
                                                   AppPermission.suppliersManage,
@@ -391,13 +388,13 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                             }
                                             if (value == 'edit' &&
                                                 widget
-                                                    .store.canManageSuppliers) {
+                                                    .store.security.canManageSuppliers) {
                                               _openSupplierForm(context,
                                                   supplier: supplier);
                                             }
                                             if (value == 'delete' &&
                                                 widget
-                                                    .store.canManageSuppliers) {
+                                                    .store.security.canManageSuppliers) {
                                               _deleteSupplier(
                                                   context, supplier);
                                             }
@@ -426,8 +423,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                       : Wrap(
                                           children: [
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .hasAnyPermission(<String>{
+                                                onPressed: widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .suppliersLedgerView,
                                                   AppPermission.suppliersManage,
@@ -448,8 +444,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                 tooltip:
                                                     tr.text('account_ledger')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .hasAnyPermission(<String>{
+                                                onPressed: widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .suppliersLedgerView,
                                                   AppPermission.suppliersManage,
@@ -472,8 +467,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                 tooltip: tr.text(
                                                     'print_account_statement')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .hasAnyPermission(<String>{
+                                                onPressed: widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .suppliersPaymentManage,
                                                   AppPermission.suppliersManage,
@@ -487,8 +481,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                 tooltip:
                                                     tr.text('pay_supplier')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .canManageSuppliers
+                                                onPressed: widget.store.security.canManageSuppliers
                                                     ? () => _openSupplierForm(
                                                         context,
                                                         supplier: supplier)
@@ -497,8 +490,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                     Icons.edit_outlined),
                                                 tooltip: tr.text('edit')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .canManageSuppliers
+                                                onPressed: widget.store.security.canManageSuppliers
                                                     ? () => _deleteSupplier(
                                                         context, supplier)
                                                     : null,
@@ -520,7 +512,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
   }
 
   Future<void> _deleteSupplier(BuildContext context, Supplier supplier) async {
-    if (!widget.store.canManageSuppliers) return;
+    if (!widget.store.security.canManageSuppliers) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -541,7 +533,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
       ),
     );
     if (confirmed != true) return;
-    await widget.store.deleteSupplier(supplier.id);
+    await widget.store.commerce.deleteSupplier(supplier.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(tr
@@ -552,16 +544,16 @@ class _SuppliersPageState extends State<SuppliersPage> {
 
   Future<void> _openSupplierForm(BuildContext context,
       {Supplier? supplier}) async {
-    if (!widget.store.canManageSuppliers) return;
+    if (!widget.store.security.canManageSuppliers) return;
     final result = await showDialog<Supplier>(
       context: context,
       builder: (_) => _SupplierDialog(supplier: supplier),
     );
     if (result != null) {
       final isDirect =
-          widget.store.appIdentity.activeSyncTransportNormalized == 'direct';
+          widget.store.runtime.identity.activeSyncTransportNormalized == 'direct';
       if (isDirect) SyncDiagnosticsLog.clear();
-      await widget.store.addOrUpdateSupplier(result);
+      await widget.store.commerce.addOrUpdateSupplier(result);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context).text(

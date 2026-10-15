@@ -8,19 +8,38 @@ void _registerAppStoreWorkflowGroup1() {
         () async {
       final store = await readySqliteStore(storeId: 'ST-EXPENSE-WORKFLOW');
 
-      expect(store.isReady, isTrue);
-      expect(store.products, isEmpty);
-      expect(store.walkInCustomer.name, AppStore.walkInCustomerName);
-      expect(store.customers.map((c) => c.id),
+      expect(store.runtime.isReady, isTrue);
+      expect(store.catalog.products, isEmpty);
+      expect(store.commerce.walkInCustomer.name, AppStore.walkInCustomerName);
+      expect(store.commerce.customers.map((c) => c.id),
           contains(AppStore.walkInCustomerId));
-      expect(store.roles.map((r) => r.id), contains('admin'));
-      expect(store.users.map((u) => u.username), contains('owner'));
-      expect(store.needsInitialAdminSetup, isFalse);
-      expect(store.appIdentity.deviceId, isNotEmpty);
-      expect(store.categories, isNotEmpty);
-      expect(store.brands, isNotEmpty);
-      expect(store.units, isNotEmpty);
+      expect(store.commerce.customers.map((c) => c.id),
+          contains(AppStore.walkInCustomerId));
+      expect(store.security.roles.map((r) => r.id), contains('admin'));
+      expect(store.security.users.map((u) => u.username), contains('owner'));
+      expect(store.security.needsInitialAdminSetup, isFalse);
+      expect(store.runtime.identity.deviceId, isNotEmpty);
+      expect(store.catalog.categories, isNotEmpty);
+      expect(store.catalog.brands, isNotEmpty);
+      expect(store.catalog.units, isNotEmpty);
       expect(store.currentBackupSummary.storeName, isNotEmpty);
+      expect(store.security.activeUser, store.security.activeUser);
+      expect(store.security.currentRole, store.security.currentRole);
+      expect(
+        store.security.hasPermission(AppPermission.settingsManage),
+        store.security.hasPermission(AppPermission.settingsManage),
+      );
+      expect(store.accounting.transactions, store.accounting.transactions);
+      expect(
+        store.accounting.accountBalance('customer', AppStore.walkInCustomerId),
+        store.accounting.accountBalance('customer', AppStore.walkInCustomerId),
+      );
+      expect(store.inventory.warehouses, store.inventory.warehouses);
+      expect(store.inventory.stockMovements, store.inventory.stockMovements);
+      expect(store.inventory.revision, store.inventory.revision);
+      expect(store.sync.changes, store.sync.changes);
+      expect(store.sync.queue, store.sync.queue);
+      expect(store.sync.sequence, store.sync.sequence);
     });
 
     test(
@@ -68,18 +87,18 @@ void _registerAppStoreWorkflowGroup1() {
     test('imports legacy sales without warehouse fields as main warehouse',
         () async {
       final store = await readySqliteStore(storeId: 'ST-LEGACY01');
-      await store.addOrUpdateProduct(product(id: 'p-legacy', stock: 0));
+      await store.catalog.addOrUpdateProduct(product(id: 'p-legacy', stock: 0));
       final stockService = StockTransactionService(
         SqliteMigrationManager.database!,
-        defaultStoreId: store.appIdentity.storeId,
-        defaultBranchId: store.appIdentity.branchId,
+        defaultStoreId: store.runtime.identity.storeId,
+        defaultBranchId: store.runtime.identity.branchId,
       );
       await stockService.applyDelta(
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
         warehouseId: Warehouse.defaultId,
         productId: 'p-legacy',
         delta: 5,
-        branchId: store.appIdentity.branchId,
+        branchId: store.runtime.identity.branchId,
       );
       final db = SqliteMigrationManager.database!;
       final now = DateTime.now().toUtc().toIso8601String();
@@ -100,8 +119,8 @@ void _registerAppStoreWorkflowGroup1() {
             const Variable<String>('legacy_sale_1'),
             Variable<String>(now),
             Variable<String>(now),
-            Variable<String>(store.appIdentity.storeId),
-            Variable<String>(store.appIdentity.branchId),
+            Variable<String>(store.runtime.identity.storeId),
+            Variable<String>(store.runtime.identity.branchId),
             const Variable<String>('INV-LEGACY-0001'),
             const Variable<String>('legacy-customer'),
             const Variable<String>('Legacy Buyer'),
@@ -177,9 +196,9 @@ void _registerAppStoreWorkflowGroup1() {
       SharedPreferences.setMockInitialValues(const <String, Object>{});
       LocalDatabaseService.useInMemoryStoreForTesting();
       final store = AppStore();
-      await store.initialize();
+      await store.runtime.initialize();
 
-      await store.recoverOnlineStoreOwnerIdentity(
+      await store.security.recoverOnlineStoreOwnerIdentity(
         storeId: 'ST-REG001',
         branchId: 'BR-REG001',
         storeName: 'Registered Store',
@@ -188,9 +207,9 @@ void _registerAppStoreWorkflowGroup1() {
         activateUser: false,
       );
 
-      expect(store.hasLocalAdminUser, isTrue);
-      expect(store.activeUser, null);
-      expect(await store.login('owner', 'OwnerPass123'), isTrue);
+      expect(store.security.hasLocalAdminUser, isTrue);
+      expect(store.security.activeUser, null);
+      expect(await store.security.login('owner', 'OwnerPass123'), isTrue);
     });
   });
 }
@@ -203,62 +222,67 @@ void _registerAppStoreWorkflowGroup2() {
       var notificationCount = 0;
       store.addListener(() => notificationCount++);
 
-      await store.addOrUpdateProduct(product(code: '', stock: 0));
-      expect(store.products.single.code, isNotEmpty);
-      expect(store.syncChanges.where((c) => c.entityType == 'product'),
+      await store.catalog.addOrUpdateProduct(product(code: '', stock: 0));
+      expect(store.catalog.products.single.code, isNotEmpty);
+      expect(store.sync.changes.where((c) => c.entityType == 'product'),
           isNotEmpty);
-      expect(store.pendingSyncQueueCount, 0);
+      expect(store.sync.pendingQueue.length, 0);
       expect(notificationCount, greaterThan(0));
 
-      final saved = store.products.single;
+      final saved = store.catalog.products.single;
       await store
-          .addOrUpdateProduct(saved.copyWith(price: 15, lowStockThreshold: 5));
-      await store.adjustStock(
+          .catalog.addOrUpdateProduct(saved.copyWith(price: 15, lowStockThreshold: 5));
+      await store.inventory.adjustStock(
         productId: saved.id,
         warehouseId: Warehouse.defaultId,
         quantityDelta: 4,
         reason: 'workflow stock seed',
       );
-      expect(store.products.single.price, 15);
-      expect(store.lowStockCount, 1);
-      expect(store.inventoryRetailValue, 60);
-      expect(store.inventoryCostValue, 28);
+      expect(store.catalog.products.single.price, 15);
+      expect(store.inventory.lowStockCount, 1);
+      expect(store.inventory.inventoryRetailValue, 60);
+      expect(store.inventory.inventoryCostValue, 28);
 
       expect(
-          store.addOrUpdateProduct(saved.copyWith(id: 'bad', code: saved.code)),
+          store.catalog.addOrUpdateProduct(saved.copyWith(id: 'bad', code: saved.code)),
           throwsArgumentError);
       expect(
-          store.addOrUpdateProduct(
+          store.catalog.addOrUpdateProduct(
               saved.copyWith(id: 'neg', code: 'NEG', price: -1)),
           throwsArgumentError);
 
-      await expectLater(store.deleteProduct(saved.id), throwsStateError);
-      await store.addOrUpdateProduct(
+      await expectLater(store.catalog.deleteProduct(saved.id), throwsStateError);
+      await store.catalog.addOrUpdateProduct(
         product(id: 'delete-me', code: 'DELETE-ME', stock: 0),
       );
-      await store.deleteProduct('delete-me');
+      await store.catalog.deleteProduct('delete-me');
       expect(
-          store.products.map((item) => item.id), isNot(contains('delete-me')));
+          store.catalog.products.map((item) => item.id), isNot(contains('delete-me')));
       expect(
-          store.syncChanges.where(
+          store.sync.changes.where(
               (c) => c.entityType == 'product' && c.operation == 'delete'),
           isNotEmpty);
     });
 
     test('reuses cached product snapshots and delivery note lookups', () async {
       final store = await readySqliteStore(storeId: 'ST-CACHE01');
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
           product(id: 'p-cache', code: 'P-CACHE', stock: 0));
-      await store.adjustStock(
+      await store.inventory.adjustStock(
           productId: 'p-cache',
           warehouseId: Warehouse.defaultId,
           quantityDelta: 10,
           reason: 'test seed');
 
-      expect(identical(store.products, store.products), isTrue);
-      expect(store.productById('p-cache')?.code, 'P-CACHE');
+      expect(identical(store.catalog.products, store.catalog.products), isTrue);
+      expect(store.catalog.productById('p-cache')?.code, 'P-CACHE');
+      expect(identical(store.catalog.products, store.catalog.products), isTrue);
+      expect(store.catalog.productById('p-cache')?.code, 'P-CACHE');
+      expect(store.catalog.categories, store.catalog.categories);
+      expect(store.catalog.brands, store.catalog.brands);
+      expect(store.catalog.units, store.catalog.units);
 
-      final sale = await store.createSale(
+      final sale = await store.commerce.createSale(
           customerId: 'customer-bob-cache',
           customerName: 'Bob',
           paymentMethod: 'Credit',
@@ -271,43 +295,43 @@ void _registerAppStoreWorkflowGroup2() {
               quantity: 1,
             ),
           ]);
-      final note = await store.createDeliveryNoteFromSale(sale.id);
+      final note = await store.commerce.createDeliveryNoteFromSale(sale.id);
 
-      expect(store.deliveryNoteForSale(sale.id)?.id, note.id);
+      expect(store.commerce.deliveryNoteForSale(sale.id)?.id, note.id);
     });
 
     test('reuses cached stock-tracked products and refreshes after edits',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product(id: 'p-track', code: 'P-TRACK'));
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(product(id: 'p-track', code: 'P-TRACK'));
+      await store.catalog.addOrUpdateProduct(
         product(id: 'p-skip', code: 'P-SKIP').copyWith(trackStock: false),
       );
 
-      expect(store.stockTrackedProducts.map((p) => p.id), contains('p-track'));
-      expect(store.stockTrackedProducts.map((p) => p.id),
+      expect(store.catalog.stockTrackedProducts.map((p) => p.id), contains('p-track'));
+      expect(store.catalog.stockTrackedProducts.map((p) => p.id),
           isNot(contains('p-skip')));
-      expect(identical(store.stockTrackedProducts, store.stockTrackedProducts),
+      expect(identical(store.catalog.stockTrackedProducts, store.catalog.stockTrackedProducts),
           isTrue);
 
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         product(id: 'p-track', code: 'P-TRACK').copyWith(trackStock: false),
       );
 
-      expect(store.stockTrackedProducts, isEmpty);
+      expect(store.catalog.stockTrackedProducts, isEmpty);
     });
 
     test('sale saves through typed SQLite without legacy derived payloads',
         () async {
       final store = await readySqliteStore(storeId: 'ST-FAST001');
       await store
-          .addOrUpdateProduct(product(id: 'p-fast', code: 'P-FAST', stock: 0));
-      await store.adjustStock(
+          .catalog.addOrUpdateProduct(product(id: 'p-fast', code: 'P-FAST', stock: 0));
+      await store.inventory.adjustStock(
           productId: 'p-fast',
           warehouseId: Warehouse.defaultId,
           quantityDelta: 10,
           reason: 'test seed');
-      final sale = await store.createSale(
+      final sale = await store.commerce.createSale(
           customerId: 'customer-bob-fast',
           customerName: 'Bob',
           paymentMethod: 'Credit',
@@ -334,78 +358,80 @@ void _registerAppStoreWorkflowGroup2() {
         () async {
       final store = await readySqliteStore(storeId: 'ST-EXPENSE-WORKFLOW');
 
-      await store.addOrUpdateCustomer(
+      await store.commerce.addOrUpdateCustomer(
           Customer(id: 'c1', name: ' Alice ', phone: '111', address: 'A'));
-      expect(store.resolveCustomerName('c1'), 'Alice');
-      expect(store.sanitizeSelectedCustomerId('missing'),
+      expect(store.commerce.resolveCustomerName('c1'), 'Alice');
+      expect(store.commerce.sanitizeSelectedCustomerId('missing'),
           AppStore.walkInCustomerId);
       expect(
-          store.addOrUpdateCustomer(
+          store.commerce.addOrUpdateCustomer(
               Customer(id: 'c2', name: 'alice', phone: '', address: '')),
           throwsArgumentError);
-      await store.deleteCustomer('c1');
-      expect(store.customers.map((c) => c.id), isNot(contains('c1')));
-      expect(store.resolveCustomerName('c1'), AppStore.walkInCustomerName);
-      expect(store.sanitizeSelectedCustomerId('c1'), AppStore.walkInCustomerId);
-      await store.addOrUpdateCustomer(
+      await store.commerce.deleteCustomer('c1');
+      expect(store.commerce.customers.map((c) => c.id), isNot(contains('c1')));
+      expect(store.commerce.customers, store.commerce.customers);
+      expect(store.commerce.resolveCustomerName('c1'), AppStore.walkInCustomerName);
+      expect(store.commerce.sanitizeSelectedCustomerId('c1'), AppStore.walkInCustomerId);
+      await store.commerce.addOrUpdateCustomer(
           Customer(id: 'c3', name: ' alice ', phone: '', address: ''));
-      expect(store.customers.map((c) => c.id), contains('c3'));
+      expect(store.commerce.customers.map((c) => c.id), contains('c3'));
 
-      await store.addOrUpdateSupplier(Supplier(
+      await store.commerce.addOrUpdateSupplier(Supplier(
           id: 's1', name: ' Supplier ', phone: '222', address: 'B', notes: ''));
-      expect(store.suppliers.single.name, 'Supplier');
+      expect(store.commerce.suppliers.single.name, 'Supplier');
       expect(
-          store.addOrUpdateSupplier(Supplier(
+          store.commerce.addOrUpdateSupplier(Supplier(
               id: 's2', name: 'supplier', phone: '', address: '', notes: '')),
           throwsArgumentError);
-      await store.deleteSupplier('s1');
-      expect(store.suppliers, isEmpty);
+      await store.commerce.deleteSupplier('s1');
+      expect(store.commerce.suppliers, isEmpty);
+      expect(store.commerce.suppliers, store.commerce.suppliers);
 
-      await store.addOrUpdateCategory(
+      await store.catalog.addOrUpdateCategory(
           CatalogItem(id: 'cat_test', nameEn: 'Snacks', nameAr: ''));
-      await store.addOrUpdateBrand(
+      await store.catalog.addOrUpdateBrand(
           CatalogItem(id: 'brand_test', nameEn: 'Acme', nameAr: ''));
-      await store.addOrUpdateUnit(
+      await store.catalog.addOrUpdateUnit(
           CatalogItem(id: 'unit_test', nameEn: 'Crate', nameAr: ''));
-      expect(store.categories.map((e) => e.nameEn), contains('Snacks'));
-      expect(store.brands.map((e) => e.nameEn), contains('Acme'));
-      expect(store.units.map((e) => e.nameEn), contains('Crate'));
+      expect(store.catalog.categories.map((e) => e.nameEn), contains('Snacks'));
+      expect(store.catalog.brands.map((e) => e.nameEn), contains('Acme'));
+      expect(store.catalog.units.map((e) => e.nameEn), contains('Crate'));
       expect(
-          store.addOrUpdateCategory(
+          store.catalog.addOrUpdateCategory(
               CatalogItem(id: 'dup', nameEn: 'Snacks', nameAr: '')),
           throwsArgumentError);
       final reusableCategory = CatalogItem(
           id: 'cat_delete', nameEn: 'Reusable Category', nameAr: '');
-      await store.addOrUpdateCategory(reusableCategory);
-      await store.replaceAndDeleteCatalogItem(
+      await store.catalog.addOrUpdateCategory(reusableCategory);
+      await store.catalog.replaceAndDeleteCatalogItem(
         type: 'category',
         item: reusableCategory,
         replacement: null,
       );
-      await store.addOrUpdateCategory(
+      await store.catalog.addOrUpdateCategory(
         CatalogItem(id: 'cat_restore', nameEn: 'Reusable Category', nameAr: ''),
       );
-      expect(store.categories.map((e) => e.id), contains('cat_restore'));
+      expect(store.catalog.categories.map((e) => e.id), contains('cat_restore'));
 
-      await store.addOrUpdateExpense(Expense(
+      await store.commerce.addOrUpdateExpense(Expense(
           id: 'e1',
           title: 'Rent',
           category: 'Office',
           amount: 125.5,
           date: DateTime(2026, 1, 1),
           notes: ''));
-      expect(store.totalExpensesAmount, 0);
-      await store.postExpense('e1', paidInCash: false);
-      expect(store.totalExpensesAmount, 125.5);
+      expect(store.commerce.totalExpensesAmount, 0);
+      await store.commerce.postExpense('e1', paidInCash: false);
+      expect(store.commerce.totalExpensesAmount, 125.5);
       final expenseJournal = await SqliteMigrationManager.database!
           .customSelect(
             "SELECT COUNT(*) AS c FROM journal_entries WHERE reference_type = 'expense' AND reference_id = 'e1' AND status = 'posted'",
           )
           .getSingle();
       expect(expenseJournal.read<int>('c'), 1);
-      expect(store.estimateProfit(), -125.5);
+      expect(store.commerce.estimateProfit(), -125.5);
       expect(
-          store.addOrUpdateExpense(Expense(
+          store.commerce.addOrUpdateExpense(Expense(
               id: 'bad',
               title: '',
               category: '',
@@ -413,9 +439,10 @@ void _registerAppStoreWorkflowGroup2() {
               date: DateTime(2026),
               notes: '')),
           throwsArgumentError);
-      await store.cancelExpense('e1', reason: 'test cancellation');
-      expect(store.expenses.single.isCancelled, isTrue);
-      expect(store.totalExpensesAmount, 0);
+      await store.commerce.cancelExpense('e1', reason: 'test cancellation');
+      expect(store.commerce.expenses.single.isCancelled, isTrue);
+      expect(store.commerce.expenses, store.commerce.expenses);
+      expect(store.commerce.totalExpensesAmount, 0);
     });
   });
 }

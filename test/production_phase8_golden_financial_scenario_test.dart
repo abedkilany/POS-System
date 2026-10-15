@@ -187,7 +187,7 @@ void main() {
       await SqliteMigrationManager.resetForTesting();
     });
 
-    await store.updateTaxConfiguration(
+    await store.accounting.updateTaxConfiguration(
       profiles: <TaxProfile>[
         TaxProfile.standardZero.copyWith(
           code: 'VAT',
@@ -374,8 +374,8 @@ void main() {
       returnedQuantities: const <String, double>{_standardProductId: 1},
     );
     expect(creditNote.amount, _n(expected, 'saleReturnGross'));
-    expect(creditNote.postedSnapshot!.totals.tax,
-        _n(expected, 'saleReturnVat'));
+    expect(
+        creditNote.postedSnapshot!.totals.tax, _n(expected, 'saleReturnVat'));
 
     await store.addOrUpdateExpense(
       Expense(
@@ -481,8 +481,8 @@ void main() {
         closeTo(_n(expected, 'saleDiscountNet'), 0.000001));
     expect(incomeStatement.salesReturns,
         closeTo(_n(expected, 'saleReturnNet'), 0.000001));
-    expect(incomeStatement.netSales,
-        closeTo(_n(expected, 'netSales'), 0.000001));
+    expect(
+        incomeStatement.netSales, closeTo(_n(expected, 'netSales'), 0.000001));
     expect(incomeStatement.costOfGoodsSold,
         closeTo(_n(expected, 'netCogs'), 0.000001));
     expect(incomeStatement.grossProfit,
@@ -493,12 +493,12 @@ void main() {
         closeTo(_n(expected, 'netIncome'), 0.000001));
 
     final balanceSheet = await AccountingService.balanceSheetReport();
-    expect(balanceSheet.assets,
-        closeTo(_n(expected, 'endingAssets'), 0.000001));
+    expect(
+        balanceSheet.assets, closeTo(_n(expected, 'endingAssets'), 0.000001));
     expect(balanceSheet.liabilities,
         closeTo(_n(expected, 'endingLiabilities'), 0.000001));
-    expect(balanceSheet.equity,
-        closeTo(_n(expected, 'endingEquity'), 0.000001));
+    expect(
+        balanceSheet.equity, closeTo(_n(expected, 'endingEquity'), 0.000001));
     expect(balanceSheet.retainedEarnings,
         closeTo(_n(expected, 'endingRetainedEarnings'), 0.000001));
     expect(balanceSheet.liabilitiesAndEquity,
@@ -507,10 +507,12 @@ void main() {
         closeTo(_n(expected, 'balanceSheetDifference'), 0.000001));
   });
 
-  test('golden scenario uses application write paths and read-only SQL evidence',
+  test(
+      'golden scenario uses application write paths and read-only SQL evidence',
       () {
-    final source = File('test/production_phase8_golden_financial_scenario_test.dart')
-        .readAsStringSync();
+    final source =
+        File('test/production_phase8_golden_financial_scenario_test.dart')
+            .readAsStringSync();
     final scenarioStart = source.indexOf(
       "test('production Phase 8 golden financial scenario closes to known balances'",
     );

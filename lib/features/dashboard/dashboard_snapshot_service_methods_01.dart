@@ -2,7 +2,7 @@ part of 'dashboard_snapshot_service.dart';
 
 extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
   String _summaryFutureKey(AppStore store, DateTime reference) =>
-      '${store.appIdentity.storeId}:${store.dashboardRevision}:${reference.year}-${reference.month}-${reference.day}';
+      '${store.runtime.identity.storeId}:${store.runtime.dashboardRevision}:${reference.year}-${reference.month}-${reference.day}';
 
   Future<DashboardSnapshotCache?> loadCachedSummary({
     required String storeId,
@@ -187,9 +187,9 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
       ),
     ];
     return DashboardState(
-      storeName: store.storeProfile.name.trim().isEmpty
-          ? store.appIdentity.storeId
-          : store.storeProfile.name,
+      storeName: store.runtime.profile.name.trim().isEmpty
+          ? store.runtime.identity.storeId
+          : store.runtime.profile.name,
       generatedAt: reference,
       todaySalesTotal: DashboardSnapshotService._doubleValue(summary['todaySalesTotal']),
       todayProfitTotal: DashboardSnapshotService._doubleValue(summary['todayProfitTotal']),
@@ -453,9 +453,9 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
     );
 
     return DashboardState(
-      storeName: store.storeProfile.name.trim().isEmpty
-          ? store.appIdentity.storeId
-          : store.storeProfile.name,
+      storeName: store.runtime.profile.name.trim().isEmpty
+          ? store.runtime.identity.storeId
+          : store.runtime.profile.name,
       generatedAt: reference,
       todaySalesTotal: DashboardSnapshotService._doubleValue(summary['todaySalesTotal']),
       todayProfitTotal: DashboardSnapshotService._doubleValue(summary['todayProfitTotal']),
@@ -501,11 +501,11 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
     required int pendingSyncCount,
     required DateTime reference,
   }) {
-    if (store.isSuspendedByHost) {
+    if (store.runtime.isSuspendedByHost) {
       return DashboardHealthSnapshot(
         level: DashboardStatusLevel.danger,
         title: 'Sync paused',
-        detail: store.suspendedByHostReason,
+        detail: store.runtime.suspendedByHostReason,
         pendingCount: pendingSyncCount,
         lastUpdatedAt: reference,
       );
@@ -611,8 +611,8 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
         if (sqliteSummary != null) {
           await _saveCachedSummary(
             sqliteSummary,
-            storeId: store.appIdentity.storeId,
-            dashboardRevision: store.dashboardRevision,
+            storeId: store.runtime.identity.storeId,
+            dashboardRevision: store.runtime.dashboardRevision,
             reference: reference,
           );
           return sqliteSummary;
@@ -629,8 +629,8 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
     );
     await _saveCachedSummary(
       computed,
-      storeId: store.appIdentity.storeId,
-      dashboardRevision: store.dashboardRevision,
+      storeId: store.runtime.identity.storeId,
+      dashboardRevision: store.runtime.dashboardRevision,
       reference: reference,
     );
     return computed;

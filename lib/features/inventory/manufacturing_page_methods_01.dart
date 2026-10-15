@@ -31,7 +31,8 @@ extension _ManufacturingPageStatePart1 on _ManufacturingPageState {
                 leading: const Icon(Icons.account_tree_outlined),
                 title: Text(bom.name),
                 subtitle: FutureBuilder<double>(
-                  future: widget.store.estimateBillOfMaterialsUnitCost(bom),
+                  future: widget.store.inventory
+                      .estimateBillOfMaterialsUnitCost(bom),
                   initialData: bom.unitCost,
                   builder: (context, snapshot) {
                     final estimatedCost = snapshot.data ?? bom.unitCost;
@@ -332,11 +333,11 @@ extension _ManufacturingPageStatePart1 on _ManufacturingPageState {
     final locale = Localizations.localeOf(context);
     try {
       final estimatedBom =
-          await widget.store.estimateBillOfMaterialsSnapshot(bom);
+          await widget.store.inventory.estimateBillOfMaterialsSnapshot(bom);
       if (!mounted) return;
       await ManufacturingPdfService.printBillOfMaterials(
         bom: estimatedBom,
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         context: context,
         locale: locale,
       );
@@ -408,13 +409,13 @@ extension _ManufacturingPageStatePart1 on _ManufacturingPageState {
 
     try {
       final bomsById = <String, BillOfMaterials>{
-        for (final bom in widget.store.billsOfMaterials) bom.id: bom,
+        for (final bom in widget.store.inventory.billsOfMaterials) bom.id: bom,
       };
       await ManufacturingPdfService.printManufacturingOrders(
         orders: selectedOrders,
         bomsById: bomsById,
         includeDetails: includeDetails,
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         context: context,
         locale: Localizations.localeOf(context),
       );

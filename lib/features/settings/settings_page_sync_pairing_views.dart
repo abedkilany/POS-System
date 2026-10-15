@@ -115,7 +115,7 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
 
   String _humanStatus(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (identity.isHost) {
       final lan = LanSyncSettings.load();
       final direct = DirectSyncSettings.load();
@@ -126,13 +126,13 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
   }
 
   Widget _hostChangedNotificationCard() {
-    final notice = widget.store.latestHostTransferNotification;
+    final notice = widget.store.sync.latestHostTransferNotification;
     if (notice == null) return const SizedBox.shrink();
     final newHostDeviceId = notice['newHostDeviceId']?.toString() ?? '';
     final storeId =
-        notice['storeId']?.toString() ?? widget.store.appIdentity.storeId;
+        notice['storeId']?.toString() ?? widget.store.runtime.identity.storeId;
     final branchId =
-        notice['branchId']?.toString() ?? widget.store.appIdentity.branchId;
+        notice['branchId']?.toString() ?? widget.store.runtime.identity.branchId;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
@@ -164,7 +164,7 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
             onPressed: _busy
                 ? null
                 : () {
-                    widget.store.clearHostTransferNotification();
+                    widget.store.sync.clearHostTransferNotification();
                   },
             icon: const Icon(Icons.close),
           ),
@@ -175,9 +175,9 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
 
   Widget _transferHostCard({required bool isHost}) {
     final tr = AppLocalizations.of(context);
-    final pending = widget.store.pendingHostTransferRequest;
+    final pending = widget.store.sync.pendingHostTransferRequest;
     final approvedForThisDevice =
-        widget.store.approvedHostTransferDeviceId == widget.store.deviceId;
+        widget.store.sync.approvedHostTransferDeviceId == widget.store.sync.deviceId;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(top: 12),
@@ -238,7 +238,7 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
           ] else ...[
             Text(tr
                 .text('this_client_device_id')
-                .replaceAll('{deviceId}', widget.store.deviceId)),
+                .replaceAll('{deviceId}', widget.store.sync.deviceId)),
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
@@ -447,7 +447,7 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
         expiresAt: _latestLanPairingExpiresAt,
         consumed: _latestLanPairingConsumed);
     final borderColor = _pairingBorderColor(context, status);
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final payload = jsonEncode({
       'transport': 'lan',
       'host': host,
@@ -455,7 +455,7 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
       'pairingCode': code,
       'storeId': identity.storeId,
       'branchId': identity.branchId,
-      'hostDeviceId': widget.store.deviceId,
+      'hostDeviceId': widget.store.sync.deviceId,
       if (identity.controlPlaneTenantId.trim().isNotEmpty)
         'controlPlaneTenantId': identity.controlPlaneTenantId,
       'expiresAt': _latestLanPairingExpiresAt?.toIso8601String(),
@@ -679,14 +679,14 @@ extension _SyncPairingViews on _UnifiedSyncSettingsCardState {
                         DirectSyncSettings.load().apiBaseUrl.trim().isNotEmpty
                             ? DirectSyncSettings.load().apiBaseUrl.trim()
                             : VpsControlPlaneSettings.load().apiBaseUrl,
-                  'storeId': widget.store.appIdentity.storeId,
-                  'branchId': widget.store.appIdentity.branchId,
-                  'hostDeviceId': widget.store.deviceId,
-                  if (widget.store.appIdentity.controlPlaneTenantId
+                  'storeId': widget.store.runtime.identity.storeId,
+                  'branchId': widget.store.runtime.identity.branchId,
+                  'hostDeviceId': widget.store.sync.deviceId,
+                  if (widget.store.runtime.identity.controlPlaneTenantId
                       .trim()
                       .isNotEmpty)
                     'controlPlaneTenantId':
-                        widget.store.appIdentity.controlPlaneTenantId,
+                        widget.store.runtime.identity.controlPlaneTenantId,
                   'expiresAt': _latestDirectPairingExpiresAt?.toIso8601String(),
                 }),
                 version: QrVersions.auto,

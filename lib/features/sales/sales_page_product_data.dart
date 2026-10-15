@@ -15,15 +15,15 @@ extension _SalesPageProductData on _SalesPageState {
 
   int _currentStoreUiRevision() {
     return Object.hashAll(<Object?>[
-      widget.store.salesPageRevision,
-      widget.store.canViewSales,
-      widget.store.canSell,
-      widget.store.canManageDeliveryNotes,
-      widget.store.canDeleteOrCancel,
-      widget.store.hasPermission(AppPermission.salesPrint),
-      widget.store.hasPermission(AppPermission.salesEdit),
-      widget.store.hasPermission(AppPermission.salesExport),
-      widget.store.saleWarehouseId
+      widget.store.commerce.salesPageRevision,
+      widget.store.security.canViewSales,
+      widget.store.security.canSell,
+      widget.store.security.canManageDeliveryNotes,
+      widget.store.security.canDeleteOrCancel,
+      widget.store.security.hasPermission(AppPermission.salesPrint),
+      widget.store.security.hasPermission(AppPermission.salesEdit),
+      widget.store.security.hasPermission(AppPermission.salesExport),
+      widget.store.inventory.saleWarehouseId
     ]);
   }
 
@@ -31,7 +31,7 @@ extension _SalesPageProductData on _SalesPageState {
     if (_refreshingProductData) return;
     setState(() => _refreshingProductData = true);
     try {
-      await widget.store.refreshSalesProductData();
+      await widget.store.runtime.refreshSalesProductData();
       if (!mounted) return;
       _visibleProductsCache.invalidate();
       _activeProductsCache.invalidate();
@@ -54,7 +54,7 @@ extension _SalesPageProductData on _SalesPageState {
     final value = double.tryParse(_discountController.text) ?? 0;
     final normalized = value < 0 ? 0 : value;
     return toUsdReferencePrice(
-        normalized.toDouble(), _discountCurrency, widget.store.storeProfile);
+        normalized.toDouble(), _discountCurrency, widget.store.runtime.profile);
   }
 
   double get _discountGrossAmount =>
@@ -104,7 +104,7 @@ extension _SalesPageProductData on _SalesPageState {
       var unitCost = item.product.usdCost;
       if (item.product.trackStock && item.baseQuantity > 0.000001) {
         try {
-          unitCost = await widget.store.estimatedUnifiedBatchUnitCostForProduct(
+          unitCost = await widget.store.inventory.estimatedUnifiedBatchUnitCostForProduct(
               item.product,
               warehouseId: _selectedWarehouseId,
               requiredQuantity: item.baseQuantity);
@@ -118,7 +118,7 @@ extension _SalesPageProductData on _SalesPageState {
   String _stockAvailabilityLabel(Product product, AppLocalizations tr,
       {bool includeUnit = false, String? warehouseId}) {
     if (!product.trackStock) return 'Non-stock';
-    final available = widget.store
+    final available = widget.store.inventory
         .stockForWarehouse(product.id, warehouseId ?? _selectedWarehouseId);
     final quantity =
         includeUnit ? _formatQuantity(available) : available.toString();
@@ -134,7 +134,7 @@ extension _SalesPageProductData on _SalesPageState {
       _cart.fold<double>(0, (sum, item) => sum + item.quantity);
 
   bool get _isWalkInCustomer =>
-      widget.store.sanitizeSelectedCustomerId(_selectedCustomerId) ==
+      widget.store.commerce.sanitizeSelectedCustomerId(_selectedCustomerId) ==
       AppStore.walkInCustomerId;
 
   bool get _isCashPayment => _paymentMethod == 'Cash';
@@ -147,7 +147,7 @@ extension _SalesPageProductData on _SalesPageState {
     final manual = double.tryParse(_paymentExchangeRateController.text.trim());
     if (manual != null && manual > 0) return manual;
     return exchangeRate(
-        _paymentCurrency, _invoiceCurrency, widget.store.storeProfile,
+        _paymentCurrency, _invoiceCurrency, widget.store.runtime.profile,
         effectiveAt: DateTime.now());
   }
 
@@ -159,7 +159,7 @@ extension _SalesPageProductData on _SalesPageState {
     final amountInPaymentCurrency =
         _convertCurrencyAmount(rawTotal, _invoiceCurrency, _paymentCurrency);
     final roundedPaymentAmount = normalizeCashAmount(
-        amountInPaymentCurrency, _paymentCurrency, widget.store.storeProfile);
+        amountInPaymentCurrency, _paymentCurrency, widget.store.runtime.profile);
     return _convertCurrencyAmount(
         roundedPaymentAmount, _paymentCurrency, _invoiceCurrency);
   }
@@ -187,15 +187,15 @@ extension _SalesPageProductData on _SalesPageState {
 
   double _currencyFromBase(double amount, String currency) => convertCurrency(
       amount,
-      widget.store.storeProfile.baseCurrency,
+      widget.store.runtime.profile.baseCurrency,
       currency,
-      widget.store.storeProfile,
+      widget.store.runtime.profile,
       effectiveAt: DateTime.now());
 
   double _convertCurrencyAmount(
       double amount, String fromCurrency, String toCurrency) {
     return convertCurrency(
-        amount, fromCurrency, toCurrency, widget.store.storeProfile,
+        amount, fromCurrency, toCurrency, widget.store.runtime.profile,
         effectiveAt: DateTime.now());
   }
 
@@ -204,9 +204,9 @@ extension _SalesPageProductData on _SalesPageState {
 
   Map<String, String> _productSearchIndex() {
     return _productSearchIndexCache.getOrCompute(
-        widget.store.productsRevision, 'product_search_index', () {
+        widget.store.catalog.productsRevision, 'product_search_index', () {
       final index = <String, String>{};
-      for (final product in widget.store.products) {
+      for (final product in widget.store.catalog.products) {
         final buffer = StringBuffer()
           ..write(product.name)
           ..write(' ')
@@ -246,9 +246,9 @@ extension _SalesPageProductData on _SalesPageState {
   }
 
   Map<String, _BarcodeProductMatch> _barcodeLookup() {
-    return _barcodeLookupCache.getOrCompute(widget.store.productsRevision, () {
+    return _barcodeLookupCache.getOrCompute(widget.store.catalog.productsRevision, () {
       final lookup = <String, _BarcodeProductMatch>{};
-      for (final product in widget.store.products) {
+      for (final product in widget.store.catalog.products) {
         if (!product.isActive || product.isDeleted) continue;
         final saleUnits = product.effectiveSaleUnits;
         final defaultUnit = saleUnits.first;
@@ -304,12 +304,12 @@ extension _SalesPageProductData on _SalesPageState {
 
   List<Product> _visibleProducts() {
     final q = _search.trim().toLowerCase();
-    return _visibleProductsCache.getOrCompute(widget.store.productsRevision, q,
+    return _visibleProductsCache.getOrCompute(widget.store.catalog.productsRevision, q,
         () {
       final activeProducts = _activeProductsCache.getOrCompute(
-          widget.store.productsRevision,
+          widget.store.catalog.productsRevision,
           'active_products',
-          () => widget.store.products
+          () => widget.store.catalog.products
               .where((product) => product.isActive && !product.isDeleted)
               .toList(growable: false));
       if (q.isEmpty) return activeProducts;
@@ -326,7 +326,7 @@ extension _SalesPageProductData on _SalesPageState {
     }
     final normalized = _search.trim().toLowerCase();
     final limit = normalized.isEmpty ? 100 : 250;
-    final key = '${widget.store.productsRevision}|$normalized|$limit';
+    final key = '${widget.store.catalog.productsRevision}|$normalized|$limit';
     if (_visibleProductsFuture == null || _visibleProductsFutureKey != key) {
       _visibleProductsFutureKey = key;
       _visibleProductsFuture = () async {

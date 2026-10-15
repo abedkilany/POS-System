@@ -69,7 +69,7 @@ extension _DatabasePageStatePart3 on _DatabasePageState {
 
   Future<void> _openRowEditor(
       {int? rowIndex, Map<String, dynamic>? row}) async {
-    if (!widget.store.canManageDatabase) return;
+    if (!widget.store.security.canManageDatabase) return;
     final decoded = _decode(_entries[_selectedKey] ?? '');
     final isNew = row == null;
     final existingRows = _rowsFor(decoded);
@@ -155,7 +155,7 @@ extension _DatabasePageStatePart3 on _DatabasePageState {
   }
 
   Future<void> _writeRow(int rowIndex, Map<String, dynamic> row) async {
-    if (!widget.store.canManageDatabase) return;
+    if (!widget.store.security.canManageDatabase) return;
     final decoded = _decode(_entries[_selectedKey] ?? '');
     if (decoded is List) {
       final list = List<dynamic>.from(decoded);
@@ -171,12 +171,12 @@ extension _DatabasePageStatePart3 on _DatabasePageState {
   }
 
   Future<void> _writeSelectedKey(String value) async {
-    if (!widget.store.canManageDatabase) return;
+    if (!widget.store.security.canManageDatabase) return;
     if (!await _ensureDatabaseMutationAuthorization()) return;
     final changedKey = _selectedKey;
     await LocalDatabaseService.setString(changedKey, value);
     await _auditDatabaseMutation('raw_write', details: 'key=$changedKey');
-    await widget.store.refreshAfterDatabaseChange(changedKey);
+    await widget.store.runtime.refreshAfterDatabaseChange(changedKey);
     await _reload();
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -184,7 +184,7 @@ extension _DatabasePageStatePart3 on _DatabasePageState {
   }
 
   Future<void> _openRawEditor() async {
-    if (!widget.store.canManageDatabase) return;
+    if (!widget.store.security.canManageDatabase) return;
     final controller =
         TextEditingController(text: _entries[_selectedKey] ?? '');
     final saved = await showDialog<bool>(
@@ -225,7 +225,7 @@ extension _DatabasePageStatePart3 on _DatabasePageState {
   }
 
   Future<void> _confirmDeleteRow(int rowIndex) async {
-    if (!widget.store.canManageDatabase) return;
+    if (!widget.store.security.canManageDatabase) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -254,7 +254,7 @@ extension _DatabasePageStatePart3 on _DatabasePageState {
   }
 
   Future<void> _confirmDeleteKey() async {
-    if (!widget.store.canManageDatabase) return;
+    if (!widget.store.security.canManageDatabase) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -276,7 +276,7 @@ extension _DatabasePageStatePart3 on _DatabasePageState {
     final changedKey = _selectedKey;
     await LocalDatabaseService.deleteString(changedKey);
     await _auditDatabaseMutation('delete_key', details: 'key=$changedKey');
-    await widget.store.refreshAfterDatabaseChange(changedKey);
+    await widget.store.runtime.refreshAfterDatabaseChange(changedKey);
     await _reload();
   }
 }

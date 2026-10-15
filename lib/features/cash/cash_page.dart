@@ -47,7 +47,7 @@ class _CashPageState extends State<CashPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final canManage = widget.store.canManageCashBox;
+    final canManage = widget.store.security.canManageCashBox;
     return FutureBuilder<AdvancedAccountingItem?>(
       key: ValueKey('cash_page_$_refreshKey'),
       future: AccountingService.currentCashDrawerForDevice(
@@ -70,7 +70,7 @@ class _CashPageState extends State<CashPage> {
                 ? null
                 : currentDrawerSessions.first;
             String money(double value) =>
-                formatUsdReferenceAmount(value, widget.store.storeProfile);
+                formatUsdReferenceAmount(value, widget.store.runtime.profile);
             final openingBalance = (currentSession?.debit ?? 0).toDouble();
             final expectedBalance =
                 (currentSession?.credit ?? currentDrawer?.balance ?? 0)

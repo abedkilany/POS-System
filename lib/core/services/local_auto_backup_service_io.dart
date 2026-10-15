@@ -119,7 +119,7 @@ class LocalAutoBackupService {
     if (_isRunning || kIsWeb) {
       return;
     }
-    if (store.appIdentity.isClient) {
+    if (store.runtime.identity.isClient) {
       return;
     }
     final settings = await loadSettings();
@@ -148,7 +148,7 @@ class LocalAutoBackupService {
     if (kIsWeb) {
       throw UnsupportedError('Local automatic backup is not supported on Web.');
     }
-    if (store.appIdentity.isClient) {
+    if (store.runtime.identity.isClient) {
       throw StateError('Local backup is only available on the Host device.');
     }
 
@@ -178,7 +178,7 @@ class LocalAutoBackupService {
       final now = DateTime.now();
       status.value = const LocalAutoBackupStatus(
           isRunning: true, message: 'Compressing backup...');
-      final recoverySecret = store.appIdentity.recoveryKey.trim();
+      final recoverySecret = store.runtime.identity.recoveryKey.trim();
       if (recoverySecret.length < 8) {
         throw StateError(
           'A valid Store Recovery Key is required before encrypted automatic backups can run.',

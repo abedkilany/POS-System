@@ -21,7 +21,7 @@ Future<void> _shutdownActivePhase5SqliteStoreForTesting() async {
   final previous = _activePhase5SqliteStoreForTesting;
   if (previous == null) return;
   _activePhase5SqliteStoreForTesting = null;
-  await previous.prepareForShutdown();
+  await previous.runtime.prepareForShutdown();
   previous.dispose();
   await LocalDatabaseService.flushPendingWrites();
   await Future<void>.delayed(Duration.zero);
@@ -184,10 +184,10 @@ void main() {
         phase5Product(id: 'fg-1', code: 'FG-1', stock: 0, cost: 0),
       );
       final rawWarehouse =
-          await store.createWarehouse(name: 'Raw', code: 'RAW');
+          await store.inventory.createWarehouse(name: 'Raw', code: 'RAW');
       await Future<void>.delayed(const Duration(milliseconds: 1));
       final finishedWarehouse =
-          await store.createWarehouse(name: 'Finished', code: 'FIN');
+          await store.inventory.createWarehouse(name: 'Finished', code: 'FIN');
       await store.adjustStock(
         productId: 'raw-1',
         warehouseId: rawWarehouse.id,
@@ -202,7 +202,7 @@ void main() {
         ),
         10,
       );
-      final bom = await store.createBillOfMaterials(
+      final bom = await store.inventory.createBillOfMaterials(
         name: 'BOM FG',
         outputProductId: 'fg-1',
         outputQuantity: 1,
@@ -243,8 +243,9 @@ void main() {
         ),
         1,
       );
-      expect(store.stockForWarehouse('raw-1', rawWarehouse.id), 6);
-      expect(store.stockForWarehouse('fg-1', finishedWarehouse.id), 1);
+      expect(store.inventory.stockForWarehouse('raw-1', rawWarehouse.id), 6);
+      expect(
+          store.inventory.stockForWarehouse('fg-1', finishedWarehouse.id), 1);
       expect(
         store.stockMovements.where((m) => m.movementGroupId == order.id).length,
         2,
@@ -264,12 +265,12 @@ void main() {
       await store.addOrUpdateProduct(
         phase5Product(id: 'fg-neg', code: 'FG-NEG', stock: 0, cost: 0),
       );
-      final rawWarehouse =
-          await store.createWarehouse(name: 'Raw Negative', code: 'RAWN');
+      final rawWarehouse = await store.inventory
+          .createWarehouse(name: 'Raw Negative', code: 'RAWN');
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      final finishedWarehouse =
-          await store.createWarehouse(name: 'Finished Negative', code: 'FINN');
-      final bom = await store.createBillOfMaterials(
+      final finishedWarehouse = await store.inventory
+          .createWarehouse(name: 'Finished Negative', code: 'FINN');
+      final bom = await store.inventory.createBillOfMaterials(
         name: 'BOM Negative FG',
         outputProductId: 'fg-neg',
         outputQuantity: 1,
@@ -359,12 +360,12 @@ void main() {
       await store.addOrUpdateProduct(
         phase5Product(id: 'fg-zero-count', code: 'FG-ZC', stock: 0, cost: 0),
       );
-      final rawWarehouse =
-          await store.createWarehouse(name: 'Raw Zero Count', code: 'RZC');
+      final rawWarehouse = await store.inventory
+          .createWarehouse(name: 'Raw Zero Count', code: 'RZC');
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      final finishedWarehouse =
-          await store.createWarehouse(name: 'Finished Zero Count', code: 'FZC');
-      final bom = await store.createBillOfMaterials(
+      final finishedWarehouse = await store.inventory
+          .createWarehouse(name: 'Finished Zero Count', code: 'FZC');
+      final bom = await store.inventory.createBillOfMaterials(
         name: 'BOM Zero Count Repair',
         outputProductId: 'fg-zero-count',
         outputQuantity: 1,
@@ -527,10 +528,11 @@ void main() {
       await store.addOrUpdateProduct(
         phase5Product(id: 'move-1', code: 'MV-1', stock: 0, cost: 3),
       );
-      final source = await store.createWarehouse(name: 'Source', code: 'SRC');
+      final source =
+          await store.inventory.createWarehouse(name: 'Source', code: 'SRC');
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      final destination =
-          await store.createWarehouse(name: 'Destination', code: 'DST');
+      final destination = await store.inventory
+          .createWarehouse(name: 'Destination', code: 'DST');
       await store.adjustStock(
         productId: 'move-1',
         warehouseId: source.id,
@@ -574,11 +576,11 @@ void main() {
       await store.addOrUpdateProduct(
         phase5Product(id: 'bulk-2', code: 'BLK-2', stock: 0, cost: 4),
       );
-      final source =
-          await store.createWarehouse(name: 'Bulk Source', code: 'BS');
+      final source = await store.inventory
+          .createWarehouse(name: 'Bulk Source', code: 'BS');
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      final destination =
-          await store.createWarehouse(name: 'Bulk Destination', code: 'BD');
+      final destination = await store.inventory
+          .createWarehouse(name: 'Bulk Destination', code: 'BD');
       await store.adjustStock(
         productId: 'bulk-1',
         warehouseId: source.id,
@@ -592,7 +594,7 @@ void main() {
         reason: 'seed bulk 2',
       );
 
-      final order = await store.createWarehouseTransferOrder(
+      final order = await store.inventory.createWarehouseTransferOrder(
         fromWarehouseId: source.id,
         toWarehouseId: destination.id,
         notes: 'truck load',
@@ -658,11 +660,11 @@ void main() {
       await store.addOrUpdateProduct(
         phase5Product(id: 'rollback-2', code: 'RB-2', stock: 0, cost: 4),
       );
-      final source =
-          await store.createWarehouse(name: 'Rollback Source', code: 'RS');
+      final source = await store.inventory
+          .createWarehouse(name: 'Rollback Source', code: 'RS');
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      final destination =
-          await store.createWarehouse(name: 'Rollback Destination', code: 'RD');
+      final destination = await store.inventory
+          .createWarehouse(name: 'Rollback Destination', code: 'RD');
       await store.adjustStock(
         productId: 'rollback-1',
         warehouseId: source.id,
@@ -731,10 +733,11 @@ void main() {
       await store.addOrUpdateProduct(
         phase5Product(id: 'dup-1', code: 'DP-1', stock: 0, cost: 3),
       );
-      final source = await store.createWarehouse(name: 'Source', code: 'SRC');
+      final source =
+          await store.inventory.createWarehouse(name: 'Source', code: 'SRC');
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      final destination =
-          await store.createWarehouse(name: 'Destination', code: 'DST');
+      final destination = await store.inventory
+          .createWarehouse(name: 'Destination', code: 'DST');
       final db = SqliteMigrationManager.database!;
       final service = StockTransactionService(
         db,
@@ -860,7 +863,7 @@ void main() {
         quantityDelta: 1,
         reason: 'seed main',
       );
-      final bom = await store.createBillOfMaterials(
+      final bom = await store.inventory.createBillOfMaterials(
         name: 'Legacy BOM',
         outputProductId: 'legacy-mfg-1',
         outputQuantity: 1,
@@ -891,7 +894,7 @@ void main() {
       await store.addOrUpdateProduct(
         phase5Product(id: 'delete-raw-1', code: 'DRAW-1', stock: 0, cost: 1),
       );
-      final bom = await store.createBillOfMaterials(
+      final bom = await store.inventory.createBillOfMaterials(
         name: 'Delete BOM',
         outputProductId: 'delete-mfg-1',
         outputQuantity: 1,
@@ -904,12 +907,12 @@ void main() {
           ),
         ],
       );
-      final order = await store.startManufacturingOrder(
+      final order = await store.inventory.startManufacturingOrder(
         bomId: bom.id,
         quantity: 1,
       );
 
-      await store.deleteManufacturingOrder(order.id);
+      await store.inventory.deleteManufacturingOrder(order.id);
 
       expect(store.manufacturingOrders.any((item) => item.id == order.id),
           isFalse);

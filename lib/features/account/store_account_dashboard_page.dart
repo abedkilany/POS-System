@@ -98,11 +98,11 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                 try {
                   // Keep the local Store Owner in sync only when this account
                   // belongs to the Store currently open on this device.
-                  if (widget.store.appIdentity.storeId.trim().isNotEmpty &&
-                      widget.store.appIdentity.storeId.trim() ==
+                  if (widget.store.runtime.identity.storeId.trim().isNotEmpty &&
+                      widget.store.runtime.identity.storeId.trim() ==
                           cache.storeId.trim() &&
-                      widget.store.storeOwnerUser != null) {
-                    await widget.store.applyStoreOwnerCredentials(
+                      widget.store.security.storeOwnerUser != null) {
+                    await widget.store.security.applyStoreOwnerCredentials(
                       username: result.username.isNotEmpty
                           ? result.username
                           : cache.username,

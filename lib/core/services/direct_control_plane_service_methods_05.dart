@@ -1,7 +1,6 @@
 part of 'direct_control_plane_service.dart';
 
 extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
-
   Future<DirectSyncResult> testConnection(
       VpsControlPlaneSettings settings) async {
     if (!settings.isConfigured) {
@@ -31,7 +30,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
           ok: false, message: 'Direct Server Unreachable: $error');
     }
 
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isClient) {
       return const DirectSyncResult(
           ok: true, message: 'Direct API connection is healthy.');
@@ -73,7 +72,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
   /// the Host must also be reachable through the Relay WebSocket.
   Future<DirectSyncResult> ensureHostRelayReady(
       VpsControlPlaneSettings settings) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isHost) {
       return const DirectSyncResult(
           ok: false, message: 'Only a Direct Host can open the Host relay.');
@@ -99,7 +98,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
 
   Future<DirectSyncResult> validateSingleHost(
       VpsControlPlaneSettings settings) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!settings.isConfigured) {
       return const DirectSyncResult(
           ok: false, message: 'Direct API URL and token are required.');
@@ -108,7 +107,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
     if (status.controlPlaneReachable &&
         status.hostReachable &&
         status.hostDeviceId.isNotEmpty &&
-        status.hostDeviceId != store.deviceId) {
+        status.hostDeviceId != store.sync.deviceId) {
       return DirectSyncResult(
         ok: false,
         message:
@@ -121,7 +120,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
 
   Future<DirectSyncResult> sendHostHeartbeat(
       VpsControlPlaneSettings settings) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isDirectEnabled || !identity.isHost) {
       return const DirectSyncResult(
           ok: false,
@@ -139,7 +138,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'hostDeviceId': store.deviceId,
+              'hostDeviceId': store.sync.deviceId,
               'hostDeviceName': identity.deviceName,
               'platform': identity.platform.name,
               'appVersion': AppBrand.directAppVersion,
@@ -160,7 +159,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
   }
 
   Future<DirectSyncResult> stopHost(VpsControlPlaneSettings settings) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isHost || !settings.isConfigured) {
       return const DirectSyncResult(
           ok: true, message: 'Direct Host is already stopped.');
@@ -171,7 +170,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
             settings.endpoint('/api/sync/host-heartbeat', {
               'store_id': identity.storeId,
               'branch_id': identity.branchId,
-              'host_device_id': store.deviceId,
+              'host_device_id': store.sync.deviceId,
             }),
             headers: _headers(settings),
           )
@@ -192,7 +191,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
     VpsControlPlaneSettings settings, {
     Duration wait = const Duration(seconds: 25),
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!_directAllowedForIdentity(identity) || !settings.isConfigured) {
       return false;
     }
@@ -242,7 +241,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
   Stream<DirectRealtimeSignal> watchRealtimeSignals(
     VpsControlPlaneSettings settings,
   ) async* {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!_directAllowedForIdentity(identity) || !settings.isConfigured) {
       return;
     }
@@ -280,7 +279,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
   Future<HostHeartbeatStatus> getHostHeartbeatStatus(
       VpsControlPlaneSettings settings,
       {Duration staleAfter = const Duration(seconds: 90)}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!settings.isConfigured) {
       return const HostHeartbeatStatus(
           controlPlaneReachable: false,
@@ -357,8 +356,8 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'hostDeviceId': store.deviceId,
-              'deviceId': store.deviceId,
+              'hostDeviceId': store.sync.deviceId,
+              'deviceId': store.sync.deviceId,
               'eventRetentionDays': eventRetentionDays,
               'processedRequestRetentionDays': 3,
               'deletedSnapshotRetentionDays': 7,
@@ -440,7 +439,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
     // rebuild deferrals from publishing ACK/sequence = 0 without an applied
     // replacement snapshot.
     await VpsControlPlaneSettings.clearSavedPullCursor();
-    await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+    await SyncDeviceStateStore.resetClientProgress(store.runtime.identity,
         transport: 'direct');
     late final UnifiedSnapshotApplyResult applied;
     try {
@@ -502,15 +501,15 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
     // never uploaded; the Host serves them through the realtime relay.
     return 0;
     /* Legacy upload implementation intentionally disabled.
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isHost ||
         !identity.isDirectEnabled ||
         !settings.isConfigured) {
       return 0;
     }
-    await store.ensureHeavyDataLoaded();
+    await store.runtime.ensureHeavyDataLoaded();
     final chunks =
-        await store.exportDirectBootstrapSnapshotChunks(maxItemsPerChunk: 300);
+        await store.sync.exportSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty || !_relaySnapshotHasBusinessCollections(chunks)) {
       return 0;
     }
@@ -533,7 +532,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
     VpsControlPlaneSettings settings, {
     required String target,
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     const transport = 'direct';
     var totalPushed = 0;
     var batchNumber = 0;
@@ -543,7 +542,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
     // Client pushes intentionally remain `submitted` until the following Pull
     // applies the Host-authoritative event. Recovering them on every iteration
     // would turn the same push into an endless resend loop.
-    await store.recoverSubmittedSyncQueue(target: target);
+    await store.sync.recoverSubmitted(target: target);
     final relaySession = await _RealtimeRelaySession.open(
       this,
       settings,
@@ -552,8 +551,8 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
 
     try {
       while (true) {
-        await store.recoverStaleInProgressSyncQueue(target: target);
-        await store.retryFailedSyncQueue(target: target);
+        await store.sync.recoverStale(target: target);
+        await store.sync.retryFailed(target: target);
         final pending = _syncCore
             .pendingChangesForTarget(target)
             .take(batchSize)
@@ -567,7 +566,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
           final response = await relaySession.sendRequest(
             'direct_client_push',
             {
-              'deviceId': store.deviceId,
+              'deviceId': store.sync.deviceId,
               'storeId': identity.storeId,
               'branchId': identity.branchId,
               'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
@@ -638,16 +637,15 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
     // relay call before selecting the Host events to publish. Without this,
     // the event can remain locally unsynced while pendingChangesForTarget()
     // sees no ready row, so the Client stays at an older ACK sequence forever.
-    await store.recoverSubmittedSyncQueue(target: UnifiedSyncQueueTarget.host);
-    await store.recoverStaleInProgressSyncQueue(
-        target: UnifiedSyncQueueTarget.host);
-    await store.retryFailedSyncQueue(target: UnifiedSyncQueueTarget.host);
-    final identity = store.appIdentity;
+    await store.sync.recoverSubmitted(target: UnifiedSyncQueueTarget.host);
+    await store.sync.recoverStale(target: UnifiedSyncQueueTarget.host);
+    await store.sync.retryFailed(target: UnifiedSyncQueueTarget.host);
+    final identity = store.runtime.identity;
     final pending =
         _syncCore.pendingChangesForTarget(UnifiedSyncQueueTarget.host);
     if (pending.isEmpty) return true;
     final pendingIds = _syncCore.changeIds(pending);
-    final latestSequence = store.latestStoredAuthoritativeSequence;
+    final latestSequence = store.sync.latestStoredAuthoritativeSequence;
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] directRelay:hostBroadcastStart '
       'pending=${pending.length} latestSequence=$latestSequence',
@@ -660,7 +658,7 @@ extension DirectControlPlaneServiceSplitPart5 on DirectControlPlaneService {
           'changed': true,
           'latestSequence': latestSequence,
           'pendingRequests': pending.length,
-          'deviceId': store.deviceId,
+          'deviceId': store.sync.deviceId,
           'storeId': identity.storeId,
           'branchId': identity.branchId,
           'relayKind': 'host_publish',

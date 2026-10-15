@@ -53,12 +53,12 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     final lanSettings = LanSyncSettings.load();
     final fallback = _DirectMonitoringSnapshot(
       devices: const <DirectDeviceStatus>[],
-      limit: store.appIdentity.isHost
+      limit: store.runtime.identity.isHost
           ? _localClientDeviceLimitStatus(store, lanSettings)
           : null,
     );
     final controlPlaneSettings = VpsControlPlaneSettings.load();
-    final showHostView = widget.forceHostView || store.appIdentity.isHost;
+    final showHostView = widget.forceHostView || store.runtime.identity.isHost;
     if (!showHostView || !controlPlaneSettings.isConfigured) {
       _directMonitoringFuture = Future<_DirectMonitoringSnapshot>.value(
         fallback,
@@ -110,9 +110,9 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     VpsControlPlaneSettings controlPlaneSettings,
     List<DirectDeviceStatus> devices,
   ) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isHost) return false;
-    final hostDeviceId = store.deviceId.trim();
+    final hostDeviceId = store.sync.deviceId.trim();
     if (hostDeviceId.isEmpty) return false;
 
     final lanSettings = LanSyncSettings.load();
@@ -144,9 +144,9 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
 
   Future<void> _adoptDirectRegistryDevices(
       List<DirectDeviceStatus> devices) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isHost) return;
-    final hostDeviceId = store.deviceId.trim();
+    final hostDeviceId = store.sync.deviceId.trim();
     if (hostDeviceId.isEmpty) return;
 
     final loadedSettings = LanSyncSettings.load();
@@ -325,14 +325,14 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isHost = widget.forceHostView || store.appIdentity.isHost;
+    final isHost = widget.forceHostView || store.runtime.identity.isHost;
     final lanSettings = LanSyncSettings.load();
     final controlPlaneSettings = VpsControlPlaneSettings.load();
     final peers = SyncDeviceStateStore.loadPeerStates();
     final peerById = <String, HostPeerSyncState>{
       for (final peer in peers) peer.deviceId: peer
     };
-    final selfState = SyncDeviceStateStore.load(store.appIdentity);
+    final selfState = SyncDeviceStateStore.load(store.runtime.identity);
 
     return Card(
       child: ExpansionTile(
@@ -395,7 +395,7 @@ DirectDeviceLimitStatus? _localClientDeviceLimitStatus(
 }) {
   final allowed = AccountAuthCache.load()?.devicesLimit;
   if (allowed == null) return null;
-  final hostDeviceId = store.deviceId.trim();
+  final hostDeviceId = store.sync.deviceId.trim();
   final excluded = excludeDeviceId.trim();
   final linked = settings.hostRegistry.values.where((device) {
     final id = device.clientDeviceId.trim();

@@ -54,7 +54,7 @@ class DisasterRecoveryService {
       'phase10_last_recovery_verified_path_v1';
 
   Future<DisasterRecoveryReadiness> assessReadiness() async {
-    store.requirePermission(AppPermission.maintenanceView);
+    store.security.requirePermission(AppPermission.maintenanceView);
     final health = await Phase10HealthService(store).run(deep: false);
     final settings = await LocalAutoBackupService.loadSettings();
     final lastSuccess = LocalAutoBackupService.lastSuccessAt();
@@ -66,9 +66,9 @@ class DisasterRecoveryService {
     final verificationRecent = lastVerified != null &&
         DateTime.now().difference(lastVerified).inDays <= 30;
     final checks = <String, bool>{
-      'hostDevice': store.appIdentity.isHost,
+      'hostDevice': store.runtime.identity.isHost,
       'healthGate': health.criticalCount == 0,
-      'recoveryKey': store.appIdentity.recoveryKey.trim().length >= 8,
+      'recoveryKey': store.runtime.identity.recoveryKey.trim().length >= 8,
       'localBackupEnabled': settings.enabled,
       'recentBackup': backupRecent,
       'recentRestoreDrill': verificationRecent,
@@ -80,12 +80,12 @@ class DisasterRecoveryService {
   }
 
   Future<DisasterRecoveryVerificationResult> createVerifiedCheckpoint() async {
-    store.requirePermission(AppPermission.maintenanceManage);
-    store.requirePermission(AppPermission.backupExport);
-    if (!store.appIdentity.isHost) {
+    store.security.requirePermission(AppPermission.maintenanceManage);
+    store.security.requirePermission(AppPermission.backupExport);
+    if (!store.runtime.identity.isHost) {
       throw StateError('Disaster recovery checkpoints are created on the Host device.');
     }
-    final recoveryKey = store.appIdentity.recoveryKey.trim();
+    final recoveryKey = store.runtime.identity.recoveryKey.trim();
     if (recoveryKey.length < 8) {
       throw StateError('A valid Store Recovery Key is required.');
     }
@@ -113,9 +113,9 @@ class DisasterRecoveryService {
   }
 
   Future<DisasterRecoveryVerificationResult> verifyLatestBackup() async {
-    store.requirePermission(AppPermission.maintenanceManage);
-    store.requirePermission(AppPermission.backupExport);
-    if (!store.appIdentity.isHost) {
+    store.security.requirePermission(AppPermission.maintenanceManage);
+    store.security.requirePermission(AppPermission.backupExport);
+    if (!store.runtime.identity.isHost) {
       throw StateError('Local backup verification is managed by the Host device.');
     }
     final file = await _latestBackupFile();
@@ -217,7 +217,7 @@ class DisasterRecoveryService {
       }
       final plain = store.decryptBackupJson(
         encryptedJson,
-        store.appIdentity.recoveryKey.trim(),
+        store.runtime.identity.recoveryKey.trim(),
       );
       final validation = store.validateBackupJson(plain);
       if (!validation.isValid || validation.summary == null) {
@@ -255,17 +255,17 @@ class DisasterRecoveryService {
   }) {
     return AuditLogger.record(
       entityType: 'disaster_recovery',
-      entityId: store.appIdentity.storeId,
+      entityId: store.runtime.identity.storeId,
       action: action,
       summary: summary,
       details: details,
-      userId: store.activeUser?.id ?? '',
-      userName: store.activeUser?.username ?? '',
-      storeId: store.appIdentity.storeId,
-      branchId: store.appIdentity.branchId,
-      sessionId: store.deviceId,
-      traceId: store.deviceId,
-      deviceId: store.deviceId,
+      userId: store.security.activeUser?.id ?? '',
+      userName: store.security.activeUser?.username ?? '',
+      storeId: store.runtime.identity.storeId,
+      branchId: store.runtime.identity.branchId,
+      sessionId: store.sync.deviceId,
+      traceId: store.sync.deviceId,
+      deviceId: store.sync.deviceId,
       sourceModule: 'maintenance',
       isImportant: true,
     );

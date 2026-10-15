@@ -418,9 +418,9 @@ class AssistantChatHistoryStore {
   }
 
   static String _scopeHash(AppStore store) {
-    final user = store.activeUser;
+    final user = store.security.activeUser;
     final userId = user?.id.trim() ?? '';
-    final storeId = store.appIdentity.storeId.trim();
+    final storeId = store.runtime.identity.storeId.trim();
     if (user == null || !user.isActive || userId.isEmpty || storeId.isEmpty) {
       throw StateError('Sign in to Ventio and select a store first.');
     }

@@ -49,11 +49,11 @@ class ProductCostRepairService {
     if (db == null) {
       throw StateError('SQLite database is not initialized.');
     }
-    await store.ensureProductsLoaded();
-    await store.ensureProductCostsLoaded();
+    await store.catalog.ensureProductsLoaded();
+    await store.catalog.ensureProductCostsLoaded();
 
     final products = <String, Product>{
-      for (final product in store.products)
+      for (final product in store.catalog.products)
         if (!product.isDeleted && product.id.trim().isNotEmpty)
           product.id: product,
     };
@@ -93,7 +93,7 @@ class ProductCostRepairService {
         GROUP BY b.product_id
         HAVING COALESCE(SUM(bb.quantity), 0) > 0.000001
       ''', variables: <Variable<Object>>[
-        Variable<String>(store.appIdentity.storeId),
+        Variable<String>(store.runtime.identity.storeId),
       ]).get();
 
       final productUpdates = <Map<String, dynamic>>[];
@@ -121,8 +121,8 @@ class ProductCostRepairService {
           usdCost: averageCost,
           updatedAt: now,
           version: product.version + 1,
-          deviceId: store.appIdentity.deviceId,
-          lastModifiedByDeviceId: store.appIdentity.deviceId,
+          deviceId: store.runtime.identity.deviceId,
+          lastModifiedByDeviceId: store.runtime.identity.deviceId,
           syncStatus: 'pending',
         );
         productUpdates.add(updated.toJson());
@@ -154,9 +154,9 @@ class ProductCostRepairService {
       rebuiltProducts = productUpdates.length;
     });
 
-    await store.refreshAfterDatabaseChange('products_v4');
-    await store.refreshAfterDatabaseChange('product_costs_v1');
-    await store.refreshAfterDatabaseChange('account_transactions_v1');
+    await store.runtime.refreshAfterDatabaseChange('products_v4');
+    await store.runtime.refreshAfterDatabaseChange('product_costs_v1');
+    await store.runtime.refreshAfterDatabaseChange('account_transactions_v1');
 
     // Cost repair can change the physical value, while BOM classification is
     // maintained by a separate accounting journal. Reconcile only after the
@@ -263,7 +263,7 @@ class ProductCostRepairService {
       WHERE b.store_id = ? AND b.source_type = 'purchase'
       GROUP BY b.id, b.product_id, b.unit_cost
     ''', variables: <Variable<Object>>[
-      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.runtime.identity.storeId),
     ]).get();
     for (final row in rows) {
       final batchId = row.data['id']?.toString() ?? '';
@@ -325,7 +325,7 @@ class ProductCostRepairService {
                b.unit_cost, b.initial_quantity
       ORDER BY b.source_id, b.id
     ''', variables: <Variable<Object>>[
-      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.runtime.identity.storeId),
     ]).get();
     final bySource = <String, List<Map<String, dynamic>>>{};
     for (final row in rows) {
@@ -382,8 +382,8 @@ class ProductCostRepairService {
       ''', <Object?>[
         nextCost,
         now.toIso8601String(),
-        store.appIdentity.deviceId,
-        store.appIdentity.storeId,
+        store.runtime.identity.deviceId,
+        store.runtime.identity.storeId,
         entry.key,
         productId,
       ]);
@@ -400,9 +400,9 @@ class ProductCostRepairService {
         manufacturingCost.eligibleCost,
         nextCost,
         now.toIso8601String(),
-        store.appIdentity.deviceId,
+        store.runtime.identity.deviceId,
         entry.key,
-        store.appIdentity.storeId,
+        store.runtime.identity.storeId,
       ]);
     }
     return (
@@ -464,7 +464,7 @@ class ProductCostRepairService {
         AND sm.deleted_at = '' AND trim(sm.batch_id) <> ''
       GROUP BY sm.product_id
     ''', variables: <Variable<Object>>[
-      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.runtime.identity.storeId),
       Variable<String>(sourceId),
     ]).get();
     var materialCost = 0.0;
@@ -477,7 +477,7 @@ class ProductCostRepairService {
       WHERE store_id = ? AND source_type = 'manufacturing_output'
         AND source_id = ? AND product_id = ?
     ''', variables: <Variable<Object>>[
-      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.runtime.identity.storeId),
       Variable<String>(sourceId),
       Variable<String>(productId),
     ]).getSingle();
@@ -492,7 +492,7 @@ class ProductCostRepairService {
       LIMIT 1
     ''', variables: <Variable<Object>>[
       Variable<String>(sourceId),
-      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.runtime.identity.storeId),
     ]).getSingleOrNull();
     final encodedWaste = orderRow?.data['wasteLinesJson']?.toString() ?? '';
     if (encodedWaste.trim().isNotEmpty) {
@@ -552,10 +552,10 @@ class ProductCostRepairService {
     ''', <Object?>[
       nextCost,
       now.toIso8601String(),
-      store.appIdentity.deviceId,
-      store.appIdentity.deviceId,
+      store.runtime.identity.deviceId,
+      store.runtime.identity.deviceId,
       batchId,
-      store.appIdentity.storeId,
+      store.runtime.identity.storeId,
     ]);
     final delta = remainingQuantity * (nextCost - currentCost);
     if (delta.abs() <= 0.000001) return (changed: true, revalued: false);
@@ -569,9 +569,9 @@ class ProductCostRepairService {
       productName: product.name,
       batchId: batchId,
       valueDelta: delta,
-      createdBy: store.appIdentity.deviceId,
-      storeId: store.appIdentity.storeId,
-      branchId: store.appIdentity.branchId,
+      createdBy: store.runtime.identity.deviceId,
+      storeId: store.runtime.identity.storeId,
+      branchId: store.runtime.identity.branchId,
       reason: reason,
     );
     return (changed: true, revalued: journalId.isNotEmpty);
@@ -592,7 +592,7 @@ class ProductCostRepairService {
                b.updated_at DESC, b.id DESC
       LIMIT 1
     ''', variables: <Variable<Object>>[
-      Variable<String>(store.appIdentity.storeId),
+      Variable<String>(store.runtime.identity.storeId),
       Variable<String>(productId),
     ]).getSingleOrNull();
     final value = (row?.data['unitCost'] as num?)?.toDouble();

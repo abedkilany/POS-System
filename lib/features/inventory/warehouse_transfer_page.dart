@@ -31,7 +31,7 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
   bool _saving = false;
   WarehouseTransferOrder? _editingOrder;
 
-  List<Warehouse> get _warehouses => widget.store.warehouses
+  List<Warehouse> get _warehouses => widget.store.inventory.warehouses
       .where((warehouse) => !warehouse.isDeleted && warehouse.isActive)
       .toList(growable: false);
 
@@ -44,7 +44,7 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
       _toWarehouseId =
           warehouses.length > 1 ? warehouses[1].id : warehouses.first.id;
     }
-    _historyFuture = widget.store.recentWarehouseTransferOrders();
+    _historyFuture = widget.store.inventory.recentTransferOrders();
     _loadSourceBalances();
   }
 
@@ -62,7 +62,8 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
     if (_fromWarehouseId.isEmpty) return;
     setState(() => _loadingStock = true);
     try {
-      final all = await widget.store.warehouseStockBalancesFromSqlite();
+      final all =
+          await widget.store.inventory.warehouseStockBalancesFromSqlite();
       if (!mounted) return;
       setState(() {
         _sourceBalances = Map<String, double>.from(
@@ -86,7 +87,7 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
 
   List<Product> get _visibleProducts {
     final query = _search.trim().toLowerCase();
-    final products = widget.store.stockTrackedProducts.where((product) {
+    final products = widget.store.catalog.stockTrackedProducts.where((product) {
       final available = _sourceBalances[product.id] ?? 0;
       if (available <= 0.0000001) return false;
       if (query.isEmpty) return true;
@@ -176,11 +177,11 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
     await _loadSourceBalances();
     if (!mounted) return;
     for (final item in order.items) {
-      final productIndex = widget.store.products.indexWhere(
+      final productIndex = widget.store.catalog.products.indexWhere(
         (product) => product.id == item.productId && !product.isDeleted,
       );
       if (productIndex < 0) continue;
-      final product = widget.store.products[productIndex];
+      final product = widget.store.catalog.products[productIndex];
       final units = product.effectiveSaleUnits;
       final selectedUnitId = units.any((unit) => unit.id == item.unitId)
           ? item.unitId
@@ -229,13 +230,13 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
       }).toList(growable: false);
       final editing = _editingOrder;
       final order = editing == null
-          ? await widget.store.createWarehouseTransferOrder(
+          ? await widget.store.inventory.createWarehouseTransferOrder(
               fromWarehouseId: _fromWarehouseId,
               toWarehouseId: _toWarehouseId,
               notes: _notesController.text.trim(),
               items: requestItems,
             )
-          : await widget.store.editWarehouseTransferOrder(
+          : await widget.store.inventory.editWarehouseTransferOrder(
               orderId: editing.id,
               expectedVersion: editing.version,
               fromWarehouseId: _fromWarehouseId,
@@ -250,7 +251,7 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
       _cart.clear();
       _notesController.clear();
       _editingOrder = null;
-      _historyFuture = widget.store.recentWarehouseTransferOrders();
+      _historyFuture = widget.store.inventory.recentTransferOrders();
       await _loadSourceBalances();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -275,7 +276,8 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.hasPermission(AppPermission.inventoryWarehousesManage)) {
+    if (!widget.store.security
+        .hasPermission(AppPermission.inventoryWarehousesManage)) {
       return Scaffold(
         appBar: AppBar(title: Text(tr.text('transfer_stock'))),
         body: Center(child: Text(tr.text('no_access_current_role'))),
@@ -692,7 +694,7 @@ class _WarehouseTransferPageState extends State<WarehouseTransferPage> {
     try {
       await WarehouseTransferPdfService.printTransferOrder(
         order: order,
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         context: context,
         locale: Localizations.localeOf(context),
       );

@@ -65,13 +65,13 @@ class _AccountingRolesTabState extends State<_AccountingRolesTab> {
   Future<_AccountingRolesData> _loadCached() {
     return _futureCache.getOrCompute(
       widget.store.accounting.revision,
-      widget.store.appIdentity.storeId,
+      widget.store.runtime.identity.storeId,
       _load,
     );
   }
 
   Future<void> _updateRole(String roleKey, String accountId) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     await AccountingService.updateAccountRole(
       roleKey: roleKey,
       accountId: accountId,
@@ -118,7 +118,7 @@ class _AccountingRolesTabState extends State<_AccountingRolesTab> {
               validationErrors: <String>[],
             );
         final canManage =
-            widget.store.hasPermission(AppPermission.accountingManage);
+            widget.store.security.hasPermission(AppPermission.accountingManage);
         final children = <Widget>[
           Card(
             elevation: 0,

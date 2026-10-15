@@ -15,7 +15,7 @@ class _TransactionsTab extends StatelessWidget {
     final normalizedQuery = _normalizedSearchQuery(query);
     final rows = _rowsCache.getOrCompute(
       store.accounting.ledgerRevision,
-      '${store.appIdentity.storeId}|$cashOnly|$normalizedQuery',
+      '${store.runtime.identity.storeId}|$cashOnly|$normalizedQuery',
       () {
         final computed = store.accounting.transactions
             .where((txn) =>
@@ -137,10 +137,10 @@ class _TransactionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final debitText = transaction.debit > 0
-        ? formatUsdReferenceAmount(transaction.debit, store.storeProfile)
+        ? formatUsdReferenceAmount(transaction.debit, store.runtime.profile)
         : '';
     final creditText = transaction.credit > 0
-        ? formatUsdReferenceAmount(transaction.credit, store.storeProfile)
+        ? formatUsdReferenceAmount(transaction.credit, store.runtime.profile)
         : '';
     final accountName = transaction.accountName.trim().isEmpty
         ? tr.text(

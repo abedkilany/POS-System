@@ -66,7 +66,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     _storeListener = _handleStoreChanged;
     widget.store.addListener(_storeListener);
     _authCache = AccountAuthCache.load();
-    _rememberLogin = widget.store.rememberLogin;
+    _rememberLogin = widget.store.security.rememberLogin;
   }
 
   @override
@@ -138,8 +138,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
           store: widget.store,
           cache: authCache,
           hasStoreIdentity:
-              widget.store.appIdentity.hostDeviceId.trim().isNotEmpty,
-          hasLocalStoreData: widget.store.hasLocalAdminUser,
+              widget.store.runtime.identity.hostDeviceId.trim().isNotEmpty,
+          hasLocalStoreData: widget.store.security.hasLocalAdminUser,
           canRecoverStoreData: authCache.directSyncEnabled,
           onRecoverStoreIdentity: () => _recoverStoreIdentity(context),
           onRecoverStoreData: () => _recoverStoreData(context),
@@ -151,7 +151,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         ),
       );
     }
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final directSettings = DirectSyncSettings.load();
     final directBootstrapIncomplete = identity.isClient &&
         identity.activeSyncTransportNormalized == 'direct' &&
@@ -171,9 +171,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
     }
 
-    if (widget.store.activeUser != null) return widget.child;
+    if (widget.store.security.activeUser != null) return widget.child;
 
-    if (_showRegister && !kIsWeb && !widget.store.hasLocalAdminUser) {
+    if (_showRegister && !kIsWeb && !widget.store.security.hasLocalAdminUser) {
       return _InitialAdminSetupCard(
         storeNameController: _storeNameController,
         usernameController: _usernameController,
@@ -188,10 +188,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
     final tr = AppLocalizations.of(context);
 
-    if (widget.store.isSuspendedByHost) {
-      final reason = widget.store.suspendedByHostReason.trim().isEmpty
+    if (widget.store.runtime.isSuspendedByHost) {
+      final reason = widget.store.runtime.suspendedByHostReason.trim().isEmpty
           ? tr.text('client_suspended_by_host_desc')
-          : widget.store.suspendedByHostReason;
+          : widget.store.runtime.suspendedByHostReason;
       return Scaffold(
         body: SafeArea(
           child: Center(
@@ -359,7 +359,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      if (!widget.store.hasLocalAdminUser)
+                      if (!widget.store.security.hasLocalAdminUser)
                         Builder(
                           builder: (context) {
                             final canRegisterHere = !kIsWeb;

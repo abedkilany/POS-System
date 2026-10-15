@@ -322,7 +322,7 @@ extension _SalesPageShortcutsCart on _SalesPageState {
   }
 
   void _setSelectedCustomerId(String? value) {
-    final id = widget.store.sanitizeSelectedCustomerId(value);
+    final id = widget.store.commerce.sanitizeSelectedCustomerId(value);
     setState(() {
       _selectedCustomerId = id;
       if (id == AppStore.walkInCustomerId && _paymentMethod == 'Credit') {

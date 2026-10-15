@@ -18,9 +18,9 @@ import '../../models/sale.dart';
 String accountBalanceText(BuildContext context, AppStore store,
     String accountType, String accountId) {
   final tr = AppLocalizations.of(context);
-  final balance = store.accountBalance(accountType, accountId);
+  final balance = store.accounting.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return tr.text('account_settled');
-  final amount = formatUsdReferenceAmount(balance.abs(), store.storeProfile);
+  final amount = formatUsdReferenceAmount(balance.abs(), store.runtime.profile);
   if (accountType == 'customer') {
     return balance > 0
         ? '${tr.text('account_receivable')}: $amount'
@@ -33,7 +33,7 @@ String accountBalanceText(BuildContext context, AppStore store,
 
 Color accountBalanceColor(BuildContext context, AppStore store,
     String accountType, String accountId) {
-  final balance = store.accountBalance(accountType, accountId);
+  final balance = store.accounting.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return Theme.of(context).colorScheme.primary;
   if (accountType == 'customer') {
     return balance > 0 ? Colors.orange.shade700 : Colors.green.shade700;
@@ -69,7 +69,7 @@ Future<void> showAccountPaymentDialog({
 }) async {
   final normalizedAccountId = accountId.trim();
   final customerInvoices = accountType == 'customer'
-      ? store.sales
+      ? store.commerce.sales
           .where((sale) =>
               !sale.isCancelled &&
               sale.balanceDue > 0.000001 &&
@@ -106,7 +106,7 @@ Future<void> showAccountPaymentDialog({
     return;
   }
   try {
-    await store.settleAccountPayment(
+    await store.accounting.settleAccountPayment(
       accountType: accountType,
       accountId: accountId,
       accountName: accountName,
@@ -140,8 +140,9 @@ class _AccountLedgerSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rows = store.accountTransactionsForAccount(accountType, accountId);
-    final balance = store.accountBalance(accountType, accountId);
+    final rows =
+        store.accounting.transactionsForAccount(accountType, accountId);
+    final balance = store.accounting.accountBalance(accountType, accountId);
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.86,
@@ -182,7 +183,7 @@ class _AccountLedgerSheet extends StatelessWidget {
                 subtitle:
                     Text(_balanceDescription(context, accountType, balance)),
                 trailing: Text(
-                    formatUsdReferenceAmount(balance.abs(), store.storeProfile),
+                    formatUsdReferenceAmount(balance.abs(), store.runtime.profile),
                     style: Theme.of(context).textTheme.titleMedium),
               ),
             ),
@@ -256,7 +257,7 @@ class _TransactionTile extends StatelessWidget {
                 postingLabel,
                 style: Theme.of(context).textTheme.labelSmall,
               ),
-              Text(formatUsdReferenceAmount(amount, store.storeProfile)),
+              Text(formatUsdReferenceAmount(amount, store.runtime.profile)),
             ],
           ),
           if (_isReceiptMovement(transaction)) ...[
@@ -285,7 +286,7 @@ class _TransactionTile extends StatelessWidget {
       await CashReceiptPdfService.printReceipt(
         context: context,
         transaction: printable,
-        profile: store.storeProfile,
+        profile: store.runtime.profile,
         locale: Localizations.localeOf(context),
       );
     } catch (error) {
@@ -493,7 +494,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   bool get _hasOpenInvoices =>
       _isCustomer && widget.customerInvoices.isNotEmpty;
   String get _voucherCurrency =>
-      widget.store.storeProfile.baseCurrency.toUpperCase();
+      widget.store.runtime.profile.baseCurrency.toUpperCase();
 
   @override
   void initState() {
@@ -515,7 +516,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
         sale.balanceDue,
         sale.invoiceCurrency,
         _voucherCurrency,
-        widget.store.storeProfile,
+        widget.store.runtime.profile,
         effectiveAt: DateTime.now(),
         normalizeResult: false,
       );
@@ -537,19 +538,19 @@ class _PaymentDialogState extends State<_PaymentDialog> {
     return normalizeAccountingAmount(
       total,
       _voucherCurrency,
-      widget.store.storeProfile,
+      widget.store.runtime.profile,
     );
   }
 
   String _amountText(double value) {
     final decimals = accountingDecimalsForCurrency(
       _voucherCurrency,
-      widget.store.storeProfile,
+      widget.store.runtime.profile,
     );
     return normalizeAccountingAmount(
       value,
       _voucherCurrency,
-      widget.store.storeProfile,
+      widget.store.runtime.profile,
     ).toStringAsFixed(decimals);
   }
 
@@ -609,7 +610,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
     var remaining = normalizeAccountingAmount(
       amount,
       _voucherCurrency,
-      widget.store.storeProfile,
+      widget.store.runtime.profile,
     );
     final drafts = <PaymentAllocationDraft>[];
     for (final sale in _selectedInvoices) {
@@ -627,7 +628,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                   take,
                   _voucherCurrency,
                   sale.invoiceCurrency,
-                  widget.store.storeProfile,
+                  widget.store.runtime.profile,
                   effectiveAt: DateTime.now(),
                 );
       if (referenceAmount > sale.balanceDue) {
@@ -647,7 +648,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
       remaining = normalizeAccountingAmount(
         remaining - take,
         _voucherCurrency,
-        widget.store.storeProfile,
+        widget.store.runtime.profile,
       );
     }
     if (remaining > 0.000001) {
@@ -757,12 +758,12 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                             final invoiceDue = formatCurrency(
                               sale.balanceDue,
                               currency: sale.invoiceCurrency,
-                              profile: widget.store.storeProfile,
+                              profile: widget.store.runtime.profile,
                             );
                             final convertedDue = canAllocate &&
                                     sale.invoiceCurrency.toUpperCase() !=
                                         _voucherCurrency
-                                ? ' • ${formatCurrency(dueInVoucher, currency: _voucherCurrency, profile: widget.store.storeProfile)}'
+                                ? ' • ${formatCurrency(dueInVoucher, currency: _voucherCurrency, profile: widget.store.runtime.profile)}'
                                 : '';
                             return CheckboxListTile(
                               dense: true,
@@ -794,7 +795,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                             padding: const EdgeInsets.all(12),
                             child: Text(
                               '${tr.text('selected_invoices')}: ${selectedInvoiceIds.length} • '
-                              '${tr.text('selected_balance')}: ${formatCurrency(selectedTotal, currency: _voucherCurrency, profile: widget.store.storeProfile)}',
+                              '${tr.text('selected_balance')}: ${formatCurrency(selectedTotal, currency: _voucherCurrency, profile: widget.store.runtime.profile)}',
                             ),
                           ),
                         ),
@@ -849,7 +850,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                     const SizedBox(height: 6),
                     Text(
                       '${tr.text('payment_allocation_summary')}: '
-                      '${formatCurrency(enteredAmount > selectedTotal ? selectedTotal : enteredAmount, currency: _voucherCurrency, profile: widget.store.storeProfile)}',
+                      '${formatCurrency(enteredAmount > selectedTotal ? selectedTotal : enteredAmount, currency: _voucherCurrency, profile: widget.store.runtime.profile)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],

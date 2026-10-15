@@ -16,7 +16,7 @@ class ReportsSnapshotService {
       <String, Map<String, Object?>>{};
 
   String _cacheKey(AppStore store, DateTime reference) =>
-      '${store.appIdentity.storeId}:${store.reportsRevision}:${reference.year}-${reference.month}-${reference.day}';
+      '${store.runtime.identity.storeId}:${store.runtime.reportsRevision}:${reference.year}-${reference.month}-${reference.day}';
 
   Map<String, Object?>? peekSummary(AppStore store, {DateTime? now}) {
     final reference = (now ?? DateTime.now()).toLocal();
@@ -84,14 +84,14 @@ Future<Map<String, Object?>> _computeSnapshotFromStore(
   DateTime reference,
 ) async {
   final today = DateTime(reference.year, reference.month, reference.day);
-  final products = store.products;
-  final sales = store.sales;
-  final purchases = store.purchases;
-  final expenses = store.expenses;
-  final stockMovements = store.stockMovements;
-  final accountTransactions = store.accountTransactions;
-  final customers = store.customers;
-  final suppliers = store.suppliers;
+  final products = store.catalog.products;
+  final sales = store.commerce.sales;
+  final purchases = store.commerce.purchases;
+  final expenses = store.commerce.expenses;
+  final stockMovements = store.inventory.stockMovements;
+  final accountTransactions = store.accounting.transactions;
+  final customers = store.commerce.customers;
+  final suppliers = store.commerce.suppliers;
 
   var totalExpensesAmount = 0.0;
   var netProfit = 0.0;
@@ -217,7 +217,8 @@ Future<Map<String, Object?>> _computeSnapshotFromStore(
   }
 
   try {
-    final dayEnd = today.add(const Duration(days: 1))
+    final dayEnd = today
+        .add(const Duration(days: 1))
         .subtract(const Duration(microseconds: 1));
     final cashSummary = await CashLedgerService.current().summary(
       from: today,
@@ -289,4 +290,3 @@ Future<Map<String, Object?>> _computeSnapshotFromStore(
         .toList(growable: false),
   };
 }
-

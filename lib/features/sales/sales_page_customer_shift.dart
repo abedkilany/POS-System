@@ -4,18 +4,18 @@ part of 'sales_page.dart';
 extension _SalesPageCustomerShift on _SalesPageState {
   double _salePriceFor(Product product, ProductSaleUnit unit) {
     final configured = widget.store
-        .productPriceFor(product.id, _salePriceType, unitId: unit.id);
+        .catalog.productPriceFor(product.id, _salePriceType, unitId: unit.id);
     if (configured != null) {
-      final override = widget.store.productPriceOverrideFor(
-          configured, widget.store.storeProfile.defaultSaleInvoiceCurrency);
+      final override = widget.store.catalog.productPriceOverrideFor(
+          configured, widget.store.runtime.profile.defaultSaleInvoiceCurrency);
       if (override != null) {
         return toUsdReferencePrice(
-            override.amount, override.currencyCode, widget.store.storeProfile);
+            override.amount, override.currencyCode, widget.store.runtime.profile);
       }
       return toUsdReferencePrice(configured.baseAmount,
-          configured.baseCurrencyCode, widget.store.storeProfile);
+          configured.baseCurrencyCode, widget.store.runtime.profile);
     }
-    return widget.store.defaultProductUsdPrice(product, unitId: unit.id);
+    return widget.store.catalog.defaultProductUsdPrice(product, unitId: unit.id);
   }
 
   void _setSalePriceType(String value) {
@@ -56,14 +56,14 @@ extension _SalesPageCustomerShift on _SalesPageState {
   }
 
   Customer _selectedCustomer() {
-    final id = widget.store.sanitizeSelectedCustomerId(_selectedCustomerId);
-    return widget.store.customers.firstWhere((customer) => customer.id == id,
-        orElse: () => widget.store.walkInCustomer);
+    final id = widget.store.commerce.sanitizeSelectedCustomerId(_selectedCustomerId);
+    return widget.store.commerce.customers.firstWhere((customer) => customer.id == id,
+        orElse: () => widget.store.commerce.walkInCustomer);
   }
 
   String _walkInCustomerLabel(AppLocalizations tr) {
     final localized = tr.text('walk_in_customer');
-    return localized.isNotEmpty ? localized : widget.store.walkInCustomer.name;
+    return localized.isNotEmpty ? localized : widget.store.commerce.walkInCustomer.name;
   }
 
   String _customerSearchText(Customer customer, AppLocalizations tr) {
@@ -80,8 +80,8 @@ extension _SalesPageCustomerShift on _SalesPageState {
     final seen = <String>{};
     final customers = <Customer>[];
     for (final customer in [
-      widget.store.walkInCustomer,
-      ...widget.store.customers
+      widget.store.commerce.walkInCustomer,
+      ...widget.store.commerce.customers
     ]) {
       if (!seen.add(customer.id)) continue;
       if (normalized.isEmpty ||
@@ -105,7 +105,7 @@ extension _SalesPageCustomerShift on _SalesPageState {
       Expanded(
           child: RawAutocomplete<Customer>(
               key: ValueKey(
-                  'sale_customer_${_selectedCustomerId}_${widget.store.customersRevision}'),
+                  'sale_customer_${_selectedCustomerId}_${widget.store.commerce.customersRevision}'),
               initialValue: TextEditingValue(
                   text: _customerSearchText(_selectedCustomer(), tr)),
               displayStringForOption: (customer) =>
@@ -217,7 +217,7 @@ extension _SalesPageCustomerShift on _SalesPageState {
       const SizedBox(height: 8),
       LayoutBuilder(builder: (context, constraints) {
         final fullWidth = constraints.maxWidth < 420;
-        final currencies = widget.store.storeProfile.currencies
+        final currencies = widget.store.runtime.profile.currencies
             .where((item) => item.isActive)
             .toList(growable: false);
         final children = [
@@ -323,7 +323,7 @@ extension _SalesPageCustomerShift on _SalesPageState {
       if (!context.mounted) return null;
       final messenger = ScaffoldMessenger.of(context);
       final createdMessage = tr.text('customer_created_selected');
-      await widget.store.addOrUpdateCustomer(customer);
+      await widget.store.commerce.addOrUpdateCustomer(customer);
       if (!context.mounted) return null;
       messenger.showSnackBar(SnackBar(content: Text(createdMessage)));
       return customer.id;
@@ -342,19 +342,19 @@ extension _SalesPageCustomerShift on _SalesPageState {
   }
 
   String _activeUserDisplayName([AppUser? user]) {
-    final current = user ?? widget.store.activeUser;
+    final current = user ?? widget.store.security.activeUser;
     final fullName = current?.fullName.trim() ?? '';
     if (fullName.isNotEmpty) return fullName;
     final username = current?.username.trim() ?? '';
     if (username.isNotEmpty) return username;
-    return widget.store.currentRole;
+    return widget.store.security.currentRole;
   }
 
   Future<_SaleShiftStatus> _loadSaleShiftStatus() async {
     final locations = await AccountingService.listActiveCashLocations();
     final openSessions = await AccountingService.listOpenCashDrawersReport();
-    final deviceId = widget.store.appIdentity.deviceId.trim();
-    final branchId = widget.store.appIdentity.branchId.trim();
+    final deviceId = widget.store.runtime.identity.deviceId.trim();
+    final branchId = widget.store.runtime.identity.branchId.trim();
     final linkedDrawers = locations
         .where((item) =>
             item.type == 'cash_drawer' &&
@@ -446,7 +446,7 @@ extension _SalesPageCustomerShift on _SalesPageState {
   }
 
   Future<void> _showSaleShiftQuickAction() async {
-    if (!widget.store.canSell) return;
+    if (!widget.store.security.canSell) return;
     final tr = AppLocalizations.of(context);
     try {
       final status = await _loadSaleShiftStatus();

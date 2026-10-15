@@ -6,10 +6,10 @@ void _registerAppStoreWorkflowGroup4() {
         'exports, validates, encrypts, decrypts, imports, and summarizes backups',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product());
-      await store.addOrUpdateCustomer(
+      await store.catalog.addOrUpdateProduct(product());
+      await store.commerce.addOrUpdateCustomer(
           Customer(id: 'c1', name: 'Alice', phone: '', address: ''));
-      await store.addOrUpdateExpense(Expense(
+      await store.commerce.addOrUpdateExpense(Expense(
           id: 'e1',
           title: 'Supplies',
           category: 'Ops',
@@ -17,16 +17,20 @@ void _registerAppStoreWorkflowGroup4() {
           date: DateTime(2026),
           notes: ''));
 
-      expect(await store.login('admin', 'AdminPass123'), isTrue);
-      final raw = await store.exportBackupJson();
+      expect(await store.security.login('admin', 'AdminPass123'), isTrue);
+      final raw = await store.recovery.exportBackupJson();
       final validation = store.validateBackupJson(raw);
       expect(validation.isValid, isTrue);
       expect(validation.summary?.productsCount, 1);
       expect(
-          store.syncSnapshotGeneratedAtFromJson(
-              await store.exportSyncSnapshotJson()),
+        store.validateBackupJson(await store.recovery.exportBackupJson()).isValid,
+        isTrue,
+      );
+      expect(
+          store.sync.snapshotGeneratedAtFromJson(
+              await store.sync.exportSyncSnapshotJson()),
           isA<DateTime>());
-      expect(store.exportSyncChangesJson(), contains('"changes"'));
+      expect(store.sync.exportChangesJson(), contains('"changes"'));
 
       final encrypted = await store.exportEncryptedBackupJson('secret-pass');
       expect(encrypted, isNot(contains('Coffee')));
@@ -37,11 +41,60 @@ void _registerAppStoreWorkflowGroup4() {
       expect(() => store.decryptBackupJson(encrypted, 'wrong-pass'),
           throwsA(isA<ArgumentError>()));
 
-      await store.resetBusinessData();
-      expect(store.products, isEmpty);
-      await store.importBackupJson(raw);
-      expect(store.products.single.name, 'Coffee');
+      await store.recovery.resetBusinessData();
+      expect(store.catalog.products, isEmpty);
+      await store.recovery.importBackupJson(raw);
+      expect(store.catalog.products.single.name, 'Coffee');
       expect(store.currentBackupSummary.productsCount, 1);
+    });
+
+    test('partial backup restore only replaces selected business sections',
+        () async {
+      final store = await readySqliteStore(
+        storeId: 'ST-PARTIAL01',
+        branchId: 'BR-PARTIAL01',
+        storeName: 'Partial Restore Store',
+      );
+      await store.catalog.addOrUpdateProduct(
+        product(id: 'restore-product', name: 'Backup product'),
+      );
+      await store.commerce.addOrUpdateCustomer(
+        Customer(
+          id: 'restore-customer',
+          name: 'Backup customer',
+          phone: '',
+          address: '',
+        ),
+      );
+      final raw = await store.recovery.exportBackupJson();
+
+      await store.catalog.addOrUpdateProduct(
+        product(id: 'restore-product', name: 'Current product'),
+      );
+      await store.commerce.addOrUpdateCustomer(
+        Customer(
+          id: 'restore-customer',
+          name: 'Current customer',
+          phone: '',
+          address: '',
+        ),
+      );
+
+      await store.recovery.importBackupJson(
+        raw,
+        selectedSectionIds: <String>{'products'},
+      );
+
+      expect(
+        store.catalog.products.singleWhere((item) => item.id == 'restore-product').name,
+        'Backup product',
+      );
+      expect(
+        store.commerce.customers
+            .singleWhere((item) => item.id == 'restore-customer')
+            .name,
+        'Current customer',
+      );
     });
 
     test(
@@ -71,9 +124,9 @@ void _registerAppStoreWorkflowGroup4() {
       });
       final service = StockTransactionService(
         sqliteDb,
-        defaultStoreId: store.appIdentity.storeId,
-        defaultBranchId: store.appIdentity.branchId,
-        deviceId: store.appIdentity.deviceId,
+        defaultStoreId: store.runtime.identity.storeId,
+        defaultBranchId: store.runtime.identity.branchId,
+        deviceId: store.runtime.identity.deviceId,
       );
       await service.recordMovementsAtomically(
         operationType: 'purchase_receive',
@@ -96,8 +149,8 @@ void _registerAppStoreWorkflowGroup4() {
             sourceMovementId: '',
             reversalOfMovementId: '',
             idempotencyKey: 'mov-initial',
-            storeId: store.appIdentity.storeId,
-            branchId: store.appIdentity.branchId,
+            storeId: store.runtime.identity.storeId,
+            branchId: store.runtime.identity.branchId,
             syncStatus: 'pending',
           ),
         ],
@@ -123,8 +176,8 @@ void _registerAppStoreWorkflowGroup4() {
             sourceMovementId: '',
             reversalOfMovementId: '',
             idempotencyKey: 'move-1',
-            storeId: store.appIdentity.storeId,
-            branchId: store.appIdentity.branchId,
+            storeId: store.runtime.identity.storeId,
+            branchId: store.runtime.identity.branchId,
             syncStatus: 'pending',
           ),
         ],
@@ -139,8 +192,8 @@ void _registerAppStoreWorkflowGroup4() {
         ''',
         variables: <Variable<Object>>[
           const Variable<String>('rec-1'),
-          Variable<String>(store.appIdentity.storeId),
-          Variable<String>(store.appIdentity.branchId),
+          Variable<String>(store.runtime.identity.storeId),
+          Variable<String>(store.runtime.identity.branchId),
           const Variable<String>('wh-1'),
           const Variable<String>('p1'),
           const Variable<double>(9),
@@ -165,8 +218,8 @@ void _registerAppStoreWorkflowGroup4() {
         variables: <Variable<Object>>[
           const Variable<String>('adj-1'),
           const Variable<String>('batch-1'),
-          Variable<String>(store.appIdentity.storeId),
-          Variable<String>(store.appIdentity.branchId),
+          Variable<String>(store.runtime.identity.storeId),
+          Variable<String>(store.runtime.identity.branchId),
           const Variable<String>('wh-1'),
           const Variable<String>('p1'),
           const Variable<double>(9),
@@ -178,7 +231,7 @@ void _registerAppStoreWorkflowGroup4() {
         ],
       );
 
-      final raw = await store.exportBackupJson();
+      final raw = await store.recovery.exportBackupJson();
       final original = jsonDecode(raw) as Map<String, dynamic>;
       expect(original['warehouseInventory'], isNotEmpty);
       expect(original['stockOperations'], isNotEmpty);
@@ -207,13 +260,13 @@ void _registerAppStoreWorkflowGroup4() {
         await sqliteDb.customStatement('DELETE FROM pending_sync_changes');
         await sqliteDb.customStatement('DELETE FROM sync_queue');
       });
-      await store.importBackupJson(raw);
+      await store.recovery.importBackupJson(raw);
       final restoredWarehouseCount = await sqliteDb
           .customSelect('SELECT COUNT(*) AS c FROM warehouse_inventory')
           .getSingle();
       expect(restoredWarehouseCount.read<int>('c') > 0, isTrue);
       final afterFirstRestore =
-          jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+          jsonDecode(await store.recovery.exportBackupJson()) as Map<String, dynamic>;
 
       expect(afterFirstRestore['warehouseInventory'],
           equals(original['warehouseInventory']));
@@ -226,9 +279,9 @@ void _registerAppStoreWorkflowGroup4() {
       expect(afterFirstRestore['inventoryMigrationAdjustments'],
           equals(original['inventoryMigrationAdjustments']));
 
-      await store.importBackupJson(raw);
+      await store.recovery.importBackupJson(raw);
       final afterSecondRestore =
-          jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+          jsonDecode(await store.recovery.exportBackupJson()) as Map<String, dynamic>;
       expect(afterSecondRestore['warehouseInventory'],
           equals(afterFirstRestore['warehouseInventory']));
       expect(afterSecondRestore['stockOperations'],
@@ -294,47 +347,47 @@ void _registerAppStoreWorkflowGroup5() {
         setupComplete: true,
       ).save();
       final store = AppStore();
-      await store.initialize();
-      await store.applySessionUser(
+      await store.runtime.initialize();
+      await store.security.applySessionUser(
         activeUser: hostStore.users.first,
         currentRole: 'Admin',
         permissions: Set<String>.from(AppPermission.all),
         rememberLogin: true,
       );
-      await store.addOrUpdateProduct(product());
+      await store.catalog.addOrUpdateProduct(product());
       final changeIds = store
-          .pendingSyncChangesForTarget('host', readyOnly: false)
+          .sync.pendingChangesForTarget('host', readyOnly: false)
           .map((c) => c.id)
           .toList();
       expect(changeIds, isNotEmpty);
 
-      await store.markSyncQueueChangesInProgress(changeIds);
-      final syncQueueSnapshot = store.syncQueue.toList();
+      await store.sync.markPushInProgress(changeIds);
+      final syncQueueSnapshot = store.sync.queue.toList();
       final inProgressRows =
           syncQueueSnapshot.where((q) => q.isInProgress).toList();
       expect(inProgressRows, isNotEmpty);
 
-      await store.markSyncQueueChangesFailed(changeIds, 'network down');
+      await store.sync.markFailed(changeIds, 'network down');
       expect(
-          store.syncQueue
+          store.sync.queue
               .where((q) => q.isFailed && q.lastError == 'network down'),
           isNotEmpty);
 
-      await store.retryFailedSyncQueue();
-      expect(store.syncQueue.where((q) => q.status == 'pending'), isNotEmpty);
+      await store.sync.retryFailed();
+      expect(store.sync.queue.where((q) => q.status == 'pending'), isNotEmpty);
 
-      await store.markSyncQueueItemFailed(
-          store.syncQueue.first.id, 'single failure');
-      expect(store.syncQueue.first.lastError, 'single failure');
+      await store.sync.markSyncQueueItemFailed(
+          store.sync.queue.first.id, 'single failure');
+      expect(store.sync.queue.first.lastError, 'single failure');
 
-      await store.markSyncChangesSyncedByIds(changeIds);
+      await store.sync.markAcknowledged(changeIds);
       expect(
-          store.pendingSyncChangesForTarget('host', readyOnly: false), isEmpty);
+          store.sync.pendingChangesForTarget('host', readyOnly: false), isEmpty);
       expect(
-          store.pendingSyncQueueForTarget('host', readyOnly: false), isEmpty);
+          store.sync.pendingSyncQueueForTarget('host', readyOnly: false), isEmpty);
 
-      await store.clearPendingSyncQueue();
-      expect(store.pendingSyncQueueCount, 0);
+      await store.sync.clearPendingSyncQueue();
+      expect(store.sync.pendingQueue.length, 0);
     });
 
     test(
@@ -356,7 +409,7 @@ void _registerAppStoreWorkflowGroup5() {
           name: 'Remote Role',
           permissions: {AppPermission.salesCreate});
 
-      await store.applyRemoteSyncChanges([
+      await store.sync.applyRemoteChanges([
         SyncChange(
             id: 'ch_profile',
             entityType: 'store_profile',
@@ -408,24 +461,24 @@ void _registerAppStoreWorkflowGroup5() {
             }),
       ]);
 
-      expect(store.storeProfile.name, 'Remote Store');
-      expect(store.roles.map((r) => r.id), contains(remoteRole.id));
-      expect(store.users.map((u) => u.id), contains(remoteUser.id));
-      expect(store.products.singleWhere((p) => p.id == 'remote_p').stock, 4);
+      expect(store.runtime.profile.name, 'Remote Store');
+      expect(store.security.roles.map((r) => r.id), contains(remoteRole.id));
+      expect(store.security.users.map((u) => u.id), contains(remoteUser.id));
+      expect(store.catalog.products.singleWhere((p) => p.id == 'remote_p').stock, 4);
       // Remote stock movements change quantity, while reference cost remains
       // the value sent with the product record.
-      expect(store.products.singleWhere((p) => p.id == 'remote_p').cost, 7);
+      expect(store.catalog.products.singleWhere((p) => p.id == 'remote_p').cost, 7);
     });
 
     test(
         'enforces permissions for restricted users and supports login/logout lifecycle',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateRole(UserRole(
+      await store.security.addOrUpdateRole(UserRole(
           id: 'cashier',
           name: 'Cashier',
           permissions: {AppPermission.salesCreate}));
-      await store.addOrUpdateUser(
+      await store.security.addOrUpdateUser(
           AppUser(
               id: '',
               fullName: 'Cashier One',
@@ -434,41 +487,41 @@ void _registerAppStoreWorkflowGroup5() {
               roleId: 'cashier'),
           password: 'Cashier123');
 
-      expect(await store.login('cashier', 'bad'), isFalse);
-      expect(await store.login('cashier', 'Cashier123'), isTrue);
-      expect(store.canSell, isTrue);
-      expect(store.canManageProducts, isFalse);
-      expect(() => store.requirePermission(AppPermission.productsDelete),
+      expect(await store.security.login('cashier', 'bad'), isFalse);
+      expect(await store.security.login('cashier', 'Cashier123'), isTrue);
+      expect(store.security.canSell, isTrue);
+      expect(store.security.canManageProducts, isFalse);
+      expect(() => store.security.requirePermission(AppPermission.productsDelete),
           throwsStateError);
-      expect(store.addOrUpdateProduct(product()), throwsStateError);
+      expect(store.catalog.addOrUpdateProduct(product()), throwsStateError);
 
-      await store.logout();
-      expect(store.activeUser == null, isTrue);
-      expect(store.hasPermission(AppPermission.productsDelete), isFalse);
-      expect(() => store.requirePermission(AppPermission.productsDelete),
+      await store.security.logout();
+      expect(store.security.activeUser == null, isTrue);
+      expect(store.security.hasPermission(AppPermission.productsDelete), isFalse);
+      expect(() => store.security.requirePermission(AppPermission.productsDelete),
           throwsStateError);
-      expect(await store.login('admin', 'AdminPass123'), isTrue);
-      expect(() => store.requirePermission(AppPermission.productsDelete),
+      expect(await store.security.login('admin', 'AdminPass123'), isTrue);
+      expect(() => store.security.requirePermission(AppPermission.productsDelete),
           returnsNormally);
 
-      expect(store.deleteRole('admin'), throwsStateError);
-      expect(store.deleteRole('cashier'), throwsStateError);
+      expect(store.security.deleteRole('admin'), throwsStateError);
+      expect(store.security.deleteRole('cashier'), throwsStateError);
       final cashierId =
-          store.users.firstWhere((u) => u.username == 'cashier').id;
-      await store.deleteUser(cashierId);
-      await store.deleteRole('cashier');
-      expect(store.roles.map((r) => r.id), isNot(contains('cashier')));
+          store.security.users.firstWhere((u) => u.username == 'cashier').id;
+      await store.security.deleteUser(cashierId);
+      await store.security.deleteRole('cashier');
+      expect(store.security.roles.map((r) => r.id), isNot(contains('cashier')));
     });
 
     test(
         'persists the active session across restart, logout, and user switching',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateRole(UserRole(
+      await store.security.addOrUpdateRole(UserRole(
           id: 'cashier',
           name: 'Cashier',
           permissions: {AppPermission.salesCreate}));
-      await store.addOrUpdateUser(
+      await store.security.addOrUpdateUser(
           AppUser(
               id: '',
               fullName: 'Cashier One',
@@ -481,9 +534,9 @@ void _registerAppStoreWorkflowGroup5() {
           await AuthRepository.login(store, 'cashier', 'Cashier123',
               remember: true),
           isTrue);
-      expect(store.activeUser?.username, 'cashier');
-      expect(store.currentRole, 'Cashier');
-      expect(store.rememberLogin, isTrue);
+      expect(store.security.activeUser?.username, 'cashier');
+      expect(store.security.currentRole, 'Cashier');
+      expect(store.security.rememberLogin, isTrue);
 
       final restarted = AppStore();
       await restarted.initialize();
@@ -511,11 +564,11 @@ void _registerAppStoreWorkflowGroup5() {
         'refreshAfterDatabaseChange reloads sqlite-backed users and session state',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateRole(UserRole(
+      await store.security.addOrUpdateRole(UserRole(
           id: 'cashier',
           name: 'Cashier',
           permissions: {AppPermission.salesCreate}));
-      await store.addOrUpdateUser(
+      await store.security.addOrUpdateUser(
           AppUser(
               id: '',
               fullName: 'Cashier One',
@@ -528,7 +581,7 @@ void _registerAppStoreWorkflowGroup5() {
               remember: true),
           isTrue);
 
-      final usersSnapshot = store.users.toList(growable: false);
+      final usersSnapshot = store.security.users.toList(growable: false);
       await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
         'users_v1',
         usersSnapshot.map((user) {
@@ -541,20 +594,20 @@ void _registerAppStoreWorkflowGroup5() {
             List<int?>.generate(usersSnapshot.length, (index) => index),
       );
 
-      await store.refreshAfterDatabaseChange('users_v1');
-      expect(store.users.singleWhere((u) => u.username == 'cashier').fullName,
+      await store.runtime.refreshAfterDatabaseChange('users_v1');
+      expect(store.security.users.singleWhere((u) => u.username == 'cashier').fullName,
           'Cashier Reloaded');
-      expect(store.activeUser?.fullName, 'Cashier Reloaded');
+      expect(store.security.activeUser?.fullName, 'Cashier Reloaded');
     });
 
     test('updates identity, admin setup, and keeps protected operations safe',
         () async {
       final store = await readyStore();
 
-      await store.updateAppIdentity(store.appIdentity.copyWith(
+      await store.runtime.updateIdentity(store.runtime.identity.copyWith(
           syncMode: SyncMode.marketplaceEnabled, deviceRole: DeviceRole.host));
-      expect(store.appIdentity.syncMode, SyncMode.marketplaceEnabled);
-      expect(store.appIdentity.deviceId, store.deviceId);
+      expect(store.runtime.identity.syncMode, SyncMode.marketplaceEnabled);
+      expect(store.runtime.identity.deviceId, store.sync.deviceId);
 
       SharedPreferences.setMockInitialValues(const <String, Object>{});
       LocalDatabaseService.useInMemoryStoreForTesting(const <String, String>{});

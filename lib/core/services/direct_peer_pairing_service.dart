@@ -64,7 +64,7 @@ class DirectPeerPairingService {
   }
 
   Map<String, String> _headers() {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final accountCache = AccountAuthCache.load();
     return {
       'Content-Type': 'application/json',
@@ -72,7 +72,7 @@ class DirectPeerPairingService {
       if (!identity.isClient &&
           (accountCache?.accountToken.trim().isNotEmpty ?? false))
         'Authorization': 'Bearer ${accountCache!.accountToken.trim()}',
-      'X-Device-Id': store.deviceId,
+      'X-Device-Id': store.sync.deviceId,
       'X-Device-Token': identity.deviceToken,
       'X-Device-Role': identity.deviceRole.name,
       'X-Sync-Transport': 'direct',
@@ -85,7 +85,7 @@ class DirectPeerPairingService {
     DirectSyncSettings settings, {
     int ttlMinutes = 5,
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isHost || settings.apiBaseUrl.trim().isEmpty) {
       return const DirectPairingCodeResult(
         ok: false,
@@ -101,7 +101,7 @@ class DirectPeerPairingService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'hostDeviceId': store.deviceId,
+              'hostDeviceId': store.sync.deviceId,
               'hostDeviceName': identity.deviceName,
               'transport': 'direct',
               'code': _newCode(),
@@ -143,7 +143,7 @@ class DirectPeerPairingService {
     String code, {
     void Function(double value, String label)? onProgress,
   }) async {
-    final current = store.appIdentity;
+    final current = store.runtime.identity;
     if (current.isHost) {
       return const DirectPairingClaimResult(
         ok: false,
@@ -166,7 +166,7 @@ class DirectPeerPairingService {
             headers: _headers(),
             body: jsonEncode({
               'code': code.trim(),
-              'deviceId': store.deviceId,
+              'deviceId': store.sync.deviceId,
               'deviceName': current.deviceName,
               'platform': current.platform.name,
               'appVersion': AppBrand.version,
@@ -226,7 +226,7 @@ class DirectPeerPairingService {
         activeTransport: 'direct',
       );
       onProgress?.call(0.22, 'Registering this Direct device...');
-      await store.updateAppIdentityDuringSetup(identity);
+      await store.runtime.updateIdentityDuringSetup(identity);
       registered = true;
       final existing = DirectSyncSettings.load();
       await existing
@@ -243,7 +243,7 @@ class DirectPeerPairingService {
       return DirectPairingClaimResult(
         ok: true,
         message: 'Device registered. Downloading Store data...',
-        identity: store.appIdentity,
+        identity: store.runtime.identity,
       );
     } catch (error) {
       SyncDiagnosticsLog.add(
@@ -253,7 +253,7 @@ class DirectPeerPairingService {
         message: registered
             ? 'Device registered, but Direct setup is incomplete: $error'
             : 'Could not connect this device. Check the pairing code and try again.',
-        identity: registered ? store.appIdentity : null,
+        identity: registered ? store.runtime.identity : null,
       );
     }
   }

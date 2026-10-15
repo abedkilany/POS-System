@@ -32,7 +32,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
   void initState() {
     super.initState();
     widget.store.addListener(_handleStoreChanged);
-    _dataFuture = widget.store.ensureQuotationsPageDataLoaded();
+    _dataFuture = widget.store.commerce.ensureQuotationsLoaded();
   }
 
   @override
@@ -41,7 +41,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
     if (oldWidget.store != widget.store) {
       oldWidget.store.removeListener(_handleStoreChanged);
       widget.store.addListener(_handleStoreChanged);
-      _dataFuture = widget.store.ensureQuotationsPageDataLoaded();
+      _dataFuture = widget.store.commerce.ensureQuotationsLoaded();
     }
   }
 
@@ -52,7 +52,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
   }
 
   Future<void> _createQuotation() async {
-    if (!widget.store.canManageQuotations) return;
+    if (!widget.store.security.canManageQuotations) return;
     final tr = AppLocalizations.of(context);
     final result = await showDialog<_QuotationDraft>(
       context: context,
@@ -62,7 +62,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
       return;
     }
     try {
-      await widget.store.createSaleQuotation(
+      await widget.store.commerce.createSaleQuotation(
         customerName: result.customerName,
         customerId: result.customerId,
         items: result.items,
@@ -84,7 +84,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
   }
 
   Future<void> _convertQuotation(SaleQuotation quotation) async {
-    if (!widget.store.canManageQuotations) return;
+    if (!widget.store.security.canManageQuotations) return;
     final tr = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
@@ -106,7 +106,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
       return;
     }
     try {
-      final sale = await widget.store.convertSaleQuotationToSale(quotation.id);
+      final sale = await widget.store.commerce.convertSaleQuotationToSale(quotation.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -123,7 +123,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
   }
 
   Future<void> _deleteQuotation(SaleQuotation quotation) async {
-    if (!widget.store.canManageQuotations) return;
+    if (!widget.store.security.canManageQuotations) return;
     final tr = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
@@ -141,14 +141,16 @@ class _QuotationsPageState extends State<QuotationsPage> {
         ],
       ),
     );
-    if (confirm == true) await widget.store.deleteSaleQuotation(quotation.id);
+    if (confirm == true) {
+      await widget.store.commerce.deleteSaleQuotation(quotation.id);
+    }
   }
 
   Future<void> _printQuotation(SaleQuotation quotation) async {
     final tr = AppLocalizations.of(context);
     await SimpleReportPdfService.printReport(
       context: context,
-      profile: widget.store.storeProfile,
+      profile: widget.store.runtime.profile,
       documentKey: PrintDocumentKeys.quotation,
       title: '${tr.text('quotations')} ${quotation.quotationNo}',
       arabic: tr.locale.languageCode == 'ar',
@@ -165,7 +167,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewQuotations) {
+    if (!widget.store.security.canViewQuotations) {
       return _AccessDeniedScaffold(
         title: tr.text('quotations'),
         message: tr.text('no_access_quotation_records'),
@@ -177,14 +179,14 @@ class _QuotationsPageState extends State<QuotationsPage> {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator.adaptive());
         }
-        final quotations = widget.store.saleQuotations;
+        final quotations = widget.store.commerce.saleQuotations;
         return Scaffold(
           appBar: AppBar(
             title: Text(tr.text('quotations')),
             actions: [
               IconButton(
                 onPressed:
-                    widget.store.canManageQuotations ? _createQuotation : null,
+                    widget.store.security.canManageQuotations ? _createQuotation : null,
                 icon: const Icon(Icons.add),
                 tooltip: tr.text('new_quotation'),
               )
@@ -192,7 +194,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
           ),
           floatingActionButton: FloatingActionButton.extended(
             onPressed:
-                widget.store.canManageQuotations ? _createQuotation : null,
+                widget.store.security.canManageQuotations ? _createQuotation : null,
             icon: const Icon(Icons.add),
             label: Text(tr.text('new_quotation')),
           ),
@@ -227,7 +229,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
                             IconButton(
                               tooltip: tr.text('convert_to_sale'),
                               onPressed: quotation.isConverted ||
-                                      !widget.store.canManageQuotations
+                                      !widget.store.security.canManageQuotations
                                   ? null
                                   : () => _convertQuotation(quotation),
                               icon: const Icon(Icons.receipt_long),
@@ -235,7 +237,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
                             IconButton(
                               tooltip: tr.text('delete'),
                               onPressed: quotation.isConverted ||
-                                      !widget.store.canManageQuotations
+                                      !widget.store.security.canManageQuotations
                                   ? null
                                   : () => _deleteQuotation(quotation),
                               icon: const Icon(Icons.delete_outline),
@@ -356,8 +358,8 @@ class _QuotationDialogState extends State<_QuotationDialog> {
       activeOnly: true,
     );
     final customers = sqliteCustomers?.items ??
-        <Customer>[widget.store.walkInCustomer, ...widget.store.customers];
-    final products = sqliteProducts?.items ?? widget.store.products;
+        <Customer>[widget.store.commerce.walkInCustomer, ...widget.store.commerce.customers];
+    final products = sqliteProducts?.items ?? widget.store.catalog.products;
     if (!mounted) return;
     setState(() {
       _customers = customers;
@@ -413,7 +415,7 @@ class _QuotationDialogState extends State<_QuotationDialog> {
         _items.add(SaleItem(
             productId: product.id,
             productName: product.name,
-            unitPrice: widget.store.defaultProductUsdPrice(product),
+            unitPrice: widget.store.catalog.defaultProductUsdPrice(product),
             quantity: 1,
             unitCost: product.usdCost,
             unitName: product.unit,
@@ -456,7 +458,7 @@ class _QuotationDialogState extends State<_QuotationDialog> {
               ? null
               : () {
                   final customer =
-                      _customerById[_customerId] ?? widget.store.walkInCustomer;
+                      _customerById[_customerId] ?? widget.store.commerce.walkInCustomer;
                   Navigator.pop(
                       context,
                       _QuotationDraft(

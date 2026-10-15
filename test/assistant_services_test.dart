@@ -80,8 +80,8 @@ void main() {
       LocalDatabaseService.clearInMemoryStoreForTesting();
       LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
       store = AppStore();
-      await store.initialize();
-      await store.completeInitialAdminSetup(
+      await store.runtime.initialize();
+      await store.security.completeInitialAdminSetup(
         fullName: 'Assistant Admin',
         username: 'assistant-admin',
         password: 'AssistantPass123',

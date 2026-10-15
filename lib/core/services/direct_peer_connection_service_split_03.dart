@@ -67,7 +67,7 @@ class DirectPeerHostManager {
   Future<void> _handleSignal(Map<String, dynamic> signal) async {
     if (_closed) return;
     final targetDeviceId = signal['targetDeviceId']?.toString().trim() ?? '';
-    final hostDeviceId = store.deviceId.trim();
+    final hostDeviceId = store.sync.deviceId.trim();
     // The coordination service may deliver a signal to every WebSocket
     // session belonging to the pairing. A Host must process only signals
     // addressed to this Host; otherwise echoed offers or another session's
@@ -287,7 +287,7 @@ class _DirectHostPeerState {
     try {
       final material = await DirectPeerHandshake.authenticateHost(
         session: _connection!,
-        identity: store.appIdentity,
+        identity: store.runtime.identity,
         expectedClientDeviceId: deviceId,
       );
       if (_closed) return;

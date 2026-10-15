@@ -2,7 +2,6 @@
 part of 'manufacturing_page.dart';
 
 extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
-
   Future<void> _reverseManufacturingOrder(ManufacturingOrder order) async {
     final controller = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -56,7 +55,7 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
       return;
     }
     try {
-      await widget.store.reverseManufacturingOrder(
+      await widget.store.inventory.reverseManufacturingOrder(
         orderId: order.id,
         reason: reason,
       );
@@ -96,13 +95,13 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
         .contains(order.status.toLowerCase())) {
       return;
     }
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryManufacturingManage,
     )) return;
-    final boms = widget.store.billsOfMaterials
+    final boms = widget.store.inventory.billsOfMaterials
         .where((item) => !item.isDeleted && item.isActive)
         .toList(growable: false);
-    final warehouses = widget.store.warehouses;
+    final warehouses = widget.store.inventory.warehouses;
     if (boms.isEmpty || warehouses.isEmpty) return;
     var bomId = boms.any((item) => item.id == order.bomId)
         ? order.bomId
@@ -209,7 +208,7 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
           warehouses.firstWhere((item) => item.id == rawWarehouseId);
       final finishedWarehouse =
           warehouses.firstWhere((item) => item.id == finishedWarehouseId);
-      await widget.store.updateManufacturingOrder(
+      await widget.store.inventory.updateManufacturingOrder(
         id: order.id,
         bomId: bomId,
         quantity: double.tryParse(qtyController.text.trim()) ?? 0,
@@ -234,7 +233,7 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
     ManufacturingOrder order, {
     bool editCompleted = false,
   }) async {
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryManufacturingManage,
     )) return;
 
@@ -244,7 +243,7 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
             : order.quantity;
     final qtyController =
         TextEditingController(text: initialOutputQuantity.toString());
-    final bom = widget.store.billsOfMaterials.firstWhere(
+    final bom = widget.store.inventory.billsOfMaterials.firstWhere(
       (item) => item.id == order.bomId && !item.isDeleted,
       orElse: () => throw ArgumentError('Manufacturing recipe was not found.'),
     );
@@ -435,7 +434,7 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
           ),
         );
       }
-      final output = widget.store.products.firstWhere(
+      final output = widget.store.catalog.products.firstWhere(
         (item) => item.id == order.outputProductId,
       );
       final outputBatches = output.expiryTrackingEnabled
@@ -466,7 +465,7 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
               wasteReasonControllers[component.productId]!.text.trim(),
       };
       if (editCompleted) {
-        await widget.store.editCompletedManufacturingOrder(
+        await widget.store.inventory.editCompletedManufacturingOrder(
           orderId: order.id,
           expectedVersion: order.version,
           bomId: order.bomId,
@@ -482,7 +481,7 @@ extension _ManufacturingPageStatePart3 on _ManufacturingPageState {
           wasteReasons: wasteReasons,
         );
       } else {
-        await widget.store.finishManufacturingOrder(
+        await widget.store.inventory.finishManufacturingOrder(
           orderId: order.id,
           actualQuantity: actualQuantity,
           outputBatchAllocations: outputBatches ?? const <BatchAllocation>[],

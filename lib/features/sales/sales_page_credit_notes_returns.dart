@@ -30,7 +30,7 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
     final isLatestActive = !isInactive &&
         _latestActiveCreditNoteForSale(note.originalSaleId)?.id == note.id;
     final amount = formatCurrency(note.amount,
-        currency: note.currency, profile: widget.store.storeProfile);
+        currency: note.currency, profile: widget.store.runtime.profile);
     return ExpansionTile(
         key: PageStorageKey<String>('credit_note_${note.id}'),
         leading: Icon(isInactive
@@ -56,10 +56,10 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
               title: Text(item.productName),
               subtitle: Text(
                   '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × '
-                  '${formatCurrency(item.unitPrice, currency: note.currency, profile: widget.store.storeProfile)}'),
+                  '${formatCurrency(item.unitPrice, currency: note.currency, profile: widget.store.runtime.profile)}'),
               trailing: Text(formatCurrency(item.lineTotal,
                   currency: note.currency,
-                  profile: widget.store.storeProfile)))),
+                  profile: widget.store.runtime.profile)))),
           const Divider(height: 1),
           Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -73,27 +73,27 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
                                 const TextStyle(fontWeight: FontWeight.w600))),
                     const SizedBox(height: 10),
                     Wrap(spacing: 8, runSpacing: 8, children: [
-                      if (widget.store.hasPermission(AppPermission.salesPrint))
+                      if (widget.store.security.hasPermission(AppPermission.salesPrint))
                         OutlinedButton.icon(
                             onPressed: () => _handleInvoiceAction(() =>
                                 InvoicePdfService.printSaleReturn(
                                     context: context,
                                     creditNote: note,
-                                    profile: widget.store.storeProfile,
+                                    profile: widget.store.runtime.profile,
                                     locale:
                                         AppLocalizations.of(context).locale)),
                             icon: const Icon(Icons.print_outlined),
                             label: Text(tr.text('print_invoice'))),
                       if (isLatestActive &&
-                          widget.store.hasPermission(AppPermission.salesEdit) &&
-                          widget.store.hasPermission(AppPermission.salesCancel))
+                          widget.store.security.hasPermission(AppPermission.salesEdit) &&
+                          widget.store.security.hasPermission(AppPermission.salesCancel))
                         FilledButton.icon(
                             onPressed: () => _editCreditNote(context, note),
                             icon: const Icon(Icons.edit_outlined),
                             label: Text(
                                 '${tr.text('edit')} ${_saleReturnLabel(tr)}')),
                       if (isLatestActive &&
-                          widget.store.hasPermission(AppPermission.salesCancel))
+                          widget.store.security.hasPermission(AppPermission.salesCancel))
                         OutlinedButton.icon(
                             onPressed: () => _cancelSaleReturn(context, note),
                             icon: const Icon(Icons.cancel_outlined),
@@ -105,7 +105,7 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
 
   Future<void> _editCreditNote(BuildContext context, CreditNote note) async {
     Sale? sale;
-    for (final candidate in widget.store.sales) {
+    for (final candidate in widget.store.commerce.sales) {
       if (candidate.id == note.originalSaleId) {
         sale = candidate;
         break;
@@ -124,7 +124,7 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
   }
 
   Future<void> _cancelSaleReturn(BuildContext context, CreditNote note) async {
-    if (!widget.store.hasPermission(AppPermission.salesCancel)) return;
+    if (!widget.store.security.hasPermission(AppPermission.salesCancel)) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
         context: context,
@@ -146,7 +146,7 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
       return;
     }
     try {
-      await widget.store.cancelSaleReturn(
+      await widget.store.commerce.cancelSaleReturn(
           creditNoteId: note.id, expectedVersion: note.version);
       if (!mounted) return;
       setState(() {
@@ -168,7 +168,7 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
 
   Map<String, String> _invoiceSearchIndex(List<Sale> sales) {
     return _invoiceSearchIndexCache.getOrCompute(
-        widget.store.salesRevision, 'recent_invoices_search_index', () {
+        widget.store.commerce.salesRevision, 'recent_invoices_search_index', () {
       final index = <String, String>{};
       for (final sale in sales) {
         final buffer = StringBuffer()

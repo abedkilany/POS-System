@@ -20,9 +20,9 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
   }
 
   Future<void> _generateLanToken() async {
-    widget.store.requirePermission(AppPermission.syncManage);
+    widget.store.security.requirePermission(AppPermission.syncManage);
     final savedLan = LanSyncSettings.load();
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final lanEnabled =
         identity.isHost && savedLan.setupComplete && savedLan.isHost;
     if (!_lanEnabledForHost || !lanEnabled) {
@@ -162,7 +162,7 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
 
   Future<void> _refreshDirectPairingStatus() async {
     final code = _latestDirectPairingCode.trim();
-    if (code.isEmpty || !widget.store.appIdentity.isHost) return;
+    if (code.isEmpty || !widget.store.runtime.identity.isHost) return;
     final settings = _directSettings(enabled: true);
     if (!settings.isConfigured) return;
     final result =
@@ -192,9 +192,9 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
   Future<void> _adoptConsumedDirectPairingDevice(
       DirectPairingStatusResult result) async {
     final clientDeviceId = result.claimedByDeviceId.trim();
-    if (clientDeviceId.isEmpty || !widget.store.appIdentity.isHost) return;
+    if (clientDeviceId.isEmpty || !widget.store.runtime.identity.isHost) return;
 
-    final hostDeviceId = widget.store.deviceId.trim();
+    final hostDeviceId = widget.store.sync.deviceId.trim();
     final current =
         LanSyncSettings.load().withMigratedHostRegistry(hostDeviceId);
     final updated = current.withDirectPairedHostRegistryDevice(
@@ -208,7 +208,7 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
   }
 
   Future<void> _handleLanPairingButton() async {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final lan = LanSyncSettings.load();
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
     if (!_lanEnabledForHost || !lanEnabled) {
@@ -225,7 +225,7 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
   }
 
   Future<void> _requestHostTransfer() => _run(() async {
-        await widget.store.requestHostTransfer(
+        await widget.store.sync.requestHostTransfer(
             reason: tr.text('user_requested_host_role_reason'));
         final direct = _directSettings(enabled: true);
         if (direct.apiBaseUrl.trim().isNotEmpty) {
@@ -234,12 +234,12 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
         }
         if (mounted) {
           setState(() => _status = tr.format('host_transfer_request_created',
-              {'deviceId': widget.store.deviceId}));
+              {'deviceId': widget.store.sync.deviceId}));
         }
       });
 
   Future<void> _approveHostTransferFromUi() => _run(() async {
-        widget.store.requirePermission(AppPermission.syncManage);
+        widget.store.security.requirePermission(AppPermission.syncManage);
         final deviceId = _transferDeviceController.text.trim();
         if (deviceId.isEmpty) {
           throw StateError(tr.text('client_device_id_required'));
@@ -272,7 +272,7 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
             throw StateError(localizeRuntimeMessage(directResult.message, tr));
           }
         }
-        await widget.store.approveHostTransfer(deviceId);
+        await widget.store.sync.approveHostTransfer(deviceId);
         if (mounted) {
           setState(() {
             _deviceRole = DeviceRole.host;
@@ -282,12 +282,12 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
       });
 
   Future<void> _activateApprovedHostTransferFromUi() => _run(() async {
-        widget.store.requirePermission(AppPermission.syncManage);
+        widget.store.security.requirePermission(AppPermission.syncManage);
         final direct = _directSettings(enabled: true);
         if (direct.apiBaseUrl.trim().isNotEmpty) {
           await _controlPlaneService().activateHostTransfer(direct);
         }
-        await widget.store.activateApprovedHostTransfer();
+        await widget.store.sync.activateApprovedHostTransfer();
         if (mounted) {
           setState(() {
             _deviceRole = DeviceRole.host;
@@ -473,7 +473,7 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
       void Function(VoidCallback fn) setDialogState,
       void Function(SyncMode mode) setDialogMode,
       SyncMode fallbackMode) async {
-    widget.store.requirePermission(AppPermission.syncManage);
+    widget.store.security.requirePermission(AppPermission.syncManage);
     final raw = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (_) => PageTimingScope(
@@ -501,7 +501,7 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
   }
 
   Future<void> _scanPairingQr() async {
-    widget.store.requirePermission(AppPermission.syncManage);
+    widget.store.security.requirePermission(AppPermission.syncManage);
     final raw = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (_) => PageTimingScope(
@@ -528,10 +528,10 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
   Future<void> _createDirectPairingCode() => _run(() async {
         var stage = 'validate';
         SyncDiagnosticsLog.add(
-            '[SYNC_TRACE] directPairingCode:start device=${widget.store.deviceId}');
+            '[SYNC_TRACE] directPairingCode:start device=${widget.store.sync.deviceId}');
         try {
-          widget.store.requirePermission(AppPermission.syncManage);
-          final identity = widget.store.appIdentity;
+          widget.store.security.requirePermission(AppPermission.syncManage);
+          final identity = widget.store.runtime.identity;
           if (!_directEnabled ||
               !_effectiveDirectEnabled ||
               !identity.isDirectEnabled) {
@@ -587,8 +587,8 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
       });
 
   Future<void> _clearInvalidPendingChanges() async {
-    widget.store.requirePermission(AppPermission.syncManage);
-    final pendingCount = widget.store.pendingSyncCount;
+    widget.store.security.requirePermission(AppPermission.syncManage);
+    final pendingCount = widget.store.sync.pendingCount;
     if (pendingCount == 0) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -611,7 +611,7 @@ extension _SyncPairingActions on _UnifiedSyncSettingsCardState {
     if (confirmed != true) return;
 
     await _run(() async {
-      final removed = await widget.store.clearLocalOnlyPendingSyncChanges();
+      final removed = await widget.store.sync.clearLocalOnlyPendingSyncChanges();
       if (!mounted) return;
       setState(() {
         _status = removed > 0

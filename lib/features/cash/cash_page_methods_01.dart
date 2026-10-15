@@ -6,12 +6,12 @@ extension _CashPageStatePart1 on _CashPageState {
     if (mounted) setState(() => _refreshKey++);
   }
 
-  String get _deviceId => widget.store.appIdentity.deviceId.trim();
-  String get _branchId => widget.store.appIdentity.branchId.trim();
+  String get _deviceId => widget.store.runtime.identity.deviceId.trim();
+  String get _branchId => widget.store.runtime.identity.branchId.trim();
 
   Future<List<Purchase>> _cashPurchasesSnapshot() async {
     final sqlitePurchases = await LocalDatabaseService.getPurchasesFromSqlite();
-    return (sqlitePurchases ?? widget.store.purchases)
+    return (sqlitePurchases ?? widget.store.commerce.purchases)
         .where((purchase) => !purchase.isDeleted)
         .toList(growable: false);
   }
@@ -19,7 +19,7 @@ extension _CashPageStatePart1 on _CashPageState {
   Future<void> _settleSaleInvoiceDialog(
       AdvancedAccountingItem currentDrawer) async {
     final tr = AppLocalizations.of(context);
-    final openSales = widget.store.sales
+    final openSales = widget.store.commerce.sales
         .where((sale) => !sale.isCancelled && sale.balanceDue > 0)
         .toList(growable: false);
     if (openSales.isEmpty) {
@@ -49,7 +49,7 @@ extension _CashPageStatePart1 on _CashPageState {
                       .map((sale) => DropdownMenuItem<String>(
                             value: sale.id,
                             child: Text(
-                                '${sale.invoiceNo} • ${sale.customerName} • ${formatUsdReferenceAmount(sale.balanceDue, widget.store.storeProfile)}'),
+                                '${sale.invoiceNo} • ${sale.customerName} • ${formatUsdReferenceAmount(sale.balanceDue, widget.store.runtime.profile)}'),
                           ))
                       .toList(),
                   onChanged: (value) {
@@ -76,7 +76,7 @@ extension _CashPageStatePart1 on _CashPageState {
                         decoration: InputDecoration(
                           labelText: tr.text('amount'),
                           helperText:
-                              '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedSale.balanceDue, widget.store.storeProfile)}',
+                              '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedSale.balanceDue, widget.store.runtime.profile)}',
                         ),
                       ),
                     ),
@@ -142,7 +142,7 @@ extension _CashPageStatePart1 on _CashPageState {
       return;
     }
     try {
-      await widget.store.settleSalePayment(
+      await widget.store.commerce.settleSalePayment(
         saleId: selectedSale.id,
         amount: amount,
         discount: discount,
@@ -201,7 +201,7 @@ extension _CashPageStatePart1 on _CashPageState {
                       .map((purchase) => DropdownMenuItem<String>(
                             value: purchase.id,
                             child: Text(
-                                '${purchase.purchaseNo} • ${purchase.supplierName} • ${formatUsdReferenceAmount(purchase.balanceDue, widget.store.storeProfile)}'),
+                                '${purchase.purchaseNo} • ${purchase.supplierName} • ${formatUsdReferenceAmount(purchase.balanceDue, widget.store.runtime.profile)}'),
                           ))
                       .toList(),
                   onChanged: (value) {
@@ -229,7 +229,7 @@ extension _CashPageStatePart1 on _CashPageState {
                         decoration: InputDecoration(
                           labelText: tr.text('amount'),
                           helperText:
-                              '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedPurchase.balanceDue, widget.store.storeProfile)}',
+                              '${tr.text('remaining_debt')}: ${formatUsdReferenceAmount(selectedPurchase.balanceDue, widget.store.runtime.profile)}',
                         ),
                       ),
                     ),
@@ -295,7 +295,7 @@ extension _CashPageStatePart1 on _CashPageState {
       return;
     }
     try {
-      await widget.store.settlePurchasePayment(
+      await widget.store.commerce.settlePurchasePayment(
         purchaseId: selectedPurchase.id,
         amount: amount,
         discount: discount,
@@ -319,7 +319,7 @@ extension _CashPageStatePart1 on _CashPageState {
 
   Future<void> _refundPurchaseReturnDialog() async {
     final tr = AppLocalizations.of(context);
-    await widget.store.ensurePurchasesPageDataLoaded();
+    await widget.store.commerce.ensurePurchasesLoaded();
     if (!mounted) return;
     final purchases = await _cashPurchasesSnapshot();
     if (!mounted) return;
@@ -327,8 +327,8 @@ extension _CashPageStatePart1 on _CashPageState {
     for (final purchase in purchases.where((item) =>
         !item.isDeleted && !item.isCancelled && item.isPurchaseReturn)) {
       try {
-        final available =
-            await widget.store.refundablePurchaseReturnCashAmount(purchase.id);
+        final available = await widget.store.commerce
+            .refundablePurchaseReturnCashAmount(purchase.id);
         if (available > 0.000001) {
           returns.add(<String, Object>{
             'purchase': purchase,
@@ -384,7 +384,7 @@ extension _CashPageStatePart1 on _CashPageState {
                       return DropdownMenuItem<String>(
                         value: itemPurchase.id,
                         child: Text(
-                          '${itemPurchase.purchaseNo} • ${itemPurchase.supplierName} • ${formatUsdReferenceAmount(itemAmount, widget.store.storeProfile)}',
+                          '${itemPurchase.purchaseNo} • ${itemPurchase.supplierName} • ${formatUsdReferenceAmount(itemAmount, widget.store.runtime.profile)}',
                           overflow: TextOverflow.ellipsis,
                         ),
                       );
@@ -410,7 +410,7 @@ extension _CashPageStatePart1 on _CashPageState {
                     decoration: InputDecoration(
                       labelText: tr.text('amount'),
                       helperText:
-                          '${_l(tr, 'Available', 'المتاح')}: ${formatUsdReferenceAmount(available, widget.store.storeProfile)}',
+                          '${_l(tr, 'Available', 'المتاح')}: ${formatUsdReferenceAmount(available, widget.store.runtime.profile)}',
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -462,7 +462,7 @@ extension _CashPageStatePart1 on _CashPageState {
     }
     try {
       final purchase = selected['purchase'] as Purchase;
-      final refunded = await widget.store.refundPurchaseReturnCash(
+      final refunded = await widget.store.commerce.refundPurchaseReturnCash(
         purchaseReturnId: purchase.id,
         amount: amount,
         notes: notesController.text.trim(),
@@ -471,7 +471,7 @@ extension _CashPageStatePart1 on _CashPageState {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${_l(tr, 'Refund posted', 'تم تسجيل الاسترداد')}: ${formatUsdReferenceAmount(refunded, widget.store.storeProfile)}',
+            '${_l(tr, 'Refund posted', 'تم تسجيل الاسترداد')}: ${formatUsdReferenceAmount(refunded, widget.store.runtime.profile)}',
           ),
         ),
       );

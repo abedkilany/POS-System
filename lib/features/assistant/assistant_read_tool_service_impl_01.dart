@@ -8,7 +8,7 @@ extension _AssistantReadToolServicePart1
       return const <AssistantJsonMap>[];
     }
     final tools = <AssistantJsonMap>[];
-    if (store.canViewAccounting) {
+    if (store.security.canViewAccounting) {
       tools.addAll(<AssistantJsonMap>[
         _tool(
           name: 'income_statement',
@@ -76,7 +76,7 @@ extension _AssistantReadToolServicePart1
         required: const <String>['supplier'],
       ));
     }
-    if (store.canViewSales) {
+    if (store.security.canViewSales) {
       tools.add(_tool(
         name: 'sales_invoice_details',
         description:
@@ -85,7 +85,7 @@ extension _AssistantReadToolServicePart1
         required: const <String>['query'],
       ));
     }
-    if (store.canViewPurchases) {
+    if (store.security.canViewPurchases) {
       tools.add(_tool(
         name: 'purchase_invoice_details',
         description:
@@ -103,7 +103,7 @@ extension _AssistantReadToolServicePart1
         required: const <String>['party_type', 'party'],
       ));
     }
-    if (store.canViewAccounting &&
+    if (store.security.canViewAccounting &&
         (_canViewCustomerLedger(store) || _canViewSupplierLedger(store))) {
       tools.add(_tool(
         name: 'party_balance_reconciliation',
@@ -113,7 +113,7 @@ extension _AssistantReadToolServicePart1
         required: const <String>['party_type', 'party'],
       ));
     }
-    if (store.canViewSales) {
+    if (store.security.canViewSales) {
       tools.add(_tool(
         name: 'sales_summary',
         description:
@@ -122,7 +122,7 @@ extension _AssistantReadToolServicePart1
         required: const <String>['from', 'to'],
       ));
     }
-    if (store.canViewPurchases) {
+    if (store.security.canViewPurchases) {
       tools.add(_tool(
         name: 'purchase_summary',
         description:
@@ -131,7 +131,7 @@ extension _AssistantReadToolServicePart1
         required: const <String>['from', 'to'],
       ));
     }
-    if (store.canViewExpenses) {
+    if (store.security.canViewExpenses) {
       tools.add(_tool(
         name: 'expense_summary',
         description:
@@ -140,14 +140,14 @@ extension _AssistantReadToolServicePart1
         required: const <String>['from', 'to'],
       ));
     }
-    if (store.canViewCashBox) {
+    if (store.security.canViewCashBox) {
       tools.add(_tool(
         name: 'cash_balances',
         description: 'Read current Ventio cash and bank balances.',
         properties: const <String, Object?>{},
       ));
     }
-    if (store.canViewAccounting) {
+    if (store.security.canViewAccounting) {
       tools.add(_tool(
         name: 'inventory_cost_valuation',
         description:
@@ -155,7 +155,7 @@ extension _AssistantReadToolServicePart1
         properties: const <String, Object?>{},
       ));
     }
-    if (store.canViewInventory || store.canViewAccounting) {
+    if (store.security.canViewInventory || store.security.canViewAccounting) {
       tools.add(_tool(
         name: 'current_stock_balances',
         description:
@@ -170,7 +170,7 @@ extension _AssistantReadToolServicePart1
         required: const <String>['from', 'to'],
       ));
     }
-    if (store.canViewInventory || store.canViewAccounting) {
+    if (store.security.canViewInventory || store.security.canViewAccounting) {
       tools.add(_tool(
         name: 'manufacturing_cost_summary',
         description:

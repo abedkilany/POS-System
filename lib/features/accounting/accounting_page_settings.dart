@@ -35,7 +35,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
 
   Future<_AccountingSettingsData> _load() async {
     final legacyRate = await AccountingService.readDefaultVatRatePercent();
-    final storeProfile = widget.store.storeProfile;
+    final storeProfile = widget.store.runtime.profile;
     final profiles = <TaxProfile>[
       for (final profile in storeProfile.taxProfiles)
         if (storeProfile.taxConfigurationVersion <= 0 &&
@@ -56,8 +56,8 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
   }
 
   Future<void> _updateVatRate(double ratePercent) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
-    await widget.store.updateDefaultTaxRatePercent(ratePercent);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
+    await widget.store.accounting.updateDefaultTaxRatePercent(ratePercent);
     if (!mounted) return;
     _refresh(force: true);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -73,8 +73,8 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
     _AccountingSettingsData data,
     String profileId,
   ) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
-    await widget.store.updateTaxConfiguration(
+    widget.store.security.requirePermission(AppPermission.accountingManage);
+    await widget.store.accounting.updateTaxConfiguration(
       profiles: data.profiles,
       defaultTaxProfileId: profileId,
     );
@@ -92,7 +92,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
   Future<_AccountingSettingsData> _loadCached() {
     return _futureCache.getOrCompute(
       widget.store.accounting.revision,
-      widget.store.appIdentity.storeId,
+      widget.store.runtime.identity.storeId,
       _load,
     );
   }
@@ -129,7 +129,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
               defaultTaxProfileId: TaxProfile.standardId,
             );
         final canManageAccounting =
-            widget.store.hasPermission(AppPermission.accountingManage);
+            widget.store.security.hasPermission(AppPermission.accountingManage);
         return Card(
           elevation: 0,
           clipBehavior: Clip.antiAlias,

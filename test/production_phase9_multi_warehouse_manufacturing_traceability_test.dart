@@ -14,26 +14,30 @@ void main() {
       () async {
     final store = await support.readyPhase5SqliteStore();
     final now = DateTime.now();
-    final raw = support.phase5Product(
-      id: 'p9-raw',
-      code: 'P9-RAW',
-      name: 'Phase 9 Raw',
-      stock: 0,
-      cost: 2,
-    ).copyWith(
-      expiryTrackingEnabled: true,
-      expiryEntryRequired: true,
-    );
-    final finished = support.phase5Product(
-      id: 'p9-finished',
-      code: 'P9-FG',
-      name: 'Phase 9 Finished',
-      stock: 0,
-      cost: 0,
-    ).copyWith(
-      expiryTrackingEnabled: true,
-      expiryEntryRequired: true,
-    );
+    final raw = support
+        .phase5Product(
+          id: 'p9-raw',
+          code: 'P9-RAW',
+          name: 'Phase 9 Raw',
+          stock: 0,
+          cost: 2,
+        )
+        .copyWith(
+          expiryTrackingEnabled: true,
+          expiryEntryRequired: true,
+        );
+    final finished = support
+        .phase5Product(
+          id: 'p9-finished',
+          code: 'P9-FG',
+          name: 'Phase 9 Finished',
+          stock: 0,
+          cost: 0,
+        )
+        .copyWith(
+          expiryTrackingEnabled: true,
+          expiryEntryRequired: true,
+        );
     await store.addOrUpdateProduct(raw);
     await store.addOrUpdateProduct(finished);
 
@@ -93,7 +97,7 @@ void main() {
     expect(productionRawBatches.single.read<String>('batchId'), 'p9-raw-early');
     expect(productionRawBatches.single.read<double>('quantity'), 4);
 
-    final bom = await store.createBillOfMaterials(
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Phase 9 Traceable BOM',
       outputProductId: finished.id,
       outputQuantity: 1,
@@ -194,7 +198,8 @@ void main() {
     expect(retailBatch.read<double>('quantity'), 1);
 
     final integrity = await store.verifyInventoryTraceabilityIntegrity();
-    expect(integrity['healthy'], isTrue, reason: integrity['issues'].toString());
+    expect(integrity['healthy'], isTrue,
+        reason: integrity['issues'].toString());
     expect(integrity['issueCount'], 0);
   });
 }

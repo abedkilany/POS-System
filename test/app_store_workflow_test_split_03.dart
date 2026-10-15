@@ -7,14 +7,14 @@ void _registerAppStoreWorkflowSalesPart2() {
       branchId: 'BR-P1-CANCEL-GUARD',
       storeName: 'Sale Cancel Guard Store',
     );
-    await store.addOrUpdateProduct(product(
+    await store.catalog.addOrUpdateProduct(product(
       id: 'p-p1-cancel-guard',
       code: 'P1-CANCEL-GUARD',
       name: 'Sale Cancel Guard Product',
       stock: 0,
       cost: 2,
     ));
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-p1-cancel-guard',
       supplierName: 'Sale Cancel Guard Supplier',
       receiveNow: true,
@@ -29,7 +29,7 @@ void _registerAppStoreWorkflowSalesPart2() {
         ),
       ],
     );
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-p1-cancel-guard',
       customerName: 'Sale Cancel Guard Customer',
       paymentMethod: 'Credit',
@@ -43,16 +43,16 @@ void _registerAppStoreWorkflowSalesPart2() {
         ),
       ],
     );
-    await store.returnSale(
+    await store.commerce.returnSale(
       sale.id,
       returnedQuantities: const <String, double>{'p-p1-cancel-guard': 1},
     );
-    await expectLater(store.cancelSale(sale.id), throwsStateError);
+    await expectLater(store.commerce.cancelSale(sale.id), throwsStateError);
     expect(
       await sqliteWarehouseQuantity(
         productId: 'p-p1-cancel-guard',
         warehouseId: sale.warehouseId,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(3, 0.000001),
     );
@@ -65,18 +65,18 @@ void _registerAppStoreWorkflowSalesPart2() {
       branchId: 'BR-P1-FREE-RETURN',
       storeName: 'Free Return Store',
     );
-    await store.setInventoryCostingMethod(
+    await store.inventory.setInventoryCostingMethod(
       InventoryCostingMethod.fifo,
       reason: 'COGS-only sale return test',
     );
-    await store.addOrUpdateProduct(product(
+    await store.catalog.addOrUpdateProduct(product(
       id: 'p-p1-free-return',
       code: 'P1-FREE-RETURN',
       name: 'Free Return Product',
       stock: 0,
       cost: 3,
     ));
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-p1-free-return',
       supplierName: 'Free Return Supplier',
       receiveNow: true,
@@ -91,7 +91,7 @@ void _registerAppStoreWorkflowSalesPart2() {
         ),
       ],
     );
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-p1-free-return',
       customerName: 'Free Return Customer',
       paymentMethod: 'Credit',
@@ -105,7 +105,7 @@ void _registerAppStoreWorkflowSalesPart2() {
         ),
       ],
     );
-    final note = await store.returnSale(sale.id);
+    final note = await store.commerce.returnSale(sale.id);
     expect(note.amount, closeTo(0, 0.000001));
     final db = SqliteMigrationManager.database!;
     final journal = await db.customSelect(
@@ -122,7 +122,7 @@ void _registerAppStoreWorkflowSalesPart2() {
       await sqliteWarehouseQuantity(
         productId: 'p-p1-free-return',
         warehouseId: sale.warehouseId,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(1, 0.000001),
     );
@@ -136,14 +136,14 @@ void _registerAppStoreWorkflowSalesPart2() {
       branchId: 'BR-P1-ATOMIC-RECEIVE',
       storeName: 'Atomic Receive Store',
     );
-    await store.addOrUpdateProduct(product(
+    await store.catalog.addOrUpdateProduct(product(
       id: 'p-atomic-receive',
       code: 'ATOMIC-RECEIVE',
       name: 'Atomic Receive Product',
       stock: 0,
       cost: 4,
     ));
-    final draft = await store.createPurchase(
+    final draft = await store.commerce.createPurchase(
       supplierId: 'supplier-atomic-receive',
       supplierName: 'Atomic Supplier',
       receiveNow: false,
@@ -181,7 +181,7 @@ void _registerAppStoreWorkflowSalesPart2() {
     await setMerchandisePostable(false);
     try {
       await expectLater(
-        () async => store.receivePurchase(draft.id),
+        () async => store.commerce.receivePurchase(draft.id),
         throwsA(isA<StateError>()),
       );
 
@@ -195,7 +195,7 @@ void _registerAppStoreWorkflowSalesPart2() {
         await sqliteWarehouseQuantity(
           productId: 'p-atomic-receive',
           warehouseId: draft.warehouseId,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         closeTo(0, 0.000001),
       );
@@ -226,14 +226,14 @@ void _registerAppStoreWorkflowSalesPart2() {
       branchId: 'BR-P1-BATCH-GUARD',
       storeName: 'Unified Batch Guard Store',
     );
-    await store.addOrUpdateProduct(product(
+    await store.catalog.addOrUpdateProduct(product(
       id: 'p-batch-guard',
       code: 'BATCH-GUARD',
       name: 'Batch Guard Product',
       stock: 0,
       cost: 3,
     ));
-    final purchase = await store.createPurchase(
+    final purchase = await store.commerce.createPurchase(
       supplierId: 'supplier-batch-guard',
       supplierName: 'Batch Guard Supplier',
       receiveNow: true,
@@ -248,7 +248,7 @@ void _registerAppStoreWorkflowSalesPart2() {
         ),
       ],
     );
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-batch-guard',
       customerName: 'Batch Guard Customer',
       paymentMethod: 'Credit',
@@ -279,13 +279,13 @@ void _registerAppStoreWorkflowSalesPart2() {
 
     expect(await qty(), closeTo(3, 0.000001));
     await expectLater(
-      () async => store.returnPurchase(purchase.id),
+      () async => store.commerce.returnPurchase(purchase.id),
       throwsA(isA<StateError>()),
     );
 
-    await store.returnSale(sale.id);
+    await store.commerce.returnSale(sale.id);
     expect(await qty(), closeTo(5, 0.000001));
-    await store.returnPurchase(purchase.id);
+    await store.commerce.returnPurchase(purchase.id);
     expect(await qty(), closeTo(0, 0.000001));
     final returnedStatus = await db.customSelect(
       'SELECT status FROM purchases WHERE id = ?',
@@ -301,14 +301,14 @@ void _registerAppStoreWorkflowSalesPart2() {
       branchId: 'BR-P1-SALE-CANCEL',
       storeName: 'Sale Cancel Batch Store',
     );
-    await store.addOrUpdateProduct(product(
+    await store.catalog.addOrUpdateProduct(product(
       id: 'p-sale-cancel-batch',
       code: 'SALE-CANCEL-BATCH',
       name: 'Sale Cancel Batch Product',
       stock: 0,
       cost: 2,
     ));
-    final purchase = await store.createPurchase(
+    final purchase = await store.commerce.createPurchase(
       supplierId: 'supplier-sale-cancel-batch',
       supplierName: 'Sale Cancel Batch Supplier',
       receiveNow: true,
@@ -323,7 +323,7 @@ void _registerAppStoreWorkflowSalesPart2() {
         ),
       ],
     );
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'customer-sale-cancel-batch',
       customerName: 'Sale Cancel Batch Customer',
       paymentMethod: 'Credit',
@@ -352,7 +352,7 @@ void _registerAppStoreWorkflowSalesPart2() {
     }
 
     expect(await qty(), closeTo(3, 0.000001));
-    await store.cancelSale(sale.id);
+    await store.commerce.cancelSale(sale.id);
     expect(await qty(), closeTo(5, 0.000001));
     final saleRow = await db.customSelect(
       'SELECT status FROM sales WHERE id = ?',
@@ -363,20 +363,20 @@ void _registerAppStoreWorkflowSalesPart2() {
 
   test('warehouse-aware sales only use the selected warehouse', () async {
     final store = await readySqliteStore();
-    await store.addOrUpdateProduct(product(id: 'p-wh', stock: 0, price: 10));
-    final mainWarehouse = store.resolveWarehouseForSale();
-    final branchWarehouse = await store.createWarehouse(
+    await store.catalog.addOrUpdateProduct(product(id: 'p-wh', stock: 0, price: 10));
+    final mainWarehouse = store.inventory.resolveWarehouseForSale();
+    final branchWarehouse = await store.inventory.createWarehouse(
       name: 'Warehouse B',
       code: 'WB',
     );
 
-    await store.adjustStock(
+    await store.inventory.adjustStock(
       productId: 'p-wh',
       warehouseId: mainWarehouse.id,
       quantityDelta: 2,
       reason: 'seed main warehouse',
     );
-    await store.adjustStock(
+    await store.inventory.adjustStock(
       productId: 'p-wh',
       warehouseId: branchWarehouse.id,
       quantityDelta: 20,
@@ -384,7 +384,7 @@ void _registerAppStoreWorkflowSalesPart2() {
     );
 
     await expectLater(
-      store.createSale(
+      store.commerce.createSale(
         customerName: 'Alice',
         customerId: 'c1',
         paymentMethod: 'Credit',
@@ -402,7 +402,7 @@ void _registerAppStoreWorkflowSalesPart2() {
       throwsA(isA<LocalizedDomainException>()),
     );
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerName: 'Alice',
       customerId: 'c1',
       paymentMethod: 'Credit',
@@ -424,7 +424,7 @@ void _registerAppStoreWorkflowSalesPart2() {
       await sqliteWarehouseQuantity(
         productId: 'p-wh',
         warehouseId: mainWarehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       2,
     );
@@ -432,18 +432,18 @@ void _registerAppStoreWorkflowSalesPart2() {
       await sqliteWarehouseQuantity(
         productId: 'p-wh',
         warehouseId: branchWarehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       15,
     );
-    expect(store.products.single.stock, 17);
+    expect(store.catalog.products.single.stock, 17);
 
-    await store.cancelSale(sale.id);
+    await store.commerce.cancelSale(sale.id);
     expect(
       await sqliteWarehouseQuantity(
         productId: 'p-wh',
         warehouseId: branchWarehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       20,
     );
@@ -454,9 +454,9 @@ void _registerAppStoreWorkflowSalesPart2() {
       () async {
     final store = await readySqliteStore(storeId: 'ST-PUREDIT1');
     await store
-        .addOrUpdateProduct(product(id: 'p-edit-cost', stock: 0, cost: 5));
+        .catalog.addOrUpdateProduct(product(id: 'p-edit-cost', stock: 0, cost: 5));
 
-    final received = await store.createPurchase(
+    final received = await store.commerce.createPurchase(
       supplierId: 'supplier-edit',
       supplierName: 'Edit Supplier',
       paymentMethod: 'Credit',
@@ -474,7 +474,7 @@ void _registerAppStoreWorkflowSalesPart2() {
     expect(received.postedSnapshot, isNotNull);
     expect(received.postedSnapshot!.totals.grandTotal, closeTo(20, 0.0001));
 
-    final edited = await store.updatePurchaseDraft(
+    final edited = await store.commerce.updatePurchaseDraft(
       purchaseId: received.id,
       expectedVersion: received.version,
       supplierId: received.supplierId,
@@ -502,16 +502,16 @@ void _registerAppStoreWorkflowSalesPart2() {
       await sqliteWarehouseQuantity(
         productId: 'p-edit-cost',
         warehouseId: Warehouse.defaultId,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(2, 0.0001),
     );
     expect(
-      store.productCostFor('p-edit-cost').averageCost,
+      store.catalog.productCostFor('p-edit-cost').averageCost,
       closeTo(20, 0.0001),
     );
     expect(
-      store.productCostFor('p-edit-cost').lastCost,
+      store.catalog.productCostFor('p-edit-cost').lastCost,
       closeTo(20, 0.0001),
     );
 
@@ -542,12 +542,12 @@ void _registerAppStoreWorkflowSalesPart2() {
       'editing received purchase can replace a product at the same total without reusing the old snapshot or cost',
       () async {
     final store = await readySqliteStore(storeId: 'ST-PUREDIT2');
-    await store.addOrUpdateProduct(
+    await store.catalog.addOrUpdateProduct(
         product(id: 'p-edit-old', code: 'P-EDIT-OLD', stock: 0, cost: 4));
-    await store.addOrUpdateProduct(
+    await store.catalog.addOrUpdateProduct(
         product(id: 'p-edit-new', code: 'P-EDIT-NEW', stock: 0, cost: 7));
 
-    final received = await store.createPurchase(
+    final received = await store.commerce.createPurchase(
       supplierId: 'supplier-edit-same-total',
       supplierName: 'Same Total Supplier',
       paymentMethod: 'Credit',
@@ -563,7 +563,7 @@ void _registerAppStoreWorkflowSalesPart2() {
       ],
     );
 
-    final edited = await store.updatePurchaseDraft(
+    final edited = await store.commerce.updatePurchaseDraft(
       purchaseId: received.id,
       expectedVersion: received.version,
       supplierId: received.supplierId,
@@ -588,7 +588,7 @@ void _registerAppStoreWorkflowSalesPart2() {
       await sqliteWarehouseQuantity(
         productId: 'p-edit-old',
         warehouseId: Warehouse.defaultId,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(0, 0.0001),
     );
@@ -596,14 +596,14 @@ void _registerAppStoreWorkflowSalesPart2() {
       await sqliteWarehouseQuantity(
         productId: 'p-edit-new',
         warehouseId: Warehouse.defaultId,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(2, 0.0001),
     );
-    expect(store.productCostFor('p-edit-old').averageCost, closeTo(0, 0.0001));
-    expect(store.productCostFor('p-edit-old').lastCost, closeTo(0, 0.0001));
-    expect(store.productCostFor('p-edit-new').averageCost, closeTo(10, 0.0001));
-    expect(store.productCostFor('p-edit-new').lastCost, closeTo(10, 0.0001));
+    expect(store.catalog.productCostFor('p-edit-old').averageCost, closeTo(0, 0.0001));
+    expect(store.catalog.productCostFor('p-edit-old').lastCost, closeTo(0, 0.0001));
+    expect(store.catalog.productCostFor('p-edit-new').averageCost, closeTo(10, 0.0001));
+    expect(store.catalog.productCostFor('p-edit-new').lastCost, closeTo(10, 0.0001));
   });
 
   test(
@@ -611,9 +611,9 @@ void _registerAppStoreWorkflowSalesPart2() {
       () async {
     final store = await readySqliteStore(storeId: 'ST-PUREDIT3');
     await store
-        .addOrUpdateProduct(product(id: 'p-edit-last-cost', stock: 0, cost: 3));
+        .catalog.addOrUpdateProduct(product(id: 'p-edit-last-cost', stock: 0, cost: 3));
 
-    final older = await store.createPurchase(
+    final older = await store.commerce.createPurchase(
       supplierId: 'supplier-old-cost',
       supplierName: 'Older Supplier',
       paymentMethod: 'Credit',
@@ -629,7 +629,7 @@ void _registerAppStoreWorkflowSalesPart2() {
       ],
     );
     await Future<void>.delayed(const Duration(milliseconds: 2));
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-new-cost',
       supplierName: 'Newer Supplier',
       paymentMethod: 'Credit',
@@ -645,9 +645,9 @@ void _registerAppStoreWorkflowSalesPart2() {
       ],
     );
     expect(
-        store.productCostFor('p-edit-last-cost').lastCost, closeTo(9, 0.0001));
+        store.catalog.productCostFor('p-edit-last-cost').lastCost, closeTo(9, 0.0001));
 
-    await store.updatePurchaseDraft(
+    await store.commerce.updatePurchaseDraft(
       purchaseId: older.id,
       expectedVersion: older.version,
       supplierId: older.supplierId,
@@ -665,10 +665,10 @@ void _registerAppStoreWorkflowSalesPart2() {
     );
 
     expect(
-      store.productCostFor('p-edit-last-cost').averageCost,
+      store.catalog.productCostFor('p-edit-last-cost').averageCost,
       closeTo(8, 0.0001),
     );
     expect(
-        store.productCostFor('p-edit-last-cost').lastCost, closeTo(9, 0.0001));
+        store.catalog.productCostFor('p-edit-last-cost').lastCost, closeTo(9, 0.0001));
   });
 }

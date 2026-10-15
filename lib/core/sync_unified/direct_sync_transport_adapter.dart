@@ -51,8 +51,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   void _onStoreChanged() {
-    if (!store.appIdentity.isHost || _hostEndpoints.isEmpty) return;
-    final sequence = store.latestStoredAuthoritativeSequence;
+    if (!store.runtime.identity.isHost || _hostEndpoints.isEmpty) return;
+    final sequence = store.sync.latestStoredAuthoritativeSequence;
     if (sequence <= 0) return;
     for (final deviceId in _hostEndpoints.keys) {
       final pending = _pendingHostRealtimeSequences[deviceId] ?? 0;
@@ -76,7 +76,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
           await endpoint.connection.send('sync_changed', {
             'changed': true,
             'latestSequence': sequence,
-            'sourceDeviceId': store.deviceId,
+            'sourceDeviceId': store.sync.deviceId,
           });
           _lastAdvertisedSequenceByClient[deviceId] = sequence;
           SyncDiagnosticsLog.add(
@@ -101,10 +101,10 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   String get label => 'Direct';
 
   @override
-  String get deviceId => store.deviceId;
+  String get deviceId => store.sync.deviceId;
 
   @override
-  String get deviceToken => store.appIdentity.deviceToken;
+  String get deviceToken => store.runtime.identity.deviceToken;
 
   String get _apiBaseUrl {
     final directUrl = _settings.apiBaseUrl.trim();
@@ -120,7 +120,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       _settings.copyWith(apiBaseUrl: _apiBaseUrl);
 
   Future<DirectPeerRequestSession> _clientSession() async {
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       throw StateError('Direct Host cannot open a Client session.');
     }
     final existing = _session;
@@ -138,7 +138,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   Future<DirectPeerRequestSession> _openClientSession() async {
     _attachStoreListener();
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       throw StateError('Direct Host cannot open a Client session.');
     }
     if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
@@ -204,7 +204,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<bool> waitForRealtimeSignal() async {
-    if (store.appIdentity.isHost) return false;
+    if (store.runtime.identity.isHost) return false;
     try {
       final session = await _clientSession();
       final completer = Completer<bool>();
@@ -231,7 +231,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> testConnection() async {
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       await _startHostListener();
       return UnifiedSyncResult(
         ok: true,
@@ -294,7 +294,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedPairingCodeResult> createPairingCode(
       {int ttlMinutes = 5}) async {
     SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] [DIRECT_PAIRING] create start role=${store.appIdentity.deviceRole.name} ttl=$ttlMinutes');
+        '[SYNC_TRACE] [DIRECT_PAIRING] create start role=${store.runtime.identity.deviceRole.name} ttl=$ttlMinutes');
     // Create the code first: the server can use the Host recovery key to
     // register or restore this Host's device token. ICE-config authorization
     // requires that registration, so starting the listener first prevents an
@@ -311,7 +311,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
         message: result.message,
       );
     }
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       // Do not expose a one-time pairing code until the Host signaling/WebRTC
       // listener is actually ready. Otherwise a fast Client can claim the code
       // and send its offer before the Host has subscribed to signaling, leaving
@@ -383,7 +383,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       return const UnifiedSyncResult(
         ok: true,
         message: 'Direct Host does not push as a Client.',
@@ -407,7 +407,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       return const UnifiedSyncResult(
         ok: true,
         message: 'Direct Host does not pull as a Client.',
@@ -433,7 +433,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedSyncResult> rebuildFromHostSnapshot({
     void Function(double value, String label)? onProgress,
   }) async {
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       return const UnifiedSyncResult(
         ok: true,
         message: 'Direct Host already owns the authoritative snapshot.',
@@ -511,7 +511,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedSyncResult> syncNow({
     void Function(double value, String label)? onProgress,
   }) async {
-    if (store.appIdentity.isHost) {
+    if (store.runtime.identity.isHost) {
       _startHostListener();
       return const UnifiedSyncResult(
         ok: true,
@@ -539,7 +539,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     if (_hostRestartScheduled ||
         _hostListenerStarting ||
         _hostManager != null ||
-        !store.appIdentity.isHost) {
+        !store.runtime.identity.isHost) {
       return _hostStartFuture ?? Future<void>.value();
     }
     _hostListenerStarting = true;
@@ -598,12 +598,12 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   void _scheduleHostRestart() {
     if (_hostRestartScheduled ||
         _hostStopRequested ||
-        !store.appIdentity.isHost) {
+        !store.runtime.identity.isHost) {
       return;
     }
     _hostRestartScheduled = true;
     Future<void>.delayed(const Duration(seconds: 2), () {
-      if (_hostStopRequested || !store.appIdentity.isHost) {
+      if (_hostStopRequested || !store.runtime.identity.isHost) {
         _hostRestartScheduled = false;
         return;
       }
@@ -625,13 +625,13 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       await manager.close();
       if (identical(_hostManager, manager)) _hostManager = null;
       await Future<void>.delayed(const Duration(seconds: 1));
-      if (!_hostStopRequested && store.appIdentity.isHost) {
+      if (!_hostStopRequested && store.runtime.identity.isHost) {
         _hostRestartScheduled = false;
         _hostListenerStarting = false;
         _startHostListener();
       }
     } finally {
-      if (_hostStopRequested || !store.appIdentity.isHost) {
+      if (_hostStopRequested || !store.runtime.identity.isHost) {
         _hostRestartScheduled = false;
         _hostListenerStarting = false;
       }
@@ -667,7 +667,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   UnifiedCursorEnvelope _cursor() {
     final cursor = SyncDeviceStateStore.cursorForTransport(
-      store.appIdentity,
+      store.runtime.identity,
       'direct',
       null,
     );
@@ -681,6 +681,6 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
 abstract final class DirectSyncProtocolMaintenance {
   static Future<void> compact(AppStore store) async {
-    await store.compactClientSyncedSyncHistoryForMaintenance();
+    await store.sync.compactClientSyncedHistoryForMaintenance();
   }
 }

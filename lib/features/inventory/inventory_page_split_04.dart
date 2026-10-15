@@ -32,11 +32,12 @@ class _MovementsListState extends State<_MovementsList> {
 
   List<String> _movementTypeOptions() {
     final types = <String>{..._commonMovementTypes};
-    types.addAll(widget.store.stockMovements.map((movement) => movement.type));
+    types.addAll(
+        widget.store.inventory.stockMovements.map((movement) => movement.type));
     return <String>['all', ...types.where((type) => type.trim().isNotEmpty)];
   }
 
-  List<Warehouse> _warehouseOptions() => widget.store.warehouses
+  List<Warehouse> _warehouseOptions() => widget.store.inventory.warehouses
       .where((warehouse) => !warehouse.isDeleted)
       .toList(growable: false);
 
@@ -72,7 +73,7 @@ class _MovementsListState extends State<_MovementsList> {
     final limit = _visibleMovementCount.clamp(1, 500).toInt();
     final query = _movementQuery.trim();
     final key =
-        '${widget.store.stockMovementsRevision}|$query|$_movementType|$_movementWarehouseId|$limit';
+        '${widget.store.inventory.revision}|$query|$_movementType|$_movementWarehouseId|$limit';
     if (_movementsFuture == null || _movementsFutureKey != key) {
       _movementsFutureKey = key;
       _movementsFuture = () async {
@@ -107,7 +108,7 @@ class _MovementsListState extends State<_MovementsList> {
             movement.type != 'inventory_adjustment')) {
       return false;
     }
-    return !widget.store.stockMovements.any(
+    return !widget.store.inventory.stockMovements.any(
       (candidate) => candidate.reversalOfMovementId == movement.id,
     );
   }
@@ -116,7 +117,7 @@ class _MovementsListState extends State<_MovementsList> {
     final tr = AppLocalizations.of(context);
     final operationId = movement.movementGroupId.trim();
     if (operationId.isEmpty) return;
-    final all = widget.store.stockMovements;
+    final all = widget.store.inventory.stockMovements;
     final reversedIds = <String>{
       for (final candidate in all)
         if (candidate.reversalOfMovementId.trim().isNotEmpty)
@@ -138,12 +139,12 @@ class _MovementsListState extends State<_MovementsList> {
       0,
       (sum, candidate) => sum + candidate.quantity,
     );
-    final product = widget.store.stockTrackedProducts
+    final product = widget.store.catalog.stockTrackedProducts
         .where((item) => item.id == first.productId)
         .firstOrNull;
     if (product == null) return;
     final expectedVersion =
-        await widget.store.manualStockAdjustmentVersion(operationId);
+        await widget.store.inventory.manualStockAdjustmentVersion(operationId);
     if (!mounted || expectedVersion <= 0) return;
 
     final quantityController = TextEditingController(text: delta.toString());
@@ -243,7 +244,7 @@ class _MovementsListState extends State<_MovementsList> {
                     if (selected == null) return;
                     allocations = selected;
                   }
-                  await widget.store.editStockAdjustment(
+                  await widget.store.inventory.editStockAdjustment(
                     operationReferenceId: operationId,
                     expectedVersion: expectedVersion,
                     quantityDelta: nextDelta,
@@ -283,7 +284,7 @@ class _MovementsListState extends State<_MovementsList> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.hasAnyPermission(<String>{
+    if (!widget.store.security.hasAnyPermission(<String>{
       AppPermission.inventoryMovementsView,
       AppPermission.reportsView,
     })) {
@@ -328,9 +329,9 @@ class _MovementsListState extends State<_MovementsList> {
 
   Widget _buildMovementsFromMemory(BuildContext context, AppLocalizations tr) {
     final movements = _movementsCache.getOrCompute(
-      widget.store.stockMovementsRevision,
-      widget.store.appIdentity.storeId,
-      () => widget.store.stockMovements.toList(growable: false),
+      widget.store.inventory.revision,
+      widget.store.runtime.identity.storeId,
+      () => widget.store.inventory.stockMovements.toList(growable: false),
     );
     final filtered =
         movements.where(_matchesMovementFilters).toList(growable: false);
@@ -536,11 +537,11 @@ class _MovementsListState extends State<_MovementsList> {
                                     if (movement.unitCost > 0)
                                       Text(formatUsdReferenceAmount(
                                         movement.value,
-                                        widget.store.storeProfile,
+                                        widget.store.runtime.profile,
                                       )),
                                   ],
                                 ),
-                                if (widget.store.hasPermission(
+                                if (widget.store.security.hasPermission(
                                       AppPermission.inventoryCorrectionsManage,
                                     ) &&
                                     _isActiveManualAdjustment(movement))

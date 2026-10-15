@@ -4,7 +4,7 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
   SupplierProductPrice? selectedSupplierPriceFor(Product product) {
     return supplierId.isEmpty
         ? null
-        : widget.store.supplierProductPriceFor(
+        : widget.store.commerce.supplierProductPriceFor(
             productId: product.id, supplierId: supplierId);
   }
 
@@ -12,17 +12,17 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     return supplierId.isEmpty
         ? null
         : widget.store
-            .lastPurchaseItemFor(productId: product.id, supplierId: supplierId);
+            .commerce.lastPurchaseItemFor(productId: product.id, supplierId: supplierId);
   }
 
   double suggestedBaseCost(Product product) {
     final supplierPrice = selectedSupplierPriceFor(product);
     if (supplierPrice != null) {
       return toUsdReferencePrice(supplierPrice.cost, supplierPrice.currency,
-          widget.store.storeProfile);
+          widget.store.runtime.profile);
     }
     return suggestedPurchaseItem(product)?.unitCostPerBase ??
-        widget.store.lastPurchasePriceForProduct(product.id) ??
+        widget.store.commerce.lastPurchasePriceForProduct(product.id) ??
         product.usdCost;
   }
 
@@ -36,7 +36,7 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     final displayCost = fromUsdReferencePrice(
         suggestedBaseCost(product) * unit.conversionToBase,
         costCurrency,
-        widget.store.storeProfile);
+        widget.store.runtime.profile);
     costController.text =
         displayCost.toStringAsFixed(costCurrency == 'LBP' ? 0 : 2);
   }
@@ -46,15 +46,15 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     if (product == null) return '';
     final configuredSupplierPrice = supplierId.isEmpty
         ? null
-        : widget.store.supplierProductPriceFor(
+        : widget.store.commerce.supplierProductPriceFor(
             productId: product.id, supplierId: supplierId);
     final supplierPrice = supplierId.isEmpty
         ? null
-        : widget.store.lastPurchasePriceFor(
+        : widget.store.commerce.lastPurchasePriceFor(
             productId: product.id, supplierId: supplierId);
-    final lastGeneral = widget.store.lastPurchasePriceForProduct(product.id);
-    final avg = widget.store.averagePurchaseCostForProduct(product.id);
-    final supplierCount = widget.store.supplierCountForProduct(product.id);
+    final lastGeneral = widget.store.commerce.lastPurchasePriceForProduct(product.id);
+    final avg = widget.store.commerce.averagePurchaseCostForProduct(product.id);
+    final supplierCount = widget.store.commerce.supplierCountForProduct(product.id);
     final parts = <String>[];
     if (configuredSupplierPrice != null) {
       parts.add(
@@ -62,15 +62,15 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     }
     if (supplierPrice != null) {
       parts.add(
-          '${tr.text('supplier_last_base')}: ${formatUsdReferenceAmount(supplierPrice, widget.store.storeProfile)}');
+          '${tr.text('supplier_last_base')}: ${formatUsdReferenceAmount(supplierPrice, widget.store.runtime.profile)}');
     }
     if (lastGeneral != null) {
       parts.add(
-          '${tr.text('last_base')}: ${formatUsdReferenceAmount(lastGeneral, widget.store.storeProfile)}');
+          '${tr.text('last_base')}: ${formatUsdReferenceAmount(lastGeneral, widget.store.runtime.profile)}');
     }
     if (avg > 0) {
       parts.add(
-          '${tr.text('avg_base')}: ${formatUsdReferenceAmount(avg, widget.store.storeProfile)}');
+          '${tr.text('avg_base')}: ${formatUsdReferenceAmount(avg, widget.store.runtime.profile)}');
     }
     if (supplierCount > 0) {
       parts.add(
@@ -173,7 +173,7 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     phoneController.dispose();
     if (created == null) return;
     try {
-      await widget.store.addOrUpdateSupplier(created);
+      await widget.store.commerce.addOrUpdateSupplier(created);
       purchaseSuppliers = <Supplier>[created, ...purchaseSuppliers]
           .fold<Map<String, Supplier>>(<String, Supplier>{}, (map, supplier) {
             map[supplier.id] = supplier;
@@ -198,7 +198,7 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     final barcodeQuickController = TextEditingController();
     var unit = '';
     String generateBarcode() {
-      final used = widget.store.products
+      final used = widget.store.catalog.products
           .map((item) => item.barcode.trim())
           .where((value) => value.isNotEmpty)
           .toSet();
@@ -279,7 +279,7 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
                   initialValue: unit.isEmpty ? null : unit,
                   decoration:
                       InputDecoration(labelText: '${tr.text('unit')} *'),
-                  items: widget.store.units
+                  items: widget.store.catalog.units
                       .map((item) =>
                           item.code.isNotEmpty ? item.code : item.nameEn)
                       .where((value) => value.trim().isNotEmpty)
@@ -324,14 +324,14 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     barcodeQuickController.dispose();
     if (created == null) return;
     try {
-      await widget.store.addOrUpdateProduct(created);
+      await widget.store.catalog.addOrUpdateProduct(created);
       selectedProduct = created;
       selectedUnit = created.effectivePurchaseUnits.first;
       selectedExpiryDate =
           created.expiryTrackingEnabled && created.defaultShelfLifeDays > 0
               ? DateTime.now().add(Duration(days: created.defaultShelfLifeDays))
               : null;
-      purchaseProducts = widget.store.products
+      purchaseProducts = widget.store.catalog.products
           .where((product) => product.trackStock && product.isActive)
           .toList();
       applySuggestedSupplierPrice();
@@ -378,7 +378,7 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
     final editCostController = TextEditingController(
         text: (item.originalUnitCost ??
                 fromUsdReferencePrice(
-                    item.unitCost, editCurrency, widget.store.storeProfile))
+                    item.unitCost, editCurrency, widget.store.runtime.profile))
             .toStringAsFixed(editCurrency == 'LBP' ? 0 : 2));
     final updated = await showModalBottomSheet<PurchaseItem>(
       context: purchaseDialogContext,
@@ -534,11 +534,11 @@ extension _PurchaseDialogSessionActions1 on _PurchaseDialogSession {
                                         unitCost: toUsdReferencePrice(
                                             enteredCost,
                                             editCurrency,
-                                            widget.store.storeProfile),
+                                            widget.store.runtime.profile),
                                         originalUnitCost: enteredCost,
                                         unitCostCurrency: editCurrency,
                                         exchangeRateAtEntry: widget
-                                            .store.storeProfile.usdToLbpRate,
+                                            .store.runtime.profile.usdToLbpRate,
                                         batchAllocations: product
                                                     ?.expiryTrackingEnabled ==
                                                 true

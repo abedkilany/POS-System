@@ -66,7 +66,7 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
   }
 
   Future<void> _createAccountDialog(List<AccountingAccount> accounts) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final codeController = TextEditingController();
     final nameController = TextEditingController();
@@ -216,7 +216,7 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
         parentId: parentId,
         description: descriptionController.text,
         isPostable: isPostable,
-        storeId: widget.store.appIdentity.storeId,
+        storeId: widget.store.runtime.identity.storeId,
       );
       if (!mounted) return;
       setState(_reload);
@@ -233,7 +233,7 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
   }
 
   Future<void> _toggleAccount(AccountingAccount account) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     try {
       await AccountingService.setAccountActive(
           accountId: account.id, active: !account.isActive);
@@ -250,7 +250,7 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
     List<AccountingAccount> accounts,
     AccountingAccount account,
   ) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final codeController = TextEditingController(text: account.code);
     final nameController = TextEditingController(text: account.name);
@@ -438,7 +438,7 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
   }
 
   Future<void> _deleteAccount(AccountingAccount account) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -487,7 +487,7 @@ class _ChartOfAccountsTabState extends State<_ChartOfAccountsTab> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final canManage =
-        widget.store.hasPermission(AppPermission.accountingManage);
+        widget.store.security.hasPermission(AppPermission.accountingManage);
     return FutureBuilder<List<AccountingAccount>>(
       future: _future,
       builder: (context, snapshot) {

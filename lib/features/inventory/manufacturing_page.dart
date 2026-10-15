@@ -34,9 +34,10 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
     _searchController.dispose();
     super.dispose();
   }
+
   @override
   Widget build(BuildContext context) {
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryManufacturingManage,
     )) {
       return _AccessDeniedScaffold(
@@ -48,7 +49,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       animation: widget.store,
       builder: (context, _) {
         final query = _searchQuery.trim().toLowerCase();
-        final boms = widget.store.billsOfMaterials.where((bom) {
+        final boms = widget.store.inventory.billsOfMaterials.where((bom) {
           if (query.isEmpty) return true;
           return <String>[
             bom.name,
@@ -64,7 +65,8 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
             if (nameComparison != 0) return nameComparison;
             return a.id.compareTo(b.id);
           });
-        final orders = widget.store.manufacturingOrders.where((order) {
+        final orders =
+            widget.store.inventory.manufacturingOrders.where((order) {
           if (query.isEmpty) return true;
           return <String>[
             order.orderNo,
@@ -117,7 +119,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                                     vertical: 14,
                                   ),
                                 ),
-                                onPressed: widget.store.hasPermission(
+                                onPressed: widget.store.security.hasPermission(
                                   AppPermission.inventoryManufacturingManage,
                                 )
                                     ? () => _showBomDialog()

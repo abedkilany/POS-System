@@ -109,6 +109,6 @@ void main() {
     expect(page, contains('AppPermission.salesEdit'));
     expect(page, contains("tr.text('edit_sale')"));
     expect(page, contains("ValueKey('SalesEditSaveButton')"));
-    expect(page, contains('widget.store.editPostedSale('));
+    expect(page, contains('widget.store.commerce.editPostedSale('));
   });
 }

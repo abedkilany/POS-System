@@ -1,13 +1,12 @@
 part of 'cash_page.dart';
 
 extension _CashPageStatePart2 on _CashPageState {
-
   Future<void> _refundDialog() async {
     final tr = AppLocalizations.of(context);
-    await widget.store.ensurePurchasesPageDataLoaded();
+    await widget.store.commerce.ensurePurchasesLoaded();
     if (!mounted) return;
     try {
-      await widget.store.normalizeRefundAllocations();
+      await widget.store.commerce.normalizeRefundAllocations();
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -19,11 +18,12 @@ extension _CashPageStatePart2 on _CashPageState {
     final purchases = await _cashPurchasesSnapshot();
     if (!mounted) return;
 
-    if (widget.store.canDeleteOrCancel) {
-      for (final sale in widget.store.sales.where((item) => !item.isDeleted)) {
+    if (widget.store.security.canDeleteOrCancel) {
+      for (final sale
+          in widget.store.commerce.sales.where((item) => !item.isDeleted)) {
         try {
           final available =
-              await widget.store.refundableSaleCashAmount(sale.id);
+              await widget.store.commerce.refundableSaleCashAmount(sale.id);
           if (available > 0.000001) {
             options.add(<String, Object>{
               'kind': 'sale',
@@ -38,12 +38,12 @@ extension _CashPageStatePart2 on _CashPageState {
       }
     }
 
-    if (widget.store.canManageSupplierPayments) {
+    if (widget.store.security.canManageSupplierPayments) {
       for (final purchase in purchases
           .where((item) => !item.isDeleted && !item.isPurchaseReturn)) {
         try {
-          final available =
-              await widget.store.refundablePurchaseCashAmount(purchase.id);
+          final available = await widget.store.commerce
+              .refundablePurchaseCashAmount(purchase.id);
           if (available > 0.000001) {
             options.add(<String, Object>{
               'kind': 'purchase',
@@ -60,7 +60,7 @@ extension _CashPageStatePart2 on _CashPageState {
           !item.isDeleted && !item.isCancelled && item.isPurchaseReturn)) {
         try {
           final available = await widget.store
-              .refundablePurchaseReturnCashAmount(purchase.id);
+              .commerce.refundablePurchaseReturnCashAmount(purchase.id);
           if (available > 0.000001) {
             options.add(<String, Object>{
               'kind': 'purchase_return',
@@ -75,13 +75,13 @@ extension _CashPageStatePart2 on _CashPageState {
       }
     }
 
-    if (widget.store.canManageExpenses) {
-      for (final expense in widget.store.expenses.where(
+    if (widget.store.security.canManageExpenses) {
+      for (final expense in widget.store.commerce.expenses.where(
         (item) => !item.isDeleted && item.isPosted,
       )) {
         try {
           final available =
-              await widget.store.refundableExpenseCashAmount(expense.id);
+              await widget.store.commerce.refundableExpenseCashAmount(expense.id);
           if (available > 0.000001) {
             options.add(<String, Object>{
               'kind': 'expense',
@@ -142,7 +142,7 @@ extension _CashPageStatePart2 on _CashPageState {
                     return DropdownMenuItem<String>(
                       value: '$kind:${item['id']}',
                       child: Text(
-                        '$direction • ${item['label']} • ${formatUsdReferenceAmount(item['amount'] as double, widget.store.storeProfile)}',
+                        '$direction • ${item['label']} • ${formatUsdReferenceAmount(item['amount'] as double, widget.store.runtime.profile)}',
                         overflow: TextOverflow.ellipsis,
                       ),
                     );
@@ -169,7 +169,7 @@ extension _CashPageStatePart2 on _CashPageState {
                   decoration: InputDecoration(
                     labelText: tr.text('amount'),
                     helperText:
-                        '${_l(tr, 'Available', 'المتاح')}: ${formatUsdReferenceAmount(selected['amount'] as double, widget.store.storeProfile)}',
+                        '${_l(tr, 'Available', 'المتاح')}: ${formatUsdReferenceAmount(selected['amount'] as double, widget.store.runtime.profile)}',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -244,24 +244,24 @@ extension _CashPageStatePart2 on _CashPageState {
       final kind = selected['kind'] as String;
       final id = selected['id'] as String;
       final refunded = kind == 'purchase_return'
-          ? await widget.store.refundPurchaseReturnCash(
+          ? await widget.store.commerce.refundPurchaseReturnCash(
               purchaseReturnId: id,
               amount: amount,
               notes: notesController.text.trim(),
             )
           : kind == 'purchase'
-              ? await widget.store.refundPurchaseCash(
+              ? await widget.store.commerce.refundPurchaseCash(
                   purchaseId: id,
                   amount: amount,
                   notes: notesController.text.trim(),
                 )
               : kind == 'expense'
-                  ? await widget.store.refundExpenseCash(
+                  ? await widget.store.commerce.refundExpenseCash(
                       expenseId: id,
                       amount: amount,
                       notes: notesController.text.trim(),
                     )
-                  : await widget.store.refundSaleCash(
+                  : await widget.store.commerce.refundSaleCash(
                       saleId: id,
                       amount: amount,
                       notes: notesController.text.trim(),
@@ -271,7 +271,7 @@ extension _CashPageStatePart2 on _CashPageState {
         SnackBar(
           content: Text(
             refunded > 0
-                ? '${_l(tr, 'Refund posted', 'تم تسجيل الاسترداد')}: ${formatUsdReferenceAmount(refunded, widget.store.storeProfile)}'
+                ? '${_l(tr, 'Refund posted', 'تم تسجيل الاسترداد')}: ${formatUsdReferenceAmount(refunded, widget.store.runtime.profile)}'
                 : _l(tr, 'Nothing remains to refund.',
                     'لا يوجد مبلغ متبقٍ للاسترداد.'),
           ),
@@ -293,7 +293,7 @@ extension _CashPageStatePart2 on _CashPageState {
     AdvancedAccountingItem? currentDrawer,
     AdvancedAccountingItem? currentSession,
   ) async {
-    widget.store.requireAllPermissions(<String>{
+    widget.store.security.requireAllPermissions(<String>{
       AppPermission.cashBoxManage,
       AppPermission.expensesManage,
     });
@@ -305,7 +305,7 @@ extension _CashPageStatePart2 on _CashPageState {
     final creditExpenseBalances =
         await AccountingService.readOutstandingCreditExpenseBalances();
     if (!mounted) return;
-    final creditExpenses = widget.store.expenses
+    final creditExpenses = widget.store.commerce.expenses
         .where((expense) =>
             !expense.isDeleted &&
             expense.isPosted &&
@@ -354,7 +354,7 @@ extension _CashPageStatePart2 on _CashPageState {
                         (expense) => DropdownMenuItem<String>(
                           value: expense.id,
                           child: Text(
-                            '${expense.title} • ${expense.category} • ${formatUsdReferenceAmount(expense.amount, widget.store.storeProfile)}',
+                            '${expense.title} • ${expense.category} • ${formatUsdReferenceAmount(expense.amount, widget.store.runtime.profile)}',
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -378,7 +378,7 @@ extension _CashPageStatePart2 on _CashPageState {
                 Align(
                   alignment: AlignmentDirectional.centerStart,
                   child: Text(
-                    '${tr.text('amount')}: ${formatUsdReferenceAmount(selectedExpense.amount, widget.store.storeProfile)}',
+                    '${tr.text('amount')}: ${formatUsdReferenceAmount(selectedExpense.amount, widget.store.runtime.profile)}',
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -470,7 +470,7 @@ extension _CashPageStatePart2 on _CashPageState {
           ),
         );
       }
-      final user = widget.store.activeUser;
+      final user = widget.store.security.activeUser;
       await CashOperationService.current(authorization: widget.store)
           .withdrawal(
         cashLocationId: currentDrawer.id,
@@ -481,14 +481,13 @@ extension _CashPageStatePart2 on _CashPageState {
             'Expense credit settlement: ${selectedExpense.id} - ${selectedExpense.title}',
         createdBy: user?.fullName.trim().isNotEmpty == true
             ? user!.fullName
-            : widget.store.currentRole,
+            : widget.store.security.currentRole,
         createdByUserId: user?.id ?? '',
-        deviceId: widget.store.appIdentity.deviceId,
-        branchId: widget.store.appIdentity.branchId,
-        storeId: widget.store.appIdentity.storeId,
-        idempotencyKey:
-            'expense-credit-settlement:${selection.expenseId}:'
-                '$_deviceId:${DateTime.now().microsecondsSinceEpoch}',
+        deviceId: widget.store.runtime.identity.deviceId,
+        branchId: widget.store.runtime.identity.branchId,
+        storeId: widget.store.runtime.identity.storeId,
+        idempotencyKey: 'expense-credit-settlement:${selection.expenseId}:'
+            '$_deviceId:${DateTime.now().microsecondsSinceEpoch}',
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

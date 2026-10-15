@@ -3,7 +3,7 @@ part of 'sales_page.dart';
 
 extension _SalesPageShiftDialogs on _SalesPageState {
   Future<void> _openSaleDrawerDialog(_SaleShiftStatus status) async {
-    widget.store.requirePermission(AppPermission.cashBoxManage);
+    widget.store.security.requirePermission(AppPermission.cashBoxManage);
     final tr = AppLocalizations.of(context);
     final controller = TextEditingController(text: '0');
     final drawers = status.drawers;
@@ -79,7 +79,7 @@ extension _SalesPageShiftDialogs on _SalesPageState {
       if (confirmed == true) {
         final drawer =
             drawers.firstWhere((item) => item.id == selectedDrawerId);
-        final activeUser = widget.store.activeUser;
+        final activeUser = widget.store.security.activeUser;
         await AccountingService.openCashDrawer(
             authorization: widget.store,
             drawerNo: drawer.name,
@@ -88,9 +88,9 @@ extension _SalesPageShiftDialogs on _SalesPageState {
             openingBalance: double.tryParse(controller.text.trim()) ?? 0,
             openedBy: _activeUserDisplayName(activeUser),
             openedByUserId: activeUser?.id ?? '',
-            storeId: widget.store.appIdentity.storeId,
-            branchId: widget.store.appIdentity.branchId,
-            deviceId: widget.store.appIdentity.deviceId);
+            storeId: widget.store.runtime.identity.storeId,
+            branchId: widget.store.runtime.identity.branchId,
+            deviceId: widget.store.runtime.identity.deviceId);
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -107,7 +107,7 @@ extension _SalesPageShiftDialogs on _SalesPageState {
 
   Future<void> _closeSaleDrawerDialog(
       AdvancedAccountingItem session, _SaleShiftStatus status) async {
-    widget.store.requirePermission(AppPermission.cashBoxManage);
+    widget.store.security.requirePermission(AppPermission.cashBoxManage);
     final tr = AppLocalizations.of(context);
     final expected =
         await AccountingService.calculateCashDrawerExpectedCash(session.id);
@@ -117,8 +117,8 @@ extension _SalesPageShiftDialogs on _SalesPageState {
     final transferTargets = status.cashLocations
         .where((item) => item.id != session.referenceId)
         .toList(growable: false);
-    final activeUser = widget.store.activeUser;
-    final handoverUsers = widget.store.users
+    final activeUser = widget.store.security.activeUser;
+    final handoverUsers = widget.store.security.users
         .where((user) => user.isActive && user.id != (activeUser?.id ?? ''))
         .toList(growable: false);
     String closeMode = 'keep_drawer';
@@ -135,7 +135,7 @@ extension _SalesPageShiftDialogs on _SalesPageState {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                           Text(
-                              '${tr.text('expected')}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
+                              '${tr.text('expected')}: ${formatUsdReferenceAmount(expected, widget.store.runtime.profile)}'),
                           const SizedBox(height: 12),
                           TextField(
                               controller: counted,
@@ -261,9 +261,9 @@ extension _SalesPageShiftDialogs on _SalesPageState {
               openingBalance: countedAmount,
               openedBy: nextUserName,
               openedByUserId: nextUser.id,
-              storeId: widget.store.appIdentity.storeId,
-              branchId: widget.store.appIdentity.branchId,
-              deviceId: widget.store.appIdentity.deviceId);
+              storeId: widget.store.runtime.identity.storeId,
+              branchId: widget.store.runtime.identity.branchId,
+              deviceId: widget.store.runtime.identity.deviceId);
         }
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);

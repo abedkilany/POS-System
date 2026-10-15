@@ -255,7 +255,7 @@ class Phase10HealthService {
   }
 
   Future<void> _checkBusinessData(List<Phase10HealthCheck> checks) async {
-    final result = await store.verifyLocalBusinessDataIntegrity();
+    final result = await store.sync.verifyLocalBusinessDataIntegrity();
     checks.add(Phase10HealthCheck(
       id: 'phase10_business_data',
       title: 'Business data references',
@@ -277,7 +277,7 @@ class Phase10HealthService {
     VentioDriftDatabase db,
     List<Phase10HealthCheck> checks,
   ) async {
-    final storeId = store.appIdentity.storeId.trim();
+    final storeId = store.runtime.identity.storeId.trim();
     if (storeId.isEmpty) {
       checks.add(const Phase10HealthCheck(
         id: 'phase10_inventory_traceability',
@@ -345,7 +345,7 @@ class Phase10HealthService {
   }
 
   void _checkRecoveryIdentity(List<Phase10HealthCheck> checks) {
-    if (store.appIdentity.isClient) {
+    if (store.runtime.identity.isClient) {
       checks.add(const Phase10HealthCheck(
         id: 'phase10_recovery_identity',
         title: 'Disaster-recovery identity',
@@ -354,8 +354,8 @@ class Phase10HealthService {
       ));
       return;
     }
-    final recoveryKey = store.appIdentity.recoveryKey.trim();
-    final storeId = store.appIdentity.storeId.trim();
+    final recoveryKey = store.runtime.identity.recoveryKey.trim();
+    final storeId = store.runtime.identity.storeId.trim();
     final healthy = recoveryKey.length >= 8 && storeId.isNotEmpty;
     checks.add(Phase10HealthCheck(
       id: 'phase10_recovery_identity',

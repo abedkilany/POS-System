@@ -14,6 +14,8 @@ mixin _AppStoreOrchestration
         _AppStoreForwardingApiPart3,
         _AppStoreForwardingApiPart4,
         _AppStoreForwardingApiPart5 {
+  SecurityDomainPort get security;
+
   bool get sqliteSourceOfTruth => LocalDatabaseService.isSqliteAuthoritative;
 
   StorageLayerSnapshot get storageLayerSnapshot => StorageLayerSnapshot(
@@ -60,6 +62,8 @@ mixin _AppStoreOrchestration
   int get inventoryCountsRevision => _inventoryCountsRevision;
   int get warehousesRevision => _warehousesRevision;
   int get accountTransactionsRevision => _accountTransactionsRevision;
+  int get _accountingRevisionReadImpl => accountingRevision;
+  int get _inventoryRevisionReadImpl => inventoryRevision;
   int get storeProfileRevision => _storeProfileRevision;
   int get accountingRevision => Object.hashAll(<Object?>[
         _customersRevision,
@@ -70,7 +74,8 @@ mixin _AppStoreOrchestration
         _accountTransactionsRevision,
         _storeProfileRevision,
       ]);
-  int get dashboardRevision => Object.hashAll(<Object?>[
+  int get dashboardRevision => _dashboardRevisionReadImpl;
+  int get _dashboardRevisionReadImpl => Object.hashAll(<Object?>[
         _productsRevision,
         _customersRevision,
         _suppliersRevision,
@@ -82,7 +87,8 @@ mixin _AppStoreOrchestration
         _storeProfileRevision,
         _syncSequence,
       ]);
-  int get reportsRevision => Object.hashAll(<Object?>[
+  int get reportsRevision => _reportsRevisionReadImpl;
+  int get _reportsRevisionReadImpl => Object.hashAll(<Object?>[
         _productsRevision,
         _customersRevision,
         _suppliersRevision,
@@ -121,7 +127,9 @@ mixin _AppStoreOrchestration
 
   Future<void> ensureSyncDataLoaded() => _requestSyncDataLoad();
 
-  Future<void> ensureProductsLoaded() => _loadDeferredGroup<Product>(
+  Future<void> ensureProductsLoaded() => _ensureProductsLoadedImpl();
+
+  Future<void> _ensureProductsLoadedImpl() => _loadDeferredGroup<Product>(
         key: AppStore._productsKey,
         loader: _loadProductsForStartup,
         target: _products,
@@ -139,7 +147,9 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureCustomersLoaded() => _loadDeferredGroup<Customer>(
+  Future<void> ensureCustomersLoaded() => _ensureCustomersLoadedImpl();
+
+  Future<void> _ensureCustomersLoadedImpl() => _loadDeferredGroup<Customer>(
         key: AppStore._customersKey,
         loader: _loadCustomersForStartup,
         target: _customers,
@@ -191,7 +201,9 @@ mixin _AppStoreOrchestration
         target: _manufacturingOrders,
       );
 
-  Future<void> ensureSuppliersLoaded() => _loadDeferredGroup<Supplier>(
+  Future<void> ensureSuppliersLoaded() => _ensureSuppliersLoadedImpl();
+
+  Future<void> _ensureSuppliersLoadedImpl() => _loadDeferredGroup<Supplier>(
         key: AppStore._suppliersKey,
         loader: _loadSuppliersForStartup,
         target: _suppliers,
@@ -222,7 +234,11 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureProductPricesLoaded() => _loadDeferredGroup<ProductPrice>(
+  Future<void> ensureProductPricesLoaded() =>
+      _ensureProductPricesLoadedImpl();
+
+  Future<void> _ensureProductPricesLoadedImpl() =>
+      _loadDeferredGroup<ProductPrice>(
         key: AppStore._productPricesKey,
         loader: _loadProductPricesForStartup,
         target: _productPrices,
@@ -242,7 +258,10 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureProductCostsLoaded() => _loadDeferredGroup<ProductCost>(
+  Future<void> ensureProductCostsLoaded() => _ensureProductCostsLoadedImpl();
+
+  Future<void> _ensureProductCostsLoadedImpl() =>
+      _loadDeferredGroup<ProductCost>(
         key: AppStore._productCostsKey,
         loader: _loadProductCostsForStartup,
         target: _productCosts,
@@ -313,7 +332,9 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureWarehousesLoaded() => _loadDeferredGroup<Warehouse>(
+  Future<void> ensureWarehousesLoaded() => _ensureWarehousesLoadedImpl();
+
+  Future<void> _ensureWarehousesLoadedImpl() => _loadDeferredGroup<Warehouse>(
         key: AppStore._warehousesKey,
         loader: _loadWarehousesForStartup,
         target: _warehouses,
@@ -324,6 +345,9 @@ mixin _AppStoreOrchestration
       );
 
   Future<void> ensureAccountTransactionsLoaded() =>
+      _ensureAccountTransactionsLoadedImpl();
+
+  Future<void> _ensureAccountTransactionsLoadedImpl() =>
       _loadDeferredGroup<AccountTransaction>(
         key: AppStore._accountTransactionsKey,
         loader: _loadAccountTransactionsForStartup,
@@ -416,7 +440,7 @@ mixin _AppStoreOrchestration
       generation == _derivedListCacheGeneration;
 
   String _accountLedgerKey(String accountType, String accountId) =>
-      '${accountType.trim().toLowerCase()}::${accountId.trim()}';
+      const AccountLedgerReadService().accountKey(accountType, accountId);
 
   int get currentSyncSequence => _syncSequence;
   int get latestStoredAuthoritativeSequence =>
@@ -446,75 +470,40 @@ mixin _AppStoreOrchestration
   bool hasAllPermissions(Iterable<String> permissions) =>
       permissions.every(hasPermission);
 
-  bool get canViewDashboard => canAccessPage('dashboard');
-  bool get canViewProducts => hasAnyPermission(<String>{
-        AppPermission.productsView,
-        AppPermission.productsManage,
-        AppPermission.productsCreate,
-        AppPermission.productsEdit,
-        AppPermission.productsDelete,
-      });
-  bool get canManageProducts => hasAnyPermission(<String>{
-        AppPermission.productsManage,
-        AppPermission.productsCreate,
-        AppPermission.productsEdit,
-        AppPermission.productsDelete,
-      });
-  bool get canViewCustomers => hasAnyPermission(<String>{
-        AppPermission.customersView,
-        AppPermission.customersManage,
-      });
-  bool get canManageCustomers => hasPermission(AppPermission.customersManage);
-  bool get canManageCustomerPayments =>
-      hasPermission(AppPermission.customersPaymentManage);
-  bool get canViewSuppliers => hasAnyPermission(<String>{
-        AppPermission.suppliersView,
-        AppPermission.suppliersManage,
-      });
-  bool get canManageSuppliers => hasPermission(AppPermission.suppliersManage);
-  bool get canManageSupplierPayments =>
-      hasPermission(AppPermission.suppliersPaymentManage);
-  bool get canViewSales => hasAnyPermission(<String>{
-        AppPermission.salesView,
-        AppPermission.salesCreate,
-        AppPermission.salesEdit,
-        AppPermission.salesCancel,
-      });
-  bool get canSell => hasPermission(AppPermission.salesCreate);
-
-  bool get canViewQuotations => canAccessPage('quotations');
-  bool get canManageQuotations => hasPermission(AppPermission.quotationsManage);
-  bool get canViewDeliveryNotes => canAccessPage('delivery_notes');
-  bool get canManageDeliveryNotes =>
-      hasPermission(AppPermission.deliveryNotesManage);
-  bool get canViewPurchases => canAccessPage('purchases');
-  bool get canManagePurchases => hasPermission(AppPermission.purchasesManage);
-  bool get canViewExpenses => canAccessPage('expenses');
-  bool get canManageExpenses => hasPermission(AppPermission.expensesManage);
-  bool get canViewAccounting => canAccessPage('accounting');
-  bool get canManageAccounting => hasPermission(AppPermission.accountingManage);
-  bool get canManageCashBox => hasPermission(AppPermission.cashBoxManage);
-  bool get canViewInventory => canAccessPage('inventory');
-  bool get canManageInventory => hasAnyPermission(<String>{
-        AppPermission.inventoryWarehousesManage,
-        AppPermission.inventoryCorrectionsManage,
-        AppPermission.inventoryCountsManage,
-        AppPermission.inventoryWasteManage,
-        AppPermission.inventoryManufacturingManage,
-      });
-  bool get canViewReports => canAccessPage('reports');
-  bool get canViewCashBox => canAccessPage('cash_box') || canViewAccounting;
-  bool get canViewSettings => canAccessPage('settings');
-  bool get canViewDatabase => canAccessPage('database');
-  bool get canViewMaintenance => canAccessPage('maintenance');
-  bool get canManageMaintenance =>
-      hasPermission(AppPermission.maintenanceManage);
-  bool get canManageUsers => hasAnyPermission(
-      <String>{AppPermission.usersManage, AppPermission.rolesManage});
-  bool get canManageUsersPage => hasAnyPermission(
-      <String>{AppPermission.usersManage, AppPermission.rolesManage});
-  bool get canManageDatabase => hasPermission(AppPermission.databaseManage);
-  bool get canDeleteOrCancel => hasPermission(AppPermission.salesCancel);
+  bool get canViewDashboard => security.canViewDashboard;
+  bool get canViewProducts => security.canViewProducts;
+  bool get canManageProducts => security.canManageProducts;
+  bool get canViewCustomers => security.canViewCustomers;
+  bool get canManageCustomers => security.canManageCustomers;
+  bool get canManageCustomerPayments => security.canManageCustomerPayments;
+  bool get canViewSuppliers => security.canViewSuppliers;
+  bool get canManageSuppliers => security.canManageSuppliers;
+  bool get canManageSupplierPayments => security.canManageSupplierPayments;
+  bool get canViewSales => security.canViewSales;
+  bool get canSell => security.canSell;
+  bool get canViewQuotations => security.canViewQuotations;
+  bool get canManageQuotations => security.canManageQuotations;
+  bool get canViewDeliveryNotes => security.canViewDeliveryNotes;
+  bool get canManageDeliveryNotes => security.canManageDeliveryNotes;
+  bool get canViewPurchases => security.canViewPurchases;
+  bool get canManagePurchases => security.canManagePurchases;
+  bool get canViewExpenses => security.canViewExpenses;
+  bool get canManageExpenses => security.canManageExpenses;
+  bool get canViewAccounting => security.canViewAccounting;
+  bool get canManageAccounting => security.canManageAccounting;
+  bool get canManageCashBox => security.canManageCashBox;
+  bool get canViewInventory => security.canViewInventory;
+  bool get canManageInventory => security.canManageInventory;
+  bool get canViewReports => security.canViewReports;
+  bool get canViewCashBox => security.canViewCashBox;
+  bool get canViewSettings => security.canViewSettings;
+  bool get canViewDatabase => security.canViewDatabase;
+  bool get canViewMaintenance => security.canViewMaintenance;
+  bool get canManageMaintenance => security.canManageMaintenance;
+  bool get canManageUsers => security.canManageUsers;
+  bool get canManageUsersPage => security.canManageUsersPage;
+  bool get canManageDatabase => security.canManageDatabase;
+  bool get canDeleteOrCancel => security.canDeleteOrCancel;
   bool get needsInitialAdminSetup =>
       _users.isEmpty || _hasOnlyLegacyDefaultAdminUser;
   bool get hasLocalAdminUser =>

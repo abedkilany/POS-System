@@ -14,13 +14,10 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
         index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
     if (purchase == null) throw ArgumentError('Purchase not found.');
     if (purchase.isReceived || purchase.isCancelled) return;
-    final plannedPayment = !settleInitialPayment
-        ? 0.0
-        : purchase.paidAmount > 0
-            ? purchase.paidAmount.clamp(0, purchase.subtotal).toDouble()
-            : (purchase.paymentStatus.trim().toLowerCase() == 'paid'
-                ? purchase.subtotal
-                : 0.0);
+    final plannedPayment = const PurchaseReceiptService().plannedInitialPayment(
+      purchase,
+      settleInitialPayment: settleInitialPayment,
+    );
     await AccountingService.validatePurchasePayment(
       paymentMethod: purchase.paymentMethod,
       paidAmount: plannedPayment,
@@ -30,39 +27,19 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
     final sqliteDb = SqliteMigrationManager.database;
     if (LocalDatabaseService.isSqliteAuthoritative && sqliteDb != null) {
       final now = DateTime.now();
-      // A received invoice can be reversed and reposted more than once. The
-      // posting version must be part of stock movement identity; otherwise a
-      // repost reuses the old idempotency key and is silently skipped.
-      final receivePostingKey =
-          '${purchase.id}:purchase_receive:v${purchase.version}';
-      final receivedItems = purchase.items.indexed.map((entry) {
-        final allocations = batchAllocationsByLine[entry.$1];
-        if (allocations == null) return entry.$2;
-        final item = entry.$2;
-        return PurchaseItem(
-          lineId: item.lineId,
-          productId: item.productId,
-          productName: item.productName,
-          quantity: item.quantity,
-          unitCost: item.unitCost,
-          purchaseUnitId: item.purchaseUnitId,
-          purchaseUnitName: item.purchaseUnitName,
-          conversionToBase: item.conversionToBase,
-          originalUnitCost: item.originalUnitCost,
-          unitCostCurrency: item.unitCostCurrency,
-          exchangeRateAtEntry: item.exchangeRateAtEntry,
-          batchAllocations: allocations,
-        );
-      }).toList(growable: false);
-      var received = _withSyncMeta<Purchase>(
-        purchase.copyWith(
-          status: 'Received',
-          items: receivedItems,
-          paidAmount: settleInitialPayment ? 0 : purchase.paidAmount,
-          paymentStatus: plannedPayment > 0 ? 'credit' : purchase.paymentStatus,
-        ),
-        now,
+      // Include the posting version in stock identity so reversal/repost cycles
+      // never collide with a previous receipt's idempotency key.
+      final receiptPlan = const PurchaseReceiptService().prepare(
+        purchase: purchase,
+        now: now,
+        settleInitialPayment: settleInitialPayment,
+        batchAllocationsByLine: batchAllocationsByLine,
+        deviceId: _deviceId,
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
       );
+      final receivePostingKey = receiptPlan.idempotencyKey;
+      var received = receiptPlan.purchase;
       final legacyDefaultVatRatePercent =
           await AccountingService.readDefaultVatRatePercent();
       final taxProfileIdByProductId = <String, String>{
@@ -395,21 +372,13 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
     final purchase =
         index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
     if (purchase == null) return;
-    if (purchase.isReceived) {
-      throw StateError(
-        'Received purchase invoices cannot be deleted. Cancel them first.',
-      );
-    }
-    if (purchase.isCancelled) {
-      throw StateError(
-        'Cancelled purchase invoices require permanent delete permission.',
-      );
-    }
     final now = DateTime.now();
-    final deleted = _withSyncMeta<Purchase>(
-      purchase.copyWith(deletedAt: now),
-      now,
-      clearDeletedAt: false,
+    final deleted = const PurchaseDraftService().softDeleteDraft(
+      current: purchase,
+      now: now,
+      deviceId: _deviceId,
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
     );
     if (index != -1) _putPurchaseAtIndex(deleted, index);
     _recordSyncChange(

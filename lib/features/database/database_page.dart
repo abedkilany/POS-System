@@ -67,8 +67,8 @@ class _DatabasePageState extends State<DatabasePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.store.canManageDatabase &&
-        !widget.store.hasPermission(AppPermission.databaseView)) {
+    if (!widget.store.security.canManageDatabase &&
+        !widget.store.security.hasPermission(AppPermission.databaseView)) {
       return _AccessDeniedScaffold(
         title: _t('database_page'),
         message: _t('no_access_database_tools'),

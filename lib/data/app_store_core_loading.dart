@@ -1,7 +1,12 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitCoreLoading on AppStore {
-void _emitTrace(
+  static const InventoryReadService _inventoryReadService =
+      InventoryReadService();
+
+  static const CommerceReadService _commerceReadService = CommerceReadService();
+
+  void _emitTrace(
     String section,
     String phase,
     Stopwatch sw,
@@ -12,7 +17,7 @@ void _emitTrace(
     sink(section, phase, sw.elapsedMilliseconds, metadata);
   }
 
-Future<T> _traceAsync<T>(
+  Future<T> _traceAsync<T>(
     String section,
     String phase,
     Future<T> Function() action, {
@@ -31,7 +36,7 @@ Future<T> _traceAsync<T>(
     }
   }
 
-void _traceSync(
+  void _traceSync(
     String section,
     String phase,
     void Function() action, {
@@ -46,7 +51,7 @@ void _traceSync(
     }
   }
 
-T _traceSyncResult<T>(
+  T _traceSyncResult<T>(
     String section,
     String phase,
     T Function() action, {
@@ -61,13 +66,13 @@ T _traceSyncResult<T>(
     }
   }
 
-Future<void> warmDeferredPageCaches() async {
+  Future<void> warmDeferredPageCaches() async {
     await StartupTimingService.measure(
       'app_store.post_startup_cache_warm',
       () async {
         await Future.wait(<Future<void>>[
           ensurePriceListsLoaded(),
-          ensureProductPricesLoaded(),
+          _ensureProductPricesLoadedImpl(),
           ensureProductPriceOverridesLoaded(),
           ensureProductCostsLoaded(),
           _requestSyncDataLoad(),
@@ -77,7 +82,7 @@ Future<void> warmDeferredPageCaches() async {
     );
   }
 
-Future<void> _requestLedgerDataLoad() {
+  Future<void> _requestLedgerDataLoad() {
     if (_ledgerDataLoadCompleted) return Future.value();
     final existing = _ledgerDataLoadFuture;
     if (existing != null) return existing;
@@ -89,7 +94,7 @@ Future<void> _requestLedgerDataLoad() {
     return _ledgerDataLoadFuture!;
   }
 
-Future<void> _requestSyncDataLoad() {
+  Future<void> _requestSyncDataLoad() {
     if (_syncDataLoadCompleted) return Future.value();
     final existing = _syncDataLoadFuture;
     if (existing != null) return existing;
@@ -101,7 +106,7 @@ Future<void> _requestSyncDataLoad() {
     return _syncDataLoadFuture!;
   }
 
-Future<void> _loadDeferredGroup<T>({
+  Future<void> _loadDeferredGroup<T>({
     required String key,
     required Future<List<T>> Function() loader,
     required List<T> target,
@@ -117,7 +122,7 @@ Future<void> _loadDeferredGroup<T>({
     });
   }
 
-Future<void> _requestDeferredGroupLoad(
+  Future<void> _requestDeferredGroupLoad(
     String key,
     Future<void> Function() action,
   ) {
@@ -148,14 +153,14 @@ Future<void> _requestDeferredGroupLoad(
     return future;
   }
 
-Future<void> ensureProductPricingLoaded() async {
+  Future<void> ensureProductPricingLoaded() async {
     await ensureProductsLoaded();
     await ensurePriceListsLoaded();
-    await ensureProductPricesLoaded();
+    await _ensureProductPricesLoadedImpl();
     await ensureProductPriceOverridesLoaded();
   }
 
-Future<void> ensureProductCostingDataLoaded() async {
+  Future<void> ensureProductCostingDataLoaded() async {
     await ensureProductsLoaded();
     await ensureProductCostsLoaded();
     await ensureCostingMethodHistoryLoaded();
@@ -163,7 +168,7 @@ Future<void> ensureProductCostingDataLoaded() async {
     await ensureSupplierProductPricesLoaded();
   }
 
-Future<void> ensureSalesPageDataLoaded() async {
+  Future<void> ensureSalesPageDataLoaded() async {
     await ensureProductsLoaded();
     await Future.wait([
       ensureCustomersLoaded(),
@@ -176,7 +181,7 @@ Future<void> ensureSalesPageDataLoaded() async {
         ._backfillPostedDocumentSnapshotsIfNeeded();
   }
 
-Future<void> ensurePurchasesPageDataLoaded() async {
+  Future<void> ensurePurchasesPageDataLoaded() async {
     await ensureProductsLoaded();
     await ensureSuppliersLoaded();
     await ensurePurchasesLoaded();
@@ -185,7 +190,7 @@ Future<void> ensurePurchasesPageDataLoaded() async {
         ._backfillPostedDocumentSnapshotsIfNeeded();
   }
 
-Future<void> ensureAccountingPageDataLoaded() async {
+  Future<void> ensureAccountingPageDataLoaded() async {
     await ensureCustomersLoaded();
     await ensureSuppliersLoaded();
     await ensureSalesLoaded();
@@ -195,23 +200,26 @@ Future<void> ensureAccountingPageDataLoaded() async {
     await ensureAccountTransactionsLoaded();
   }
 
-Future<void> ensureQuotationsPageDataLoaded() async {
+  Future<void> ensureQuotationsPageDataLoaded() async {
     await ensureSaleQuotationsLoaded();
   }
 
-Future<void> ensureDeliveryNotesPageDataLoaded() async {
+  Future<void> ensureDeliveryNotesPageDataLoaded() async {
     await ensureSalesLoaded();
     await ensureDeliveryNotesLoaded();
   }
 
-Future<void> ensureInventoryPageDataLoaded() async {
+  Future<void> ensureInventoryPageDataLoaded() =>
+      _ensureInventoryPageDataLoadedImpl();
+
+  Future<void> _ensureInventoryPageDataLoadedImpl() async {
     await ensureProductsLoaded();
     await ensureStockMovementsLoaded();
     await ensureInventoryCountsLoaded();
     await ensureWarehousesLoaded();
   }
 
-Future<void> ensureHeavyDataLoaded({bool failOnError = false}) async {
+  Future<void> ensureHeavyDataLoaded({bool failOnError = false}) async {
     await ensureProductsLoaded();
     await ensureCustomersLoaded();
     await ensureSalesLoaded();
@@ -222,7 +230,7 @@ Future<void> ensureHeavyDataLoaded({bool failOnError = false}) async {
     await ensureSuppliersLoaded();
     await ensureSupplierProductPricesLoaded();
     await ensurePriceListsLoaded();
-    await ensureProductPricesLoaded();
+    await _ensureProductPricesLoadedImpl();
     await ensureProductPriceOverridesLoaded();
     await ensureProductCostsLoaded();
     await ensureCostingMethodHistoryLoaded();
@@ -247,27 +255,27 @@ Future<void> ensureHeavyDataLoaded({bool failOnError = false}) async {
     }
   }
 
-void _ensureSalesCache() {
+  void _ensureSalesCache() {
     if (_cachedSalesGeneration == _salesRevision && _cachedSales != null) {
       return;
     }
     _cachedSales = UnmodifiableListView(
-      _sales
-          .where((item) => !item.isDeleted)
-          .toList(growable: false)
-          .reversed
-          .toList(growable: false),
+      _commerceReadService.activeSalesNewestFirst(_sales),
     );
     _cachedSalesGeneration = _salesRevision;
   }
 
-List<Sale> get sales {
+  List<Sale> get sales {
+    return _salesReadImpl;
+  }
+
+  List<Sale> get _salesReadImpl {
     unawaited(ensureSalesLoaded());
     _ensureSalesCache();
     return _cachedSales!;
   }
 
-Future<void> ensureCreditNotesLoaded() async {
+  Future<void> ensureCreditNotesLoaded() async {
     if (_creditNotes.isNotEmpty) return;
     // credit_notes_v1 is stored as a scalar JSON list rather than a typed
     // business table. Read the scalar mirror first so SQLite desktop installs
@@ -328,7 +336,7 @@ Future<void> ensureCreditNotesLoaded() async {
     }
   }
 
-Future<CreditNote> issueCreditNote({
+  Future<CreditNote> issueCreditNote({
     required Sale originalSale,
     required List<SaleItem> items,
     required double amount,
@@ -419,43 +427,43 @@ Future<CreditNote> issueCreditNote({
     return creditNote;
   }
 
-List<SaleQuotation> get saleQuotations {
+  List<SaleQuotation> get saleQuotations {
     unawaited(ensureSaleQuotationsLoaded());
     _ensureSaleQuotationsCache();
     return _cachedSaleQuotations!;
   }
 
-List<DeliveryNote> get deliveryNotes {
+  List<DeliveryNote> get deliveryNotes {
     unawaited(ensureDeliveryNotesLoaded());
     _ensureDeliveryNotesCache();
     return _cachedDeliveryNotes!;
   }
 
-List<BillOfMaterials> get billsOfMaterials {
+  List<BillOfMaterials> get billsOfMaterials {
     unawaited(ensureBillsOfMaterialsLoaded());
     _ensureBillsOfMaterialsCache();
     return _cachedBillsOfMaterials!;
   }
 
-List<ManufacturingOrder> get manufacturingOrders {
+  List<ManufacturingOrder> get manufacturingOrders {
     unawaited(ensureManufacturingOrdersLoaded());
     _ensureManufacturingOrdersCache();
     return _cachedManufacturingOrders!;
   }
 
-ProductCost productCostFor(String productId) {
+  ProductCost productCostFor(String productId) {
     _ensureProductPricingLookupCaches();
     return _productCostByProductId[productId] ??
         ProductCost(productId: productId);
   }
 
-PriceList get defaultPriceList {
+  PriceList get defaultPriceList {
     _ensureDefaultPriceLists();
     return _priceLists.firstWhere((item) => item.isDefault && item.isActive,
         orElse: () => _priceLists.first);
   }
 
-ProductPrice? defaultProductPriceFor(String productId,
+  ProductPrice? defaultProductPriceFor(String productId,
       {String unitId = 'base'}) {
     _ensureProductPricingLookupCaches();
     _ensureDefaultProductPriceEntries();
@@ -464,7 +472,7 @@ ProductPrice? defaultProductPriceFor(String productId,
         _productPriceLookupKey(productId, priceListId, unitId)];
   }
 
-ProductPrice? productPriceFor(String productId, String priceListId,
+  ProductPrice? productPriceFor(String productId, String priceListId,
       {String unitId = 'base'}) {
     _ensureDefaultProductPriceEntries();
     _ensureProductPricingLookupCaches();
@@ -472,7 +480,7 @@ ProductPrice? productPriceFor(String productId, String priceListId,
         _productPriceLookupKey(productId, priceListId, unitId)];
   }
 
-ProductPriceOverride? productPriceOverrideFor(
+  ProductPriceOverride? productPriceOverrideFor(
       ProductPrice price, String currencyCode) {
     final normalizedCurrency = currencyCode.trim().toUpperCase();
     for (final item in _productPriceOverrides) {
@@ -485,7 +493,7 @@ ProductPriceOverride? productPriceOverrideFor(
     return null;
   }
 
-double productPriceAmountForCurrency(Product product, String currencyCode,
+  double productPriceAmountForCurrency(Product product, String currencyCode,
       {String unitId = 'base'}) {
     final price = defaultProductPriceFor(product.id, unitId: unitId);
     if (price == null) {
@@ -504,7 +512,7 @@ double productPriceAmountForCurrency(Product product, String currencyCode,
     );
   }
 
-double defaultProductUsdPrice(Product product, {String unitId = 'base'}) {
+  double defaultProductUsdPrice(Product product, {String unitId = 'base'}) {
     final price = defaultProductPriceFor(product.id, unitId: unitId);
     if (price == null) {
       return unitId == 'base' ? product.usdPrice : product.price;
@@ -519,68 +527,66 @@ double defaultProductUsdPrice(Product product, {String unitId = 'base'}) {
         price.baseAmount, price.baseCurrencyCode, storeProfile);
   }
 
-List<DataConflict> get dataConflicts {
+  List<DataConflict> get dataConflicts {
     return List.unmodifiable(_detectDataConflicts());
   }
 
-Future<List<DataConflict>> ensureDataConflictsLoaded() async {
+  Future<List<DataConflict>> ensureDataConflictsLoaded() async {
     await ensureHeavyDataLoaded();
     return dataConflicts;
   }
 
-List<Expense> get expenses {
+  List<Expense> get expenses {
+    return _expensesReadImpl;
+  }
+
+  List<Expense> get _expensesReadImpl {
     unawaited(ensureExpensesLoaded());
-    return List.unmodifiable(
-      _expenses
-          .where((item) => !item.isDeleted)
-          .toList(growable: false)
-          .reversed
-          .toList(growable: false),
-    );
+    return _commerceReadService.activeExpensesNewestFirst(_expenses);
   }
 
-List<Purchase> get purchases {
+  List<Purchase> get purchases {
+    return _purchasesReadImpl;
+  }
+
+  List<Purchase> get _purchasesReadImpl {
     unawaited(ensurePurchasesLoaded());
-    return List.unmodifiable(
-      _purchases
-          .where((item) => !item.isDeleted)
-          .toList(growable: false)
-          .reversed
-          .toList(growable: false),
-    );
+    return _commerceReadService.activePurchasesNewestFirst(_purchases);
   }
 
-List<StockMovement> get stockMovements {
+  List<StockMovement> get stockMovements {
+    return _stockMovementsReadImpl;
+  }
+
+  List<StockMovement> get _stockMovementsReadImpl {
     unawaited(ensureStockMovementsLoaded());
-    return List.unmodifiable(
-      _stockMovements.toList(growable: false).reversed.toList(growable: false),
-    );
+    return _inventoryReadService.newestFirstMovements(_stockMovements);
   }
 
-List<InventoryCountSession> get inventoryCountSessions {
+  List<InventoryCountSession> get inventoryCountSessions {
     unawaited(ensureInventoryCountsLoaded());
     return List.unmodifiable(
       _inventoryCounts.toList(growable: false).reversed.toList(growable: false),
     );
   }
 
-InventoryCountSession? get activeInventoryCountSession {
+  InventoryCountSession? get activeInventoryCountSession {
     for (final session in _inventoryCounts.reversed) {
       if (session.isOpen) return session;
     }
     return null;
   }
 
-List<Warehouse> get warehouses {
-    unawaited(ensureWarehousesLoaded());
-    return List.unmodifiable(
-      _warehouses
-          .where((item) => !item.isDeleted && item.isActive)
-          .toList(growable: false),
-    );
+  List<Warehouse> get warehouses {
+    return _warehousesReadImpl;
   }
 
-Warehouse get defaultWarehouse {
+  List<Warehouse> get _warehousesReadImpl {
+    unawaited(ensureWarehousesLoaded());
+    return _inventoryReadService.activeWarehouses(_warehouses);
+  }
+
+  Warehouse get defaultWarehouse {
     _ensureDefaultWarehouse();
     return _warehouses.firstWhere(
       (item) => item.id == Warehouse.defaultId,
@@ -592,7 +598,7 @@ Warehouse get defaultWarehouse {
     );
   }
 
-Warehouse resolveWarehouseForSale({String warehouseId = ''}) {
+  Warehouse resolveWarehouseForSale({String warehouseId = ''}) {
     _ensureDefaultWarehouse();
     final normalized = warehouseId.trim();
     final activeWarehouses = _warehouses
@@ -610,7 +616,7 @@ Warehouse resolveWarehouseForSale({String warehouseId = ''}) {
     );
   }
 
-String get saleWarehouseId {
+  String get saleWarehouseId {
     final storeId = appIdentity.storeId.trim();
     if (storeId.isEmpty) return '';
     return LocalDatabaseService.getString(
@@ -619,7 +625,7 @@ String get saleWarehouseId {
         '';
   }
 
-Future<void> setSaleWarehouseId(String warehouseId) async {
+  Future<void> setSaleWarehouseId(String warehouseId) async {
     requirePermission(AppPermission.settingsManage);
     final storeId = appIdentity.storeId.trim();
     if (storeId.isEmpty) return;
@@ -630,11 +636,11 @@ Future<void> setSaleWarehouseId(String warehouseId) async {
     notifyListeners();
   }
 
-Warehouse resolveWarehouseForPurchase({String warehouseId = ''}) {
+  Warehouse resolveWarehouseForPurchase({String warehouseId = ''}) {
     return resolveWarehouseForSale(warehouseId: warehouseId);
   }
 
-void _ensureDefaultWarehouse() {
+  void _ensureDefaultWarehouse() {
     if (_warehouses.any(
       (item) => item.id == Warehouse.defaultId && !item.isDeleted,
     )) {
@@ -662,7 +668,7 @@ void _ensureDefaultWarehouse() {
     );
   }
 
-void _invalidateDerivedDataCaches() {
+  void _invalidateDerivedDataCaches() {
     _derivedListCacheGeneration += 1;
     _warehouseStockCacheDirty = true;
     _purchaseInsightsCacheDirty = true;

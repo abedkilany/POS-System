@@ -23,6 +23,7 @@ import 'package:ventio/models/expense.dart';
 import 'package:ventio/models/product.dart';
 import 'package:ventio/models/product_costing.dart';
 import 'package:ventio/models/inventory_batch.dart';
+import 'package:ventio/models/purchase.dart';
 import 'package:ventio/models/stock_movement.dart';
 import 'package:ventio/models/purchase_item.dart';
 import 'package:ventio/models/sale_item.dart';
@@ -88,9 +89,9 @@ Future<AppStore> readyStore([Map<String, String>? seed]) async {
   await LocalDatabaseService.resetForTesting();
   LocalDatabaseService.useInMemoryStoreForTesting(hostIdentitySeed(seed));
   final store = AppStore();
-  await store.initialize();
-  if (store.needsInitialAdminSetup) {
-    await store.completeInitialAdminSetup(
+  await store.runtime.initialize();
+  if (store.security.needsInitialAdminSetup) {
+    await store.security.completeInitialAdminSetup(
         fullName: 'Admin', username: 'admin', password: 'AdminPass123');
   }
   return store;
@@ -102,7 +103,7 @@ Future<void> _shutdownActiveSqliteStoreForTesting() async {
   final previous = _activeSqliteStoreForTesting;
   if (previous == null) return;
   _activeSqliteStoreForTesting = null;
-  await previous.prepareForShutdown();
+  await previous.runtime.prepareForShutdown();
   previous.dispose();
   // prepareForShutdown() drains Ventio-owned buffered writes. Flush the
   // database facade as a final deterministic boundary before reset closes the
@@ -195,8 +196,8 @@ Future<AppStore> readySqliteStore({
   await LocalDatabaseService.deleteString('inventory_costing_method_v1');
   await LocalDatabaseService.deleteString('credit_notes_v1');
   final store = AppStore();
-  await store.initialize();
-  await store.recoverOnlineStoreOwnerIdentity(
+  await store.runtime.initialize();
+  await store.security.recoverOnlineStoreOwnerIdentity(
     storeId: storeId,
     branchId: branchId,
     storeName: storeName,
@@ -205,15 +206,15 @@ Future<AppStore> readySqliteStore({
     deviceRole: DeviceRole.host,
     syncMode: SyncMode.localOnly,
   );
-  expect(await store.login('owner', 'OwnerPass123'), isTrue);
-  expect(store.hasPermission(AppPermission.backupExport), isTrue);
-  await store.applySessionUser(
-    activeUser: store.activeUser!,
+  expect(await store.security.login('owner', 'OwnerPass123'), isTrue);
+  expect(store.security.hasPermission(AppPermission.backupExport), isTrue);
+  await store.security.applySessionUser(
+    activeUser: store.security.activeUser!,
     currentRole: 'Admin',
     permissions: Set<String>.from(AppPermission.all),
     rememberLogin: true,
   );
-  await store.ensureHeavyDataLoaded(failOnError: true);
+  await store.runtime.ensureHeavyDataLoaded(failOnError: true);
   _activeSqliteStoreForTesting = store;
   return store;
 }
@@ -224,9 +225,9 @@ Future<String> seedOpenCashDrawerForStore(AppStore store) async {
   final cashAccount = accounts['default_cash_account_id']?.trim() ?? '';
   expect(cashAccount, isNotEmpty);
   final now = DateTime(2026, 8, 19, 12).toUtc().toIso8601String();
-  final drawerId = 'drawer-${store.appIdentity.storeId.toLowerCase()}';
-  final sessionId = 'shift-${store.appIdentity.storeId.toLowerCase()}';
-  final drawerCode = 'P6-${store.appIdentity.storeId.toUpperCase()}';
+  final drawerId = 'drawer-${store.runtime.identity.storeId.toLowerCase()}';
+  final sessionId = 'shift-${store.runtime.identity.storeId.toLowerCase()}';
+  final drawerCode = 'P6-${store.runtime.identity.storeId.toUpperCase()}';
   await db.customInsert(
     '''
     INSERT INTO cash_locations
@@ -241,9 +242,9 @@ Future<String> seedOpenCashDrawerForStore(AppStore store) async {
       Variable<String>(cashAccount),
       Variable<String>(now),
       Variable<String>(now),
-      Variable<String>(store.appIdentity.storeId),
-      Variable<String>(store.appIdentity.branchId),
-      Variable<String>(store.deviceId),
+      Variable<String>(store.runtime.identity.storeId),
+      Variable<String>(store.runtime.identity.branchId),
+      Variable<String>(store.sync.deviceId),
     ],
   );
   await db.customInsert(
@@ -259,8 +260,8 @@ Future<String> seedOpenCashDrawerForStore(AppStore store) async {
       Variable<String>(drawerCode),
       Variable<String>(drawerId),
       Variable<String>(now),
-      Variable<String>(store.appIdentity.storeId),
-      Variable<String>(store.appIdentity.branchId),
+      Variable<String>(store.runtime.identity.storeId),
+      Variable<String>(store.runtime.identity.branchId),
       Variable<String>(now),
     ],
   );
@@ -318,7 +319,7 @@ void _phase3InventoryCountAccountingTests() {
         branchId: 'BR-ACC-P3-COUNT',
         storeName: 'Accounting Phase 3 Count',
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         product(
             id: 'p-count-loss',
             code: 'PCL',
@@ -326,7 +327,7 @@ void _phase3InventoryCountAccountingTests() {
             stock: 0,
             cost: 10),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         product(
             id: 'p-count-gain',
             code: 'PCG',
@@ -334,37 +335,37 @@ void _phase3InventoryCountAccountingTests() {
             stock: 0,
             cost: 4),
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'p-count-loss',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 10,
         reason: 'seed loss stock',
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'p-count-gain',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 5,
         reason: 'seed gain stock',
       );
 
-      final session = await store.createInventoryCountSession();
-      await store.countInventoryLine(
+      final session = await store.inventory.createInventoryCountSession();
+      await store.inventory.countInventoryLine(
         sessionId: session.id,
         productId: 'p-count-loss',
         countedQty: 8,
       );
-      await store.countInventoryLine(
+      await store.inventory.countInventoryLine(
         sessionId: session.id,
         productId: 'p-count-gain',
         countedQty: 6,
       );
-      await store.approveInventoryCount(session.id);
+      await store.inventory.approveInventoryCount(session.id);
 
       expect(
         await sqliteWarehouseQuantity(
           productId: 'p-count-loss',
           warehouseId: Warehouse.defaultId,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         8,
       );
@@ -372,12 +373,12 @@ void _phase3InventoryCountAccountingTests() {
         await sqliteWarehouseQuantity(
           productId: 'p-count-gain',
           warehouseId: Warehouse.defaultId,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         6,
       );
 
-      final approved = store.inventoryCountSessions
+      final approved = store.inventory.inventoryCountSessions
           .firstWhere((item) => item.id == session.id);
       expect(approved.isApproved, isTrue);
       expect(approved.journalEntryId, isNotEmpty);
@@ -444,7 +445,7 @@ void _phase3InventoryCountAccountingTests() {
         branchId: 'BR-ACC-P3-STALE',
         storeName: 'Accounting Phase 3 Stale Count',
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         product(
             id: 'p-count-stale',
             code: 'PCS',
@@ -452,20 +453,20 @@ void _phase3InventoryCountAccountingTests() {
             stock: 0,
             cost: 5),
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'p-count-stale',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 10,
         reason: 'seed stale stock',
       );
-      final session = await store.createInventoryCountSession();
-      await store.countInventoryLine(
+      final session = await store.inventory.createInventoryCountSession();
+      await store.inventory.countInventoryLine(
         sessionId: session.id,
         productId: 'p-count-stale',
         countedQty: 10,
       );
       await Future<void>.delayed(const Duration(milliseconds: 2));
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'p-count-stale',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 1,
@@ -473,12 +474,12 @@ void _phase3InventoryCountAccountingTests() {
       );
 
       await expectLater(
-          store.approveInventoryCount(session.id), throwsStateError);
+          store.inventory.approveInventoryCount(session.id), throwsStateError);
       expect(
         await sqliteWarehouseQuantity(
           productId: 'p-count-stale',
           warehouseId: Warehouse.defaultId,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         11,
       );
@@ -500,7 +501,7 @@ void _phase3InventoryCountAccountingTests() {
         branchId: 'BR-ACC-P3-ROLLBACK',
         storeName: 'Accounting Phase 3 Rollback',
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         product(
             id: 'p-count-rollback',
             code: 'PCRB',
@@ -508,14 +509,14 @@ void _phase3InventoryCountAccountingTests() {
             stock: 0,
             cost: 5),
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'p-count-rollback',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 10,
         reason: 'seed rollback stock',
       );
-      final session = await store.createInventoryCountSession();
-      await store.countInventoryLine(
+      final session = await store.inventory.createInventoryCountSession();
+      await store.inventory.countInventoryLine(
         sessionId: session.id,
         productId: 'p-count-rollback',
         countedQty: 8,
@@ -526,12 +527,12 @@ void _phase3InventoryCountAccountingTests() {
       );
 
       await expectLater(
-          store.approveInventoryCount(session.id), throwsStateError);
+          store.inventory.approveInventoryCount(session.id), throwsStateError);
       expect(
         await sqliteWarehouseQuantity(
           productId: 'p-count-rollback',
           warehouseId: Warehouse.defaultId,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         10,
       );
@@ -556,7 +557,7 @@ void _phase3InventoryCountAccountingTests() {
         branchId: 'BR-ACC-P3-REV',
         storeName: 'Accounting Phase 3 Reverse Count',
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         product(
             id: 'p-count-reverse',
             code: 'PCR',
@@ -564,29 +565,29 @@ void _phase3InventoryCountAccountingTests() {
             stock: 0,
             cost: 6),
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'p-count-reverse',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 10,
         reason: 'seed reverse stock',
       );
-      final session = await store.createInventoryCountSession();
-      await store.countInventoryLine(
+      final session = await store.inventory.createInventoryCountSession();
+      await store.inventory.countInventoryLine(
         sessionId: session.id,
         productId: 'p-count-reverse',
         countedQty: 8,
       );
-      await store.approveInventoryCount(session.id);
+      await store.inventory.approveInventoryCount(session.id);
       expect(
         await sqliteWarehouseQuantity(
           productId: 'p-count-reverse',
           warehouseId: Warehouse.defaultId,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         8,
       );
 
-      await store.reverseInventoryCount(
+      await store.inventory.reverseInventoryCount(
         session.id,
         reason: 'approved by mistake',
       );
@@ -594,11 +595,11 @@ void _phase3InventoryCountAccountingTests() {
         await sqliteWarehouseQuantity(
           productId: 'p-count-reverse',
           warehouseId: Warehouse.defaultId,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         10,
       );
-      final reversed = store.inventoryCountSessions
+      final reversed = store.inventory.inventoryCountSessions
           .firstWhere((item) => item.id == session.id);
       expect(reversed.isReversed, isTrue);
       expect(reversed.reversalJournalEntryId, isNotEmpty);
@@ -657,9 +658,9 @@ Future<void> _seedPhase5PostingDrawer(
       Variable<double>(balance),
       Variable<String>(now),
       Variable<String>(now),
-      Variable<String>(store.appIdentity.storeId),
-      Variable<String>(store.appIdentity.branchId),
-      Variable<String>(store.appIdentity.deviceId),
+      Variable<String>(store.runtime.identity.storeId),
+      Variable<String>(store.runtime.identity.branchId),
+      Variable<String>(store.runtime.identity.deviceId),
     ],
   );
   await db.customInsert(
@@ -674,8 +675,8 @@ Future<void> _seedPhase5PostingDrawer(
       Variable<String>(now),
       Variable<double>(balance),
       Variable<double>(balance),
-      Variable<String>(store.appIdentity.storeId),
-      Variable<String>(store.appIdentity.branchId),
+      Variable<String>(store.runtime.identity.storeId),
+      Variable<String>(store.runtime.identity.branchId),
     ],
   );
 }
@@ -690,7 +691,7 @@ void _phase5ExpensePostStateTests() {
       storeName: 'Phase 5 Posting One',
     );
     await _seedPhase5PostingDrawer(store, balance: 5);
-    await store.addOrUpdateExpense(Expense(
+    await store.commerce.addOrUpdateExpense(Expense(
       id: 'expense-post-fail',
       title: 'Too large',
       category: 'General',
@@ -699,10 +700,10 @@ void _phase5ExpensePostStateTests() {
       notes: '',
     ));
 
-    await expectLater(store.postExpense('expense-post-fail'), throwsStateError);
+    await expectLater(store.commerce.postExpense('expense-post-fail'), throwsStateError);
 
     final expense =
-        store.expenses.firstWhere((e) => e.id == 'expense-post-fail');
+        store.commerce.expenses.firstWhere((e) => e.id == 'expense-post-fail');
     expect(expense.isPosted, isFalse);
     final db = SqliteMigrationManager.database!;
     final operation = await db
@@ -748,10 +749,10 @@ void _phase5ExpensePostStateTests() {
     ];
 
     await expectLater(
-        store.createAndPostExpensesBulk(expenses), throwsStateError);
+        store.commerce.createAndPostExpensesBulk(expenses), throwsStateError);
 
     expect(
-      store.expenses.where((e) =>
+      store.commerce.expenses.where((e) =>
           e.id == 'expense-bulk-post-1' || e.id == 'expense-bulk-post-2'),
       isEmpty,
     );

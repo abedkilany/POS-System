@@ -461,7 +461,7 @@ extension _OrganizationActions on SettingsPage {
   Future<void> _saveOrganizationProfile(
       BuildContext context, StoreProfile profile) async {
     final tr = AppLocalizations.of(context);
-    await store.updateStoreProfile(profile);
+    await store.runtime.updateStoreProfile(profile);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('store_profile_updated'))));

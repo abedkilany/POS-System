@@ -258,16 +258,21 @@ mixin _AppStoreForwardingApiPart5
               maxItemsPerChunk: maxItemsPerChunk,
               maxEncodedPayloadBytes: maxEncodedPayloadBytes);
 
-  String exportRecoveryFileJson({String controlPlaneApiUrl = ''}) =>
-      _AppStoreSplitBackupRecoveryPart2(this as AppStore)
-          .exportRecoveryFileJson(controlPlaneApiUrl: controlPlaneApiUrl);
+  String exportRecoveryFileJson({String controlPlaneApiUrl = ''}) {
+    requirePermission(AppPermission.backupExport);
+    final store = this as AppStore;
+    return RecoveryFileService(identityProvider: () => store.appIdentity)
+        .exportRecoveryFileJson(controlPlaneApiUrl: controlPlaneApiUrl);
+  }
 
-  Map<String, String> parseRecoveryFileJson(String rawJson) =>
-      _AppStoreSplitBackupRecoveryPart2(this as AppStore)
-          .parseRecoveryFileJson(rawJson);
+  Map<String, String> parseRecoveryFileJson(String rawJson) {
+    final store = this as AppStore;
+    return RecoveryFileService(identityProvider: () => store.appIdentity)
+        .parseRecoveryFileJson(rawJson);
+  }
 
   Future<String> exportBackupJson() =>
-      _AppStoreSplitBackupRecoveryPart2(this as AppStore).exportBackupJson();
+      AppStoreRecoveryService(this as AppStore).exportBackupJson();
 
   String currentHostSnapshotGeneration() =>
       _AppStoreSplitBackupRecoveryPart2(this as AppStore)

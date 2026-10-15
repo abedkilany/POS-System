@@ -34,7 +34,7 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
     required bool reviewed,
     required int limit,
   }) {
-    final key = '${widget.store.stockMovementsRevision}|$reviewed|$limit';
+    final key = '${widget.store.inventory.revision}|$reviewed|$limit';
     if (_correctionsFuture == null || _correctionsFutureKey != key) {
       _correctionsFutureKey = key;
       _correctionsFuture = () async {
@@ -55,7 +55,7 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
   }
 
   Future<_StockMovementsQueryResult?> _queryPendingCorrectionsCount() {
-    final key = '${widget.store.stockMovementsRevision}|pending_count';
+    final key = '${widget.store.inventory.revision}|pending_count';
     if (_pendingCountFuture == null || _pendingCountFutureKey != key) {
       _pendingCountFutureKey = key;
       _pendingCountFuture = () async {
@@ -76,7 +76,7 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
   }
 
   Future<_StockMovementsQueryResult?> _queryAllCorrectionsCount() {
-    final key = '${widget.store.stockMovementsRevision}|all_count';
+    final key = '${widget.store.inventory.revision}|all_count';
     if (_allCountFuture == null || _allCountFutureKey != key) {
       _allCountFutureKey = key;
       _allCountFuture = () async {
@@ -106,10 +106,10 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final canReview = widget.store.hasPermission(
+    final canReview = widget.store.security.hasPermission(
       AppPermission.inventoryCorrectionsManage,
     );
-    if (!widget.store.hasAnyPermission(<String>{
+    if (!widget.store.security.hasAnyPermission(<String>{
       AppPermission.inventoryCorrectionsManage,
       AppPermission.inventoryMovementsView,
       AppPermission.reportsView,
@@ -168,14 +168,16 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
     bool canReview,
   ) {
     final allCorrections = _allCache.getOrCompute(
-      widget.store.stockMovementsRevision,
-      widget.store.appIdentity.storeId,
-      () => widget.store.autoCorrectionMovements.toList(growable: false),
+      widget.store.inventory.revision,
+      widget.store.runtime.identity.storeId,
+      () => widget.store.inventory.autoCorrectionMovements
+          .toList(growable: false),
     );
     final pending = _pendingCache.getOrCompute(
-      widget.store.stockMovementsRevision,
-      '${widget.store.appIdentity.storeId}|pending',
-      () => widget.store.pendingAutoCorrectionMovements.toList(growable: false),
+      widget.store.inventory.revision,
+      '${widget.store.runtime.identity.storeId}|pending',
+      () => widget.store.inventory.pendingAutoCorrectionMovements
+          .toList(growable: false),
     );
     final corrections = showReviewed ? allCorrections : pending;
     return _buildCorrectionsView(
@@ -229,7 +231,7 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
             SummaryCard(
                 title: tr.text('estimated_value'),
                 value: formatUsdReferenceAmount(
-                    totalValue, widget.store.storeProfile),
+                    totalValue, widget.store.runtime.profile),
                 icon: Icons.payments_outlined),
           ],
         ),
@@ -321,7 +323,7 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
   Future<void> _reviewMovement(String id) async {
     final tr = AppLocalizations.of(context);
     try {
-      await widget.store.reviewAutoCorrection(id);
+      await widget.store.inventory.reviewAutoCorrection(id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(tr.text('auto_correction_marked_reviewed'))));
@@ -385,13 +387,13 @@ class _StockCountTabState extends State<_StockCountTab> {
     Map<String, DateTime> countedAtByProduct,
   ) {
     return _movementCountCache.getOrCompute(
-      widget.store.inventoryRevision,
+      widget.store.inventory.revision,
       active?.id ?? 'no_active',
       () {
         final counts = <String, int>{
           for (final productId in countedAtByProduct.keys) productId: 0,
         };
-        for (final movement in widget.store.stockMovements) {
+        for (final movement in widget.store.inventory.stockMovements) {
           final countedAt = countedAtByProduct[movement.productId];
           if (countedAt == null) continue;
           if (movement.type == 'count_adjustment' ||
@@ -414,7 +416,7 @@ class _StockCountTabState extends State<_StockCountTab> {
       return Future<Map<String, int>?>.value(null);
     }
     final key =
-        '${widget.store.inventoryRevision}|${active?.id ?? 'no_active'}|${countedAtByProduct.length}';
+        '${widget.store.inventory.revision}|${active?.id ?? 'no_active'}|${countedAtByProduct.length}';
     if (_movementCountsFuture == null || _movementCountsFutureKey != key) {
       _movementCountsFutureKey = key;
       _movementCountsFuture =
@@ -456,7 +458,7 @@ class _StockCountTabState extends State<_StockCountTab> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryCountsManage,
     )) {
       return _InventorySectionDenied(
@@ -464,10 +466,10 @@ class _StockCountTabState extends State<_StockCountTab> {
         message: tr.text('stock_count_actions_no_access'),
       );
     }
-    final sessions = widget.store.inventoryCountSessions;
-    final active = widget.store.activeInventoryCountSession;
+    final sessions = widget.store.inventory.inventoryCountSessions;
+    final active = widget.store.inventory.activeInventoryCountSession;
     final lineLookup = _lineLookupCache.getOrCompute(
-      widget.store.inventoryRevision,
+      widget.store.inventory.revision,
       active?.id ?? 'no_active',
       () {
         final map = <String, InventoryCountLine>{};
@@ -484,9 +486,9 @@ class _StockCountTabState extends State<_StockCountTab> {
         _movementCountsFromMemory(active, countedAtByProduct);
     final needle = query.trim().toLowerCase();
     final products = _productsCache.getOrCompute(
-      widget.store.inventoryRevision,
+      widget.store.inventory.revision,
       '${active?.id ?? 'no_active'}|$needle',
-      () => widget.store.stockTrackedProducts.where((product) {
+      () => widget.store.catalog.stockTrackedProducts.where((product) {
         if (active == null || needle.isEmpty) return true;
         return product.name.toLowerCase().contains(needle) ||
             product.code.toLowerCase().contains(needle);
@@ -659,7 +661,7 @@ class _StockCountTabState extends State<_StockCountTab> {
       final selected = await showDialog<Warehouse>(
         context: context,
         builder: (dialogContext) {
-          final initial = widget.store.resolveWarehouseForPurchase();
+          final initial = widget.store.inventory.resolveWarehouseForPurchase();
           var selectedWarehouse = initial;
           return StatefulBuilder(
             builder: (context, setDialogState) => AlertDialog(
@@ -667,7 +669,7 @@ class _StockCountTabState extends State<_StockCountTab> {
               content: DropdownButtonFormField<String>(
                 initialValue: selectedWarehouse.id,
                 decoration: InputDecoration(labelText: tr.text('warehouse')),
-                items: widget.store.warehouses
+                items: widget.store.inventory.warehouses
                     .map(
                       (warehouse) => DropdownMenuItem<String>(
                         value: warehouse.id,
@@ -677,7 +679,7 @@ class _StockCountTabState extends State<_StockCountTab> {
                     .toList(),
                 onChanged: (value) {
                   setDialogState(() {
-                    selectedWarehouse = widget.store
+                    selectedWarehouse = widget.store.inventory
                         .resolveWarehouseForPurchase(warehouseId: value ?? '');
                   });
                 },
@@ -698,7 +700,7 @@ class _StockCountTabState extends State<_StockCountTab> {
         },
       );
       if (selected == null) return;
-      await widget.store.createInventoryCountSession(
+      await widget.store.inventory.createInventoryCountSession(
         warehouseId: selected.id,
         warehouseName: selected.name,
       );
@@ -714,7 +716,7 @@ class _StockCountTabState extends State<_StockCountTab> {
 
   Future<void> _approveCount(String id) async {
     try {
-      await widget.store.approveInventoryCount(id);
+      await widget.store.inventory.approveInventoryCount(id);
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {
@@ -762,7 +764,7 @@ class _StockCountTabState extends State<_StockCountTab> {
         ),
       );
       if (confirmed != true) return;
-      await widget.store.reverseInventoryCount(
+      await widget.store.inventory.reverseInventoryCount(
         session.id,
         reason: reasonController.text.trim(),
       );
@@ -780,7 +782,7 @@ class _StockCountTabState extends State<_StockCountTab> {
 
   Future<void> _cancelCount(String id) async {
     try {
-      await widget.store.cancelInventoryCount(id);
+      await widget.store.inventory.cancelInventoryCount(id);
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {

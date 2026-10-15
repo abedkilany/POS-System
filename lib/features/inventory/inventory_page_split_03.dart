@@ -15,12 +15,13 @@ class _WarehousesTabState extends State<_WarehousesTab> {
 
   Future<Map<String, List<_WarehouseProductStock>>>
       _loadStockRowsByWarehouse() async {
-    final warehouses = widget.store.warehouses;
-    final products = widget.store.stockTrackedProducts;
+    final warehouses = widget.store.inventory.warehouses;
+    final products = widget.store.catalog.stockTrackedProducts;
     final productsById = <String, Product>{
       for (final product in products) product.id: product,
     };
-    final balances = await widget.store.warehouseStockBalancesFromSqlite();
+    final balances =
+        await widget.store.inventory.warehouseStockBalancesFromSqlite();
     final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
       for (final warehouse in warehouses)
         warehouse.id: <_WarehouseProductStock>[],
@@ -45,7 +46,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
   Future<Map<String, List<_WarehouseProductStock>>>
       _stockRowsByWarehouseFuture() {
     final key =
-        '${widget.store.appIdentity.storeId}:${widget.store.inventoryRevision}';
+        '${widget.store.runtime.identity.storeId}:${widget.store.inventory.revision}';
     if (_stockRowsFuture == null || _stockRowsFutureKey != key) {
       _stockRowsFutureKey = key;
       _stockRowsFuture = _loadStockRowsByWarehouse();
@@ -87,7 +88,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
           FilledButton(
             onPressed: () async {
               try {
-                await widget.store.createWarehouse(
+                await widget.store.inventory.createWarehouse(
                     name: nameController.text,
                     code: codeController.text,
                     location: locationController.text);
@@ -136,7 +137,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
               ),
             )
             .toList(growable: false),
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         context: context,
         locale: Localizations.localeOf(context),
       );
@@ -151,7 +152,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryWarehousesManage,
     )) {
       return _InventorySectionDenied(
@@ -159,7 +160,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
         message: tr.text('warehouse_management_no_access'),
       );
     }
-    final warehouses = widget.store.warehouses;
+    final warehouses = widget.store.inventory.warehouses;
     return FutureBuilder<Map<String, List<_WarehouseProductStock>>>(
       future: _stockRowsByWarehouseFuture(),
       builder: (context, snapshot) {

@@ -68,7 +68,7 @@ extension _DataActions on SettingsPage {
       );
     }
 
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     String message = '';
     bool success = false;
 
@@ -295,7 +295,7 @@ extension _DataActions on SettingsPage {
     if (verified != true) return;
 
     final passwordOk =
-        await store.verifyAdminPassword(passwordController.text) &&
+        await store.security.verifyAdminPassword(passwordController.text) &&
             await store.security.authorizeSensitiveAction(
               action: SensitiveAction.databaseDestructive,
               password: passwordController.text,
@@ -349,7 +349,7 @@ extension _DataActions on SettingsPage {
     );
     if (finalConfirm != true) return;
 
-    await store.factoryResetLocalDevice();
+    await store.recovery.factoryResetLocalDevice();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('host_reset_completed'))));

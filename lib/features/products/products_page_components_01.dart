@@ -69,14 +69,14 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewProducts) {
+    if (!widget.store.security.canViewProducts) {
       return _PermissionDeniedScaffold(
         title: tr.text('products'),
         message:
             'This page is available in read-only mode only for users who can access product data.',
       );
     }
-    if (!widget.store.isCoreDataLoaded) {
+    if (!widget.store.runtime.isCoreDataLoaded) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
     final localeTag = Localizations.localeOf(context).toLanguageTag();
@@ -404,7 +404,7 @@ class _ProductRowData {
       product.category,
       product.brand
     ].where((e) => e.trim().isNotEmpty).join(' • ');
-    final compatibilityCost = store.productCostFor(product.id);
+    final compatibilityCost = store.catalog.productCostFor(product.id);
     final fallbackReference =
         product.usdCost > 0 ? product.usdCost : product.cost;
     final snapshot = costSnapshot ??
@@ -415,11 +415,11 @@ class _ProductRowData {
               : fallbackReference,
           inventoryQuantity: product.trackStock ? product.stock : 0,
           batchCount: 0,
-          lastPurchaseUnitCost: store.lastPurchasePriceForProduct(product.id),
+          lastPurchaseUnitCost: store.commerce.lastPurchasePriceForProduct(product.id),
           referenceUnitCost: fallbackReference,
         );
-    final supplierCount = store.supplierCountForProduct(product.id);
-    final displayPrice = store.defaultProductUsdPrice(product);
+    final supplierCount = store.commerce.supplierCountForProduct(product.id);
+    final displayPrice = store.catalog.defaultProductUsdPrice(product);
     final meta = product.trackStock
         ? '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}'
         : '${tr.text('quantity_type_service')} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}';

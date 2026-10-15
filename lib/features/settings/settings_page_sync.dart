@@ -56,10 +56,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   AppLocalizations get tr => AppLocalizations.of(context);
   bool get _canManageSync =>
-      widget.store.hasPermission(AppPermission.syncManage);
+      widget.store.security.hasPermission(AppPermission.syncManage);
 
   String get _initialDirectHostReadyKey =>
-      'direct_initial_snapshot_ready_${widget.store.appIdentity.storeId}';
+      'direct_initial_snapshot_ready_${widget.store.runtime.identity.storeId}';
 
   bool? _directSyncPlanAllowed;
 
@@ -74,7 +74,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     // Direct entitlement is controlled by Admin > Subscribers. Until the
     // live entitlement is verified, keep Direct disabled by default.
     _directSyncPlanAllowed = null;
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final lan = LanSyncSettings.load();
     final direct = DirectSyncSettings.load();
     _deviceRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
@@ -132,7 +132,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final isHost = _deviceRole == DeviceRole.host;
     final runtimeClientTransport = isHost
         ? identity.activeSyncTransportNormalized
@@ -143,7 +143,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         ? _effectiveDirectEnabled
         : (runtimeClientTransport == 'direct' && _directSyncPlanAllowsUi);
     final hostActionLabel = tr.text('sync_now');
-    final pendingCount = isHost ? 0 : widget.store.activeClientPendingSyncCount;
+    final pendingCount = isHost ? 0 : widget.store.sync.activeClientPendingCount;
     final allGood = pendingCount == 0 && (lanActive || directActive || !isHost);
 
     return Card(
@@ -161,7 +161,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               directActive: directActive,
               actionLabel: hostActionLabel,
             ),
-            if (widget.store.latestHostTransferNotification != null) ...[
+            if (widget.store.sync.latestHostTransferNotification != null) ...[
               const SizedBox(height: 12),
               _hostChangedNotificationCard(),
             ],
@@ -172,7 +172,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 lanActive: lanActive,
                 directActive: directActive,
                 pendingCount: pendingCount),
-            if (!isHost && widget.store.isSuspendedByHost) ...[
+            if (!isHost && widget.store.runtime.isSuspendedByHost) ...[
               const SizedBox(height: 14),
               _clientSuspendedWarningCard(context),
             ],

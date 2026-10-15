@@ -92,7 +92,7 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
     return false;
   }
 
-  List<Product> get _products => widget.store.products
+  List<Product> get _products => widget.store.catalog.products
           .where((item) => item.isActive && item.trackStock)
           .where((item) {
         final query = _search.trim().toLowerCase();
@@ -103,13 +103,14 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
       }).toList();
 
   Supplier? get _supplier {
-    for (final supplier in widget.store.suppliers) {
+    for (final supplier in widget.store.commerce.suppliers) {
       if (supplier.id == _supplierId) return supplier;
     }
     return null;
   }
 
-  Warehouse get _warehouse => widget.store.resolveWarehouseForPurchase(
+  Warehouse get _warehouse =>
+      widget.store.inventory.resolveWarehouseForPurchase(
         warehouseId: _warehouseId,
       );
 
@@ -117,23 +118,23 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
 
   String _amount(double value) => formatUsdReferenceAmount(
         value,
-        widget.store.storeProfile,
+        widget.store.runtime.profile,
       );
 
   Future<void> _addProduct(Product product) async {
     final unit = product.effectivePurchaseUnits.first;
     final supplierPrice = _supplierId.isEmpty
         ? null
-        : widget.store.supplierProductPriceFor(
+        : widget.store.commerce.supplierProductPriceFor(
             productId: product.id, supplierId: _supplierId);
     final remembered = _supplierId.isEmpty
-        ? widget.store.lastPurchasePriceForProduct(product.id)
-        : widget.store.lastPurchasePriceFor(
+        ? widget.store.commerce.lastPurchasePriceForProduct(product.id)
+        : widget.store.commerce.lastPurchasePriceFor(
             productId: product.id, supplierId: _supplierId);
     final defaultCost = supplierPrice == null
         ? (remembered ?? product.usdCost) * unit.conversionToBase
         : toUsdReferencePrice(supplierPrice.cost, supplierPrice.currency,
-                widget.store.storeProfile) *
+                widget.store.runtime.profile) *
             unit.conversionToBase;
     final quantity = TextEditingController(text: '1');
     final cost = TextEditingController(text: defaultCost.toStringAsFixed(2));
@@ -208,7 +209,7 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
     final code = _barcodeController.text.trim();
     if (code.isEmpty) return;
     _barcodeController.clear();
-    for (final product in widget.store.products) {
+    for (final product in widget.store.catalog.products) {
       if (product.code == code ||
           product.barcode == code ||
           product.purchaseUnitForBarcode(code) != null) {
@@ -257,7 +258,7 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
     try {
       final items =
           _cart.map((line) => line.toPurchaseItem(widget.store)).toList();
-      await widget.store.createPurchase(
+      await widget.store.commerce.createPurchase(
         supplierId: supplier.id,
         supplierName: supplier.name,
         items: items,
@@ -300,10 +301,10 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
                             icon: const Icon(Icons.close))),
                     Expanded(
                         child: ListView.separated(
-                      itemCount: widget.store.purchases.length,
+                      itemCount: widget.store.commerce.purchases.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (_, index) {
-                        final purchase = widget.store.purchases[index];
+                        final purchase = widget.store.commerce.purchases[index];
                         return ListTile(
                           leading: Icon(purchase.isReceived
                               ? Icons.inventory_2_outlined
@@ -326,7 +327,7 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canManagePurchases) {
+    if (!widget.store.security.canManagePurchases) {
       return Scaffold(
           body: Center(child: Text(tr.text('no_access_purchase_records'))));
     }
@@ -470,7 +471,7 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
                   initialValue: _supplierId.isEmpty ? null : _supplierId,
                   isExpanded: true,
                   decoration: InputDecoration(labelText: tr.text('supplier')),
-                  items: widget.store.suppliers
+                  items: widget.store.commerce.suppliers
                       .map((s) =>
                           DropdownMenuItem(value: s.id, child: Text(s.name)))
                       .toList(),
@@ -480,7 +481,7 @@ class _PurchaseWorkstationPageState extends State<PurchaseWorkstationPage> {
               child: DropdownButtonFormField<String>(
                   initialValue: _warehouse.id,
                   decoration: InputDecoration(labelText: tr.text('warehouse')),
-                  items: widget.store.warehouses
+                  items: widget.store.inventory.warehouses
                       .map((w) =>
                           DropdownMenuItem(value: w.id, child: Text(w.name)))
                       .toList(),
@@ -584,5 +585,5 @@ class _DraftPurchaseLine {
       conversionToBase: unit.conversionToBase,
       originalUnitCost: unitCost,
       unitCostCurrency: 'USD',
-      exchangeRateAtEntry: store.storeProfile.usdToLbpRate);
+      exchangeRateAtEntry: store.runtime.profile.usdToLbpRate);
 }

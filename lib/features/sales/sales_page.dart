@@ -226,14 +226,14 @@ class _SalesPageState extends State<SalesPage> {
     widget.onExitGuardChanged?.call(_confirmSalesExit);
     widget.store.addListener(_handleStoreChanged);
     _selectedCustomerId = AppStore.walkInCustomerId;
-    _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-    _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
-    _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-    _selectedWarehouseId = widget.store
-        .resolveWarehouseForSale(warehouseId: widget.store.saleWarehouseId)
+    _invoiceCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
+    _paymentCurrency = widget.store.runtime.profile.defaultSalePaymentCurrency;
+    _discountCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
+    _selectedWarehouseId = widget.store.inventory
+        .resolveWarehouseForSale(warehouseId: widget.store.inventory.saleWarehouseId)
         .id;
     _paymentExchangeRateController.text =
-        widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+        widget.store.runtime.profile.usdToLbpRate.toStringAsFixed(0);
     _storeUiRevision = _currentStoreUiRevision();
     _loadQuickProductPreferences();
     _loadQuickProductPages();
@@ -242,8 +242,8 @@ class _SalesPageState extends State<SalesPage> {
     _dataFuture.then((_) {
       if (!mounted) return;
       setState(() {
-        _selectedWarehouseId = widget.store
-            .resolveWarehouseForSale(warehouseId: widget.store.saleWarehouseId)
+        _selectedWarehouseId = widget.store.inventory
+            .resolveWarehouseForSale(warehouseId: widget.store.inventory.saleWarehouseId)
             .id;
       });
     });
@@ -283,9 +283,9 @@ class _SalesPageState extends State<SalesPage> {
       _dataFuture.then((_) {
         if (!mounted) return;
         setState(() {
-          _selectedWarehouseId = widget.store
+          _selectedWarehouseId = widget.store.inventory
               .resolveWarehouseForSale(
-                  warehouseId: widget.store.saleWarehouseId)
+                  warehouseId: widget.store.inventory.saleWarehouseId)
               .id;
         });
       });
@@ -321,7 +321,7 @@ class _SalesPageState extends State<SalesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewSales) {
+    if (!widget.store.security.canViewSales) {
       return _AccessDeniedScaffold(
           title: tr.text('sales_page'),
           message: tr.text('no_access_sales_data'));

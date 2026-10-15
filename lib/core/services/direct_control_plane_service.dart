@@ -821,11 +821,11 @@ class _DirectRelaySnapshotPullTransport
   @override
   Future<UnifiedSnapshotManifestResponse> requestManifest(
       {bool force = false}) async {
-    final identity = _service.store.appIdentity;
+    final identity = _service.store.runtime.identity;
     final response = await _request('direct_snapshot_manifest', {
       'storeId': identity.storeId,
       'branchId': identity.branchId,
-      'deviceId': _service.store.deviceId,
+      'deviceId': _service.store.sync.deviceId,
       'snapshotKind': _snapshotKind,
       'force': force,
       if (_rebuildRequestId.trim().isNotEmpty)

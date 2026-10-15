@@ -51,7 +51,7 @@ extension _SalesPageSalePayment on _SalesPageState {
       ..writeln('user_message: $userMessage')
       ..writeln('error_type: ${error.runtimeType}')
       ..writeln('error: $error')
-      ..writeln('device_id: ${widget.store.deviceId}')
+      ..writeln('device_id: ${widget.store.sync.deviceId}')
       ..writeln('payment_method: $_paymentMethod')
       ..writeln('payment_status: $_derivedPaymentStatus')
       ..writeln('invoice_currency: $_invoiceCurrency')
@@ -139,10 +139,10 @@ extension _SalesPageSalePayment on _SalesPageState {
   }
 
   Future<void> _createDeliveryNote(BuildContext context, Sale sale) async {
-    if (!widget.store.canManageDeliveryNotes) return;
+    if (!widget.store.security.canManageDeliveryNotes) return;
     final tr = AppLocalizations.of(context);
     try {
-      await widget.store.createDeliveryNoteFromSale(sale.id);
+      await widget.store.commerce.createDeliveryNoteFromSale(sale.id);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('delivery_note_created'))));
@@ -155,7 +155,7 @@ extension _SalesPageSalePayment on _SalesPageState {
 
   _BarcodeAddResult _addProduct(Product product,
       {ProductSaleUnit? saleUnit, bool showBarcodeFeedback = false}) {
-    if (!widget.store.canSell) {
+    if (!widget.store.security.canSell) {
       if (showBarcodeFeedback) {
         _showBarcodeAddFeedback(_BarcodeAddResult.notAllowed);
       } else {
@@ -272,16 +272,16 @@ extension _SalesPageSalePayment on _SalesPageState {
   }
 
   Future<void> _openPaymentPage() async {
-    if (!widget.store.canSell) return;
+    if (!widget.store.security.canSell) return;
     if (_cart.isEmpty) return;
     await _refreshInvoiceBatchCostPreview();
     if (!mounted) return;
-    _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+    _invoiceCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
     _discountCurrency = _invoiceCurrency;
     _syncDiscountPercentFromAmount();
-    _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
+    _paymentCurrency = widget.store.runtime.profile.defaultSalePaymentCurrency;
     _paymentExchangeRateController.text =
-        widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+        widget.store.runtime.profile.usdToLbpRate.toStringAsFixed(0);
     if (_paymentMethod == 'Cash') {
       _paidAmountController.clear();
     } else if (_paidAmountController.text.trim().isEmpty) {

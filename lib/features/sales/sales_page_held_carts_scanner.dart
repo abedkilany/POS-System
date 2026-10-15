@@ -104,7 +104,7 @@ extension _SalesPageHeldCartsScanner on _SalesPageState {
   }
 
   Future<bool> _holdCurrentCart() async {
-    if (!widget.store.canSell) return false;
+    if (!widget.store.security.canSell) return false;
     if (_cart.isEmpty) return false;
     final tr = AppLocalizations.of(context);
     final nameController = TextEditingController(text: _defaultHeldCartName());
@@ -161,7 +161,7 @@ extension _SalesPageHeldCartsScanner on _SalesPageState {
     final restored = <_DraftSaleItem>[];
     final missingNames = <String>[];
     for (final item in heldCart.items) {
-      final product = widget.store.productById(item.productId);
+      final product = widget.store.catalog.productById(item.productId);
       if (product == null || !product.isActive) {
         missingNames.add(item.productName);
         continue;

@@ -51,8 +51,8 @@ void main() {
     expect(body, isNot(contains("labelText: tr.text('fixed_assets_account')")));
     expect(body, contains('AppPermission.cashBoxManage'));
     expect(body, contains('paidFromCashDrawer: paidFromCashDrawer'));
-    expect(body, contains('deviceId: widget.store.appIdentity.deviceId'));
-    expect(body, contains('storeId: widget.store.appIdentity.storeId'));
-    expect(body, contains('branchId: widget.store.appIdentity.branchId'));
+    expect(body, contains('deviceId: widget.store.runtime.identity.deviceId'));
+    expect(body, contains('storeId: widget.store.runtime.identity.storeId'));
+    expect(body, contains('branchId: widget.store.runtime.identity.branchId'));
   });
 }

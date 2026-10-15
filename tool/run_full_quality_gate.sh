@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+python3 tool/check_architecture_boundaries.py
+python3 tool/test_architecture_boundary_checker.py
 flutter pub get
 flutter analyze
 flutter test -r expanded --coverage --concurrency=1

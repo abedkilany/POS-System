@@ -9,7 +9,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
       bool requestFreshSnapshot = true,
       String expectedSnapshotGeneration = '',
       String expectedRestoreCommandId = ''}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (identity.isHost) {
       return const DirectSyncResult(
           ok: false,
@@ -151,7 +151,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
 
   Future<DirectSyncResult?> checkCurrentDeviceAccess(
       VpsControlPlaneSettings settings) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!identity.isClient || !settings.isConfigured) return null;
     try {
       final response = await _client
@@ -161,7 +161,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'deviceId': store.deviceId,
+              'deviceId': store.sync.deviceId,
               'deviceToken': identity.deviceToken,
             }),
           )
@@ -175,7 +175,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (decoded['wipeRequired'] == true ||
           decoded['action'] == 'wipe_local_data') {
-        final wipedDeviceId = store.deviceId;
+        final wipedDeviceId = store.sync.deviceId;
         final wipedStoreId = identity.storeId;
         final wipedBranchId = identity.branchId;
         final wipedToken = identity.deviceToken;
@@ -186,7 +186,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
           deviceId: wipedDeviceId,
           deviceToken: wipedToken,
         );
-        await store.factoryResetLocalDevice(enforcePermission: false);
+        await store.recovery.factoryResetLocalDevice(enforcePermission: false);
         return const DirectSyncResult(
             ok: false,
             message: 'Device revoked by Host. Local data was wiped.');
@@ -195,11 +195,11 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
         final reason = decoded['reason']?.toString() ??
             'This device is suspended or not authorized for Direct sync.';
         if (decoded['suspended'] == true) {
-          await store.markSuspendedByHost(reason: reason);
+          await store.runtime.markSuspendedByHost(reason: reason);
         }
         return DirectSyncResult(ok: false, message: reason);
       }
-      await store.clearSuspendedByHost();
+      await store.runtime.clearSuspendedByHost();
       return null;
     } catch (error) {
       return DirectSyncResult(
@@ -210,7 +210,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
   Future<DirectSyncResult> setDeviceSuspended(
       VpsControlPlaneSettings settings, String deviceId,
       {required bool suspended}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canSuspendDirectDevices(identity)) {
       return const DirectSyncResult(
           ok: false, message: 'Only the Host can suspend devices.');
@@ -248,7 +248,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
 
   Future<DirectSyncResult> revokeDevice(
       VpsControlPlaneSettings settings, String deviceId) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canRevokeDirectDevices(identity)) {
       return const DirectSyncResult(
           ok: false, message: 'Only the Host can revoke devices.');
@@ -283,7 +283,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
 
   Future<DirectSyncResult> deleteDeviceRecord(
       VpsControlPlaneSettings settings, String deviceId) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canRemoveDirectDevices(identity)) {
       return const DirectSyncResult(
           ok: false, message: 'Only the Host can remove devices.');
@@ -318,7 +318,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
 
   Map<String, String> _headers(VpsControlPlaneSettings settings,
       {bool includeAccountTokenForClient = false}) {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -327,7 +327,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
       if ((includeAccountTokenForClient || !identity.isClient) &&
           settings.accountToken.trim().isNotEmpty)
         'Authorization': 'Bearer ${settings.accountToken.trim()}',
-      'X-Device-Id': store.deviceId,
+      'X-Device-Id': store.sync.deviceId,
       'X-Device-Token': identity.deviceToken,
       'X-Device-Role': identity.deviceRole.name,
       'X-Sync-Transport': identity.transportType,
@@ -341,14 +341,14 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
 
   String _newRelayRequestId() {
     DirectControlPlaneService._relayRequestCounter += 1;
-    return '${store.deviceId}-${DateTime.now().microsecondsSinceEpoch}-${DirectControlPlaneService._relayRequestCounter.toRadixString(36)}';
+    return '${store.sync.deviceId}-${DateTime.now().microsecondsSinceEpoch}-${DirectControlPlaneService._relayRequestCounter.toRadixString(36)}';
   }
 
   Future<_RealtimeChannelSession> _openRealtimeChannel(
     VpsControlPlaneSettings settings, {
     bool includeSequenceHint = true,
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final state = SyncDeviceStateStore.load(identity);
     final ticketQuery = <String, String>{
       'store_id': identity.storeId,
@@ -451,18 +451,18 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
     final kind =
         snapshotKind.trim().isEmpty ? 'full_store' : snapshotKind.trim();
     if (kind != 'login_bootstrap') {
-      await store.ensureHeavyDataLoaded();
+      await store.runtime.ensureHeavyDataLoaded();
     }
     final chunks = kind == 'login_bootstrap'
         ? await store.exportDirectLoginBootstrapSnapshotChunks()
-        : await store.exportDirectBootstrapSnapshotChunks(
+        : await store.sync.exportSnapshotChunks(
             maxItemsPerChunk: 300);
     if (chunks.isEmpty) return null;
     if (kind != 'login_bootstrap' &&
         !_relaySnapshotHasBusinessCollections(chunks)) {
       return null;
     }
-    final envelope = store.unifiedSnapshotPayloadFromChunks(chunks);
+    final envelope = store.sync.snapshotPayloadFromChunks(chunks);
     final cleanRebuildRequestId = rebuildRequestId.trim();
     if (cleanRebuildRequestId.isNotEmpty) {
       envelope['rebuildRequestId'] = cleanRebuildRequestId;

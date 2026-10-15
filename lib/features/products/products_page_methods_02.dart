@@ -17,7 +17,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
           width: 760,
           height: 520,
           child: FutureBuilder<List<ProductPriceHistoryEntry>>(
-            future: widget.store.productPriceHistoryForProduct(product.id),
+            future: widget.store.catalog.productPriceHistoryForProduct(product.id),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
@@ -77,7 +77,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
 
   Future<void> _openPriceList(BuildContext context) async {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-    final products = _filteredProducts(widget.store.products);
+    final products = _filteredProducts(widget.store.catalog.products);
     if (products.isEmpty) return;
     final priceListTitle = isArabic ? 'بيانات المنتج' : 'Product data';
     final cancelText = isArabic ? 'إلغاء' : 'Cancel';
@@ -201,7 +201,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
               await PriceListPdfService.printPriceList(
                 context: context,
                 products: products,
-                profile: widget.store.storeProfile,
+                profile: widget.store.runtime.profile,
                 title: _priceListTitle(isArabic, selection),
                 fields: selection.toList(growable: false),
                 valueResolver: (product, field) =>
@@ -317,12 +317,12 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
       case 'price':
         return '${product.originalCurrency} ${product.originalPrice.toStringAsFixed(2)}';
       case 'wholesale':
-        final price = widget.store.productPriceFor(product.id, 'wholesale');
+        final price = widget.store.catalog.productPriceFor(product.id, 'wholesale');
         final value = price?.baseAmount ?? product.originalPrice;
         return '${price?.baseCurrencyCode.toUpperCase() ?? product.originalCurrency} ${value.toStringAsFixed(2)}';
       case 'wholesale_bulk':
         final price =
-            widget.store.productPriceFor(product.id, 'wholesale_bulk');
+            widget.store.catalog.productPriceFor(product.id, 'wholesale_bulk');
         final value = price?.baseAmount ?? product.originalPrice;
         return '${price?.baseCurrencyCode.toUpperCase() ?? product.originalCurrency} ${value.toStringAsFixed(2)}';
       case 'isActive':
@@ -384,7 +384,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
 
   List<Product> _filteredProducts(List<Product> source) {
     final value = query.trim().toLowerCase();
-    final revision = widget.store.productsRevision;
+    final revision = widget.store.catalog.productsRevision;
     if (_cachedRevision != revision) {
       _cachedProductSource = null;
       _cachedCategorySource = null;
@@ -477,7 +477,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
   }
 
   List<String> _categoriesFor(List<Product> source) {
-    if (_cachedRevision != widget.store.productsRevision) {
+    if (_cachedRevision != widget.store.catalog.productsRevision) {
       _cachedCategorySource = null;
       _cachedCategories = const <String>[];
     }
@@ -505,7 +505,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
         ? 'fallback'
         : '${costSnapshot.currentInventoryUnitCost}|${costSnapshot.inventoryQuantity}|${costSnapshot.batchCount}|${costSnapshot.lastPurchaseUnitCost}|${costSnapshot.referenceUnitCost}';
     final signature =
-        '${widget.store.productsPageRevision}|$localeTag|$costSignature';
+        '${widget.store.catalog.productsPageRevision}|$localeTag|$costSignature';
     final cached = _rowCache[cacheKey];
     if (cached != null && cached.signature == signature) {
       return cached.row;
@@ -517,7 +517,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
     final row = _ProductRowData.fromStore(
       product,
       widget.store,
-      widget.store.storeProfile,
+      widget.store.runtime.profile,
       tr,
       costSnapshot: costSnapshot,
     );
@@ -527,7 +527,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
       if (elapsed > 1000) {
         debugPrint(
           '[ProductsPage] row productId=${product.id} '
-          'revision=${widget.store.productsPageRevision} took=${elapsed / 1000.0}ms',
+          'revision=${widget.store.catalog.productsPageRevision} took=${elapsed / 1000.0}ms',
         );
       }
     }
@@ -535,7 +535,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
   }
 
   Future<void> _deleteProduct(BuildContext context, Product product) async {
-    if (!widget.store.canManageProducts) return;
+    if (!widget.store.security.canManageProducts) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -552,11 +552,11 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
         ],
       ),
     );
-    if (confirmed == true) await widget.store.deleteProduct(product.id);
+    if (confirmed == true) await widget.store.catalog.deleteProduct(product.id);
   }
 
   Future<void> _openCatalogManager(BuildContext context, String type) async {
-    if (!widget.store.canManageProducts) return;
+    if (!widget.store.security.canManageProducts) return;
     await showDialog<void>(
       context: context,
       builder: (_) => _CatalogManagerDialog(store: widget.store, type: type),
@@ -566,7 +566,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
 
   Future<void> _openProductForm(BuildContext context,
       {Product? product}) async {
-    if (!widget.store.canManageProducts) return;
+    if (!widget.store.security.canManageProducts) return;
     final tr = AppLocalizations.of(context);
     final result = await showDialog<_ProductFormResult>(
       context: context,
@@ -574,7 +574,7 @@ extension _ProductsPageStatePart2 on _ProductsPageState {
     );
     if (result == null) return;
     try {
-      await widget.store.addOrUpdateProduct(result.product);
+      await widget.store.catalog.addOrUpdateProduct(result.product);
       if (result.priceSave != null) {
         await result.priceSave!();
       }

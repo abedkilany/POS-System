@@ -8,10 +8,11 @@ extension _AppStoreCatalogRead on AppStore {
   }
 
   Product? _productByIdReadImpl(String id) {
-    final index = _productIndexById[id.trim()];
-    if (index == null || index < 0 || index >= _products.length) return null;
-    final product = _products[index];
-    return product.isDeleted ? null : product;
+    return const CatalogReadService().productById(
+      id,
+      products: _products,
+      indexById: _productIndexById,
+    );
   }
 
   List<Product> get _allProductsForDiagnosticsReadImpl =>
@@ -24,7 +25,7 @@ extension _AppStoreCatalogRead on AppStore {
   }
 
   List<ProductPrice> get _productPricesReadImpl {
-    unawaited(ensureProductPricesLoaded());
+    unawaited(_ensureProductPricesLoadedImpl());
     _ensureProductPricesCacheReadImpl();
     return _cachedProductPrices!;
   }
@@ -54,21 +55,15 @@ extension _AppStoreCatalogRead on AppStore {
   }
 
   List<CatalogItem> get _categoriesReadImpl {
-    return List.unmodifiable(
-      _categories.where((item) => !item.isDeleted).toList(growable: false),
-    );
+    return const CatalogReadService().activeItems(_categories);
   }
 
   List<CatalogItem> get _brandsReadImpl {
-    return List.unmodifiable(
-      _brands.where((item) => !item.isDeleted).toList(growable: false),
-    );
+    return const CatalogReadService().activeItems(_brands);
   }
 
   List<CatalogItem> get _unitsReadImpl {
-    return List.unmodifiable(
-      _units.where((item) => !item.isDeleted).toList(growable: false),
-    );
+    return const CatalogReadService().activeItems(_units);
   }
 
   List<Product> get _stockTrackedProductsReadImpl {
@@ -192,15 +187,7 @@ extension _AppStoreCatalogRead on AppStore {
   }
 
   List<Product> _sortedProductsReadImpl(List<Product> items) {
-    final sorted = List<Product>.from(items);
-    sorted.sort((a, b) {
-      final nameCompare = a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      if (nameCompare != 0) return nameCompare;
-      final codeCompare = a.code.toLowerCase().compareTo(b.code.toLowerCase());
-      if (codeCompare != 0) return codeCompare;
-      return a.id.compareTo(b.id);
-    });
-    return sorted;
+    return const CatalogReadService().sortProducts(items);
   }
 
   Product? _findProductByIdReadImpl(String id) {

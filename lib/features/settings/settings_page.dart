@@ -99,18 +99,18 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final canAccessGeneralSettings = store.hasAnyPermission(<String>{
+    final canAccessGeneralSettings = store.security.hasAnyPermission(<String>{
       AppPermission.settingsView,
       AppPermission.settingsManage,
       AppPermission.usersManage,
       AppPermission.rolesManage,
       AppPermission.permissionsManage,
     });
-    final canAccessSyncSettings = store.hasAnyPermission(<String>{
+    final canAccessSyncSettings = store.security.hasAnyPermission(<String>{
       AppPermission.syncView,
       AppPermission.syncManage,
     });
-    final canAccessBackupSettings = store.hasAnyPermission(<String>{
+    final canAccessBackupSettings = store.security.hasAnyPermission(<String>{
       AppPermission.backupExport,
       AppPermission.backupRestore,
       AppPermission.backupManage,
@@ -204,7 +204,7 @@ class SettingsPage extends StatelessWidget {
           pageBuilder: (context) =>
               _settingsList(context, _backupCards(context)),
         ),
-      if (store.hasAnyPermission(<String>{
+      if (store.security.hasAnyPermission(<String>{
         AppPermission.usersManage,
         AppPermission.rolesManage,
         AppPermission.permissionsManage,

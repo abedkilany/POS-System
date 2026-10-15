@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "coverageMinimumPercent": 35.0,
+  "coverageMinimumPercent": 40.0,
   "coverageTargetPercent": 75.0,
   "coverageExcludes": [
     "lib/app.dart",

@@ -1,0 +1,54 @@
+name: Quality checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter-quality:
+    name: Flutter analysis, tests, and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Test architecture boundary checker
+        run: python tool/test_architecture_boundary_checker.py
+
+      - name: Check architecture boundaries
+        run: python tool/check_architecture_boundaries.py
+
+      - name: Analyze Dart and Flutter code
+        run: flutter analyze --no-pub
+
+      - name: Run tests with coverage
+        run: flutter test --no-pub --coverage --concurrency=1 --reporter=compact
+
+      - name: Enforce coverage threshold
+        run: dart run tool/check_coverage.dart

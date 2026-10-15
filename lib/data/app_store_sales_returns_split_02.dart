@@ -22,61 +22,28 @@ extension _AppStoreSplitSalesReturnsPart2 on AppStore {
     String warehouseName = '',
   }) async {
     requirePermission(AppPermission.salesCreate);
+    const saleWorkflow = SaleWorkflowService();
+    late final double cleanedDiscount;
     _traceSync('sales.createSale', 'validate_input', () {
-      if (items.isEmpty) {
-        throw ArgumentError('Sale must contain at least one item.');
-      }
-
-      final double cleanedDiscount = discount.isFinite ? discount : 0.0;
-      if (cleanedDiscount < 0) {
-        throw ArgumentError('Discount cannot be negative.');
-      }
-
-      final subtotal =
-          items.fold<double>(0, (sum, item) => sum + item.lineTotal);
-      if (cleanedDiscount > subtotal) {
-        throw ArgumentError('Discount cannot be greater than subtotal.');
-      }
-
-      for (final item in items) {
-        if (item.quantity <= 0 || item.unitPrice < 0) {
-          throw ArgumentError('Invalid sale item values.');
-        }
-        final product = _findProductById(item.productId);
-        if (product == null) {
-          throw ArgumentError('Product not found: ${item.productName}');
-        }
-      }
+      cleanedDiscount = saleWorkflow.validateCreate(
+        items: items,
+        discount: discount,
+        productExists: (productId) => _findProductById(productId) != null,
+      );
     });
     if (!LocalDatabaseService.isSqliteAuthoritative ||
         SqliteMigrationManager.database == null) {
       throw StateError('Sale posting requires the SQLite authoritative store.');
     }
 
-    final double cleanedDiscount = discount.isFinite ? discount : 0.0;
     final now = DateTime.now();
     final saleItems = _traceSyncResult<List<SaleItem>>(
       'sales.createSale',
       'prepare_sale_items',
-      () => items.map((item) {
-        return SaleItem(
-          productId: item.productId,
-          productName: item.productName,
-          unitPrice: item.unitPrice,
-          quantity: item.quantity,
-          unitName: item.unitName,
-          baseQuantity: item.effectiveBaseQuantity,
-          conversionToBase: item.conversionToBase,
-          // Cost is finalized inside the authoritative SQLite transaction.
-          // Keeping this preparation phase side-effect free prevents FIFO
-          // layers from being consumed before the sale can be committed.
-          unitCost: item.unitCost,
-          costingMethodAtSale: _inventoryCostingMethod,
-          costCurrency: item.costCurrency,
-          costExchangeRate: 1,
-          costLayerConsumptions: const <InventoryCostLayerConsumption>[],
-        );
-      }).toList(),
+      () => saleWorkflow.prepareItems(
+        items,
+        costingMethod: _inventoryCostingMethod,
+      ),
     );
 
     late Sale sale;
@@ -161,45 +128,25 @@ extension _AppStoreSplitSalesReturnsPart2 on AppStore {
           storeProfile,
           effectiveAt: now,
         );
-        final normalizedCustomerId = customerId.trim().isEmpty
-            ? AppStore.walkInCustomerId
-            : customerId.trim();
-        final normalizedCustomerName = customerName.trim().isEmpty
-            ? AppStore.walkInCustomerName
-            : customerName.trim();
-        final normalizedPaymentMethod = paymentMethodForRounding;
-        final isWalkInSale =
-            normalizedCustomerId == AppStore.walkInCustomerId ||
-                normalizedCustomerName.toLowerCase() ==
-                    AppStore.walkInCustomerName.toLowerCase();
-        if (isWalkInSale && normalizedPaymentMethod == 'Credit') {
-          throw ArgumentError('Walk-in customer sales cannot be credit.');
-        }
-        final normalizedCashReceived = (cashReceivedAmount ??
-                (normalizedPaymentMethod == 'Cash'
-                    ? saleTotalInInvoiceCurrency
-                    : 0.0))
-            .clamp(0, saleTotalInInvoiceCurrency)
-            .toDouble();
-        final requestedStatus = paymentStatus.trim().toLowerCase();
-        final normalizedPaymentStatus = normalizedPaymentMethod == 'Credit'
-            ? (normalizedCashReceived > 0 ? 'partial' : 'credit')
-            : (requestedStatus == 'credit'
-                ? 'credit'
-                : requestedStatus == 'partial'
-                    ? 'partial'
-                    : 'paid');
-        final normalizedPaidAmount = normalizedPaymentMethod == 'Credit'
-            ? normalizedCashReceived
-            : saleTotalInInvoiceCurrency;
-        requestedInitialPaidAmount = normalizedPaidAmount;
-        requestedInitialCashAmount = normalizedCashReceived;
-        requestedInitialPaymentMethod =
-            normalizedPaymentMethod == 'Credit' && normalizedCashReceived > 0
-                ? 'Cash'
-                : normalizedPaymentMethod;
+        final paymentPlan = saleWorkflow.prepareInitialPayment(
+          customerId: customerId,
+          customerName: customerName,
+          paymentMethod: paymentMethodForRounding,
+          paymentStatus: paymentStatus,
+          saleTotalInInvoiceCurrency: saleTotalInInvoiceCurrency,
+          cashReceivedAmount: cashReceivedAmount,
+          walkInCustomerId: AppStore.walkInCustomerId,
+          walkInCustomerName: AppStore.walkInCustomerName,
+        );
+        final normalizedCustomerId = paymentPlan.customerId;
+        final normalizedCustomerName = paymentPlan.customerName;
+        final normalizedPaymentMethod = paymentPlan.paymentMethod;
+        final normalizedPaymentStatus = paymentPlan.paymentStatus;
+        requestedInitialPaidAmount = paymentPlan.paidAmount;
+        requestedInitialCashAmount = paymentPlan.cashReceivedAmount;
+        requestedInitialPaymentMethod = paymentPlan.initialPaymentMethod;
         if (requestedInitialPaymentMethod.toLowerCase() == 'cash' &&
-            normalizedPaidAmount > 0) {
+            paymentPlan.paidAmount > 0) {
           final hasOpenDrawer =
               await AccountingService.hasOpenCashDrawerForDevice(
             deviceId: _deviceId,

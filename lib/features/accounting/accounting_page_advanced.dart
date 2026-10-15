@@ -72,7 +72,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   @override
   Widget build(BuildContext context) {
     final canManageAccounting =
-        widget.store.hasPermission(AppPermission.accountingManage);
+        widget.store.security.hasPermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     return FutureBuilder<_AdvancedAccountingData>(
       future: _future,

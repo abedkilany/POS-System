@@ -67,7 +67,7 @@ class DirectHostSyncEndpoint {
   }
 
   Future<Map<String, dynamic>> _handleSnapshotManifest() async {
-    _snapshotChunks ??= await store.exportUnifiedSnapshotChunks(
+    _snapshotChunks ??= await store.sync.exportSnapshotChunks(
       kind: 'full_store',
       // WebRTC data channels are not a good place for very large messages.
       // Keep each response small enough for mobile and desktop peers alike.
@@ -117,7 +117,7 @@ class DirectHostSyncEndpoint {
     );
     applyWatch.stop();
     SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] host push applied accepted=${accepted.ackIds.length} rejected=${accepted.rejected.length} applyMs=${applyWatch.elapsedMilliseconds} hostSequence=${store.latestStoredAuthoritativeSequence}');
+        '[SYNC_TRACE] host push applied accepted=${accepted.ackIds.length} rejected=${accepted.rejected.length} applyMs=${applyWatch.elapsedMilliseconds} hostSequence=${store.sync.latestStoredAuthoritativeSequence}');
     final deviceId = payload['deviceId']?.toString().trim() ?? '';
     final sequence = int.tryParse(
           payload['sequence']?.toString() ??
@@ -138,7 +138,7 @@ class DirectHostSyncEndpoint {
       'rejected': accepted.rejected.entries
           .map((entry) => {'id': entry.key, 'reason': entry.value})
           .toList(),
-      'latestSequence': store.latestStoredAuthoritativeSequence,
+      'latestSequence': store.sync.latestStoredAuthoritativeSequence,
     };
   }
 
@@ -159,12 +159,12 @@ class DirectHostSyncEndpoint {
       return {
         'needsSnapshot': true,
         'changes': const <dynamic>[],
-        'generatedSequence': store.latestStoredAuthoritativeSequence,
+        'generatedSequence': store.sync.latestStoredAuthoritativeSequence,
       };
     }
     final exportWatch = Stopwatch()..start();
     final decoded = jsonDecode(
-      store.exportSyncChangesJson(
+      store.sync.exportChangesJson(
         since: since,
         sinceSequence: sinceSequence,
         maxEncodedPayloadBytes: _maxChangePayloadBytes,
@@ -281,8 +281,8 @@ class DirectHostSyncEndpoint {
         appliedCursor: appliedCursor,
         ackCursor: ackCursor,
       );
-      await store.settleHostQueueThroughPeerAck();
-      await store.compactSyncedSyncHistoryForMaintenance();
+      await store.sync.settleHostQueueThroughPeerAck();
+      await store.sync.compactSyncedHistoryForMaintenance();
       stateWatch.stop();
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] host ack persisted device=$deviceId sequence=$ackSequence persistMs=${stateWatch.elapsedMilliseconds}');
@@ -327,10 +327,10 @@ class DirectClientSyncService {
           SyncDiagnosticsLog.add(
               '[SYNC_TRACE] client push batch=${index + 1}/${batches.length} count=${batch.length}');
           final response = await session.sendRequest('direct_client_push', {
-            'deviceId': store.deviceId,
-            'deviceName': store.appIdentity.deviceName,
+            'deviceId': store.sync.deviceId,
+            'deviceName': store.runtime.identity.deviceName,
             'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
-              store.appIdentity,
+              store.runtime.identity,
               'direct',
             ),
             'changes': batch.map((item) => item.toJson()).toList(),
@@ -383,7 +383,7 @@ class DirectClientSyncService {
   }
 
   Future<UnifiedSyncResult> pullChanges() async {
-    final state = SyncDeviceStateStore.load(store.appIdentity);
+    final state = SyncDeviceStateStore.load(store.runtime.identity);
     SyncDiagnosticsLog.add(
         '[SYNC_TRACE] client pull prepare sinceSequence=${state.lastAppliedSequence} cursor=${state.lastAppliedHostCursor?.toIso8601String() ?? '-'}');
     var currentSequence = state.lastAppliedSequence;
@@ -392,7 +392,7 @@ class DirectClientSyncService {
     var batches = 0;
     while (true) {
       final response = await session.sendRequest('direct_client_pull', {
-        'deviceId': store.deviceId,
+        'deviceId': store.sync.deviceId,
         'since': currentCursor?.toIso8601String(),
         'sinceSequence': currentSequence,
       });
@@ -448,7 +448,7 @@ class DirectClientSyncService {
           '[SYNC_TRACE] client pull applied batch=$batches count=${changes.length} applyMs=${applyWatch.elapsedMilliseconds} stateMs=${stateWatch.elapsedMilliseconds} sequence=$generatedSequence');
       final ackWatch = Stopwatch()..start();
       await session.sendRequest('direct_client_ack', {
-        'deviceId': store.deviceId,
+        'deviceId': store.sync.deviceId,
         'appliedCursor': generatedAt.toIso8601String(),
         'ackCursor': generatedAt.toIso8601String(),
         'appliedSequence': generatedSequence,
@@ -491,7 +491,7 @@ class DirectClientSyncService {
     ];
     for (var index = 1; index < totalChunks; index++) {
       final chunk = await session.sendRequest('direct_client_pull_chunk', {
-        'deviceId': store.deviceId,
+        'deviceId': store.sync.deviceId,
         'pullId': pullId,
         'chunkIndex': index,
       });
@@ -541,7 +541,7 @@ class DirectClientSyncService {
       SyncDiagnosticsLog.add('[SYNC_TRACE] client snapshot start');
       final manifest = await session.sendRequest(
         'direct_client_snapshot_manifest',
-        {'deviceId': store.deviceId},
+        {'deviceId': store.sync.deviceId},
       );
       final total =
           int.tryParse(manifest['totalChunks']?.toString() ?? '') ?? 0;
@@ -552,7 +552,7 @@ class DirectClientSyncService {
       for (var index = 0; index < total; index++) {
         final response = await session.sendRequest(
           'direct_client_snapshot_chunk',
-          {'deviceId': store.deviceId, 'index': index},
+          {'deviceId': store.sync.deviceId, 'index': index},
         );
         final chunk = response['chunk'];
         if (chunk is! Map) throw StateError('Invalid Direct snapshot chunk.');
@@ -561,7 +561,7 @@ class DirectClientSyncService {
             '[SYNC_TRACE] client snapshot chunk index=$index total=$total');
         onProgress?.call((index + 1) / total, 'Receiving Direct snapshot');
       }
-      final envelope = store.unifiedSnapshotPayloadFromChunks(chunks);
+      final envelope = store.sync.snapshotPayloadFromChunks(chunks);
       final applied = await UnifiedSnapshotLifecycle.applyEnvelope(
         store: store,
         envelope: envelope,
@@ -573,7 +573,7 @@ class DirectClientSyncService {
         sequence: applied.sequence,
       );
       await session.sendRequest('direct_client_ack', {
-        'deviceId': store.deviceId,
+        'deviceId': store.sync.deviceId,
         'appliedCursor': applied.cursor.toIso8601String(),
         'ackCursor': applied.cursor.toIso8601String(),
         'appliedSequence': applied.sequence,
@@ -613,7 +613,7 @@ class DirectClientSyncService {
 
   UnifiedCursorEnvelope _cursor() {
     final cursor = SyncDeviceStateStore.cursorForTransport(
-      store.appIdentity,
+      store.runtime.identity,
       'direct',
       null,
     );

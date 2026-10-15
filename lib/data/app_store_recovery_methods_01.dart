@@ -1,15 +1,26 @@
 part of 'app_store.dart';
 
 extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
-
   Future<void> importBackupJson(
     String rawJson, {
     Set<String>? selectedSectionIds,
   }) async {
     store.requirePermission(AppPermission.backupRestore);
+    store.requireSensitiveActionAuthorization(SensitiveAction.backupRestore);
     if (store.appIdentity.isClient) {
       throw StateError('Import Backup is only available on the Host device.');
     }
+    if (!LocalDatabaseService.isSqliteAuthoritative) {
+      // Keep the non-SQLite storage adapter behavior available for web/test
+      // stores until that backend has a transactional restore implementation.
+      await _AppStoreSplitBackupRecoveryPart3(store).importBackupJson(
+        rawJson,
+        selectedSectionIds: selectedSectionIds,
+      );
+      return;
+    }
+    final auditActorId = store._activeUser?.id ?? '';
+    final auditActorName = store._activeUser?.username ?? '';
 
     var decoded = jsonDecode(rawJson) as Map<String, dynamic>;
     final customImport = selectedSectionIds != null;
@@ -392,17 +403,20 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
       category: 'backup',
     );
 
-    if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
+    if (!customImport &&
+        restoreFullDeviceBackup &&
+        localDatabaseEntries.isNotEmpty) {
+      final snapshotPayload = Map<String, dynamic>.from(decoded);
+      if (preservePairedHostIdentity) {
+        snapshotPayload['appIdentity'] = store.appIdentity.toJson();
+      }
       await replaceFromSnapshotPayloadDirectToSqlite(
-        decoded,
-        preserveLocalIdentityForLanClient: preservePairedHostIdentity,
+        snapshotPayload,
       );
     }
 
     await _refreshRuntimeAfterRecovery(loadStoreProfile: true);
-    if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
-      await store.reloadAllAfterDatabaseChange();
-    }
+    await store.reloadAllAfterDatabaseChange();
     await _refreshSummaryTables();
 
     if (store.appIdentity.isHost) {
@@ -437,6 +451,29 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
       );
       await store._saveSyncStateOnly();
     }
+
+    await AuditLogger.record(
+      entityType: 'backup',
+      entityId: store.appIdentity.storeId,
+      action: 'restore_success',
+      summary: 'Backup restore completed',
+      details: jsonEncode(<String, Object?>{
+        'fullDeviceBackup': restoreFullDeviceBackup,
+        'customImport': customImport,
+        'selectedSections': selectedSectionIds == null
+            ? null
+            : (selectedSectionIds.toList()..sort()),
+      }),
+      userId: auditActorId,
+      userName: auditActorName,
+      storeId: store.appIdentity.storeId,
+      branchId: store.appIdentity.branchId,
+      sessionId: store.deviceId,
+      traceId: store.deviceId,
+      deviceId: store.deviceId,
+      sourceModule: 'backup',
+      isImportant: true,
+    );
 
     store.refreshUi();
   }

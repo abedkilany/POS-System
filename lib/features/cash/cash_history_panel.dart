@@ -371,7 +371,7 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
   Widget _summaryBar(
       BuildContext context, AppLocalizations tr, CashLedgerSummary value) {
     String money(double amount) =>
-        formatUsdReferenceAmount(amount, widget.store.storeProfile);
+        formatUsdReferenceAmount(amount, widget.store.runtime.profile);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
@@ -431,7 +431,7 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
       subtitle: Text(subtitleParts.join(' • '),
           maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: Text(
-        '${incoming ? '+' : '-'}${formatUsdReferenceAmount(item.amount, widget.store.storeProfile)}',
+        '${incoming ? '+' : '-'}${formatUsdReferenceAmount(item.amount, widget.store.runtime.profile)}',
         style: Theme.of(context)
             .textTheme
             .titleSmall
@@ -537,7 +537,7 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
                 await CashReceiptPdfService.printReceipt(
                   context: context,
                   transaction: item,
-                  profile: widget.store.storeProfile,
+                  profile: widget.store.runtime.profile,
                   locale: Localizations.localeOf(context),
                 );
               } catch (error) {
@@ -552,7 +552,7 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
             icon: const Icon(Icons.print_outlined),
             label: Text(_l(tr, 'Print receipt', 'طباعة الإيصال')),
           ),
-          if (widget.store.canManageAccounting &&
+          if (widget.store.security.canManageAccounting &&
               item.reversalOfId.isEmpty &&
               item.type != 'reversal' &&
               (<String>{
@@ -598,13 +598,13 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
                     referenceId: item.referenceId,
                     reason: 'Cash history reversal',
                     createdBy:
-                        widget.store.currentUser?.fullName.trim().isNotEmpty ==
+                        widget.store.security.currentUser?.fullName.trim().isNotEmpty ==
                                 true
-                            ? widget.store.currentUser!.fullName.trim()
-                            : (widget.store.currentUser?.username ??
-                                widget.store.currentRole),
-                    createdByUserId: widget.store.currentUser?.id ?? '',
-                    deviceId: widget.store.appIdentity.deviceId,
+                            ? widget.store.security.currentUser!.fullName.trim()
+                            : (widget.store.security.currentUser?.username ??
+                                widget.store.security.currentRole),
+                    createdByUserId: widget.store.security.currentUser?.id ?? '',
+                    deviceId: widget.store.runtime.identity.deviceId,
                   );
                   if (reversed <= 0) {
                     throw StateError(_l(
@@ -613,7 +613,7 @@ class _CashHistoryPanelState extends State<CashHistoryPanel> {
                       'لم يتم عكس حركة الصندوق.',
                     ));
                   }
-                  await widget.store.refreshAccountTransactionsFromSqlite();
+                  await widget.store.accounting.refreshFromSqlite();
                   if (!dialogContext.mounted) return;
                   Navigator.pop(dialogContext);
                   _reload();

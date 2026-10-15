@@ -116,7 +116,7 @@ class _CustomersPageState extends State<CustomersPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewCustomers) {
+    if (!widget.store.security.canViewCustomers) {
       return _AccessDeniedScaffold(
         title: tr.text('customers'),
         message: tr.text('no_access_customer_records'),
@@ -163,9 +163,9 @@ class _CustomersPageState extends State<CustomersPage> {
     String value,
   ) {
     final customers = _filteredCustomersCache.getOrCompute(
-      widget.store.customersRevision,
+      widget.store.commerce.customersRevision,
       value,
-      () => widget.store.customers.where((customer) {
+      () => widget.store.commerce.customers.where((customer) {
         final isWalkIn = customer.id == AppStore.walkInCustomerId ||
             customer.name.trim().toLowerCase() ==
                 AppStore.walkInCustomerName.toLowerCase();
@@ -190,7 +190,7 @@ class _CustomersPageState extends State<CustomersPage> {
 
   Future<_CustomerQueryResult?> _queryCustomersFromSqlite(String value) {
     final limit = math.max(1, _visibleCustomerCount);
-    final key = '${widget.store.customersRevision}|$value|$limit';
+    final key = '${widget.store.commerce.customersRevision}|$value|$limit';
     if (_customerQueryFuture == null || _customerQueryFutureKey != key) {
       _customerQueryFutureKey = key;
       _customerQueryFuture = () async {
@@ -232,7 +232,7 @@ class _CustomersPageState extends State<CustomersPage> {
     if (_printingReceivables) return;
     setState(() => _printingReceivables = true);
     try {
-      var allCustomers = widget.store.customers;
+      var allCustomers = widget.store.commerce.customers;
       if (LocalDatabaseService.canQueryBusinessSqlite) {
         final queriedCustomers = <Customer>[];
         var offset = 0;
@@ -260,7 +260,7 @@ class _CustomersPageState extends State<CustomersPage> {
           .map((customer) => CustomerReceivableRow(
                 name: customer.name,
                 phone: customer.phone,
-                balance: widget.store.accountBalance('customer', customer.id),
+                balance: widget.store.accounting.accountBalance('customer', customer.id),
               ))
           .where((customer) => customer.balance > 0.0001)
           .toList(growable: false)
@@ -269,7 +269,7 @@ class _CustomersPageState extends State<CustomersPage> {
       await CustomerReceivablesPdfService.print(
         context: context,
         customers: customers,
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         locale: Localizations.localeOf(context),
       );
     } catch (_) {
@@ -309,7 +309,7 @@ class _CustomersPageState extends State<CustomersPage> {
                   loadedCount: customers.length,
                   totalCount: totalCount,
                 ),
-                if (widget.store.hasAnyPermission(<String>{
+                if (widget.store.security.hasAnyPermission(<String>{
                   AppPermission.customersLedgerView,
                   AppPermission.customersManage,
                 }))
@@ -329,7 +329,7 @@ class _CustomersPageState extends State<CustomersPage> {
                     label: Text(tr.text('print_unpaid_customer_accounts')),
                   ),
                 FilledButton.icon(
-                  onPressed: widget.store.canManageCustomers
+                  onPressed: widget.store.security.canManageCustomers
                       ? () => _openCustomerForm(context)
                       : null,
                   icon: const Icon(Icons.person_add_alt_1),
@@ -420,8 +420,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                           tooltip: tr.text('actions'),
                                           onSelected: (value) {
                                             if (value == 'ledger' &&
-                                                widget.store
-                                                    .hasAnyPermission(<String>{
+                                                widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .customersLedgerView,
                                                   AppPermission.customersManage,
@@ -434,8 +433,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                                   accountName: customer.name);
                                             }
                                             if (value == 'statement' &&
-                                                widget.store
-                                                    .hasAnyPermission(<String>{
+                                                widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .customersLedgerView,
                                                   AppPermission.customersManage,
@@ -451,8 +449,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                               );
                                             }
                                             if (value == 'payment' &&
-                                                widget.store
-                                                    .hasAnyPermission(<String>{
+                                                widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .customersPaymentManage,
                                                   AppPermission.customersManage,
@@ -463,13 +460,13 @@ class _CustomersPageState extends State<CustomersPage> {
                                             }
                                             if (value == 'edit' &&
                                                 widget
-                                                    .store.canManageCustomers) {
+                                                    .store.security.canManageCustomers) {
                                               _openCustomerForm(context,
                                                   customer: customer);
                                             }
                                             if (value == 'delete' &&
                                                 widget
-                                                    .store.canManageCustomers) {
+                                                    .store.security.canManageCustomers) {
                                               _deleteCustomer(
                                                   context, customer);
                                             }
@@ -498,8 +495,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                       : Wrap(
                                           children: [
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .hasAnyPermission(<String>{
+                                                onPressed: widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .customersLedgerView,
                                                   AppPermission.customersManage,
@@ -520,8 +516,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                                 tooltip:
                                                     tr.text('account_ledger')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .hasAnyPermission(<String>{
+                                                onPressed: widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .customersLedgerView,
                                                   AppPermission.customersManage,
@@ -544,8 +539,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                                 tooltip: tr.text(
                                                     'print_account_statement')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .hasAnyPermission(<String>{
+                                                onPressed: widget.store.security.hasAnyPermission(<String>{
                                                   AppPermission
                                                       .customersPaymentManage,
                                                   AppPermission.customersManage,
@@ -559,8 +553,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                                 tooltip:
                                                     tr.text('receive_payment')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .canManageCustomers
+                                                onPressed: widget.store.security.canManageCustomers
                                                     ? () => _openCustomerForm(
                                                         context,
                                                         customer: customer)
@@ -569,8 +562,7 @@ class _CustomersPageState extends State<CustomersPage> {
                                                     Icons.edit_outlined),
                                                 tooltip: tr.text('edit')),
                                             IconButton(
-                                                onPressed: widget.store
-                                                        .canManageCustomers
+                                                onPressed: widget.store.security.canManageCustomers
                                                     ? () => _deleteCustomer(
                                                         context, customer)
                                                     : null,
@@ -592,7 +584,7 @@ class _CustomersPageState extends State<CustomersPage> {
   }
 
   Future<void> _deleteCustomer(BuildContext context, Customer customer) async {
-    if (!widget.store.canManageCustomers) return;
+    if (!widget.store.security.canManageCustomers) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -613,7 +605,7 @@ class _CustomersPageState extends State<CustomersPage> {
       ),
     );
     if (confirmed != true) return;
-    await widget.store.deleteCustomer(customer.id);
+    await widget.store.commerce.deleteCustomer(customer.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(tr
@@ -624,13 +616,13 @@ class _CustomersPageState extends State<CustomersPage> {
 
   Future<void> _openCustomerForm(BuildContext context,
       {Customer? customer}) async {
-    if (!widget.store.canManageCustomers) return;
+    if (!widget.store.security.canManageCustomers) return;
     final result = await showDialog<Customer>(
       context: context,
       builder: (_) => _CustomerDialog(customer: customer),
     );
     if (result != null) {
-      await widget.store.addOrUpdateCustomer(result);
+      await widget.store.commerce.addOrUpdateCustomer(result);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context).text(

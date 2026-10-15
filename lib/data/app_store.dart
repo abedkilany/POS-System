@@ -13,6 +13,7 @@ import '../core/repositories/business_session_context.dart';
 import '../core/services/local_database_service.dart';
 import '../core/services/direct_sync_settings.dart';
 import '../core/services/accounting_service.dart';
+import '../core/services/account_ledger_read_service.dart';
 import '../core/services/account_auth_service.dart';
 import '../core/services/app_logging_service.dart';
 import '../core/services/startup_timing_service.dart';
@@ -20,12 +21,21 @@ import '../core/services/sync_diagnostics_log.dart';
 import '../core/services/stock_transaction_service.dart';
 import '../core/services/batch_inventory_service.dart';
 import '../core/services/inventory_traceability_service.dart';
+import '../core/services/inventory_read_service.dart';
 import '../core/services/unified_batch_phase4_closure_service.dart';
 import '../core/services/payment_voucher_service.dart';
+import '../core/services/permission_service.dart';
 import '../core/services/posted_document_snapshot_service.dart';
 import '../core/services/posted_document_edit_framework.dart';
 import '../core/services/cash_reversal_service.dart';
 import '../core/services/cash_ledger_service.dart';
+import '../core/services/catalog_read_service.dart';
+import '../core/services/commerce_read_service.dart';
+import '../core/services/recovery_file_service.dart';
+import '../core/services/sync_queue_recovery_service.dart';
+import '../core/services/purchase_draft_service.dart';
+import '../core/services/purchase_receipt_service.dart';
+import '../core/services/sale_workflow_service.dart';
 import '../core/localization/localized_domain_exception.dart';
 import '../core/sync_unified/sync_device_state.dart';
 import '../core/snapshot/unified_snapshot.dart';
@@ -390,10 +400,12 @@ class AppStore extends ChangeNotifier
   static AppStoreTraceSink? _traceSink;
 
   /// Preferred typed domain boundaries for new callers.
+  late final AppRuntimeDomainPort runtime = _AppRuntimeDomain(this);
   late final CatalogDomainPort catalog = _CatalogDomain(this);
   late final CommerceDomainPort commerce = _CommerceDomain(this);
   late final AccountingDomainPort accounting = _AccountingDomain(this);
   late final InventoryDomainPort inventory = _InventoryDomain(this);
+  @override
   late final SecurityDomainPort security = _SecurityDomain(this);
   late final SyncDomainPort sync = _SyncDomain(this);
   late final RecoveryDomainPort recovery = _RecoveryDomain(this);

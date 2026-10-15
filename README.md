@@ -34,9 +34,13 @@ Application startup hydrates state from SQLite, and all business mutations are w
 
 ### AppStore domain boundary
 
-`AppStore` is a thin application-session facade rather than a business-logic god object. SQLite remains authoritative. Runtime caches and short-lived mutable state are partitioned into Catalog, Commerce, Inventory, Accounting, Security, Sync, and Runtime state objects. Cross-domain lifecycle coordination lives in a dedicated orchestration layer, while existing split business modules remain the implementation owners for their workflows.
+`AppStore` remains the application-session and composition root. SQLite is authoritative. Runtime caches and short-lived mutable state are partitioned into Catalog, Commerce, Inventory, Accounting, Security, Sync, and Runtime state objects. Cross-domain lifecycle coordination lives in a dedicated orchestration layer, while split business modules own their workflows.
 
-New code should prefer the typed domain ports exposed by `store.catalog`, `store.commerce`, `store.accounting`, `store.inventory`, `store.security`, `store.sync`, and `store.recovery`. The legacy AppStore method surface is retained only as a compatibility layer so existing screens can migrate incrementally without a behavior-changing flag-day rewrite. The compatibility layer owns no mutable state.
+Production consumers use the eight typed ports exposed by `store.runtime`, `store.catalog`, `store.commerce`, `store.accounting`, `store.inventory`, `store.security`, `store.sync`, and `store.recovery`. The runtime port owns the app-shell lifecycle and presentation-preference boundary; domain ports expose business reads and commands. The older forwarding methods remain on `AppStore` for compatibility with its split in-library implementation, but production features and services have no direct selectors against them. The architecture guard records that boundary and rejects new facade members or uses.
+
+Pull requests run the architecture guard, `flutter analyze`, the full test suite, and the coverage threshold in `.github/workflows/quality.yml`. Configure the `Flutter analysis, tests, and coverage` job as a required status check in GitHub branch protection.
+
+Read projections and recovery helpers live in focused services under `lib/core/services/`; purchase draft rules, receipt preparation, and sale validation/payment normalization also have focused domain services. The data layer retains SQLite hydration, cache invalidation, sync updates, and composition of atomic posting transactions. Sales, purchase, stock, ledger, and sync mutations must preserve their existing atomicity and audit/reversal behavior when their workflows move behind domain ports.
 
 ## Inventory architecture
 
@@ -206,7 +210,9 @@ The original Phase 0 review captured source archive version `1.0.26+26`. These v
 - Direct peer handshake protocol version 1; authenticated peer session protocol version 1; unified snapshot version 1.
 - No single authoritative Sync Protocol Version constant was found in that snapshot. This was recorded as a gap at the time; review current protocol ownership before making incompatible sync changes.
 
-The baseline policy set an enforced coverage minimum of 35% and a progressive target of 75%. The 35% minimum preserved the Windows release gate already in use at the time; raising it requires measuring coverage and adding tests rather than silently changing the gate. Coverage exclusions are maintained in `tool/quality_gate_config.json` and evaluated by `tool/check_coverage.dart`.
+The enforced coverage minimum is 40%, raised from 35% after the full suite measured 44.26% (27,214 of 61,487 included lines). The progressive target remains 75%; the exclusions are maintained in `tool/quality_gate_config.json` and evaluated by `tool/check_coverage.dart`.
+
+Pull requests and pushes to `main` run the architecture boundary check, `flutter analyze`, the full test suite with coverage, and the shared coverage gate through [`.github/workflows/quality.yml`](.github/workflows/quality.yml). The Windows desktop integration suite remains in the local Windows quality gate. Repository administrators can make the `Flutter analysis, tests, and coverage` job required in branch protection.
 
 Phase 0 acceptance required a passing baseline run on the Windows release machine and retention of its generated evidence. The two disabled integration scenarios' then-current navigation and trace coverage was maintained by the desktop integration suite.
 

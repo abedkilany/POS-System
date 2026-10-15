@@ -236,7 +236,7 @@ extension _FinancialActions on SettingsPage {
     );
 
     if (result != null) {
-      await store.updateStoreProfile(result);
+      await store.runtime.updateStoreProfile(result);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(tr.text('financial_settings_updated'))));
@@ -434,7 +434,7 @@ extension _FinancialActions on SettingsPage {
     final normalizedCurrencies = nextCurrencies
         .map((item) => item.copyWith(isBase: item.code == nextBase))
         .toList(growable: false);
-    await store.updateStoreProfile(profile.copyWith(
+    await store.runtime.updateStoreProfile(profile.copyWith(
       baseCurrency: nextBase,
       currency: nextBase,
       currencies: normalizedCurrencies,
@@ -565,7 +565,7 @@ extension _FinancialActions on SettingsPage {
         result.fromCurrency == 'USD' && result.toCurrency == 'LBP'
             ? result.rate
             : profile.usdToLbpRate;
-    await store.updateStoreProfile(profile.copyWith(
+    await store.runtime.updateStoreProfile(profile.copyWith(
       exchangeRates: nextRates,
       usdToLbpRate: legacyUsdLbp,
     ));

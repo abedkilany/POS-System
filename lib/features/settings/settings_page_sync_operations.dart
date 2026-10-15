@@ -3,8 +3,8 @@ part of 'settings_page.dart';
 
 extension _SyncOperations on _UnifiedSyncSettingsCardState {
   Future<void> _syncNow() => _run(() async {
-        widget.store.requirePermission(AppPermission.syncManage);
-        final identity = widget.store.appIdentity;
+        widget.store.security.requirePermission(AppPermission.syncManage);
+        final identity = widget.store.runtime.identity;
         final lan = LanSyncSettings.load();
         final hostLanEnabled = identity.isHost &&
             (_lanEnabledForHost || (lan.setupComplete && lan.isHost));
@@ -111,7 +111,7 @@ extension _SyncOperations on _UnifiedSyncSettingsCardState {
           _status = tr.text('testing_paired_clients');
           _statusProgress = 0.15;
         });
-        final identity = widget.store.appIdentity;
+        final identity = widget.store.runtime.identity;
         final lan = LanSyncSettings.load();
         final direct = VpsControlPlaneSettings.load();
         final peerStates = <String, HostPeerSyncState>{

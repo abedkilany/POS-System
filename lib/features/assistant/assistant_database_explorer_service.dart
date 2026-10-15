@@ -308,7 +308,7 @@ class AssistantDatabaseExplorerService {
         'Choose a result limit from 1 to 50.',
       );
     }
-    final storeId = store.appIdentity.storeId.trim();
+    final storeId = store.runtime.identity.storeId.trim();
     if (storeId.isEmpty) {
       throw const AssistantDatabaseExplorerException(
         'active_store_required',
@@ -452,16 +452,16 @@ class AssistantDatabaseExplorerService {
 
   static bool _hasDomainPermission(AppStore store, _Domain domain) =>
       switch (domain) {
-        _Domain.sales => store.canViewSales,
-        _Domain.purchases => store.canViewPurchases,
-        _Domain.customers => store.canViewCustomers || store.canViewSales,
-        _Domain.suppliers => store.canViewSuppliers || store.canViewPurchases,
-        _Domain.inventory => store.canViewInventory || store.canViewAccounting,
-        _Domain.expenses => store.canViewExpenses,
-        _Domain.accounting => store.canViewAccounting,
-        _Domain.cash => store.canViewCashBox,
+        _Domain.sales => store.security.canViewSales,
+        _Domain.purchases => store.security.canViewPurchases,
+        _Domain.customers => store.security.canViewCustomers || store.security.canViewSales,
+        _Domain.suppliers => store.security.canViewSuppliers || store.security.canViewPurchases,
+        _Domain.inventory => store.security.canViewInventory || store.security.canViewAccounting,
+        _Domain.expenses => store.security.canViewExpenses,
+        _Domain.accounting => store.security.canViewAccounting,
+        _Domain.cash => store.security.canViewCashBox,
         _Domain.manufacturing =>
-          store.canViewInventory || store.canViewAccounting,
+          store.security.canViewInventory || store.security.canViewAccounting,
       };
 
   static VentioDriftDatabase _requireDatabase() {

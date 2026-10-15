@@ -31,6 +31,7 @@ For Dart application and test files, use [FILE_INDEX.md](FILE_INDEX.md). For dir
 | File | Responsibility |
 | --- | --- |
 | [`deploy-vps.yml`](../.github/workflows/deploy-vps.yml) | GitHub Actions workflow for `deploy vps`. |
+| [`quality.yml`](../.github/workflows/quality.yml) | GitHub Actions workflow for `quality`. |
 
 ## `android/`
 

@@ -89,7 +89,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
     final serverClientIds = directById.values
         .where((device) =>
             device.deviceId.trim().isNotEmpty &&
-            device.deviceId.trim() != widget.store.deviceId.trim() &&
+            device.deviceId.trim() != widget.store.sync.deviceId.trim() &&
             device.role.trim().toLowerCase() != 'host' &&
             !device.revoked)
         .map((device) => device.deviceId.trim());
@@ -338,7 +338,7 @@ class _HostStatusMonitoringCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final activeTransport = identity.activeSyncTransportNormalized;
     final lanReady = activeTransport == 'lan' &&
         lanSettings.setupComplete &&
@@ -390,7 +390,7 @@ class _HostStatusMonitoringCard extends StatelessWidget {
           _Line(title: tr.text('device_id'), value: identity.deviceId),
           _Line(
               title: tr.text('host_sequence'),
-              value: '${store.latestStoredAuthoritativeSequence}'),
+              value: '${store.sync.latestStoredAuthoritativeSequence}'),
         ],
       ),
     );
@@ -564,7 +564,7 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
         lanSettings: lanSettings,
         controlPlaneSettings: controlPlaneSettings);
     final status = _syncStatusForClient(context, state,
-        pendingCount: store.activeClientPendingSyncCount);
+        pendingCount: store.sync.activeClientPendingCount);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -592,14 +592,14 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _Line(title: tr.text('role'), value: tr.text('client')),
-        _Line(title: tr.text('device_id'), value: store.appIdentity.deviceId),
+        _Line(title: tr.text('device_id'), value: store.runtime.identity.deviceId),
         _Line(
             title: tr.text('active_transport'),
             value: _transportLabel(
                 context,
                 state.activeTransport.isNotEmpty
                     ? state.activeTransport
-                    : store.appIdentity.activeSyncTransport)),
+                    : store.runtime.identity.activeSyncTransport)),
         _Line(title: tr.text('connection_status'), value: connection.label),
         _Line(title: tr.text('sync_status'), value: status.label),
         _Line(
@@ -608,7 +608,7 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
                 _formatDateTime(context, _lastSuccessfulSyncForClient(state))),
         _Line(
             title: tr.text('pending_changes'),
-            value: '${store.activeClientPendingSyncCount}'),
+            value: '${store.sync.activeClientPendingCount}'),
         _Line(
             title: tr.text('last_ack_sequence'),
             value: '${state.lastAckSequence}'),

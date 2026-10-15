@@ -461,7 +461,7 @@ extension _SalesPageProductDialogs on _SalesPageState {
       final sqlite = await LocalDatabaseService.queryProductsFromSqlite(
           query: normalized, limit: 250, activeOnly: true);
       if (sqlite != null) return sqlite.items;
-      final allActiveProducts = widget.store.products
+      final allActiveProducts = widget.store.catalog.products
           .where((product) => product.isActive && !product.isDeleted)
           .where((product) =>
               searchIndex[product.id]?.contains(normalized) ?? false)
@@ -688,7 +688,7 @@ extension _SalesPageProductDialogs on _SalesPageState {
                                                         '$codeAndBarcode • ${_stockAvailabilityLabel(product, tr)}',
                                                         maxLines: 1,
                                                         overflow: TextOverflow.ellipsis),
-                                                    trailing: Text(formatUsdReferenceAmount(_salePriceFor(product, unit), widget.store.storeProfile)),
+                                                    trailing: Text(formatUsdReferenceAmount(_salePriceFor(product, unit), widget.store.runtime.profile)),
                                                     onTap: () => addSearchOption(index));
                                               });
                                         }))

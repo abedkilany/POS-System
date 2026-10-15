@@ -33,19 +33,19 @@ class UnifiedSnapshotLifecycle {
     final snapshotJson = jsonEncode(envelope);
 
     await beforeImport?.call(snapshotJson);
-    await store.importSyncSnapshotJson(snapshotJson);
+    await store.sync.importSnapshotJson(snapshotJson);
 
     if (markAllSyncChangesSynced) {
-      await store.markAllSyncChangesSynced();
+      await store.sync.markAllChangesSynced();
     }
     if (cleanupSoftDeleted) {
-      await store.cleanupSoftDeletedRecords();
+      await store.sync.cleanupSoftDeletedRecords();
     }
 
     var verificationOk = true;
     var verificationMessage = '';
     if (verifyLocalData) {
-      final verification = await store.verifyLocalBusinessDataIntegrity();
+      final verification = await store.sync.verifyLocalBusinessDataIntegrity();
       verificationOk = verification.ok;
       verificationMessage = verification.message;
     }
@@ -53,8 +53,8 @@ class UnifiedSnapshotLifecycle {
     await afterImport?.call(snapshotJson);
 
     return UnifiedSnapshotApplyResult(
-      cursor: store.syncSnapshotGeneratedAtFromJson(snapshotJson),
-      sequence: store.syncSnapshotGeneratedSequenceFromJson(snapshotJson),
+      cursor: store.sync.snapshotGeneratedAtFromJson(snapshotJson),
+      sequence: store.sync.snapshotGeneratedSequenceFromJson(snapshotJson),
       transferredChunks: (envelope['totalChunks'] as num?)?.toInt() ?? 0,
       verificationOk: verificationOk,
       verificationMessage: verificationMessage,

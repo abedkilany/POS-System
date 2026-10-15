@@ -1,13 +1,12 @@
 part of 'cash_page.dart';
 
 extension _CashPageStatePart3 on _CashPageState {
-
   Future<void> _cashOperationDialog({
     required AdvancedAccountingItem currentDrawer,
     required AdvancedAccountingItem currentSession,
     required String type,
   }) async {
-    widget.store.requirePermission(AppPermission.cashBoxManage);
+    widget.store.security.requirePermission(AppPermission.cashBoxManage);
     final tr = AppLocalizations.of(context);
     final allAccounts = await AccountingService.listAccounts(activeOnly: true);
     if (!mounted) return;
@@ -202,7 +201,7 @@ extension _CashPageStatePart3 on _CashPageState {
       return;
     }
     try {
-      final user = widget.store.activeUser;
+      final user = widget.store.security.activeUser;
       final service = CashOperationService.current(authorization: widget.store);
       final args = (
         cashLocationId: currentDrawer.id,
@@ -212,11 +211,11 @@ extension _CashPageStatePart3 on _CashPageState {
         notes: notes,
         createdBy: user?.fullName.trim().isNotEmpty == true
             ? user!.fullName
-            : widget.store.currentRole,
+            : widget.store.security.currentRole,
         createdByUserId: user?.id ?? '',
-        deviceId: widget.store.appIdentity.deviceId,
-        branchId: widget.store.appIdentity.branchId,
-        storeId: widget.store.appIdentity.storeId,
+        deviceId: widget.store.runtime.identity.deviceId,
+        branchId: widget.store.runtime.identity.branchId,
+        storeId: widget.store.runtime.identity.storeId,
         idempotencyKey:
             'cash-ui-$type-${DateTime.now().toUtc().microsecondsSinceEpoch}',
       );
@@ -277,7 +276,7 @@ extension _CashPageStatePart3 on _CashPageState {
     required AdvancedAccountingItem currentSession,
     required String kind,
   }) async {
-    widget.store.requirePermission(AppPermission.cashBoxManage);
+    widget.store.security.requirePermission(AppPermission.cashBoxManage);
     final tr = AppLocalizations.of(context);
     final all =
         await AccountingService.listActiveCashLocations(includeBank: false);
@@ -384,7 +383,7 @@ extension _CashPageStatePart3 on _CashPageState {
 
       if (from.type == 'cash_drawer' && fromSessionId.isEmpty) {
         fromSessionId = await AccountingService.currentOpenCashDrawerSessionId(
-          branchId: widget.store.appIdentity.branchId,
+          branchId: widget.store.runtime.identity.branchId,
           cashLocationId: from.id,
         );
         if (fromSessionId.isEmpty) {
@@ -394,7 +393,7 @@ extension _CashPageStatePart3 on _CashPageState {
       }
       if (to.type == 'cash_drawer' && toSessionId.isEmpty) {
         toSessionId = await AccountingService.currentOpenCashDrawerSessionId(
-          branchId: widget.store.appIdentity.branchId,
+          branchId: widget.store.runtime.identity.branchId,
           cashLocationId: to.id,
         );
         if (toSessionId.isEmpty) {
@@ -404,7 +403,7 @@ extension _CashPageStatePart3 on _CashPageState {
               'درج النقدية الوجهة لا يملك شيفتاً مفتوحاً.'));
         }
       }
-      final user = widget.store.activeUser;
+      final user = widget.store.security.activeUser;
       await AccountingService.createCashTransfer(
         authorization: widget.store,
         fromLocationId: from.id,
@@ -413,11 +412,11 @@ extension _CashPageStatePart3 on _CashPageState {
         notes: notes,
         createdBy: user?.fullName.trim().isNotEmpty == true
             ? user!.fullName
-            : widget.store.currentRole,
+            : widget.store.security.currentRole,
         createdByUserId: user?.id ?? '',
-        storeId: widget.store.appIdentity.storeId,
-        branchId: widget.store.appIdentity.branchId,
-        deviceId: widget.store.appIdentity.deviceId,
+        storeId: widget.store.runtime.identity.storeId,
+        branchId: widget.store.runtime.identity.branchId,
+        deviceId: widget.store.runtime.identity.deviceId,
         fromSessionId: fromSessionId,
         toSessionId: toSessionId,
         transferKind: kind,
@@ -434,7 +433,7 @@ extension _CashPageStatePart3 on _CashPageState {
 
   Future<void> _openDrawerDialog(
       BuildContext context, List<AdvancedAccountingItem> drawers) async {
-    widget.store.requirePermission(AppPermission.cashBoxManage);
+    widget.store.security.requirePermission(AppPermission.cashBoxManage);
     final tr = AppLocalizations.of(context);
     if (drawers.isEmpty) return;
     final controller = TextEditingController(text: '0');
@@ -482,7 +481,7 @@ extension _CashPageStatePart3 on _CashPageState {
     }
     try {
       final drawer = drawers.firstWhere((item) => item.id == selectedDrawerId);
-      final activeUser = widget.store.activeUser;
+      final activeUser = widget.store.security.activeUser;
       await AccountingService.openCashDrawer(
         authorization: widget.store,
         drawerNo: drawer.name,
@@ -490,11 +489,11 @@ extension _CashPageStatePart3 on _CashPageState {
         openingBalance: double.tryParse(controller.text.trim()) ?? 0,
         openedBy: activeUser?.fullName.trim().isNotEmpty == true
             ? activeUser!.fullName
-            : widget.store.currentRole,
+            : widget.store.security.currentRole,
         openedByUserId: activeUser?.id ?? '',
-        storeId: widget.store.appIdentity.storeId,
-        branchId: widget.store.appIdentity.branchId,
-        deviceId: widget.store.appIdentity.deviceId,
+        storeId: widget.store.runtime.identity.storeId,
+        branchId: widget.store.runtime.identity.branchId,
+        deviceId: widget.store.runtime.identity.deviceId,
       );
       _refresh();
     } catch (error) {
@@ -509,7 +508,7 @@ extension _CashPageStatePart3 on _CashPageState {
 
   Future<void> _closeDrawerDialog(
       BuildContext context, AdvancedAccountingItem session) async {
-    widget.store.requirePermission(AppPermission.cashBoxManage);
+    widget.store.security.requirePermission(AppPermission.cashBoxManage);
     final tr = AppLocalizations.of(context);
     final expected =
         await AccountingService.calculateCashDrawerExpectedCash(session.id);
@@ -522,7 +521,7 @@ extension _CashPageStatePart3 on _CashPageState {
         title: Text(tr.text('close_handover_shift')),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(
-              '${tr.text('expected')}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
+              '${tr.text('expected')}: ${formatUsdReferenceAmount(expected, widget.store.runtime.profile)}'),
           const SizedBox(height: 12),
           TextField(
               controller: counted,
@@ -551,14 +550,14 @@ extension _CashPageStatePart3 on _CashPageState {
       return;
     }
     try {
-      final activeUser = widget.store.activeUser;
+      final activeUser = widget.store.security.activeUser;
       await AccountingService.closeCashDrawer(
         authorization: widget.store,
         sessionId: session.id,
         countedCash: double.tryParse(counted.text.trim()) ?? 0,
         closedBy: activeUser?.fullName.trim().isNotEmpty == true
             ? activeUser!.fullName
-            : widget.store.currentRole,
+            : widget.store.security.currentRole,
         closedByUserId: activeUser?.id ?? '',
         notes: notes.text.trim(),
       );

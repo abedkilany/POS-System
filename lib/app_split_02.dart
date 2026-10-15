@@ -176,7 +176,7 @@ class _MainShellState extends State<MainShell> {
       // Reload the store in place. The shell and the current page remain
       // mounted, so page-local state such as filters, drafts, and scroll
       // position is preserved while the refreshed data is published once.
-      await widget.store.reloadAllAfterDatabaseChange();
+      await widget.store.runtime.reloadAllAfterDatabaseChange();
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -553,7 +553,7 @@ class _MainShellState extends State<MainShell> {
       );
     }
 
-    final storeName = widget.store.storeProfile.name.trim();
+    final storeName = widget.store.runtime.profile.name.trim();
     final shellTitle = storeName.isEmpty ||
             storeName == 'My Store' ||
             storeName == tr.text('my_store')
@@ -561,12 +561,12 @@ class _MainShellState extends State<MainShell> {
         : storeName;
     final authCache = _authCache;
     final isPlatformAdmin = authCache?.accountType == 'platform_admin';
-    final canUseAssistant = widget.store.canViewAccounting ||
-        widget.store.canViewSales ||
-        widget.store.canViewPurchases ||
-        widget.store.canViewExpenses ||
-        widget.store.canViewCashBox ||
-        widget.store.canViewInventory;
+    final canUseAssistant = widget.store.security.canViewAccounting ||
+        widget.store.security.canViewSales ||
+        widget.store.security.canViewPurchases ||
+        widget.store.security.canViewExpenses ||
+        widget.store.security.canViewCashBox ||
+        widget.store.security.canViewInventory;
     final items = [
       if (isPlatformAdmin)
         _ShellItem(
@@ -575,7 +575,7 @@ class _MainShellState extends State<MainShell> {
             selectedIcon: Icons.admin_panel_settings,
             page: timedPage('AdminSubscribersPage',
                 tr.text('admin_subscribers'), const AdminSubscribersPage())),
-      if (widget.store.canAccessPage('dashboard'))
+      if (widget.store.security.canAccessPage('dashboard'))
         _ShellItem(
             label: tr.text('dashboard'),
             icon: Icons.dashboard_outlined,
@@ -587,35 +587,35 @@ class _MainShellState extends State<MainShell> {
               autoReady: false,
               child: DashboardPage(store: widget.store),
             )),
-      if (widget.store.canAccessPage('products'))
+      if (widget.store.security.canAccessPage('products'))
         _ShellItem(
             label: tr.text('products'),
             icon: Icons.inventory_2_outlined,
             selectedIcon: Icons.inventory_2,
             page: timedPage('ProductsPage', tr.text('products'),
                 ProductsPage(store: widget.store))),
-      if (widget.store.canAccessPage('products'))
+      if (widget.store.security.canAccessPage('products'))
         _ShellItem(
             label: tr.text('barcode_labels'),
             icon: Icons.qr_code_2_outlined,
             selectedIcon: Icons.qr_code_2,
             page: timedPage('BarcodeLabelsPage', tr.text('barcode_labels'),
                 BarcodeLabelsPage(store: widget.store))),
-      if (widget.store.canAccessPage('customers'))
+      if (widget.store.security.canAccessPage('customers'))
         _ShellItem(
             label: tr.text('customers'),
             icon: Icons.people_outline,
             selectedIcon: Icons.people,
             page: timedPage('CustomersPage', tr.text('customers'),
                 CustomersPage(store: widget.store))),
-      if (widget.store.canAccessPage('suppliers'))
+      if (widget.store.security.canAccessPage('suppliers'))
         _ShellItem(
             label: tr.text('suppliers'),
             icon: Icons.local_shipping_outlined,
             selectedIcon: Icons.local_shipping,
             page: timedPage('SuppliersPage', tr.text('suppliers'),
                 SuppliersPage(store: widget.store))),
-      if (widget.store.canAccessPage('sales'))
+      if (widget.store.security.canAccessPage('sales'))
         _ShellItem(
             label: tr.text('sales'),
             icon: Icons.receipt_long_outlined,
@@ -630,63 +630,63 @@ class _MainShellState extends State<MainShell> {
                     widget.onExitGuardChanged?.call(guard);
                   },
                 ))),
-      if (widget.store.canAccessPage('quotations'))
+      if (widget.store.security.canAccessPage('quotations'))
         _ShellItem(
             label: tr.text('quotations'),
             icon: Icons.request_quote_outlined,
             selectedIcon: Icons.request_quote,
             page: timedPage('QuotationsPage', tr.text('quotations'),
                 QuotationsPage(store: widget.store))),
-      if (widget.store.canAccessPage('delivery_notes'))
+      if (widget.store.security.canAccessPage('delivery_notes'))
         _ShellItem(
             label: tr.text('delivery_notes'),
             icon: Icons.local_shipping_outlined,
             selectedIcon: Icons.local_shipping,
             page: timedPage('DeliveryNotesPage', tr.text('delivery_notes'),
                 DeliveryNotesPage(store: widget.store))),
-      if (widget.store.canAccessPage('purchases'))
+      if (widget.store.security.canAccessPage('purchases'))
         _ShellItem(
             label: tr.text('purchases'),
             icon: Icons.add_shopping_cart_outlined,
             selectedIcon: Icons.add_shopping_cart,
             page: timedPage('PurchasesPage', tr.text('purchases'),
                 PurchasesPage(store: widget.store))),
-      if (widget.store.canAccessPage('expenses'))
+      if (widget.store.security.canAccessPage('expenses'))
         _ShellItem(
             label: tr.text('expenses'),
             icon: Icons.payments_outlined,
             selectedIcon: Icons.payments,
             page: timedPage('ExpensesPage', tr.text('expenses'),
                 ExpensesPage(store: widget.store))),
-      if (widget.store.canViewCashBox)
+      if (widget.store.security.canViewCashBox)
         _ShellItem(
             label: tr.text('cash_box'),
             icon: Icons.point_of_sale_outlined,
             selectedIcon: Icons.point_of_sale,
             page: timedPage('CashPage', tr.text('cash_box'),
                 CashPage(store: widget.store))),
-      if (widget.store.canAccessPage('accounting'))
+      if (widget.store.security.canAccessPage('accounting'))
         _ShellItem(
             label: tr.text('accounting'),
             icon: Icons.account_balance_wallet_outlined,
             selectedIcon: Icons.account_balance_wallet,
             page: timedPage('AccountingPage', tr.text('accounting'),
                 AccountingPage(store: widget.store))),
-      if (widget.store.canAccessPage('inventory'))
+      if (widget.store.security.canAccessPage('inventory'))
         _ShellItem(
             label: tr.text('inventory'),
             icon: Icons.warehouse_outlined,
             selectedIcon: Icons.warehouse,
             page: timedPage('InventoryPage', tr.text('inventory'),
                 InventoryPage(store: widget.store))),
-      if (widget.store.canAccessPage('manufacturing'))
+      if (widget.store.security.canAccessPage('manufacturing'))
         _ShellItem(
             label: tr.text('manufacturing_page'),
             icon: Icons.precision_manufacturing_outlined,
             selectedIcon: Icons.precision_manufacturing,
             page: timedPage('ManufacturingPage', tr.text('manufacturing_page'),
                 ManufacturingPage(store: widget.store))),
-      if (widget.store.canAccessPage('reports'))
+      if (widget.store.security.canAccessPage('reports'))
         _ShellItem(
             label: tr.text('reports'),
             icon: Icons.bar_chart_outlined,
@@ -702,21 +702,21 @@ class _MainShellState extends State<MainShell> {
                 'AssistantChatPage',
                 tr.text('assistant_chat_title'),
                 AssistantChatPage(store: widget.store))),
-      if (widget.store.canAccessPage('maintenance'))
+      if (widget.store.security.canAccessPage('maintenance'))
         _ShellItem(
             label: tr.text('maintenance'),
             icon: Icons.health_and_safety_outlined,
             selectedIcon: Icons.health_and_safety,
             page: timedPage('MaintenancePage', tr.text('maintenance'),
                 MaintenancePage(store: widget.store))),
-      if (widget.store.canAccessPage('database'))
+      if (widget.store.security.canAccessPage('database'))
         _ShellItem(
             label: tr.text('database'),
             icon: Icons.storage_outlined,
             selectedIcon: Icons.storage,
             page: timedPage('DatabasePage', tr.text('database'),
                 DatabasePage(store: widget.store))),
-      if (widget.store.canAccessPage('settings'))
+      if (widget.store.security.canAccessPage('settings'))
         _ShellItem(
             label: tr.text('settings'),
             icon: Icons.settings_outlined,
@@ -796,7 +796,7 @@ class _MainShellState extends State<MainShell> {
               else
                 HostConnectionIndicator(store: widget.store),
               PopupMenuButton<String>(
-                tooltip: widget.store.activeUser?.fullName ?? tr.text('logout'),
+                tooltip: widget.store.security.activeUser?.fullName ?? tr.text('logout'),
                 onSelected: (value) async {
                   if (value == 'language_en') {
                     widget.onLocaleChanged(const Locale('en'));
@@ -807,19 +807,19 @@ class _MainShellState extends State<MainShell> {
                   } else if (value == 'logout') {
                     await widget.onLogout?.call();
                     await AccountAuthCache.clear();
-                    await widget.store.logout();
+                    await widget.store.security.logout();
                   }
                 },
                 itemBuilder: (context) {
                   final currentLocale = Localizations.localeOf(context);
                   final languageCode = currentLocale.languageCode;
                   return [
-                    if ((widget.store.activeUser?.fullName ?? '')
+                    if ((widget.store.security.activeUser?.fullName ?? '')
                         .trim()
                         .isNotEmpty)
                       PopupMenuItem<String>(
                         enabled: false,
-                        child: Text(widget.store.activeUser!.fullName,
+                        child: Text(widget.store.security.activeUser!.fullName,
                             maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     PopupMenuItem<String>(

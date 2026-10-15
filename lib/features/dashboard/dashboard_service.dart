@@ -165,13 +165,13 @@ class DashboardService {
     final reference = (now ?? DateTime.now()).toLocal();
     final cashTotals = await currentCashTotals(store);
     final customerAging = AccountingAgingService.customerAgingFromStore(
-      sales: store.sales,
-      accountTransactions: store.accountTransactions,
+      sales: store.commerce.sales,
+      accountTransactions: store.accounting.transactions,
       asOfDate: reference,
     );
     final supplierAging = AccountingAgingService.supplierAgingFromStore(
-      purchases: store.purchases,
-      accountTransactions: store.accountTransactions,
+      purchases: store.commerce.purchases,
+      accountTransactions: store.accounting.transactions,
       asOfDate: reference,
     );
     final salesToday = todaySalesAmount(store, reference);
@@ -208,9 +208,9 @@ class DashboardService {
     );
 
     return DashboardState(
-      storeName: store.storeProfile.name.trim().isEmpty
-          ? store.appIdentity.storeId
-          : store.storeProfile.name,
+      storeName: store.runtime.profile.name.trim().isEmpty
+          ? store.runtime.identity.storeId
+          : store.runtime.profile.name,
       generatedAt: reference,
       todaySalesTotal: salesToday,
       todayProfitTotal: profitToday,
@@ -235,16 +235,16 @@ class DashboardService {
   }
 
   double todaySalesAmount(AppStore store, DateTime reference) {
-    return store.sales
+    return store.commerce.sales
         .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
         .fold<double>(0, (sum, sale) => sum + _saleReportingTotal(sale));
   }
 
   double todayProfitAmount(AppStore store, DateTime reference) {
-    final salesProfit = store.sales
+    final salesProfit = store.commerce.sales
         .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
         .fold<double>(0, (sum, sale) => sum + sale.grossProfit);
-    final expenses = store.expenses
+    final expenses = store.commerce.expenses
         .where((expense) =>
             expense.isPosted &&
             !expense.isDeleted &&
@@ -254,12 +254,12 @@ class DashboardService {
   }
 
   int todayInvoiceCount(AppStore store, DateTime reference) {
-    return store.sales
+    return store.commerce.sales
         .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
         .length;
   }
 
-  int lowStockCount(AppStore store) => store.lowStockCount;
+  int lowStockCount(AppStore store) => store.inventory.lowStockCount;
 
   Future<CashBalanceTotals> currentCashTotals(AppStore store) async {
     if (!AccountingService.isAvailable) return CashBalanceTotals();
@@ -296,7 +296,7 @@ class DashboardService {
     required DashboardHealthSnapshot backupStatus,
   }) {
     final alerts = <DashboardAlertItem>[];
-    final lowStockProducts = store.products
+    final lowStockProducts = store.catalog.products
         .where((product) => product.trackStock && product.isLowStock)
         .toList()
       ..sort((a, b) => a.stock.compareTo(b.stock));
@@ -342,7 +342,7 @@ class DashboardService {
       );
     }
 
-    final todayExpenses = store.expenses
+    final todayExpenses = store.commerce.expenses
         .where((expense) =>
             expense.isPosted &&
             !expense.isDeleted &&
@@ -385,13 +385,13 @@ class DashboardService {
       );
     }
 
-    if (store.blockingDataConflictCount > 0) {
+    if (store.sync.blockingDataConflictCount > 0) {
       alerts.add(
         DashboardAlertItem(
           level: DashboardStatusLevel.danger,
           title: 'Blocking conflicts',
           message:
-              '${store.blockingDataConflictCount} blocking conflict(s) need review',
+              '${store.sync.blockingDataConflictCount} blocking conflict(s) need review',
           icon: Icons.rule_outlined,
         ),
       );
@@ -448,7 +448,7 @@ class DashboardService {
       DashboardFinancialItem(
         key: 'inventory',
         title: 'Inventory',
-        amount: store.inventoryCostValue,
+        amount: store.inventory.inventoryCostValue,
         icon: Icons.warehouse_outlined,
       ),
       DashboardFinancialItem(
@@ -469,7 +469,7 @@ class DashboardService {
       DashboardFinancialItem(
         key: 'purchases',
         title: 'Purchases',
-        amount: store.totalPurchasesAmount,
+        amount: store.commerce.totalPurchasesAmount,
         icon: Icons.shopping_cart_outlined,
       ),
     ];
@@ -583,7 +583,7 @@ class DashboardService {
       for (var i = 0; i < days; i += 1)
         _dateKey(start.add(Duration(days: i))): 0,
     };
-    for (final sale in store.sales) {
+    for (final sale in store.commerce.sales) {
       if (sale.isDeleted || sale.isCancelled) continue;
       final date = sale.date.toLocal();
       if (date.isBefore(start) || date.isAfter(reference)) continue;
@@ -602,7 +602,7 @@ class DashboardService {
   }
 
   double _salesTotalSince(AppStore store, DateTime from) {
-    return store.sales
+    return store.commerce.sales
         .where((sale) =>
             !sale.isDeleted &&
             !sale.isCancelled &&
@@ -611,13 +611,13 @@ class DashboardService {
   }
 
   double _profitTotalSince(AppStore store, DateTime from) {
-    final salesProfit = store.sales
+    final salesProfit = store.commerce.sales
         .where((sale) =>
             !sale.isDeleted &&
             !sale.isCancelled &&
             !sale.date.toLocal().isBefore(from))
         .fold<double>(0, (sum, sale) => sum + sale.grossProfit);
-    final expenses = store.expenses
+    final expenses = store.commerce.expenses
         .where((expense) =>
             expense.isPosted &&
             !expense.isDeleted &&
@@ -628,7 +628,7 @@ class DashboardService {
 
   List<DashboardChartItem> _groupExpensesByCategory(AppStore store, int limit) {
     final totals = <String, double>{};
-    for (final expense in store.expenses) {
+    for (final expense in store.commerce.expenses) {
       if (!expense.isPosted || expense.isDeleted) continue;
       final key = expense.category.trim().isEmpty
           ? 'Unspecified'
@@ -651,7 +651,7 @@ class DashboardService {
 
   List<DashboardChartItem> _topProductsByQuantity(AppStore store, int limit) {
     final totals = <String, double>{};
-    for (final sale in store.sales) {
+    for (final sale in store.commerce.sales) {
       if (sale.isDeleted || sale.isCancelled) continue;
       for (final item in sale.items) {
         totals[item.productName] =
@@ -674,7 +674,7 @@ class DashboardService {
 
   List<DashboardChartItem> _topCustomersBySales(AppStore store, int limit) {
     final totals = <String, double>{};
-    for (final sale in store.sales) {
+    for (final sale in store.commerce.sales) {
       if (sale.isDeleted || sale.isCancelled) continue;
       final name = sale.customerName.trim().isEmpty
           ? 'Walk-in customer'
@@ -701,7 +701,8 @@ class DashboardService {
     int limit = 5,
   }) {
     final items = <DashboardOperationItem>[
-      for (final sale in store.sales.where((item) => !item.isDeleted).take(20))
+      for (final sale
+          in store.commerce.sales.where((item) => !item.isDeleted).take(20))
         DashboardOperationItem(
           type: DashboardOperationType.sale,
           title: sale.invoiceNo,
@@ -711,7 +712,7 @@ class DashboardService {
           at: sale.date,
         ),
       for (final purchase
-          in store.purchases.where((item) => !item.isDeleted).take(20))
+          in store.commerce.purchases.where((item) => !item.isDeleted).take(20))
         DashboardOperationItem(
           type: DashboardOperationType.purchase,
           title: purchase.purchaseNo,
@@ -722,7 +723,7 @@ class DashboardService {
           at: purchase.date,
         ),
       for (final expense
-          in store.expenses.where((item) => !item.isDeleted).take(20))
+          in store.commerce.expenses.where((item) => !item.isDeleted).take(20))
         DashboardOperationItem(
           type: DashboardOperationType.expense,
           title: expense.title,
@@ -730,7 +731,7 @@ class DashboardService {
           amount: expense.amount,
           at: expense.date,
         ),
-      for (final movement in store.stockMovements.take(20))
+      for (final movement in store.inventory.stockMovements.take(20))
         DashboardOperationItem(
           type: DashboardOperationType.stockMovement,
           title: movement.type,
@@ -738,7 +739,7 @@ class DashboardService {
           amount: movement.quantity.abs(),
           at: movement.date,
         ),
-      for (final transaction in store.accountTransactions
+      for (final transaction in store.accounting.transactions
           .where((item) => !item.isDeleted)
           .take(20))
         DashboardOperationItem(
@@ -760,12 +761,12 @@ class DashboardService {
     AppStore store, {
     DateTime? reference,
   }) {
-    final pending = store.pendingSyncCount;
-    if (store.isSuspendedByHost) {
+    final pending = store.sync.pendingCount;
+    if (store.runtime.isSuspendedByHost) {
       return DashboardHealthSnapshot(
         level: DashboardStatusLevel.danger,
         title: 'Sync paused',
-        detail: store.suspendedByHostReason,
+        detail: store.runtime.suspendedByHostReason,
         pendingCount: pending,
         lastUpdatedAt: reference,
       );
@@ -837,7 +838,7 @@ class DashboardService {
   double _averageDailyExpense(AppStore store, DateTime reference, int days) {
     if (days <= 0) return 0;
     final start = reference.subtract(Duration(days: days - 1));
-    final total = store.expenses
+    final total = store.commerce.expenses
         .where((expense) =>
             expense.isPosted &&
             !expense.isDeleted &&

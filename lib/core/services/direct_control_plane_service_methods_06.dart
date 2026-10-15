@@ -7,7 +7,7 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
     DateTime? minSnapshotUpdatedAt,
     DirectSyncProgressCallback? onProgress,
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (identity.isHost) {
       return const DirectSyncResult(
           ok: true,
@@ -17,14 +17,14 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
 
     final baseLastAppliedSequence =
         SyncDeviceStateStore.lastAppliedSequenceForTransport(
-            store.appIdentity, 'direct');
+            store.runtime.identity, 'direct');
     if (baseLastAppliedSequence <= 0) return null;
 
     final initialCursor = settings.lastPullCursor;
     try {
       onProgress?.call(0.35, 'Pulling Direct changes through the relay...');
       final pullPayload = <String, dynamic>{
-        'deviceId': store.deviceId,
+        'deviceId': store.sync.deviceId,
         'storeId': identity.storeId,
         'branchId': identity.branchId,
         'sinceSequence': baseLastAppliedSequence,
@@ -53,7 +53,7 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
 
       if (_syncCore.shouldHandlePulledSnapshotAsRepair(
         response,
-        isClient: store.appIdentity.isClient,
+        isClient: store.runtime.identity.isClient,
       )) {
         final generation = _remoteHostSnapshotGeneration(response);
         final commandId = _remoteHostRestoreCommandId(response);
@@ -167,7 +167,7 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
           settings,
           requestKind: 'direct_client_ack',
           payload: {
-            'deviceId': store.deviceId,
+            'deviceId': store.sync.deviceId,
             'storeId': identity.storeId,
             'branchId': identity.branchId,
             'appliedSequence': finalPullSequence,
@@ -188,11 +188,11 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
 
       if (applied > 0) {
         onProgress?.call(0.92, 'Cleaning up after Direct sync...');
-        await store.cleanupSoftDeletedRecords();
+        await store.sync.cleanupSoftDeletedRecords();
       }
-      if (store.appIdentity.isClient &&
+      if (store.runtime.identity.isClient &&
           (restoredSnapshot || applied > 0) &&
-          !store.needsInitialAdminSetup) {
+          !store.security.needsInitialAdminSetup) {
         await DirectProvisioningStatus.markComplete(
             message: 'Initial Store data downloaded.');
       }
@@ -217,7 +217,7 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
   Future<DirectSyncResult> pushPendingForUnifiedEngine(
       VpsControlPlaneSettings settings,
       {DirectSyncProgressCallback? onProgress}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!_directAllowedForIdentity(identity)) {
       return const DirectSyncResult(
           ok: false,
@@ -281,7 +281,7 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
     DateTime? minSnapshotUpdatedAt,
     DirectSyncProgressCallback? onProgress,
   }) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (identity.isHost) {
       return const DirectSyncResult(
           ok: true,
@@ -316,7 +316,7 @@ extension DirectControlPlaneServiceSplitPart6 on DirectControlPlaneService {
   Future<DirectSyncResult> syncNow(VpsControlPlaneSettings settings,
       {DateTime? minSnapshotUpdatedAt,
       DirectSyncProgressCallback? onProgress}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!_directAllowedForIdentity(identity)) {
       return const DirectSyncResult(
           ok: false,

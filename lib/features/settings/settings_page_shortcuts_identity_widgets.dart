@@ -297,7 +297,7 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
   Future<void> _editDeviceName() async {
     final tr = AppLocalizations.of(context);
     final controller =
-        TextEditingController(text: widget.store.appIdentity.deviceName);
+        TextEditingController(text: widget.store.runtime.identity.deviceName);
     String? errorText;
     final result = await showDialog<String>(
       context: context,
@@ -353,15 +353,15 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
     controller.dispose();
     if (result == null || result.trim().isEmpty) return;
     try {
-      await widget.store.updateDeviceName(result);
+      await widget.store.runtime.updateDeviceName(result);
       final direct = VpsControlPlaneSettings.load();
-      if (widget.store.appIdentity.isDirectEnabled && direct.isConfigured) {
+      if (widget.store.runtime.identity.isDirectEnabled && direct.isConfigured) {
         await _controlPlaneService().registerCurrentDevice(
           direct,
           transport:
-              widget.store.appIdentity.activeSyncTransportNormalized == 'lan'
+              widget.store.runtime.identity.activeSyncTransportNormalized == 'lan'
                   ? 'direct'
-                  : widget.store.appIdentity.activeSyncTransportNormalized,
+                  : widget.store.runtime.identity.activeSyncTransportNormalized,
         );
       }
       if (!mounted) return;
@@ -379,7 +379,7 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     return _SectionCard(
       icon: Icons.hub_outlined,
       title: tr.text('system_foundation'),

@@ -13,7 +13,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
   double? _costUsd() {
     final cost = double.tryParse(costController.text.trim());
     if (cost == null) return null;
-    return toUsdReferencePrice(cost, costCurrency, widget.store.storeProfile);
+    return toUsdReferencePrice(cost, costCurrency, widget.store.runtime.profile);
   }
 
   void _setControllerNumber(TextEditingController controller, double value) {
@@ -27,7 +27,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
     final sale = double.tryParse(price.text.trim());
     if (costUsd == null || costUsd <= 0 || sale == null) return;
     final saleUsd =
-        toUsdReferencePrice(sale, priceCurrency, widget.store.storeProfile);
+        toUsdReferencePrice(sale, priceCurrency, widget.store.runtime.profile);
     _setControllerNumber(margin, (saleUsd / costUsd - 1) * 100);
   }
 
@@ -39,7 +39,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
     final saleUsd = costUsd * (1 + marginValue / 100);
     _setControllerNumber(
       price,
-      fromUsdReferencePrice(saleUsd, priceCurrency, widget.store.storeProfile),
+      fromUsdReferencePrice(saleUsd, priceCurrency, widget.store.runtime.profile),
     );
   }
 
@@ -83,7 +83,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
   }
 
   void _generateBarcode() {
-    final used = widget.store.products
+    final used = widget.store.catalog.products
         .where((item) => item.id != widget.product?.id)
         .map((item) => item.barcode.trim())
         .where((item) => item.isNotEmpty)
@@ -109,11 +109,11 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
     final name = nameController.text.trim();
     final originalPrice = double.tryParse(priceController.text.trim()) ?? 0;
     final originalCost = double.tryParse(costController.text.trim()) ?? 0;
-    final rate = widget.store.storeProfile.usdToLbpRate;
+    final rate = widget.store.runtime.profile.usdToLbpRate;
     final usdPrice = toUsdReferencePrice(
-        originalPrice, priceCurrency, widget.store.storeProfile);
+        originalPrice, priceCurrency, widget.store.runtime.profile);
     final usdCost = toUsdReferencePrice(
-        originalCost, costCurrency, widget.store.storeProfile);
+        originalCost, costCurrency, widget.store.runtime.profile);
     Navigator.pop(
       context,
       _ProductFormResult(
@@ -124,7 +124,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
           final wholesale =
               double.tryParse(wholesalePriceController.text.trim());
           if (wholesale != null) {
-            await widget.store.setProductBasePriceForList(
+            await widget.store.catalog.setProductBasePriceForList(
               productId: _productId,
               priceListId: 'wholesale',
               amount: wholesale,
@@ -134,7 +134,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
           final bulkWholesale =
               double.tryParse(bulkWholesalePriceController.text.trim());
           if (bulkWholesale != null) {
-            await widget.store.setProductBasePriceForList(
+            await widget.store.catalog.setProductBasePriceForList(
               productId: _productId,
               priceListId: 'wholesale_bulk',
               amount: bulkWholesale,
@@ -173,7 +173,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
           unit: unit.trim(),
           quantityType: quantityType,
           saleUnits: saleUnitDrafts
-              .map((item) => item.toSaleUnit(widget.store.storeProfile))
+              .map((item) => item.toSaleUnit(widget.store.runtime.profile))
               .where((item) =>
                   item.name.trim().isNotEmpty && item.conversionToBase > 0)
               .toList(),
@@ -206,14 +206,14 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
 
   Future<void> _saveProductPriceDrafts(
       String productId, double amount, String currencyCode) async {
-    final previousBasePrice = widget.store.defaultProductPriceFor(productId);
-    await widget.store.setDefaultProductBasePrice(
+    final previousBasePrice = widget.store.catalog.defaultProductPriceFor(productId);
+    await widget.store.catalog.setDefaultProductBasePrice(
       productId: productId,
       unitId: 'base',
       amount: amount,
       currencyCode: currencyCode,
     );
-    final basePrice = widget.store.defaultProductPriceFor(productId);
+    final basePrice = widget.store.catalog.defaultProductPriceFor(productId);
     if (basePrice != null) {
       final activeCurrencies = <String>{};
       for (final draft in priceOverrideDrafts) {
@@ -226,7 +226,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
           continue;
         }
         activeCurrencies.add(normalizedCurrency);
-        await widget.store.setProductPriceOverride(
+        await widget.store.catalog.setProductPriceOverride(
           productPriceId: basePrice.id,
           currencyCode: normalizedCurrency,
           amount: overrideAmount,
@@ -236,23 +236,23 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
       if (previousBasePrice != null) {
         existingOverridePriceIds.add(previousBasePrice.id);
       }
-      for (final item in widget.store.productPriceOverrides) {
+      for (final item in widget.store.catalog.productPriceOverrides) {
         if (existingOverridePriceIds.contains(item.productPriceId) &&
             item.isActive &&
             !activeCurrencies.contains(item.currencyCode)) {
-          await widget.store.removeProductPriceOverride(
+          await widget.store.catalog.removeProductPriceOverride(
               item.productPriceId, item.currencyCode);
         }
       }
     }
     for (final draft in saleUnitDrafts) {
-      final unit = draft.toSaleUnit(widget.store.storeProfile);
+      final unit = draft.toSaleUnit(widget.store.runtime.profile);
       if (unit.id.trim().isEmpty ||
           unit.name.trim().isEmpty ||
           unit.conversionToBase <= 0) {
         continue;
       }
-      await widget.store.setDefaultProductBasePrice(
+      await widget.store.catalog.setDefaultProductBasePrice(
         productId: productId,
         unitId: unit.id,
         amount: unit.originalPrice,
@@ -263,14 +263,14 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
 
   Future<void> _saveSupplierPriceDrafts(String productId) async {
     final activeDraftIds = supplierPriceDrafts.map((item) => item.id).toSet();
-    final existing = widget.store.supplierProductPricesForProduct(productId);
+    final existing = widget.store.commerce.supplierProductPricesForProduct(productId);
     for (final item in supplierPriceDrafts) {
       await widget.store
-          .addOrUpdateSupplierProductPrice(item.copyWith(productId: productId));
+          .commerce.addOrUpdateSupplierProductPrice(item.copyWith(productId: productId));
     }
     for (final item in existing) {
       if (!activeDraftIds.contains(item.id)) {
-        await widget.store.deleteSupplierProductPrice(item.id);
+        await widget.store.commerce.deleteSupplierProductPrice(item.id);
       }
     }
   }
@@ -280,17 +280,17 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
         context: context, builder: (_) => _CatalogItemDialog(type: type));
     if (item == null) return;
     if (type == 'category') {
-      await widget.store.addOrUpdateCategory(item);
+      await widget.store.catalog.addOrUpdateCategory(item);
       setState(() => category = item.nameEn.trim().isNotEmpty
           ? item.nameEn.trim()
           : item.nameAr.trim());
     } else if (type == 'brand') {
-      await widget.store.addOrUpdateBrand(item);
+      await widget.store.catalog.addOrUpdateBrand(item);
       setState(() => brand = item.nameEn.trim().isNotEmpty
           ? item.nameEn.trim()
           : item.nameAr.trim());
     } else {
-      await widget.store.addOrUpdateUnit(item);
+      await widget.store.catalog.addOrUpdateUnit(item);
       setState(() => unit =
           item.code.trim().isNotEmpty ? item.code.trim() : item.nameEn.trim());
     }
@@ -309,11 +309,11 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
       : codeController.text.trim();
 
   String _generateUniqueSku() {
-    final used = widget.store.products
+    final used = widget.store.catalog.products
         .where((item) => item.id != widget.product?.id)
         .map((item) => item.code.trim().toUpperCase())
         .toSet();
-    var counter = widget.store.products.length + 1;
+    var counter = widget.store.catalog.products.length + 1;
     while (true) {
       final candidate = 'PRD-${counter.toString().padLeft(5, '0')}';
       if (!used.contains(candidate)) return candidate;
@@ -324,7 +324,7 @@ extension _ProductDialogStatePart3 on _ProductDialogState {
   String? _uniqueSku(String? value) {
     final normalized = (value ?? '').trim().toLowerCase();
     if (normalized.isEmpty) return null;
-    final exists = widget.store.products.any((item) =>
+    final exists = widget.store.catalog.products.any((item) =>
         item.id != widget.product?.id &&
         item.code.trim().toLowerCase() == normalized);
     return exists

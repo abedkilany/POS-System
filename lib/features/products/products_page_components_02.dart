@@ -43,14 +43,14 @@ class _ProductDialogState extends State<_ProductDialog> {
     final tr = AppLocalizations.of(context);
     final product = widget.product;
     if (product != null && product.trackStock) {
-      _costSnapshotFuture = widget.store.productCostSnapshotForProduct(product);
+      _costSnapshotFuture = widget.store.catalog.productCostSnapshotForProduct(product);
     }
     _productId =
         product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
     supplierPriceDrafts = product == null
         ? <SupplierProductPrice>[]
-        : widget.store.supplierProductPricesForProduct(product.id).toList();
-    _supplierOptions = widget.store.suppliers.toList(growable: false);
+        : widget.store.commerce.supplierProductPricesForProduct(product.id).toList();
+    _supplierOptions = widget.store.commerce.suppliers.toList(growable: false);
     unawaited(_loadSupplierOptions());
     barcodeController = TextEditingController(text: product?.barcode ?? '');
     codeController =
@@ -66,27 +66,27 @@ class _ProductDialogState extends State<_ProductDialog> {
         TextEditingController(text: product?.description ?? '');
     final defaultProductPrice = product == null
         ? null
-        : widget.store.defaultProductPriceFor(product.id);
+        : widget.store.catalog.defaultProductPriceFor(product.id);
     priceOverrideDrafts = defaultProductPrice == null
         ? <_CurrencyPriceOverrideDraft>[]
-        : widget.store.productPriceOverrides
+        : widget.store.catalog.productPriceOverrides
             .where((item) =>
                 item.productPriceId == defaultProductPrice.id && item.isActive)
             .map(_CurrencyPriceOverrideDraft.fromOverride)
             .toList();
     priceCurrency = defaultProductPrice?.baseCurrencyCode ??
         product?.originalCurrency ??
-        widget.store.storeProfile.defaultProductCurrency;
+        widget.store.runtime.profile.defaultProductCurrency;
     costCurrency = product?.costCurrency ??
-        widget.store.storeProfile.defaultProductCurrency;
-    final activeTaxProfiles = widget.store.storeProfile.activeTaxProfiles;
+        widget.store.runtime.profile.defaultProductCurrency;
+    final activeTaxProfiles = widget.store.runtime.profile.activeTaxProfiles;
     final requestedTaxProfileId = product?.taxProfileId.trim() ?? '';
     if (activeTaxProfiles.any((item) => item.id == requestedTaxProfileId)) {
       taxProfileId = requestedTaxProfileId;
     } else if (activeTaxProfiles.any(
-      (item) => item.id == widget.store.storeProfile.defaultTaxProfileId,
+      (item) => item.id == widget.store.runtime.profile.defaultTaxProfileId,
     )) {
-      taxProfileId = widget.store.storeProfile.defaultTaxProfileId;
+      taxProfileId = widget.store.runtime.profile.defaultTaxProfileId;
     } else {
       taxProfileId =
           activeTaxProfiles.isEmpty ? '' : activeTaxProfiles.first.id;
@@ -99,7 +99,7 @@ class _ProductDialogState extends State<_ProductDialog> {
         text: product == null
             ? ''
             : widget.store
-                    .productPriceFor(product.id, 'wholesale')
+                    .catalog.productPriceFor(product.id, 'wholesale')
                     ?.baseAmount
                     .toString() ??
                 '');
@@ -107,7 +107,7 @@ class _ProductDialogState extends State<_ProductDialog> {
         text: product == null
             ? ''
             : widget.store
-                    .productPriceFor(product.id, 'wholesale_bulk')
+                    .catalog.productPriceFor(product.id, 'wholesale_bulk')
                     ?.baseAmount
                     .toString() ??
                 '');
@@ -129,10 +129,10 @@ class _ProductDialogState extends State<_ProductDialog> {
         text: (product?.minimumReceiptShelfLifeDays ?? 0).toString());
     imagePath = product?.imagePath ?? '';
     category = product?.category ??
-        (widget.store.categories.isNotEmpty
-            ? widget.store.categories.first.code.isNotEmpty
-                ? widget.store.categories.first.code
-                : widget.store.categories.first.nameEn
+        (widget.store.catalog.categories.isNotEmpty
+            ? widget.store.catalog.categories.first.code.isNotEmpty
+                ? widget.store.catalog.categories.first.code
+                : widget.store.catalog.categories.first.nameEn
             : tr.text('general'));
     brand = product?.brand ?? '';
     unit = product?.unit ?? '';
@@ -246,7 +246,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _CatalogDropdown(
                         label: tr.text('category'),
                         value: category,
-                        items: widget.store.categories,
+                        items: widget.store.catalog.categories,
                         onChanged: (value) => setState(() => category = value),
                         onAdd: () => _addCatalogItem(context, 'category'),
                         onManage: () =>
@@ -255,7 +255,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _CatalogDropdown(
                         label: tr.text('brand'),
                         value: brand,
-                        items: widget.store.brands,
+                        items: widget.store.catalog.brands,
                         onChanged: (value) => setState(() => brand = value),
                         onAdd: () => _addCatalogItem(context, 'brand'),
                         onManage: () => _manageCatalogItems(context, 'brand'),
@@ -263,7 +263,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _CatalogDropdown(
                         label: '${tr.text('unit')} *',
                         value: unit,
-                        items: widget.store.units,
+                        items: widget.store.catalog.units,
                         onChanged: (value) => setState(() => unit = value),
                         onAdd: () => _addCatalogItem(context, 'unit'),
                         onManage: () => _manageCatalogItems(context, 'unit'),
@@ -374,16 +374,16 @@ class _ProductDialogState extends State<_ProductDialog> {
                               children: [
                                 Text(
                                   value.hasInventory
-                                      ? '${tr.text('current_inventory_cost')}: ${formatUsdReferenceAmount(value.currentInventoryUnitCost, widget.store.storeProfile)} (${value.batchCount} ${tr.text('batches_label')})'
+                                      ? '${tr.text('current_inventory_cost')}: ${formatUsdReferenceAmount(value.currentInventoryUnitCost, widget.store.runtime.profile)} (${value.batchCount} ${tr.text('batches_label')})'
                                       : '${tr.text('current_inventory_cost')}: —',
                                   style: const TextStyle(
                                       fontWeight: FontWeight.w700),
                                 ),
                                 Text(
-                                  '${tr.text('last_purchase_cost_label')}: ${value.lastPurchaseUnitCost == null ? '—' : formatUsdReferenceAmount(value.lastPurchaseUnitCost!, widget.store.storeProfile)}',
+                                  '${tr.text('last_purchase_cost_label')}: ${value.lastPurchaseUnitCost == null ? '—' : formatUsdReferenceAmount(value.lastPurchaseUnitCost!, widget.store.runtime.profile)}',
                                 ),
                                 Text(
-                                  '${tr.text('reference_cost')}: ${formatUsdReferenceAmount(value.referenceUnitCost, widget.store.storeProfile)}',
+                                  '${tr.text('reference_cost')}: ${formatUsdReferenceAmount(value.referenceUnitCost, widget.store.runtime.profile)}',
                                 ),
                               ],
                             ),
@@ -465,12 +465,12 @@ class _ProductDialogState extends State<_ProductDialog> {
                     ]),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      initialValue: widget.store.storeProfile.activeTaxProfiles
+                      initialValue: widget.store.runtime.profile.activeTaxProfiles
                               .any((item) => item.id == taxProfileId)
                           ? taxProfileId
-                          : (widget.store.storeProfile.activeTaxProfiles.isEmpty
+                          : (widget.store.runtime.profile.activeTaxProfiles.isEmpty
                               ? null
-                              : widget.store.storeProfile.activeTaxProfiles
+                              : widget.store.runtime.profile.activeTaxProfiles
                                   .first.id),
                       decoration: InputDecoration(
                         labelText: tr.text('tax_profile'),
@@ -479,7 +479,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       ),
                       items: [
                         for (final profile
-                            in widget.store.storeProfile.activeTaxProfiles)
+                            in widget.store.runtime.profile.activeTaxProfiles)
                           DropdownMenuItem<String>(
                             value: profile.id,
                             child: Text(
@@ -498,7 +498,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       drafts: priceOverrideDrafts,
                       baseCurrencyCode: priceCurrency,
                       availableCurrencyCodes: widget
-                          .store.storeProfile.currencies
+                          .store.runtime.profile.currencies
                           .map((item) => item.code)
                           .toList(growable: false),
                       onChanged: (items) =>
@@ -515,7 +515,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       prices: supplierPriceDrafts,
                       productId: _productId,
                       suppliers: _supplierOptions,
-                      storeProfile: widget.store.storeProfile,
+                      storeProfile: widget.store.runtime.profile,
                       onChanged: (items) =>
                           setState(() => supplierPriceDrafts = items),
                     ),
@@ -571,8 +571,8 @@ class _ProductDialogState extends State<_ProductDialog> {
                   children: [
                     _SaleUnitsEditor(
                       saleUnits: saleUnitDrafts,
-                      storeProfile: widget.store.storeProfile,
-                      existingBarcodes: widget.store.products
+                      storeProfile: widget.store.runtime.profile,
+                      existingBarcodes: widget.store.catalog.products
                           .where((item) => item.id != widget.product?.id)
                           .expand((item) => <String>[
                                 item.barcode,

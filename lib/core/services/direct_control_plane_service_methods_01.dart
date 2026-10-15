@@ -6,14 +6,14 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
   UnifiedSyncCoreService get syncCore => _syncCore;
 
   Future<bool> _clientDirectHostWorkNeedsDrain() async {
-    if (!store.appIdentity.isClient) return false;
+    if (!store.runtime.identity.isClient) return false;
 
     // A relay ACK means that the Host accepted the draft, not that the Client
     // has applied the Host's authoritative event yet. Submitted rows must not
     // block the pull immediately following the push; otherwise the unified
     // push -> pull cycle deadlocks forever. The next push recovers submitted
     // rows if the authoritative pull was interrupted.
-    final outstanding = store.syncQueue.where((item) =>
+    final outstanding = store.sync.queue.where((item) =>
         item.target == UnifiedSyncQueueTarget.host &&
         item.status != 'synced' &&
         item.status != 'rejected');
@@ -57,7 +57,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
     }
     if (compactHistory) {
       onProgress?.call(0.90, 'Running safe local sync history maintenance...');
-      await store.compactSyncedSyncHistoryForMaintenance();
+      await store.sync.compactSyncedHistoryForMaintenance();
       onProgress?.call(1.0, 'Host Direct sync completed.');
     }
     return DirectSyncResult(
@@ -93,7 +93,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
   }) async {
     final baseLastAppliedSequence =
         SyncDeviceStateStore.lastAppliedSequenceForTransport(
-            store.appIdentity, 'direct');
+            store.runtime.identity, 'direct');
     if (baseLastAppliedSequence <= 0) {
       onProgress?.call(0.32,
           'Rebuilding this device data from the Direct relay snapshot...');
@@ -121,7 +121,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
     VpsControlPlaneSettings settings, {
     DirectSyncProgressCallback? onProgress,
   }) async {
-    if (!store.appIdentity.isClient) {
+    if (!store.runtime.identity.isClient) {
       return const DirectSyncResult(
           ok: true, message: 'No Client drain needed.');
     }
@@ -178,8 +178,8 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
     required DateTime requestedAt,
   }) {
     final raw = jsonEncode(envelope);
-    final generatedSequence = store.syncSnapshotGeneratedSequenceFromJson(raw);
-    final generatedAt = store.syncSnapshotGeneratedAtFromJson(raw);
+    final generatedSequence = store.sync.snapshotGeneratedSequenceFromJson(raw);
+    final generatedAt = store.sync.snapshotGeneratedAtFromJson(raw);
     final envelopeRequestId =
         (envelope['rebuildRequestId'] ?? envelope['snapshotRequestId'] ?? '')
             .toString()
@@ -203,10 +203,10 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
   }
 
   Future<void> _restorePreviousSyncMode(AppIdentity previousIdentity) async {
-    final current = store.appIdentity;
+    final current = store.runtime.identity;
     if (current.syncMode == previousIdentity.syncMode) return;
     try {
-      await store.recoverExistingStoreIdentity(
+      await store.runtime.recoverExistingStoreIdentity(
         storeId: current.storeId,
         branchId: current.branchId,
         recoveryKey: current.recoveryKey,
@@ -231,7 +231,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
     // to already be configured creates a circular lock for a Host that is
     // trying to learn whether it may enable Direct for the first time.
     if (settings.apiBaseUrl.trim().isEmpty ||
-        store.appIdentity.storeId.trim().isEmpty) {
+        store.runtime.identity.storeId.trim().isEmpty) {
       return null;
     }
     // Do not call listDevicesWithLimit here. The normal Direct control-plane
@@ -239,7 +239,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
     // still needed by the Sync settings page while the Host is on LAN.
     final client = http.Client();
     try {
-      final identity = store.appIdentity;
+      final identity = store.runtime.identity;
       final response = await client
           .get(
             settings.endpoint('/api/sync/entitlement', {
@@ -278,31 +278,31 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
   }
 
   String _snapshotGenerationKey(String transport) =>
-      'applied_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'applied_host_snapshot_generation_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationInProgressKey(String transport) =>
-      'in_progress_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'in_progress_host_snapshot_generation_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationFailedKey(String transport) =>
-      'failed_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'failed_host_snapshot_generation_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationInProgressAtKey(String transport) =>
-      'in_progress_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'in_progress_host_snapshot_generation_at_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotGenerationFailedAtKey(String transport) =>
-      'failed_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'failed_host_snapshot_generation_at_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _snapshotRequestKey(String transport, String generation) =>
-      'requested_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_${generation.trim()}';
+      'requested_host_snapshot_generation_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}_${generation.trim()}';
 
   String _snapshotRequestAtKey(String transport, String generation) =>
-      'requested_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_${generation.trim()}';
+      'requested_host_snapshot_generation_at_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}_${generation.trim()}';
 
   String _restoreCommandExecutedKey(String transport) =>
-      'executed_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'executed_host_restore_command_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _restoreCommandInProgressKey(String transport) =>
-      'in_progress_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+      'in_progress_host_restore_command_${transport}_${store.runtime.identity.storeId}_${store.runtime.identity.branchId}';
 
   String _remoteHostSnapshotGeneration(Map<String, dynamic> decoded) {
     return (decoded['hostSnapshotGeneration'] ??
@@ -374,7 +374,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
     VpsControlPlaneSettings? settings,
   }) async {
     final effectiveSequence =
-        sequence > 0 ? sequence : store.latestStoredAuthoritativeSequence;
+        sequence > 0 ? sequence : store.sync.latestStoredAuthoritativeSequence;
     if (cursor != null) {
       await _syncCore.saveCursorAndRecordTransportState(
         store,
@@ -392,7 +392,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
     // Authoritative ACK: update the Host-visible device state only after the
     // Client has successfully applied the pulled data locally. Pull itself must
     // never be treated as ACK.
-    if (settings != null && store.appIdentity.isClient && cursor != null) {
+    if (settings != null && store.runtime.identity.isClient && cursor != null) {
       await registerCurrentDevice(settings, transport: transport);
     }
   }
@@ -418,7 +418,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
       VpsControlPlaneSettings settings,
       {String transport = 'direct',
       int ttlMinutes = 5}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final canCreate = transport == 'direct'
         ? identity.isHost && settings.apiBaseUrl.trim().isNotEmpty
         : UnifiedSyncPolicy.canCreateDirectPairingCode(
@@ -449,7 +449,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
-              'hostDeviceId': store.deviceId,
+              'hostDeviceId': store.sync.deviceId,
               'hostDeviceName': identity.deviceName,
               'transport': transport,
               'code': localPairingCode,
@@ -525,7 +525,7 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
 
   Future<DirectPairingStatusResult> pairingCodeStatus(
       VpsControlPlaneSettings settings, String code) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canCheckDirectPairingStatus(identity)) {
       return const DirectPairingStatusResult(
           ok: false,

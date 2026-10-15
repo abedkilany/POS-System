@@ -53,7 +53,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
   }
 
   Future<void> _editManualJournal(JournalEntrySummaryReport summary) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     try {
       final details = await AccountingService.journalEntryDetails(
@@ -275,10 +275,10 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
       if (value <= 0 || debitAccount == null || creditAccount == null) {
         throw StateError('A positive balanced journal amount is required.');
       }
-      final user = widget.store.activeUser;
+      final user = widget.store.security.activeUser;
       final actor = user?.fullName.trim().isNotEmpty == true
           ? user!.fullName.trim()
-          : widget.store.currentRole;
+          : widget.store.security.currentRole;
       await AccountingService.editManualJournalEntry(
         activeEntryId: entry.id,
         entryDate: entryDate,
@@ -437,7 +437,7 @@ class _JournalEntriesTabState extends State<_JournalEntriesTab> {
                               entry.status == 'posted' &&
                               entry.reversedByEntryId.isEmpty &&
                               entry.lineCount == 2 &&
-                              widget.store.hasPermission(
+                              widget.store.security.hasPermission(
                                   AppPermission.accountingManage))
                             IconButton(
                               tooltip: _accountingUiText(

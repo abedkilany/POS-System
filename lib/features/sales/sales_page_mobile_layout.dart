@@ -73,7 +73,7 @@ extension _SalesPageMobileLayout on _SalesPageState {
                             label: tr.text('recent_invoices'),
                             onTap: _showInvoicesSheet),
                         if (widget.store
-                            .hasPermission(AppPermission.salesCancel))
+                            .security.hasPermission(AppPermission.salesCancel))
                           _MobileSaleAction(
                               icon: Icons.assignment_return_outlined,
                               label: tr.text('new_sales_return'),
@@ -89,7 +89,7 @@ extension _SalesPageMobileLayout on _SalesPageState {
   Widget _buildSaleTotalBar(BuildContext context, AppLocalizations tr,
       {bool compact = false}) {
     final totalText =
-        formatUsdReferenceAmount(_total, widget.store.storeProfile);
+        formatUsdReferenceAmount(_total, widget.store.runtime.profile);
     final hasDiscount = _discount > 0;
     final content = compact
         ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -107,7 +107,7 @@ extension _SalesPageMobileLayout on _SalesPageState {
             if (hasDiscount) ...[
               const SizedBox(height: 4),
               Text(
-                  '${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}',
+                  '${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.runtime.profile)}',
                   style: Theme.of(context).textTheme.bodySmall)
             ],
             const SizedBox(height: 10),
@@ -132,7 +132,7 @@ extension _SalesPageMobileLayout on _SalesPageState {
                           ?.copyWith(fontWeight: FontWeight.w900)),
                   if (hasDiscount)
                     Text(
-                        '${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}',
+                        '${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.runtime.profile)}',
                         style: Theme.of(context).textTheme.bodySmall)
                 ])),
             FilledButton.icon(

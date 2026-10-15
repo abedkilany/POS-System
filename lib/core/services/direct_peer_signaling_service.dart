@@ -78,7 +78,7 @@ class DirectPeerSignalingService {
   final http.Client _client;
 
   Map<String, String> _headers() {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     return {
       'Accept': 'application/json',
       'X-Device-Id': identity.deviceId,
@@ -93,7 +93,7 @@ class DirectPeerSignalingService {
   Future<DirectPeerSignalingSession> open(
     DirectPeerSignalingSettings settings,
   ) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     SyncDiagnosticsLog.add(
         '[DIRECT_SIGNAL] ticket request role=${identity.deviceRole.name}');
     final response = await _client
@@ -135,7 +135,7 @@ class DirectPeerSignalingService {
     DirectPeerSignalingSettings settings,
     String peerDeviceId,
   ) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final response = await _client
         .get(
           settings.endpoint('/api/sync/device-key', {
@@ -159,7 +159,7 @@ class DirectPeerSignalingService {
   Future<List<Map<String, dynamic>>> fetchIceServers(
     DirectPeerSignalingSettings settings,
   ) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final response = await _client
         .get(
           settings.endpoint('/api/sync/ice-config', {

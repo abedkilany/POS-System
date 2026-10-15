@@ -100,17 +100,17 @@ class _ExpensesPageState extends State<ExpensesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewExpenses) {
+    if (!widget.store.security.canViewExpenses) {
       return _AccessDeniedScaffold(
         title: tr.text('expenses'),
         message: tr.text('no_access_expense_records'),
       );
     }
-    if (!widget.store.isCoreDataLoaded) {
+    if (!widget.store.runtime.isCoreDataLoaded) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
     final normalizedQuery = query.trim().toLowerCase();
-    final overview = widget.store.expensesOverview;
+    final overview = widget.store.commerce.expensesOverview;
     if (LocalDatabaseService.canQueryBusinessSqlite) {
       return FutureBuilder<_ExpenseQueryResult?>(
         future: _queryExpensesFromSqlite(normalizedQuery),
@@ -168,12 +168,12 @@ class _ExpensesPageState extends State<ExpensesPage> {
     String normalizedQuery,
   ) {
     final cacheKey = '$statusFilter|$normalizedQuery';
-    final allExpenses = widget.store.expenses;
+    final allExpenses = widget.store.commerce.expenses;
     final useDefaultView = statusFilter == 'all' && normalizedQuery.isEmpty;
     final expenses = useDefaultView
         ? allExpenses
         : _filteredExpensesCache.getOrCompute(
-            widget.store.expensesRevision,
+            widget.store.commerce.expensesRevision,
             cacheKey,
             () => allExpenses.where((expense) {
               final matchesStatus = statusFilter == 'all' ||
@@ -188,7 +188,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
     final filteredTotal = useDefaultView
         ? overview.totalExpensesAmount
         : _filteredTotalCache.getOrCompute(
-            widget.store.expensesRevision,
+            widget.store.commerce.expensesRevision,
             cacheKey,
             () => expenses
                 .where((expense) => expense.isPosted)
@@ -215,7 +215,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
   ) {
     final limit = math.max(1, _visibleExpenseCount);
     final key =
-        '${widget.store.expensesRevision}|$statusFilter|$normalizedQuery|$limit';
+        '${widget.store.commerce.expensesRevision}|$statusFilter|$normalizedQuery|$limit';
     if (_expenseQueryFuture == null || _expenseQueryFutureKey != key) {
       _expenseQueryFutureKey = key;
       _expenseQueryFuture = () async {
@@ -226,7 +226,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
         );
         if (page == null) return null;
         final filteredPostedTotal = normalizedQuery.isEmpty
-            ? widget.store.expensesOverview.totalExpensesAmount
+            ? widget.store.commerce.expensesOverview.totalExpensesAmount
             : await LocalDatabaseService.sumPostedExpensesFromSqlite(
                   query: normalizedQuery,
                   status: statusFilter,
@@ -288,7 +288,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                   label: Text(tr.text('print_expense_statement')),
                 ),
                 FilledButton.icon(
-                  onPressed: widget.store.canManageExpenses
+                  onPressed: widget.store.security.canManageExpenses
                       ? () => _openExpenseForm(context)
                       : null,
                   icon: const Icon(Icons.add_card_outlined),
@@ -317,7 +317,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                       title: tr.text('total'),
                       value: formatUsdReferenceAmount(
                           overview.totalExpensesAmount,
-                          widget.store.storeProfile),
+                          widget.store.runtime.profile),
                       icon: Icons.payments_outlined),
                   _MiniCard(
                       width: cardWidth,
@@ -396,7 +396,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
           if (normalizedQuery.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
-                '${tr.text('total')}: ${formatUsdReferenceAmount(filteredTotal, widget.store.storeProfile)}',
+                '${tr.text('total')}: ${formatUsdReferenceAmount(filteredTotal, widget.store.runtime.profile)}',
                 style: Theme.of(context).textTheme.bodyMedium),
           ],
           const SizedBox(height: 16),
@@ -435,29 +435,32 @@ class _ExpensesPageState extends State<ExpensesPage> {
                               final expense = expenses[index];
                               return _ExpenseCard(
                                 expense: expense,
-                                storeProfile: widget.store.storeProfile,
+                                storeProfile: widget.store.runtime.profile,
                                 onPrint: () => _printExpense(context, expense),
                                 onEdit: (expense.isDraft || expense.isPosted) &&
-                                        widget.store.canManageExpenses
+                                        widget.store.security.canManageExpenses
                                     ? () => _openExpenseForm(context,
                                         expense: expense)
                                     : null,
                                 onPost: expense.isDraft &&
-                                        widget.store.hasAnyPermission(<String>{
+                                        widget.store.security
+                                            .hasAnyPermission(<String>{
                                           AppPermission.expensesApprove,
                                           AppPermission.expensesManage
                                         })
                                     ? () => _postExpense(context, expense)
                                     : null,
                                 onCancel: expense.isPosted &&
-                                        widget.store.hasAnyPermission(<String>{
+                                        widget.store.security
+                                            .hasAnyPermission(<String>{
                                           AppPermission.expensesCancel,
                                           AppPermission.expensesManage
                                         })
                                     ? () => _cancelExpense(context, expense)
                                     : null,
                                 onDeleteDraft: expense.isDraft &&
-                                        widget.store.hasAnyPermission(<String>{
+                                        widget.store.security
+                                            .hasAnyPermission(<String>{
                                           AppPermission.expensesDelete,
                                           AppPermission.expensesManage
                                         })
@@ -476,7 +479,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
   }
 
   Future<void> _deleteExpense(BuildContext context, Expense expense) async {
-    if (!widget.store.hasAnyPermission(<String>{
+    if (!widget.store.security.hasAnyPermission(<String>{
       AppPermission.expensesDelete,
       AppPermission.expensesManage,
     })) return;
@@ -502,7 +505,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
       return;
     }
     try {
-      await widget.store.deleteDraftExpense(expense.id);
+      await widget.store.commerce.deleteDraftExpense(expense.id);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -522,7 +525,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
   }
 
   Future<void> _postExpense(BuildContext context, Expense expense) async {
-    if (!widget.store.hasAnyPermission(<String>{
+    if (!widget.store.security.hasAnyPermission(<String>{
       AppPermission.expensesApprove,
       AppPermission.expensesManage,
     })) return;
@@ -583,8 +586,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
                                     ? 'المبلغ المدفوع نقداً (USD)'
                                     : 'Amount paid in cash (USD)',
                                 helperText: isArabic
-                                    ? 'إجمالي المصروف: ${formatUsdReferenceAmount(expense.amount, widget.store.storeProfile)}'
-                                    : 'Expense total: ${formatUsdReferenceAmount(expense.amount, widget.store.storeProfile)}',
+                                    ? 'إجمالي المصروف: ${formatUsdReferenceAmount(expense.amount, widget.store.runtime.profile)}'
+                                    : 'Expense total: ${formatUsdReferenceAmount(expense.amount, widget.store.runtime.profile)}',
                               ),
                               keyboardType:
                                   const TextInputType.numberWithOptions(
@@ -664,7 +667,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
       return;
     }
     try {
-      await widget.store.postExpense(
+      await widget.store.commerce.postExpense(
         expense.id,
         paidInCash: settlement.paidInCash,
         cashPaidAmount: settlement.cashPaidAmount,
@@ -684,7 +687,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
   }
 
   Future<void> _cancelExpense(BuildContext context, Expense expense) async {
-    if (!widget.store.hasAnyPermission(<String>{
+    if (!widget.store.security.hasAnyPermission(<String>{
       AppPermission.expensesCancel,
       AppPermission.expensesManage,
     })) return;
@@ -726,7 +729,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
     final reason = reasonController.text.trim();
     reasonController.dispose();
     try {
-      await widget.store.cancelExpense(expense.id, reason: reason);
+      await widget.store.commerce.cancelExpense(expense.id, reason: reason);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('expense_cancelled'))),
@@ -747,7 +750,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
       await ExpensePdfService.printExpense(
         context: context,
         expense: expense,
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         locale: Localizations.localeOf(context),
       );
     } catch (_) {
@@ -761,19 +764,19 @@ class _ExpensesPageState extends State<ExpensesPage> {
 
   Future<void> _openExpenseForm(BuildContext context,
       {Expense? expense}) async {
-    if (!widget.store.canManageExpenses) return;
+    if (!widget.store.security.canManageExpenses) return;
     final result = await showDialog<Expense>(
       context: context,
       builder: (_) => _ExpenseDialog(
         expense: expense,
-        storeProfile: widget.store.storeProfile,
-        existingExpenses: widget.store.expenses,
+        storeProfile: widget.store.runtime.profile,
+        existingExpenses: widget.store.commerce.expenses,
       ),
     );
     if (result != null) {
       try {
         if (expense?.isPosted == true) {
-          await widget.store.editPostedExpense(
+          await widget.store.commerce.editPostedExpense(
             expenseId: expense!.id,
             expectedVersion: expense.version,
             title: result.title,
@@ -786,7 +789,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
             notes: result.notes,
           );
         } else {
-          await widget.store.addOrUpdateExpense(result);
+          await widget.store.commerce.addOrUpdateExpense(result);
         }
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(

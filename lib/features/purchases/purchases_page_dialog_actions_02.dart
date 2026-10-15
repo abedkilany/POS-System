@@ -12,7 +12,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
     for (final item in latestByProduct.values) {
       final productId = item.productId.trim();
       if (productId.isEmpty) continue;
-      final existing = widget.store.supplierProductPriceFor(
+      final existing = widget.store.commerce.supplierProductPriceFor(
           productId: productId, supplierId: supplierId);
       final newCurrency =
           item.unitCostCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
@@ -31,7 +31,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
         cost: newBaseCost,
         currency: newCurrency,
         isPreferred: existing?.isPreferred ??
-            widget.store.supplierProductPricesForProduct(productId).isEmpty,
+            widget.store.commerce.supplierProductPricesForProduct(productId).isEmpty,
         supplierSku: existing?.supplierSku ?? '',
         minOrderQty: existing?.minOrderQty,
         leadTimeDays: existing?.leadTimeDays,
@@ -65,7 +65,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
     );
     if (shouldUpdate != true) return;
     for (final price in updates) {
-      await widget.store.addOrUpdateSupplierProductPrice(price);
+      await widget.store.commerce.addOrUpdateSupplierProductPrice(price);
     }
   }
 
@@ -92,7 +92,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
       return false;
     }
     final cost =
-        toUsdReferencePrice(enteredCost, currency, widget.store.storeProfile);
+        toUsdReferencePrice(enteredCost, currency, widget.store.runtime.profile);
     items.add(PurchaseItem(
       lineId:
           'purchase_line_${DateTime.now().microsecondsSinceEpoch}_${items.length}',
@@ -105,7 +105,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
       unitCost: cost,
       originalUnitCost: enteredCost,
       unitCostCurrency: currency,
-      exchangeRateAtEntry: widget.store.storeProfile.usdToLbpRate,
+      exchangeRateAtEntry: widget.store.runtime.profile.usdToLbpRate,
       batchAllocations: product.expiryTrackingEnabled
           ? <BatchAllocation>[
               BatchAllocation(
@@ -298,7 +298,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
                                     product.effectivePurchaseUnits.first;
                                 final configuredPrice = supplierId.isEmpty
                                     ? null
-                                    : widget.store.supplierProductPriceFor(
+                                    : widget.store.commerce.supplierProductPriceFor(
                                         productId: product.id,
                                         supplierId: supplierId);
                                 final subtitleParts = <String>[
@@ -306,7 +306,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
                                     product.code.trim(),
                                   if (product.barcode.trim().isNotEmpty)
                                     product.barcode.trim(),
-                                  '${tr.text('stock')}: ${_formatQuantity(widget.store.stockForWarehouse(product.id, selectedWarehouseId))}',
+                                  '${tr.text('stock')}: ${_formatQuantity(widget.store.inventory.stockForWarehouse(product.id, selectedWarehouseId))}',
                                   if (configuredPrice != null)
                                     '${tr.text('supplier_price')}: ${formatCurrency(configuredPrice.cost, currency: configuredPrice.currency)}',
                                 ];
@@ -453,7 +453,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
       }
       if (editPurchase != null) {
         if (editingReturnedPurchase) {
-          await widget.store.editPurchaseReturn(
+          await widget.store.commerce.editPurchaseReturn(
             purchaseId: editPurchase.id,
             expectedVersion: editPurchase.version,
             supplierId: supplierId,
@@ -463,7 +463,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
             warehouseName: selectedWarehouseName,
           );
         } else {
-          await widget.store.updatePurchaseDraft(
+          await widget.store.commerce.updatePurchaseDraft(
             purchaseId: editPurchase.id,
             expectedVersion: editPurchase.version,
             supplierId: supplierId,
@@ -477,7 +477,7 @@ extension _PurchaseDialogSessionActions2 on _PurchaseDialogSession {
           );
         }
       } else {
-        await widget.store.createPurchase(
+        await widget.store.commerce.createPurchase(
             supplierId: supplierId,
             supplierName: supplierName,
             items: purchaseItems,

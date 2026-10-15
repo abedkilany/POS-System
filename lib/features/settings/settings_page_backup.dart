@@ -72,7 +72,7 @@ class SettingsBackupActions {
         // recovery key (or the password used for a manual encrypted backup).
         var decrypted = false;
         if (isLocalBackupArchive) {
-          final recoveryKey = store.appIdentity.recoveryKey.trim();
+          final recoveryKey = store.runtime.identity.recoveryKey.trim();
           if (recoveryKey.length >= 8) {
             try {
               rawJson = store.decryptBackupJson(rawJson, recoveryKey);
@@ -124,7 +124,7 @@ class SettingsBackupActions {
     AppStore store,
   ) async {
     final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final direct = VpsControlPlaneSettings.load();
     var confirmed = false;
     final ok = await showDialog<bool>(
@@ -199,8 +199,8 @@ class SettingsBackupActions {
     AppStore store,
   ) async {
     final tr = AppLocalizations.of(context);
-    if (store.appIdentity.hostDeviceId.trim().isNotEmpty) {
-      if (!store.hasPermission(AppPermission.syncManage)) {
+    if (store.runtime.identity.hostDeviceId.trim().isNotEmpty) {
+      if (!store.security.hasPermission(AppPermission.syncManage)) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(tr.text('permission_sync_manage_required')),
@@ -223,12 +223,12 @@ class SettingsBackupActions {
     final direct = VpsControlPlaneSettings.load();
     final storeId = (cache?.storeId.trim().isNotEmpty == true
             ? cache!.storeId
-            : store.appIdentity.storeId)
+            : store.runtime.identity.storeId)
         .trim()
         .toUpperCase();
     final branchId = (cache?.branchId.trim().isNotEmpty == true
             ? cache!.branchId
-            : store.appIdentity.branchId)
+            : store.runtime.identity.branchId)
         .trim()
         .toUpperCase();
 
@@ -326,12 +326,12 @@ class SettingsBackupActions {
     final direct = VpsControlPlaneSettings.load();
     final storeId = (cache?.storeId.trim().isNotEmpty == true
             ? cache!.storeId
-            : store.appIdentity.storeId)
+            : store.runtime.identity.storeId)
         .trim()
         .toUpperCase();
     final branchId = (cache?.branchId.trim().isNotEmpty == true
             ? cache!.branchId
-            : store.appIdentity.branchId)
+            : store.runtime.identity.branchId)
         .trim()
         .toUpperCase();
 
@@ -351,13 +351,13 @@ class SettingsBackupActions {
       );
       return;
     }
-    if (store.appIdentity.hostDeviceId.trim().isEmpty) {
+    if (store.runtime.identity.hostDeviceId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('recover_store_identity_first'))),
       );
       return;
     }
-    if (!store.hasPermission(AppPermission.syncManage)) {
+    if (!store.security.hasPermission(AppPermission.syncManage)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(tr.text('permission_sync_manage_required')),
@@ -508,7 +508,7 @@ class SettingsBackupActions {
         )) {
       return;
     }
-    await store.factoryResetLocalDevice();
+    await store.recovery.factoryResetLocalDevice();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -566,7 +566,7 @@ class SettingsBackupActions {
       );
     }
 
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     String message = '';
     bool success = false;
 
@@ -796,7 +796,7 @@ class SettingsBackupActions {
     if (verified != true) return;
 
     final passwordOk =
-        await store.verifyAdminPassword(passwordController.text) &&
+        await store.security.verifyAdminPassword(passwordController.text) &&
             await store.security.authorizeSensitiveAction(
               action: SensitiveAction.databaseDestructive,
               password: passwordController.text,
@@ -850,7 +850,7 @@ class SettingsBackupActions {
     );
     if (finalConfirm != true) return;
 
-    await store.factoryResetLocalDevice();
+    await store.recovery.factoryResetLocalDevice();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('host_reset_completed'))));

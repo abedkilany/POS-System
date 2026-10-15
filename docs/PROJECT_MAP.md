@@ -9,6 +9,7 @@ This guide explains where responsibilities live and how to locate the implementa
 | Understand the app and its durable rules | [README.md](../README.md) | Read only the relevant business or runtime section. |
 | Route a coding task efficiently | [AGENTS.md](../AGENTS.md) | Use its task-to-code table and focused-context rules. |
 | Find a particular source or test file | [FILE_INDEX.md](FILE_INDEX.md) | Search the exact filename or symbol, then open the source. |
+| Review AppStore and feature boundaries | [ARCHITECTURE_BOUNDARY_BASELINE.md](ARCHITECTURE_BOUNDARY_BASELINE.md) | See current use counts, classifications, and focused tests before a domain move. |
 | Find platform, config, or resource files | [PLATFORM_INDEX.md](PLATFORM_INDEX.md) | Search by filename; generated build output is omitted. |
 | Trace a business workflow | `lib/features/` → `lib/data/` → `lib/core/services/` → repositories/SQLite | Follow the matching feature and its focused tests. |
 | Trace a database change | `lib/core/storage/sqlite/` and `database/` | Client business SQLite lives under `lib`; `database/` contains VPS/control-plane SQL. |
@@ -29,7 +30,7 @@ For accounting, inventory, synchronization, backup, and assistant data-access ru
 | --- | --- |
 | `lib/` | Flutter application, domain models, application state, services, persistence, and UI. |
 | `lib/data/` | AppStore facade, domain state, typed ports, and workflow implementation parts. |
-| `lib/core/services/` | Accounting, sales, purchases, inventory, backup, database, reporting, and sync workflows. |
+| `lib/core/services/` | Focused domain read projections and accounting, sales and purchase lifecycle rules, inventory, backup, database, reporting, and sync workflows. |
 | `lib/core/storage/sqlite/` | Drift database, schema, migrations, typed SQLite stores, and query implementations. |
 | `lib/core/repositories/` | Domain persistence and reconciliation boundaries. |
 | `lib/core/sync_unified/` | Shared event, snapshot, and payload synchronization contracts. |
@@ -127,7 +128,7 @@ Names such as `_widgets`, `_layout`, `_actions`, `_reports`, and `_persistence` 
 
 - `lib/core/storage/sqlite/` owns the client SQLite schema and local persistence implementation.
 - `lib/core/services/local_database_service.dart` is the app-facing database access boundary; business workflows should use typed service/repository APIs rather than write raw storage from UI code.
-- `lib/data/app_store.dart` is a compatibility/session facade. Prefer its typed domain ports for new UI workflows.
+- `lib/data/app_store.dart` is the session coordinator and typed-port composition root. App-shell lifecycle and presentation preferences use `store.runtime`; feature workflows use the narrowest available domain port. The legacy forwarding API remains for phase-three compatibility cleanup.
 - `server_api/` and `database/` serve the VPS control plane. Do not treat them as the client's operational business database.
 - `test/` includes executable behavior checks as well as source-structure contract checks. Use the exact relevant test file from the index when changing one workflow.
 

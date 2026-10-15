@@ -130,7 +130,7 @@ extension _LoginGatePageStatePart2 on _LoginGatePageState {
         return;
       }
       final localUsername = draft.loginName.split('@').first;
-      await widget.store.applySupportPasswordResetToLocalUser(
+      await widget.store.security.applySupportPasswordResetToLocalUser(
         username: localUsername,
         newPassword: draft.password,
       );
@@ -206,7 +206,7 @@ extension _LoginGatePageStatePart2 on _LoginGatePageState {
         mode: 'registered_local',
       );
       _setAuthCache(cached);
-      await widget.store.recoverOnlineStoreOwnerIdentity(
+      await widget.store.security.recoverOnlineStoreOwnerIdentity(
         storeId: onlineResult.storeId,
         branchId: onlineResult.branchId,
         storeName:
@@ -219,7 +219,7 @@ extension _LoginGatePageStatePart2 on _LoginGatePageState {
         activateUser: false,
       );
 
-      await widget.store.logout();
+      await widget.store.security.logout();
       if (mounted) {
         setState(() {
           _showRegister = false;

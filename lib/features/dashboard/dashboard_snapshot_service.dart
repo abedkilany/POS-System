@@ -430,7 +430,7 @@ class DashboardSnapshotService {
       for (var i = 0; i < days; i += 1)
         _dateKey(start.add(Duration(days: i))): 0,
     };
-    for (final sale in store.sales) {
+    for (final sale in store.commerce.sales) {
       if (sale.isDeleted || sale.isCancelled) continue;
       final date = sale.date.toLocal();
       if (date.isBefore(start) || date.isAfter(reference)) continue;

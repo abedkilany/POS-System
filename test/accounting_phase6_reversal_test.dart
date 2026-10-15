@@ -45,7 +45,7 @@ void main() {
       finishedGoodsWarehouseId: finished.id,
       wasteQuantities: const <String, double>{'raw-reverse': 0.5},
     );
-    final reversed = await store.reverseManufacturingOrder(
+    final reversed = await store.inventory.reverseManufacturingOrder(
       orderId: completed.id,
       reason: 'Incorrect production run',
     );
@@ -77,7 +77,7 @@ void main() {
     ]).getSingle();
     expect(reversalLinks.read<int>('count'), 2);
 
-    final retried = await store.reverseManufacturingOrder(
+    final retried = await store.inventory.reverseManufacturingOrder(
       orderId: completed.id,
       reason: 'Retry',
     );

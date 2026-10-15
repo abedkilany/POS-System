@@ -1,6 +1,8 @@
 part of 'app_store.dart';
 
 extension _AppStorePartyRead on AppStore {
+  static const CommerceReadService _commerceReadService = CommerceReadService();
+
   List<Customer> get _allCustomersForDiagnosticsReadImpl =>
       List.unmodifiable(_customers);
 
@@ -9,9 +11,7 @@ extension _AppStorePartyRead on AppStore {
 
   List<Customer> get _customersReadImpl {
     unawaited(ensureCustomersLoaded());
-    return List.unmodifiable(
-      _customers.where((item) => !item.isDeleted).toList(growable: false),
-    );
+    return _commerceReadService.activeCustomers(_customers);
   }
 
   List<Supplier> get _suppliersReadImpl {
@@ -26,8 +26,9 @@ extension _AppStorePartyRead on AppStore {
     return _cachedSupplierProductPrices!;
   }
 
-  List<SupplierProductPrice> get _allSupplierProductPricesForDiagnosticsReadImpl =>
-      List.unmodifiable(_supplierProductPrices);
+  List<SupplierProductPrice>
+      get _allSupplierProductPricesForDiagnosticsReadImpl =>
+          List.unmodifiable(_supplierProductPrices);
 
   String _resolveCustomerNameReadImpl(String? customerId) {
     if (customerId == null ||
@@ -47,7 +48,9 @@ extension _AppStorePartyRead on AppStore {
 
   String _sanitizeSelectedCustomerIdReadImpl(String? customerId) {
     final normalized = customerId?.trim();
-    if (normalized == null || normalized.isEmpty) return AppStore.walkInCustomerId;
+    if (normalized == null || normalized.isEmpty) {
+      return AppStore.walkInCustomerId;
+    }
     final index = _customerIndexById[normalized];
     if (index == null || index < 0 || index >= _customers.length) {
       return AppStore.walkInCustomerId;
@@ -61,7 +64,7 @@ extension _AppStorePartyRead on AppStore {
       return;
     }
     _cachedSuppliers = UnmodifiableListView(
-      _suppliers.where((item) => !item.isDeleted).toList(growable: false),
+      _commerceReadService.activeSuppliers(_suppliers),
     );
     _cachedSuppliersGeneration = _suppliersRevision;
   }

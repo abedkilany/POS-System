@@ -14,18 +14,18 @@ extension _SalesPagePostedSaleEdit on _SalesPageState {
   }
 
   Future<void> _editPostedSale(BuildContext sheetContext, Sale sale) async {
-    if (!widget.store.hasPermission(AppPermission.salesEdit) ||
+    if (!widget.store.security.hasPermission(AppPermission.salesEdit) ||
         sale.isCancelled) {
       return;
     }
     final tr = AppLocalizations.of(sheetContext);
-    final activeProducts = widget.store.products
+    final activeProducts = widget.store.catalog.products
         .where((product) => product.isActive && !product.isDeleted)
         .toList(growable: true);
     final lines = <_PostedSaleEditLine>[];
     for (final item in sale.items) {
       Product? product;
-      for (final candidate in widget.store.products) {
+      for (final candidate in widget.store.catalog.products) {
         if (candidate.id == item.productId) {
           product = candidate;
           break;
@@ -50,17 +50,17 @@ extension _SalesPagePostedSaleEdit on _SalesPageState {
     }
     if (activeProducts.isEmpty) return;
     final customerIds = <String>{AppStore.walkInCustomerId};
-    customerIds.addAll(widget.store.customers
+    customerIds.addAll(widget.store.commerce.customers
         .where((customer) => !customer.isDeleted)
         .map((customer) => customer.id));
     if (sale.customerId.trim().isNotEmpty) customerIds.add(sale.customerId);
     var selectedCustomerId = customerIds.contains(sale.customerId)
         ? sale.customerId
         : AppStore.walkInCustomerId;
-    final warehouses = widget.store.warehouses
+    final warehouses = widget.store.inventory.warehouses
         .where((warehouse) => warehouse.isActive && !warehouse.isDeleted)
         .toList(growable: true);
-    for (final warehouse in widget.store.warehouses) {
+    for (final warehouse in widget.store.inventory.warehouses) {
       if (warehouse.id == sale.warehouseId &&
           !warehouses.any((item) => item.id == warehouse.id)) {
         warehouses.add(warehouse);
@@ -69,7 +69,7 @@ extension _SalesPagePostedSaleEdit on _SalesPageState {
     }
     var selectedWarehouseId = warehouses.any((w) => w.id == sale.warehouseId)
         ? sale.warehouseId
-        : widget.store
+        : widget.store.inventory
             .resolveWarehouseForSale(warehouseId: sale.warehouseId)
             .id;
     final discountController =
@@ -100,16 +100,17 @@ extension _SalesPagePostedSaleEdit on _SalesPageState {
                 }
                 setDialogState(() => saving = true);
                 try {
-                  final warehouse = widget.store.resolveWarehouseForSale(
-                      warehouseId: selectedWarehouseId);
-                  final result = await widget.store.editPostedSale(
+                  final warehouse = widget.store.inventory
+                      .resolveWarehouseForSale(
+                          warehouseId: selectedWarehouseId);
+                  final result = await widget.store.commerce.editPostedSale(
                       saleId: sale.id,
                       expectedVersion: sale.version,
                       customerId: selectedCustomerId,
                       customerName: selectedCustomerId == sale.customerId
                           ? sale.customerName
                           : widget.store
-                              .resolveCustomerName(selectedCustomerId),
+                              .commerce.resolveCustomerName(selectedCustomerId),
                       items: lines
                           .map((line) => SaleItem(
                               productId: line.product.id,
@@ -163,7 +164,7 @@ extension _SalesPagePostedSaleEdit on _SalesPageState {
                                             child: Text(id == sale.customerId
                                                 ? sale.customerName
                                                 : widget.store
-                                                    .resolveCustomerName(id))))
+                                                    .commerce.resolveCustomerName(id))))
                                         .toList(growable: false),
                                     onChanged: saving
                                         ? null
@@ -371,7 +372,7 @@ extension _SalesPagePostedSaleEdit on _SalesPageState {
   }
 
   CreditNote? _latestActiveCreditNoteForSale(String saleId) {
-    final notes = widget.store.creditNotes
+    final notes = widget.store.commerce.creditNotes
         .where((note) =>
             note.originalSaleId == saleId &&
             !<String>{'cancelled', 'reversed', 'void'}

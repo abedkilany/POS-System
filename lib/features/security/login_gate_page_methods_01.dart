@@ -65,7 +65,7 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
   }
 
   Future<void> _checkSuspensionStatus() async {
-    if (!widget.store.appIdentity.isClient) return;
+    if (!widget.store.runtime.identity.isClient) return;
     final tr = AppLocalizations.of(context);
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _checkingSuspension = true);
@@ -73,7 +73,7 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
       final result =
           await UnifiedSyncFactory.activeEngine(widget.store).syncNow();
       if (!mounted) return;
-      if (result.ok && !widget.store.isSuspendedByHost) {
+      if (result.ok && !widget.store.runtime.isSuspendedByHost) {
         messenger.showSnackBar(
             SnackBar(content: Text(tr.text('client_resume_detected'))));
         setState(() {});
@@ -96,21 +96,21 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
     final tr = AppLocalizations.of(context);
     final cache = _authCache ?? AccountAuthCache.load();
     final direct = VpsControlPlaneSettings.load();
-    final previousIdentity = widget.store.appIdentity;
+    final previousIdentity = widget.store.runtime.identity;
     final storeId = (cache?.storeId.trim().isNotEmpty == true
             ? cache!.storeId
-            : widget.store.appIdentity.storeId)
+            : widget.store.runtime.identity.storeId)
         .trim()
         .toUpperCase();
     final branchId = (cache?.branchId.trim().isNotEmpty == true
             ? cache!.branchId
-            : widget.store.appIdentity.branchId)
+            : widget.store.runtime.identity.branchId)
         .trim()
         .toUpperCase();
     SyncDiagnosticsLog.add(
       '[RECOVER_IDENTITY] press '
-      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
-      'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
+      'hasLocalStoreData=${widget.store.recovery.hasLocalStoreData} '
+      'hasStoreIdentity=${widget.store.runtime.identity.hostDeviceId.trim().isNotEmpty} '
       'hasCache=${cache != null} '
       'accountToken=${cache?.accountToken.trim().isNotEmpty == true} '
       'storeId=$storeId branchId=$branchId',
@@ -125,7 +125,7 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
       );
       return;
     }
-    if (widget.store.hasLocalAdminUser) {
+    if (widget.store.security.hasLocalAdminUser) {
       SyncDiagnosticsLog.add(
         '[RECOVER_IDENTITY] blocked reason=local_store_data_exists',
       );
@@ -229,20 +229,20 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
             ? ''
             : _recoveryUsernameFromResult(result, recoveryCache);
         if (recoveryCache != null && recoveryUsername.isNotEmpty) {
-          await widget.store.recoverOnlineStoreOwnerIdentity(
+          await widget.store.security.recoverOnlineStoreOwnerIdentity(
             storeId: result.identity?.storeId ?? storeId,
             branchId: result.identity?.branchId ?? branchId,
             storeName: result.storeName.trim().isNotEmpty
                 ? result.storeName
                 : recoveryCache.storeName.trim().isNotEmpty
                     ? recoveryCache.storeName
-                    : widget.store.storeProfile.name,
+                    : widget.store.runtime.profile.name,
             username: recoveryUsername,
             password: _onlineSessionPassword,
             hostDeviceId:
                 result.identity?.hostDeviceId.trim().isNotEmpty == true
                     ? result.identity!.hostDeviceId
-                    : widget.store.deviceId,
+                    : widget.store.sync.deviceId,
             deviceToken: result.identity?.deviceToken ?? '',
             controlPlaneTenantId: result.identity?.controlPlaneTenantId ?? '',
             deviceRole: DeviceRole.host,
@@ -300,8 +300,8 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
     final direct = VpsControlPlaneSettings.load();
     SyncDiagnosticsLog.add(
       '[RECOVER_DATA] press '
-      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
-      'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
+      'hasLocalStoreData=${widget.store.recovery.hasLocalStoreData} '
+      'hasStoreIdentity=${widget.store.runtime.identity.hostDeviceId.trim().isNotEmpty} '
       'hasCache=${cache != null} '
       'accountToken=${cache?.accountToken.trim().isNotEmpty == true}',
     );
@@ -315,7 +315,7 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
       );
       return;
     }
-    if (widget.store.appIdentity.hostDeviceId.trim().isEmpty) {
+    if (widget.store.runtime.identity.hostDeviceId.trim().isEmpty) {
       SyncDiagnosticsLog.add(
         '[RECOVER_DATA] blocked reason=missing_store_identity',
       );
@@ -345,14 +345,14 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
             ? sessionResult.storeId
             : latestCache.storeId.trim().isNotEmpty
                 ? latestCache.storeId
-                : widget.store.appIdentity.storeId)
+                : widget.store.runtime.identity.storeId)
         .trim()
         .toUpperCase();
     final branchId = (sessionResult.branchId.trim().isNotEmpty
             ? sessionResult.branchId
             : latestCache.branchId.trim().isNotEmpty
                 ? latestCache.branchId
-                : widget.store.appIdentity.branchId)
+                : widget.store.runtime.identity.branchId)
         .trim()
         .toUpperCase();
     if (!storeId.startsWith('ST-')) {
@@ -427,12 +427,12 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
           client: recoveryClient,
         );
         final identityMismatch =
-            widget.store.appIdentity.storeId.trim().toUpperCase() != storeId;
+            widget.store.runtime.identity.storeId.trim().toUpperCase() != storeId;
         // When business data already exists and only a test/probe identity is
         // wrong, repair the identity without replacing local data by a remote
         // snapshot. Full recovery remains available for an empty matching
         // Store installation.
-        result = identityMismatch && widget.store.hasLocalStoreData
+        result = identityMismatch && widget.store.recovery.hasLocalStoreData
             ? await recoveryService.recoverExistingStoreIdentityFromDirect(
                 recoverySettings,
                 storeId: storeId,
@@ -541,7 +541,7 @@ extension _LoginGatePageStatePart1 on _LoginGatePageState {
       }
     }
 
-    final ok = await widget.store.login(
+    final ok = await widget.store.security.login(
       localUsername,
       _passwordController.text,
       remember: _rememberLogin,

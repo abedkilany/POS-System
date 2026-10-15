@@ -4,7 +4,7 @@ part of 'database_page.dart';
 extension _DatabasePageStatePart2 on _DatabasePageState {
   Widget _buildSqlEditorView() {
     final theme = Theme.of(context);
-    final canWrite = widget.store.canManageDatabase;
+    final canWrite = widget.store.security.canManageDatabase;
     final exportResultIndex = _latestExportableSqlResultIndex();
     final exportRows =
         exportResultIndex == null ? null : _sqlResults[exportResultIndex].rows;
@@ -352,7 +352,7 @@ extension _DatabasePageStatePart2 on _DatabasePageState {
   }
 
   Future<void> _runSqlEditor() async {
-    if (!widget.store.canManageDatabase) {
+    if (!widget.store.security.canManageDatabase) {
       if (_sqlAllowWrites) {
         setState(() => _sqlAllowWrites = false);
       }
@@ -387,7 +387,7 @@ extension _DatabasePageStatePart2 on _DatabasePageState {
           details: 'statementCount=${statements.length}',
         );
       }
-      await widget.store.refreshAfterDatabaseChange(_selectedKey);
+      await widget.store.runtime.refreshAfterDatabaseChange(_selectedKey);
       await _reload();
       if (!mounted) return;
       setState(() {
@@ -513,7 +513,7 @@ extension _DatabasePageStatePart2 on _DatabasePageState {
                 IconButton(
                     tooltip: _t('edit_record'),
                     icon: const Icon(Icons.edit_outlined, size: 20),
-                    onPressed: widget.store.canManageDatabase
+                    onPressed: widget.store.security.canManageDatabase
                         ? () => _openRowEditor(rowIndex: rowIndex, row: row)
                         : null),
                 IconButton(
@@ -522,7 +522,7 @@ extension _DatabasePageStatePart2 on _DatabasePageState {
                       size: 20, color: Theme.of(context).colorScheme.error),
                   onPressed: decoded is List &&
                           rowIndex >= 0 &&
-                          widget.store.canManageDatabase
+                          widget.store.security.canManageDatabase
                       ? () => _confirmDeleteRow(rowIndex)
                       : null,
                 ),

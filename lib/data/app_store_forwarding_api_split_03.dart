@@ -527,8 +527,16 @@ mixin _AppStoreForwardingApiPart3
   Future<Map<String, dynamic>> traceInventoryBatch(
     String batchId, {
     int maxDepth = 8,
+  }) =>
+      _traceInventoryBatchDomainImpl(batchId, maxDepth: maxDepth);
+
+  Future<Map<String, dynamic>> _traceInventoryBatchDomainImpl(
+    String batchId, {
+    int maxDepth = 8,
   }) async {
-    requirePermission(AppPermission.inventoryMovementsView);
+    (this as AppStore)._requirePermissionReadImpl(
+      AppPermission.inventoryMovementsView,
+    );
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
       throw StateError('Inventory traceability requires SQLite storage.');
@@ -541,8 +549,14 @@ mixin _AppStoreForwardingApiPart3
   }
 
   /// Phase 9 invariant audit used by the health dashboard/final release gate.
-  Future<Map<String, dynamic>> verifyInventoryTraceabilityIntegrity() async {
-    requirePermission(AppPermission.inventoryMovementsView);
+  Future<Map<String, dynamic>> verifyInventoryTraceabilityIntegrity() =>
+      _verifyInventoryTraceabilityIntegrityDomainImpl();
+
+  Future<Map<String, dynamic>>
+      _verifyInventoryTraceabilityIntegrityDomainImpl() async {
+    (this as AppStore)._requirePermissionReadImpl(
+      AppPermission.inventoryMovementsView,
+    );
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
       throw StateError(

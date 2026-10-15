@@ -15,19 +15,10 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
   }) async {
     requirePermission(AppPermission.purchasesManage);
     _traceSync('purchases.createPurchase', 'validate_input', () {
-      if (items.isEmpty) {
-        throw ArgumentError('Purchase must contain at least one item.');
-      }
-      for (final item in items) {
-        if (item.quantity <= 0 ||
-            item.conversionToBase <= 0 ||
-            item.unitCost < 0) {
-          throw ArgumentError('Invalid purchase item values.');
-        }
-        if (_findProductById(item.productId) == null) {
-          throw ArgumentError('Product not found: ${item.productName}');
-        }
-      }
+      const PurchaseDraftService().validateItems(
+        items,
+        productExists: (productId) => _findProductById(productId) != null,
+      );
     });
     final sqliteDb = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
@@ -73,14 +64,11 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
       0,
       (sum, item) => sum + item.lineTotal,
     );
+    const draftService = PurchaseDraftService();
     final normalizedPaymentStatus =
-        paymentStatus.trim().toLowerCase() == 'credit'
-            ? 'credit'
-            : paymentStatus.trim().toLowerCase() == 'partial'
-                ? 'partial'
-                : 'paid';
+        draftService.normalizePaymentStatus(paymentStatus);
     final normalizedPaymentMethod =
-        paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
+        draftService.normalizePaymentMethod(paymentMethod);
     final normalizedPaidAmount = normalizedPaymentStatus == 'paid'
         ? purchaseTotal
         : normalizedPaymentStatus == 'credit'
@@ -98,42 +86,24 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
     final normalizedWarehouseName = warehouseName.trim().isEmpty
         ? resolvedWarehouse.name
         : warehouseName.trim();
-    var purchase = Purchase(
+    var purchase = draftService.createPurchase(
       id: 'purchase_${_purchaseDevicePrefix}_${_purchaseCounter.toString().padLeft(6, '0')}',
       purchaseNo:
           'PO-$_purchaseDevicePrefix-${_purchaseCounter.toString().padLeft(6, '0')}',
       supplierId: supplierId,
-      supplierName:
-          supplierName.trim().isEmpty ? 'Supplier' : supplierName.trim(),
-      date: now,
-      status: receiveNow ? 'Received' : 'Draft',
+      supplierName: supplierName,
       items: items,
-      note: note,
-      paymentStatus:
-          normalizedPaidAmount > 0 ? 'credit' : normalizedPaymentStatus,
+      receiveNow: receiveNow,
+      paymentStatus: normalizedPaymentStatus,
       paymentMethod: normalizedPaymentMethod,
-      paidAmount: 0,
+      normalizedPaidAmount: normalizedPaidAmount,
       warehouseId: resolvedWarehouse.id,
       warehouseName: normalizedWarehouseName,
-      createdAt: now,
-      updatedAt: now,
+      now: now,
       deviceId: _deviceId,
-      syncStatus: 'pending',
       storeId: appIdentity.storeId,
       branchId: appIdentity.branchId,
-      version: 1,
-      lastModifiedByDeviceId: _deviceId,
-    );
-    // A new purchase always owns fresh line identities. Never reuse a lineId
-    // copied from a template/duplicated invoice, because purchase_items.id is
-    // globally unique and the Batch source identity is anchored to it.
-    purchase = purchase.copyWith(
-      items: purchase.items.indexed.map((entry) {
-        return _copyPurchaseItemWith(
-          item: entry.$2,
-          lineId: '${purchase.id}:pl:${entry.$1}',
-        );
-      }).toList(growable: false),
+      note: note,
     );
     final legacyDefaultVatRatePercent =
         await AccountingService.readDefaultVatRatePercent();

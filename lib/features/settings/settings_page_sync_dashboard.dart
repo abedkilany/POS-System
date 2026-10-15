@@ -4,9 +4,9 @@ extension _SyncDashboard on _UnifiedSyncSettingsCardState {
   Widget _clientSuspendedWarningCard(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
-    final reason = widget.store.suspendedByHostReason.trim().isEmpty
+    final reason = widget.store.runtime.suspendedByHostReason.trim().isEmpty
         ? tr.text('client_suspended_by_host_desc')
-        : widget.store.suspendedByHostReason;
+        : widget.store.runtime.suspendedByHostReason;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -64,7 +64,7 @@ extension _SyncDashboard on _UnifiedSyncSettingsCardState {
               icon: const Icon(Icons.network_check_outlined),
               label: Text(tr.text('test_connection')),
             ),
-            if (!isHost && widget.store.activeClientPendingSyncCount > 0)
+            if (!isHost && widget.store.sync.activeClientPendingCount > 0)
               OutlinedButton.icon(
                 onPressed: _busy || !_canManageSync
                     ? null

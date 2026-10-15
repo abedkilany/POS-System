@@ -2,7 +2,7 @@ part of 'accounting_page.dart';
 
 extension _AdvancedOperations on _AdvancedAccountingTabState {
   Future<void> _createPaymentAccountDialog() async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final name = TextEditingController();
     var type = 'bank';
@@ -82,7 +82,7 @@ extension _AdvancedOperations on _AdvancedAccountingTabState {
   }
 
   Future<void> _createChequeDialog() async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final chequeNo = TextEditingController();
     final partyName = TextEditingController();
@@ -152,7 +152,7 @@ extension _AdvancedOperations on _AdvancedAccountingTabState {
   }
 
   Future<void> _createMasterDataDialog(String table, String title) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final code = TextEditingController();
     final name = TextEditingController();
@@ -186,7 +186,7 @@ extension _AdvancedOperations on _AdvancedAccountingTabState {
   }
 
   Future<void> _settleCheque(AdvancedAccountingItem item) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -212,7 +212,7 @@ extension _AdvancedOperations on _AdvancedAccountingTabState {
   }
 
   Future<void> _bounceChequeDialog(AdvancedAccountingItem item) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final reason = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -241,7 +241,7 @@ extension _AdvancedOperations on _AdvancedAccountingTabState {
   }
 
   Future<void> _closePeriod(AdvancedAccountingItem item) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -266,7 +266,7 @@ extension _AdvancedOperations on _AdvancedAccountingTabState {
   }
 
   Future<void> _createPeriodDialog() async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final name = TextEditingController(text: tr.text('current_period'));
     final now = DateTime.now();

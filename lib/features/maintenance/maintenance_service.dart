@@ -25,27 +25,27 @@ class MaintenanceService {
     final backupSnapshot = await _backupSnapshot();
     final phase10 = await Phase10HealthService(store).run(deep: deep);
     final counts = <String, int>{
-      'products': sqliteCounts['products'] ?? store.products.length,
-      'customers': sqliteCounts['customers'] ?? store.customers.length,
-      'suppliers': sqliteCounts['suppliers'] ?? store.suppliers.length,
-      'sales': sqliteCounts['sales'] ?? store.sales.length,
+      'products': sqliteCounts['products'] ?? store.catalog.products.length,
+      'customers': sqliteCounts['customers'] ?? store.commerce.customers.length,
+      'suppliers': sqliteCounts['suppliers'] ?? store.commerce.suppliers.length,
+      'sales': sqliteCounts['sales'] ?? store.commerce.sales.length,
       'purchases':
-          sqliteCounts['purchases'] ?? store.purchasesOverview.totalCount,
-      'expenses': sqliteCounts['expenses'] ?? store.expensesOverview.totalCount,
+          sqliteCounts['purchases'] ?? store.commerce.purchasesOverview.totalCount,
+      'expenses': sqliteCounts['expenses'] ?? store.commerce.expensesOverview.totalCount,
       'stockMovements':
-          sqliteCounts['stockMovements'] ?? store.stockMovements.length,
+          sqliteCounts['stockMovements'] ?? store.inventory.stockMovements.length,
       'accountTransactions': sqliteCounts['accountTransactions'] ??
-          store.accountTransactions.length,
-      'users': sqliteCounts['users'] ?? store.users.length,
-      'roles': sqliteCounts['roles'] ?? store.roles.length,
+          store.accounting.transactions.length,
+      'users': sqliteCounts['users'] ?? store.security.users.length,
+      'roles': sqliteCounts['roles'] ?? store.security.roles.length,
       'localDatabaseKeys': sqliteCounts['localDatabaseKeys'] ??
           LocalDatabaseService.keys().length,
       'pendingSyncChanges':
-          sqliteCounts['pendingSyncChanges'] ?? store.pendingSyncChanges.length,
+          sqliteCounts['pendingSyncChanges'] ?? store.sync.pendingChanges.length,
       'pendingSyncQueue':
-          sqliteCounts['pendingSyncQueue'] ?? store.pendingSyncQueue.length,
+          sqliteCounts['pendingSyncQueue'] ?? store.sync.pendingQueue.length,
       'dataConflicts':
-          sqliteCounts['dataConflicts'] ?? store.dataConflicts.length,
+          sqliteCounts['dataConflicts'] ?? store.sync.dataConflicts.length,
       'appLogs': sqliteCounts['appLogs'] ?? 0,
       'auditLogs': sqliteCounts['auditLogs'] ?? 0,
       ...backupSnapshot.counts,
@@ -160,7 +160,7 @@ class MaintenanceService {
   }
 
   MaintenanceIssue _localKeysIssue(int localKeys) {
-    final isExpectedEmpty = kIsWeb || store.appIdentity.isClient;
+    final isExpectedEmpty = kIsWeb || store.runtime.identity.isClient;
     return MaintenanceIssue(
       id: 'local_database_keys',
       title: 'Local database keys',
@@ -172,13 +172,13 @@ class MaintenanceService {
   }
 
   List<MaintenanceIssue> _duplicateIssues() {
-    final duplicateProductNames = _countDuplicates(store.products
+    final duplicateProductNames = _countDuplicates(store.catalog.products
         .map((item) => item.name.trim().toLowerCase())
         .where((item) => item.isNotEmpty));
-    final duplicateCustomerNames = _countDuplicates(store.customers
+    final duplicateCustomerNames = _countDuplicates(store.commerce.customers
         .map((item) => item.name.trim().toLowerCase())
         .where((item) => item.isNotEmpty));
-    final duplicateSupplierNames = _countDuplicates(store.suppliers
+    final duplicateSupplierNames = _countDuplicates(store.commerce.suppliers
         .map((item) => item.name.trim().toLowerCase())
         .where((item) => item.isNotEmpty));
     return [
@@ -216,13 +216,13 @@ class MaintenanceService {
   }
 
   List<MaintenanceIssue> _stockIssues() {
-    final negativeStockProducts = store.products
+    final negativeStockProducts = store.catalog.products
         .where((item) => item.trackStock && item.stock < 0)
         .length;
     final zeroCostProducts =
-        store.products.where((item) => item.isActive && item.cost <= 0).length;
+        store.catalog.products.where((item) => item.isActive && item.cost <= 0).length;
     final zeroPriceProducts =
-        store.products.where((item) => item.isActive && item.price <= 0).length;
+        store.catalog.products.where((item) => item.isActive && item.price <= 0).length;
     return [
       MaintenanceIssue(
         id: 'negative_stock',
@@ -261,17 +261,17 @@ class MaintenanceService {
   }
 
   List<MaintenanceIssue> _salesIssues() {
-    final emptySales = store.sales
+    final emptySales = store.commerce.sales
         .where((item) => !item.isDeleted && item.items.isEmpty)
         .length;
-    final overpaidSales = store.sales
+    final overpaidSales = store.commerce.sales
         .where((item) =>
             !item.isDeleted &&
             !item.isCancelled &&
             item.paidAmount > item.invoiceTotal + 0.01)
         .length;
-    final productIds = store.products.map((product) => product.id).toSet();
-    final missingProductRefs = store.sales
+    final productIds = store.catalog.products.map((product) => product.id).toSet();
+    final missingProductRefs = store.commerce.sales
         .where((sale) => !sale.isDeleted)
         .expand((sale) => sale.items)
         .where((item) =>
@@ -312,7 +312,7 @@ class MaintenanceService {
   }
 
   List<MaintenanceIssue> _purchaseIssues() {
-    final emptyPurchases = store.purchases
+    final emptyPurchases = store.commerce.purchases
         .where((item) => !item.isDeleted && item.items.isEmpty)
         .length;
     return [
@@ -331,9 +331,9 @@ class MaintenanceService {
 
   List<MaintenanceIssue> _syncIssues(Map<String, int> counts) {
     final pendingSync =
-        (counts['pendingSyncChanges'] ?? store.pendingSyncChanges.length) +
-            (counts['pendingSyncQueue'] ?? store.pendingSyncQueue.length);
-    final conflicts = counts['dataConflicts'] ?? store.dataConflicts.length;
+        (counts['pendingSyncChanges'] ?? store.sync.pendingChanges.length) +
+            (counts['pendingSyncQueue'] ?? store.sync.pendingQueue.length);
+    final conflicts = counts['dataConflicts'] ?? store.sync.dataConflicts.length;
     return [
       MaintenanceIssue(
         id: 'data_conflicts',
@@ -359,7 +359,7 @@ class MaintenanceService {
   }
 
   Future<_BackupSnapshot> _backupSnapshot() async {
-    if (store.appIdentity.isClient) {
+    if (store.runtime.identity.isClient) {
       return const _BackupSnapshot(
         counts: {
           'localBackupEnabled': 0,

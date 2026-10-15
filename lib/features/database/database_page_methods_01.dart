@@ -49,7 +49,7 @@ extension _DatabasePageStatePart1 on _DatabasePageState {
   }
 
   void _deleteSelectedRows() async {
-    if (!widget.store.canManageDatabase) return;
+    if (!widget.store.security.canManageDatabase) return;
     final raw = _selectedKey.isEmpty ? '' : (_entries[_selectedKey] ?? '');
     final decoded = _decode(raw);
     if (decoded is! List) return;
@@ -116,7 +116,7 @@ extension _DatabasePageStatePart1 on _DatabasePageState {
   }
 
   Future<bool> _verifyDatabasePassword(String password) async {
-    final adminOk = await widget.store.verifyAdminPassword(password);
+    final adminOk = await widget.store.security.verifyAdminPassword(password);
     if (!adminOk) return false;
     return widget.store.security.authorizeSensitiveAction(
       action: SensitiveAction.databaseDestructive,
@@ -144,8 +144,8 @@ extension _DatabasePageStatePart1 on _DatabasePageState {
     String action, {
     String details = '',
   }) async {
-    final user = widget.store.activeUser;
-    final identity = widget.store.appIdentity;
+    final user = widget.store.security.activeUser;
+    final identity = widget.store.runtime.identity;
     await AuditLogger.record(
       entityType: 'database',
       entityId: _selectedKey,
@@ -156,9 +156,9 @@ extension _DatabasePageStatePart1 on _DatabasePageState {
       userName: user?.username ?? '',
       storeId: identity.storeId,
       branchId: identity.branchId,
-      sessionId: widget.store.deviceId,
-      traceId: widget.store.deviceId,
-      deviceId: widget.store.deviceId,
+      sessionId: widget.store.sync.deviceId,
+      traceId: widget.store.sync.deviceId,
+      deviceId: widget.store.sync.deviceId,
       sourceModule: 'database',
       isImportant: true,
     );
@@ -571,22 +571,22 @@ extension _DatabasePageStatePart1 on _DatabasePageState {
                             value: 'sql', child: Text(_t('sql_editor'))),
                       PopupMenuItem(
                           enabled:
-                              decoded is List && widget.store.canManageDatabase,
+                              decoded is List && widget.store.security.canManageDatabase,
                           value: 'add',
                           child: Text(_t('add_record'))),
                       if (_selectedRowIndexes.isNotEmpty)
                         PopupMenuItem(
-                            enabled: widget.store.canManageDatabase,
+                            enabled: widget.store.security.canManageDatabase,
                             value: 'deleteSelected',
                             child: Text(_tf('delete_selected_records_count',
                                 {'count': _selectedRowIndexes.length}))),
                       const PopupMenuDivider(),
                       PopupMenuItem(
-                          enabled: widget.store.canManageDatabase,
+                          enabled: widget.store.security.canManageDatabase,
                           value: 'raw',
                           child: Text(_t('edit_raw_json'))),
                       PopupMenuItem(
-                          enabled: widget.store.canManageDatabase,
+                          enabled: widget.store.security.canManageDatabase,
                           value: 'delete',
                           child: Text(_t('delete_selected_table_key'))),
                       const PopupMenuDivider(),

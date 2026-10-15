@@ -798,7 +798,7 @@ class _AccountingPrintablePageState extends State<_AccountingPrintablePage> {
       if (!mounted) return;
       final pdfImage = pw.MemoryImage(Uint8List.fromList(imageBytes));
       await PrintService.printPdf(
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         documentKey: PrintDocumentKeys.accountingPage,
         context: context,
         bytesBuilder: (selection) async {

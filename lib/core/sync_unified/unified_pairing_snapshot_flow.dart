@@ -34,7 +34,7 @@ class UnifiedPairingSnapshotFlow {
       afterImport: (_) => markSnapshotApplied(),
     );
     await SyncDeviceStateStore.recordSyncResult(
-      store.appIdentity,
+      store.runtime.identity,
       transport: 'direct',
       appliedCursor: applied.cursor,
       ackCursor: applied.cursor,
@@ -45,9 +45,9 @@ class UnifiedPairingSnapshotFlow {
     // Pairing may be completed from Settings while the user is already
     // logged in. Saving the transport settings alone does not notify the
     // running auto-sync controller, so publish the new client state now.
-    store.refreshUi();
+    store.runtime.refreshUi();
     return UnifiedPairingSnapshotSuccess(
-      identity: store.appIdentity,
+      identity: store.runtime.identity,
       cursor: applied.cursor,
       sequence: applied.sequence,
       verificationOk: applied.verificationOk,
@@ -75,9 +75,9 @@ class UnifiedPairingSnapshotFlow {
     // The LAN settings are persisted inside the pairing flow. Notify the
     // existing app/controller so it starts using the new Client transport
     // immediately instead of leaving subsequent changes pending locally.
-    store.refreshUi();
+    store.runtime.refreshUi();
     return UnifiedPairingSnapshotSuccess(
-      identity: store.appIdentity,
+      identity: store.runtime.identity,
       cursor: applied.cursor,
       sequence: applied.sequence,
       verificationOk: true,

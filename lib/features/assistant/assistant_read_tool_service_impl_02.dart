@@ -399,7 +399,7 @@ extension _AssistantReadToolServicePart2
         );
         final data =
             await LocalDatabaseService.assistantStockBalancesFromSqlite(
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
           productQuery: _optionalStringArgument(arguments, 'product'),
           warehouseQuery: _optionalStringArgument(arguments, 'warehouse'),
         );
@@ -420,7 +420,7 @@ extension _AssistantReadToolServicePart2
         final period = _parsePeriod(arguments);
         final data =
             await LocalDatabaseService.assistantStockMovementSummaryFromSqlite(
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
           from: period.from,
           to: period.toCalendarDate,
           productQuery: _optionalStringArgument(arguments, 'product'),

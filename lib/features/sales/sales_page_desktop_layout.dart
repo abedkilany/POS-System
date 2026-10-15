@@ -12,7 +12,7 @@ extension _SalesPageDesktopLayout on _SalesPageState {
               subtitle: tr.text('pos_terminal_desc'),
               compact: true,
               action: Wrap(spacing: 8, runSpacing: 8, children: [
-                if (widget.store.canSell)
+                if (widget.store.security.canSell)
                   _buildSaleShiftActionButton(context, tr),
                 OutlinedButton.icon(
                     onPressed: _refreshingProductData
@@ -27,7 +27,7 @@ extension _SalesPageDesktopLayout on _SalesPageState {
                     label: Text(tr.text('refresh'))),
                 if (_legacyShiftButtonVisible)
                   OutlinedButton.icon(
-                      onPressed: widget.store.canSell
+                      onPressed: widget.store.security.canSell
                           ? _showSaleShiftQuickAction
                           : null,
                       icon: const Icon(Icons.point_of_sale_outlined),
@@ -38,7 +38,7 @@ extension _SalesPageDesktopLayout on _SalesPageState {
                     label: Text(tr.text('recent_invoices'))),
                 OutlinedButton.icon(
                     onPressed:
-                        widget.store.hasPermission(AppPermission.salesCancel)
+                        widget.store.security.hasPermission(AppPermission.salesCancel)
                             ? () => _openSaleReturnDialog(context)
                             : null,
                     icon: const Icon(Icons.assignment_return_outlined),

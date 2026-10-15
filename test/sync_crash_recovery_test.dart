@@ -160,7 +160,7 @@ void main() {
 
       // Relay receipt is not Host confirmation. After restart, the draft must
       // be retried until the authoritative event is pulled and applied.
-      await recovered.recoverSubmittedSyncQueue(target: 'host');
+      await recovered.sync.recoverSubmitted(target: 'host');
       expect(recovered.syncQueue.single.status, 'pending');
       expect(recovered.pendingSyncChangesForTarget('host', readyOnly: false),
           hasLength(1));

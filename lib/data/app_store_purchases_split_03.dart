@@ -14,19 +14,11 @@ extension _AppStoreSplitPurchasesPart3 on AppStore {
     String warehouseName = '',
   }) async {
     requirePermission(AppPermission.purchasesManage);
-    if (items.isEmpty) {
-      throw ArgumentError('Purchase must contain at least one item.');
-    }
-    for (final item in items) {
-      if (item.quantity <= 0 ||
-          item.conversionToBase <= 0 ||
-          item.unitCost < 0) {
-        throw ArgumentError('Invalid purchase item values.');
-      }
-      if (_findProductById(item.productId) == null) {
-        throw ArgumentError('Product not found: ${item.productName}');
-      }
-    }
+    const draftService = PurchaseDraftService();
+    draftService.validateItems(
+      items,
+      productExists: (productId) => _findProductById(productId) != null,
+    );
     final index = _purchaseIndexForId(purchaseId);
     final current = LocalDatabaseService.isSqliteAuthoritative &&
             SqliteMigrationManager.database != null
@@ -46,11 +38,7 @@ extension _AppStoreSplitPurchasesPart3 on AppStore {
     final now = DateTime.now();
     final resolvedWarehouse =
         resolveWarehouseForPurchase(warehouseId: warehouseId);
-    final normalizedStatus = paymentStatus.trim().toLowerCase() == 'credit'
-        ? 'credit'
-        : paymentStatus.trim().toLowerCase() == 'partial'
-            ? 'partial'
-            : 'paid';
+    final normalizedStatus = draftService.normalizePaymentStatus(paymentStatus);
     final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
     if (current.isReceived && current.paidAmount > total + 0.000001) {
       throw StateError(
@@ -64,63 +52,75 @@ extension _AppStoreSplitPurchasesPart3 on AppStore {
         'Cannot change the supplier of a received purchase with allocated payments. Reverse the payment first.',
       );
     }
-    final normalizedPaid = normalizedStatus == 'paid'
-        ? total
-        : normalizedStatus == 'credit'
-            ? 0.0
-            : (paidAmount ?? 0).clamp(0, total).toDouble();
-    final receivedPaymentStatus = _receivedPurchasePaymentStatus(
-      paidAmount: current.paidAmount.clamp(0, total).toDouble(),
-      total: total,
-    );
-    final existingLineIds = current.items
-        .map((item) => item.lineId.trim())
-        .where((value) => value.isNotEmpty)
-        .toSet();
-    final usedLineIds = <String>{};
-    final normalizedItems = items.indexed.map((entry) {
-      final item = entry.$2;
-      final requestedLineId = item.lineId.trim();
-      if (requestedLineId.isNotEmpty &&
-          existingLineIds.contains(requestedLineId) &&
-          usedLineIds.add(requestedLineId)) {
-        return item;
-      }
-      var generatedLineId =
-          '${current.id}:pl:v${current.version + 1}:${entry.$1}:${now.microsecondsSinceEpoch}';
-      var suffix = 0;
-      while (!usedLineIds.add(generatedLineId)) {
-        suffix += 1;
-        generatedLineId =
-            '${current.id}:pl:v${current.version + 1}:${entry.$1}:${now.microsecondsSinceEpoch}:$suffix';
-      }
-      return _copyPurchaseItemWith(
-        item: item,
-        lineId: generatedLineId,
+    late Purchase updated;
+    if (current.isDraft) {
+      updated = draftService.updateDraft(
+        current: current,
+        expectedVersion: expectedVersion,
+        supplierId: supplierId,
+        supplierName: supplierName,
+        items: items,
+        paymentStatus: normalizedStatus,
+        paymentMethod: paymentMethod,
+        paidAmount: paidAmount,
+        warehouseId: resolvedWarehouse.id,
+        warehouseName: warehouseName.trim().isEmpty
+            ? resolvedWarehouse.name
+            : warehouseName.trim(),
+        now: now,
+        deviceId: _deviceId,
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
       );
-    }).toList(growable: false);
-    var updated = current.copyWith(
-      supplierId: supplierId,
-      supplierName:
-          supplierName.trim().isEmpty ? 'Supplier' : supplierName.trim(),
-      items: normalizedItems,
-      paymentStatus: current.isReceived
-          ? receivedPaymentStatus
-          : (normalizedPaid > 0 ? 'credit' : normalizedStatus),
-      paymentMethod: current.isReceived
-          ? current.paymentMethod
-          : (paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim()),
-      paidAmount: current.isReceived ? current.paidAmount : 0,
-      warehouseId: resolvedWarehouse.id,
-      warehouseName: warehouseName.trim().isEmpty
-          ? resolvedWarehouse.name
-          : warehouseName.trim(),
-      updatedAt: now,
-      version: current.version + 1,
-      lastModifiedByDeviceId: _deviceId,
-      syncStatus: 'pending',
-      clearPostedSnapshot: current.isReceived,
-    );
+    } else {
+      final receivedPaymentStatus = _receivedPurchasePaymentStatus(
+        paidAmount: current.paidAmount.clamp(0, total).toDouble(),
+        total: total,
+      );
+      final existingLineIds = current.items
+          .map((item) => item.lineId.trim())
+          .where((value) => value.isNotEmpty)
+          .toSet();
+      final usedLineIds = <String>{};
+      final normalizedItems = items.indexed.map((entry) {
+        final item = entry.$2;
+        final requestedLineId = item.lineId.trim();
+        if (requestedLineId.isNotEmpty &&
+            existingLineIds.contains(requestedLineId) &&
+            usedLineIds.add(requestedLineId)) {
+          return item;
+        }
+        var generatedLineId =
+            '${current.id}:pl:v${current.version + 1}:${entry.$1}:${now.microsecondsSinceEpoch}';
+        var suffix = 0;
+        while (!usedLineIds.add(generatedLineId)) {
+          suffix += 1;
+          generatedLineId =
+              '${current.id}:pl:v${current.version + 1}:${entry.$1}:${now.microsecondsSinceEpoch}:$suffix';
+        }
+        return draftService.copyItemWith(item, lineId: generatedLineId);
+      }).toList(growable: false);
+      updated = current.copyWith(
+        supplierId: supplierId,
+        supplierName:
+            supplierName.trim().isEmpty ? 'Supplier' : supplierName.trim(),
+        items: normalizedItems,
+        paymentStatus: receivedPaymentStatus,
+        paymentMethod: current.paymentMethod,
+        paidAmount: current.paidAmount,
+        warehouseId: resolvedWarehouse.id,
+        warehouseName: warehouseName.trim().isEmpty
+            ? resolvedWarehouse.name
+            : warehouseName.trim(),
+        updatedAt: now,
+        version: current.version + 1,
+        lastModifiedByDeviceId: _deviceId,
+        syncStatus: 'pending',
+        clearPostedSnapshot: current.isReceived,
+      );
+      // Preserve the prior received-document behavior: the caller's requested
+      // payment fields do not replace allocations already posted to the ledger.
+    }
     final beforeJson = jsonEncode(current.toJson());
     final sqliteDb = SqliteMigrationManager.database;
     final legacyDefaultVatRatePercent =

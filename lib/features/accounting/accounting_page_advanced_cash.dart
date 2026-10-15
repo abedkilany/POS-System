@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 extension _AdvancedCash on _AdvancedAccountingTabState {
   Future<void> _createCashLocationDialog(
       {String initialType = 'cash_drawer'}) async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final name = TextEditingController();
     final notes = TextEditingController();
@@ -19,8 +19,8 @@ extension _AdvancedCash on _AdvancedAccountingTabState {
     String selectedType = initialType;
     bool isDefault = false;
     bool bindToCurrentDevice = initialType == 'cash_drawer';
-    final currentDeviceId = widget.store.appIdentity.deviceId.trim();
-    final currentBranchId = widget.store.appIdentity.branchId.trim();
+    final currentDeviceId = widget.store.runtime.identity.deviceId.trim();
+    final currentBranchId = widget.store.runtime.identity.branchId.trim();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -91,7 +91,7 @@ extension _AdvancedCash on _AdvancedAccountingTabState {
         type: selectedType,
         isDefault: isDefault,
         notes: notes.text,
-        storeId: widget.store.appIdentity.storeId,
+        storeId: widget.store.runtime.identity.storeId,
         branchId: currentBranchId,
         deviceId: selectedType == 'cash_drawer' && bindToCurrentDevice
             ? currentDeviceId
@@ -114,7 +114,7 @@ extension _AdvancedCash on _AdvancedAccountingTabState {
   }
 
   Future<void> _openingBalancesDialog() async {
-    widget.store.requirePermission(AppPermission.accountingManage);
+    widget.store.security.requirePermission(AppPermission.accountingManage);
     final tr = AppLocalizations.of(context);
     final locations = await AccountingService.listActiveCashLocations();
     if (!mounted) return;
@@ -188,15 +188,15 @@ extension _AdvancedCash on _AdvancedAccountingTabState {
       return;
     }
     try {
-      final user = widget.store.activeUser;
+      final user = widget.store.security.activeUser;
       await AccountingService.recordOpeningCashLocationBalance(
         cashLocationId: selectedId,
         amount: value,
-        storeId: widget.store.appIdentity.storeId,
-        branchId: widget.store.appIdentity.branchId,
+        storeId: widget.store.runtime.identity.storeId,
+        branchId: widget.store.runtime.identity.branchId,
         createdBy: user?.fullName.trim().isNotEmpty == true
             ? user!.fullName.trim()
-            : widget.store.currentRole,
+            : widget.store.security.currentRole,
         notes: notes.text,
       );
       if (mounted) {

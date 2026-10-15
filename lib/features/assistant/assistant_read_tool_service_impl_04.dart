@@ -89,16 +89,16 @@ extension _AssistantReadToolServicePart4
     };
   }
 
-  bool _canViewAccounting(AppStore store) => store.canViewAccounting;
+  bool _canViewAccounting(AppStore store) => store.security.canViewAccounting;
 
   bool _canViewCustomerLedger(AppStore store) =>
-      store.hasAnyPermission(<String>{
+      store.security.hasAnyPermission(<String>{
         AppPermission.customersLedgerView,
         AppPermission.customersManage,
       });
 
   bool _canViewSupplierLedger(AppStore store) =>
-      store.hasAnyPermission(<String>{
+      store.security.hasAnyPermission(<String>{
         AppPermission.suppliersLedgerView,
         AppPermission.suppliersManage,
       });
@@ -115,30 +115,30 @@ extension _AssistantReadToolServicePart4
         _canViewAccounting(store),
       'customer_account_statement' => _canViewCustomerLedger(store),
       'supplier_account_statement' => _canViewSupplierLedger(store),
-      'sales_invoice_details' => store.canViewSales,
-      'purchase_invoice_details' => store.canViewPurchases,
+      'sales_invoice_details' => store.security.canViewSales,
+      'purchase_invoice_details' => store.security.canViewPurchases,
       'party_payment_history' =>
         _canViewCustomerLedger(store) || _canViewSupplierLedger(store),
       'party_balance_reconciliation' => _canViewAccounting(store) &&
           (_canViewCustomerLedger(store) || _canViewSupplierLedger(store)),
-      'sales_summary' => store.canViewSales,
-      'purchase_summary' => store.canViewPurchases,
-      'expense_summary' => store.canViewExpenses,
+      'sales_summary' => store.security.canViewSales,
+      'purchase_summary' => store.security.canViewPurchases,
+      'expense_summary' => store.security.canViewExpenses,
       'current_stock_balances' ||
       'stock_movement_summary' =>
-        store.canViewInventory || _canViewAccounting(store),
-      'cash_balances' => store.canViewCashBox,
+        store.security.canViewInventory || _canViewAccounting(store),
+      'cash_balances' => store.security.canViewCashBox,
       'inventory_cost_valuation' ||
       'manufacturing_cost_summary' ||
       'manufacturing_waste' ||
       'inventory_count_variances' =>
         name == 'inventory_cost_valuation'
-            ? store.canViewAccounting
-            : store.canViewInventory || _canViewAccounting(store),
-      'business_data_analysis' => store.canViewSales ||
-          store.canViewPurchases ||
-          store.canViewExpenses ||
-          store.canViewInventory ||
+            ? store.security.canViewAccounting
+            : store.security.canViewInventory || _canViewAccounting(store),
+      'business_data_analysis' => store.security.canViewSales ||
+          store.security.canViewPurchases ||
+          store.security.canViewExpenses ||
+          store.security.canViewInventory ||
           _canViewAccounting(store),
       'business_schema_catalog' ||
       'business_table_analysis' =>
@@ -209,7 +209,7 @@ extension _AssistantReadToolServicePart4
     AppStore store,
   ) {
     final currency = transaction.currency.trim().toUpperCase();
-    return currency.isEmpty ? store.storeProfile.baseCurrency : currency;
+    return currency.isEmpty ? store.runtime.profile.baseCurrency : currency;
   }
 
   int _compareAccountTransactions(
@@ -335,10 +335,10 @@ extension _AssistantReadToolServicePart4
       'generatedAtUtc': generatedAt.toUtc().toIso8601String(),
       'localTimezoneOffsetMinutes': generatedAt.timeZoneOffset.inMinutes,
       'dateBasis': 'device_local_calendar',
-      'baseCurrency': store.storeProfile.baseCurrency,
-      'deviceRole': store.appIdentity.deviceRole.name,
+      'baseCurrency': store.runtime.profile.baseCurrency,
+      'deviceRole': store.runtime.identity.deviceRole.name,
       'branchFilterApplied': false,
-      if (store.appIdentity.isClient) 'dataFreshness': 'client_local_copy',
+      if (store.runtime.identity.isClient) 'dataFreshness': 'client_local_copy',
       if (period != null)
         'period': <String, Object?>{
           'from': period.fromLabel,

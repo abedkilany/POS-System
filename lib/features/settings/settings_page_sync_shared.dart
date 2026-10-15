@@ -52,7 +52,7 @@ DirectDeviceLimitStatus? _localClientDeviceLimitStatus(
 }) {
   final allowed = AccountAuthCache.load()?.devicesLimit;
   if (allowed == null) return null;
-  final hostDeviceId = store.deviceId.trim();
+  final hostDeviceId = store.sync.deviceId.trim();
   final excluded = excludeDeviceId.trim();
   final linked = settings.hostRegistry.values.where((device) {
     final id = device.clientDeviceId.trim();

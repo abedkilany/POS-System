@@ -4,16 +4,16 @@ part of 'sales_page.dart';
 extension _SalesPageSaleReturnSave on _SalesPageState {
   Future<void> _editLatestSaleReturn(
       BuildContext sheetContext, Sale sale) async {
-    if (!widget.store.hasPermission(AppPermission.salesEdit) ||
-        !widget.store.hasPermission(AppPermission.salesCancel)) {
+    if (!widget.store.security.hasPermission(AppPermission.salesEdit) ||
+        !widget.store.security.hasPermission(AppPermission.salesCancel)) {
       return;
     }
-    await widget.store.ensureCreditNotesLoaded();
+    await widget.store.commerce.ensureCreditNotesLoaded();
     final note = _latestActiveCreditNoteForSale(sale.id);
     if (note == null || !sheetContext.mounted) return;
     final tr = AppLocalizations.of(sheetContext);
     final otherReturned = <String, double>{};
-    for (final candidate in widget.store.creditNotes) {
+    for (final candidate in widget.store.commerce.creditNotes) {
       if (candidate.originalSaleId != sale.id || candidate.id == note.id) {
         continue;
       }
@@ -104,7 +104,7 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
       return;
     }
     try {
-      await widget.store.editSaleReturn(
+      await widget.store.commerce.editSaleReturn(
           creditNoteId: note.id,
           expectedVersion: note.version,
           returnedQuantities: editedQuantities);
@@ -127,7 +127,7 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
   }
 
   Future<void> _returnSale(BuildContext sheetContext, Sale sale) async {
-    if (!widget.store.hasPermission(AppPermission.salesCancel) ||
+    if (!widget.store.security.hasPermission(AppPermission.salesCancel) ||
         sale.isCancelled) {
       return;
     }
@@ -154,7 +154,7 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
       return;
     }
     try {
-      await widget.store.returnSale(sale.id, restoreStock: true);
+      await widget.store.commerce.returnSale(sale.id, restoreStock: true);
       if (!mounted) return;
       setState(() {
         _salesQueryFuture = null;
@@ -236,14 +236,14 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
     final paymentStatus = _derivedPaymentStatus;
     late final Sale sale;
     try {
-      sale = await widget.store.createSale(
-          customerName: widget.store.resolveCustomerName(_selectedCustomerId),
+      sale = await widget.store.commerce.createSale(
+          customerName: widget.store.commerce.resolveCustomerName(_selectedCustomerId),
           customerId: _selectedCustomerId,
           discount: _discount,
           originalDiscount:
               double.tryParse(_discountController.text.trim()) ?? 0,
           discountCurrency: _discountCurrency,
-          discountExchangeRateAtEntry: exchangeRate(widget.store.storeProfile.baseCurrency, _discountCurrency, widget.store.storeProfile,
+          discountExchangeRateAtEntry: exchangeRate(widget.store.runtime.profile.baseCurrency, _discountCurrency, widget.store.runtime.profile,
               effectiveAt: DateTime.now()),
           paymentMethod: _paymentMethod,
           paymentStatus: paymentStatus,
@@ -261,7 +261,7 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
                   cashReceivedAmount, _invoiceCurrency, _paymentCurrency)
               : _cashReceivedInPaymentCurrency,
           warehouseId: _selectedWarehouseId,
-          warehouseName: widget.store
+          warehouseName: widget.store.inventory
               .resolveWarehouseForSale(warehouseId: _selectedWarehouseId)
               .name,
           items: _cart
@@ -297,14 +297,14 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
       _paidAmountController.clear();
       _selectedCustomerId = AppStore.walkInCustomerId;
       _paymentMethod = 'Cash';
-      _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-      _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
-      _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-      _selectedWarehouseId = widget.store
-          .resolveWarehouseForSale(warehouseId: widget.store.saleWarehouseId)
+      _invoiceCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
+      _paymentCurrency = widget.store.runtime.profile.defaultSalePaymentCurrency;
+      _discountCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
+      _selectedWarehouseId = widget.store.inventory
+          .resolveWarehouseForSale(warehouseId: widget.store.inventory.saleWarehouseId)
           .id;
       _paymentExchangeRateController.text =
-          widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+          widget.store.runtime.profile.usdToLbpRate.toStringAsFixed(0);
       _searchController.clear();
       _barcodeController.clear();
       _search = '';
@@ -313,7 +313,7 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(AppLocalizations.of(context)
             .text('invoice_created_successfully'))));
-    final printSettings = widget.store.storeProfile.printSettings;
+    final printSettings = widget.store.runtime.profile.printSettings;
     final shouldPrint = printSettings.askBeforeSalesInvoicePrint
         ? await _confirmInvoicePrintAfterSave()
         : printSettings.printSalesInvoiceAfterSave;
@@ -321,7 +321,7 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
       await _handleInvoiceAction(() => InvoicePdfService.printInvoice(
           context: context,
           sale: sale,
-          profile: widget.store.storeProfile,
+          profile: widget.store.runtime.profile,
           locale: AppLocalizations.of(context).locale));
     }
   }

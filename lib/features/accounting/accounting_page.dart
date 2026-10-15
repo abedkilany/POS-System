@@ -113,13 +113,13 @@ class _AccountingPageState extends State<AccountingPage>
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.canViewAccounting) {
+    if (!widget.store.security.canViewAccounting) {
       return _AccessDeniedScaffold(
         title: tr.text('accounting'),
         message: tr.text('no_access_accounting_data'),
       );
     }
-    if (!widget.store.isCoreDataLoaded || !widget.store.isLedgerDataLoaded) {
+    if (!widget.store.runtime.isCoreDataLoaded || !widget.store.runtime.isLedgerDataLoaded) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
 

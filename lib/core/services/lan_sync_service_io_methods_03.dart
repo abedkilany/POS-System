@@ -38,7 +38,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       {int port = 8787,
       String token = '',
       LanSyncProgressCallback? onProgress}) async {
-    if (!UnifiedSyncPolicy.canRebuildFromLanSnapshot(store.appIdentity)) {
+    if (!UnifiedSyncPolicy.canRebuildFromLanSnapshot(store.runtime.identity)) {
       return const LanSyncResult(
           ok: false,
           message:
@@ -73,7 +73,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       await _sendLanAck(host,
           port: port, token: token, cursor: hostCursor, sequence: hostSequence);
       onProgress?.call(0.94, 'Running Client sync log maintenance...');
-      await store.compactClientSyncedSyncHistoryForMaintenance();
+      await store.sync.compactClientSyncedHistoryForMaintenance();
       onProgress?.call(1.0, 'LAN rebuild completed.');
       return const LanSyncResult(
           ok: true, message: 'LAN rebuild completed from snapshot chunks.');
@@ -163,7 +163,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
 
   bool shouldBypassTransportSyncForHost() {
     return _syncCore.shouldBypassTransportSyncForHost(
-      isHost: store.appIdentity.isHost || isHosting,
+      isHost: store.runtime.identity.isHost || isHosting,
       transportHasNativeHostMode: true,
     );
   }
@@ -179,10 +179,10 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       final decoded = jsonDecode(body) as Map<String, dynamic>;
       if (decoded['wipeRequired'] == true ||
           decoded['action'] == 'wipe_local_data') {
-        final wipedDeviceId = store.deviceId;
-        final wipedStoreId = store.appIdentity.storeId;
-        final wipedBranchId = store.appIdentity.branchId;
-        final wipedToken = store.appIdentity.deviceToken;
+        final wipedDeviceId = store.sync.deviceId;
+        final wipedStoreId = store.runtime.identity.storeId;
+        final wipedBranchId = store.runtime.identity.branchId;
+        final wipedToken = store.runtime.identity.deviceToken;
         await _confirmLanWipe(host,
             port: port,
             token: token,
@@ -190,7 +190,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
             branchId: wipedBranchId,
             deviceId: wipedDeviceId,
             deviceToken: wipedToken);
-        await store.factoryResetLocalDevice(enforcePermission: false);
+        await store.recovery.factoryResetLocalDevice(enforcePermission: false);
         return const LanSyncResult(
             ok: false,
             message: 'Device deleted by Host. Local data was wiped.');
@@ -198,7 +198,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       if (decoded['suspended'] == true || decoded['action'] == 'suspended') {
         final reason =
             decoded['error']?.toString() ?? 'Device is suspended by Host.';
-        await store.markSuspendedByHost(reason: reason);
+        await store.runtime.markSuspendedByHost(reason: reason);
         return LanSyncResult(ok: false, message: reason);
       }
     } catch (_) {}
@@ -244,10 +244,10 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       _attachToken(request, token);
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode({
-        'deviceId': store.deviceId,
-        'storeId': store.appIdentity.storeId,
-        'branchId': store.appIdentity.branchId,
-        'deviceName': store.appIdentity.deviceName,
+        'deviceId': store.sync.deviceId,
+        'storeId': store.runtime.identity.storeId,
+        'branchId': store.runtime.identity.branchId,
+        'deviceName': store.runtime.identity.deviceName,
         'lastAppliedCursor': cursor.toIso8601String(),
         'lastAckCursor': cursor.toIso8601String(),
         'lastAppliedSequence': sequence,
@@ -279,13 +279,13 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       _attachToken(pushRequest, token);
       pushRequest.headers.contentType = ContentType.json;
       pushRequest.write(jsonEncode({
-        'deviceId': store.deviceId,
-        'storeId': store.appIdentity.storeId,
-        'branchId': store.appIdentity.branchId,
-        'deviceName': store.appIdentity.deviceName,
+        'deviceId': store.sync.deviceId,
+        'storeId': store.runtime.identity.storeId,
+        'branchId': store.runtime.identity.branchId,
+        'deviceName': store.runtime.identity.deviceName,
         'cursor': LanSyncSettings.load().lastPullCursor?.toIso8601String(),
         'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
-            store.appIdentity, 'lan'),
+            store.runtime.identity, 'lan'),
         'changes': pending.map((item) => item.toJson()).toList(),
       }));
       final pushResponse = await pushRequest.close();
@@ -307,7 +307,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
       if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
       await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
-      await store.clearSuspendedByHost();
+      await store.runtime.clearSuspendedByHost();
       return LanSyncResult(
           ok: true,
           message: 'LAN push completed. Pushed ${pending.length} change(s).');
@@ -367,7 +367,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       port: port,
       path: '/realtime',
     );
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final headers = <String, String>{
       'X-Device-Id': identity.deviceId,
       'X-Device-Token':
@@ -410,7 +410,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       final settings = LanSyncSettings.load();
       final client = _client();
       final lastSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
-          store.appIdentity, 'lan');
+          store.runtime.identity, 'lan');
       final query = <String, String>{
         'wait_seconds': wait.inSeconds.clamp(1, 25).toString(),
         'since_sequence': lastSequence.toString(),
@@ -445,11 +445,11 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       final client = _client();
       final ackCursor = settings.lastPullCursor?.toIso8601String() ?? '';
       final lastSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
-          store.appIdentity, 'lan');
+          store.runtime.identity, 'lan');
       final seqParam = '&since_sequence=$lastSequence';
       final path = settings.lastPullCursor == null
-          ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
-          : '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}&since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}$seqParam';
+          ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.sync.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
+          : '/changes/pull?device_id=${Uri.encodeQueryComponent(store.sync.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}&since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}$seqParam';
       onProgress?.call(0.62, 'Pulling new changes from LAN Host...');
       final pullRequest = await client.get(host.trim(), port, path);
       _attachToken(pullRequest, token);
@@ -477,7 +477,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
       if (generationRebuild != null) return generationRebuild;
       if (_syncCore.shouldHandlePulledSnapshotAsRepair(
         decodedPull,
-        isClient: store.appIdentity.isClient,
+        isClient: store.runtime.identity.isClient,
       )) {
         final repair = await repairFromHostSnapshot(host,
             port: port, token: token, onProgress: onProgress);
@@ -494,7 +494,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
           .normalizePulledChanges(decodedPull['changes'] as List<dynamic>?);
       if (_syncCore.shouldRebuildClientFromRestoreMarker(
         changes,
-        isClient: store.appIdentity.isClient,
+        isClient: store.runtime.identity.isClient,
       )) {
         final commandId = _restoreCommandIdFromChanges(changes);
         if (_restoreCommandAlreadyExecuted('lan', commandId)) {
@@ -504,7 +504,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
           onProgress?.call(0.72,
               'Host restore detected. Rebuilding from LAN Host snapshot...');
           await settings.copyWith(clearLastPullCursor: true).save();
-          await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+          await SyncDeviceStateStore.resetClientProgress(store.runtime.identity,
               transport: 'lan');
           return repairFromHostSnapshot(host,
               port: port, token: token, onProgress: onProgress);
@@ -531,7 +531,7 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
           token: token,
           cursor: generatedAt,
           sequence: generatedSequence);
-      await store.clearSuspendedByHost();
+      await store.runtime.clearSuspendedByHost();
       return LanSyncResult(
           ok: true,
           message: 'LAN pull completed. Pulled ${changes.length} change(s).');

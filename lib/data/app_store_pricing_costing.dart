@@ -317,7 +317,7 @@ extension _AppStoreSplitPricingCosting on AppStore {
       AppPermission.productsEdit,
     });
     await ensureProductsLoaded();
-    await ensureProductPricesLoaded();
+    await _ensureProductPricesLoadedImpl();
     final normalizedList = priceListId.trim();
     if (!const {'retail', 'wholesale', 'wholesale_bulk'}
         .contains(normalizedList)) {

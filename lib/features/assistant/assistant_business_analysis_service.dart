@@ -17,14 +17,14 @@ class AssistantBusinessAnalysisService {
 
   static List<String> datasetsFor(AppStore store) {
     final datasets = <String>[];
-    if (store.canViewSales) {
+    if (store.security.canViewSales) {
       datasets
         ..add('sales')
         ..add('sales_items');
     }
-    if (store.canViewPurchases) datasets.add('purchases');
-    if (store.canViewExpenses) datasets.add('expenses');
-    if (store.canViewInventory || store.canViewAccounting) {
+    if (store.security.canViewPurchases) datasets.add('purchases');
+    if (store.security.canViewExpenses) datasets.add('expenses');
+    if (store.security.canViewInventory || store.security.canViewAccounting) {
       datasets
         ..add('stock_movements')
         ..add('current_stock');
@@ -157,7 +157,7 @@ class AssistantBusinessAnalysisService {
         'Ventio business data is not available for a local read right now.',
       );
     }
-    final storeId = store.appIdentity.storeId.trim();
+    final storeId = store.runtime.identity.storeId.trim();
     if (storeId.isEmpty) {
       throw const AssistantBusinessAnalysisException(
         'active_user_required',

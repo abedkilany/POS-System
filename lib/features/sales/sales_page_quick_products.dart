@@ -49,7 +49,7 @@ extension _SalesPageQuickProducts on _SalesPageState {
                                       ? slot.shortName!.trim()
                                       : product!.name;
                               final price = formatUsdReferenceAmount(
-                                  product!.price, widget.store.storeProfile);
+                                  product!.price, widget.store.runtime.profile);
                               return Center(
                                   child: FittedBox(
                                       fit: BoxFit.scaleDown,
@@ -340,7 +340,7 @@ extension _SalesPageQuickProducts on _SalesPageState {
       jsonEncode(_quickPages.map((page) => page.toJson()).toList()));
 
   Product? _productById(String id) {
-    final product = widget.store.productById(id);
+    final product = widget.store.catalog.productById(id);
     if (product == null || !product.isActive) return null;
     return product;
   }
@@ -455,9 +455,9 @@ extension _SalesPageQuickProducts on _SalesPageState {
     if (slotIndex < 0 || slotIndex >= page.slots.length) return;
     final tr = AppLocalizations.of(context);
     final products = _activeProductsCache.getOrCompute(
-        widget.store.productsRevision,
+        widget.store.catalog.productsRevision,
         'active_products',
-        () => widget.store.products
+        () => widget.store.catalog.products
             .where((product) => product.isActive && !product.isDeleted)
             .toList(growable: false));
     final searchIndex = _productSearchIndex();
@@ -571,10 +571,10 @@ extension _SalesPageQuickProducts on _SalesPageState {
                                                     trailing: Text(
                                                         formatUsdReferenceAmount(
                                                             widget.store
-                                                                .defaultProductUsdPrice(
+                                                                .catalog.defaultProductUsdPrice(
                                                                     product),
                                                             widget.store
-                                                                .storeProfile)),
+                                                                .runtime.profile)),
                                                     onTap: () {
                                                       setSheetState(() {
                                                         selected = product;

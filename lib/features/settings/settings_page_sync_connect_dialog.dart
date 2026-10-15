@@ -3,7 +3,7 @@ part of 'settings_page.dart';
 
 extension _SyncConnectDialog on _UnifiedSyncSettingsCardState {
   Future<void> _openConnectToStoreDialog(SyncMode mode) async {
-    widget.store.requirePermission(AppPermission.syncManage);
+    widget.store.security.requirePermission(AppPermission.syncManage);
     final tr = AppLocalizations.of(context);
     final lan = LanSyncSettings.load();
     final direct = DirectSyncSettings.load();
@@ -158,7 +158,7 @@ extension _SyncConnectDialog on _UnifiedSyncSettingsCardState {
                                 setDialogState(() => dialogBusy = false);
                                 return;
                               }
-                              final previousIdentity = widget.store.appIdentity;
+                              final previousIdentity = widget.store.runtime.identity;
                               final previousActive = previousIdentity
                                   .activeSyncTransportNormalized;
                               final result = await _lanEngine(
@@ -176,12 +176,12 @@ extension _SyncConnectDialog on _UnifiedSyncSettingsCardState {
                               );
                               if (!result.ok) throw Exception(result.message);
                               _validateExpectedPairingTarget(
-                                  widget.store.appIdentity);
+                                  widget.store.runtime.identity);
                               _validateAgainstExistingClientIdentity(
-                                  previousIdentity, widget.store.appIdentity);
+                                  previousIdentity, widget.store.runtime.identity);
                               if (previousActive == 'direct') {
                                 await widget.store
-                                    .setActiveSyncTransport('direct');
+                                    .sync.setActiveSyncTransport('direct');
                               }
                             } else {
                               final code =
@@ -190,7 +190,7 @@ extension _SyncConnectDialog on _UnifiedSyncSettingsCardState {
                                 setDialogState(() => dialogBusy = false);
                                 return;
                               }
-                              final previousIdentity = widget.store.appIdentity;
+                              final previousIdentity = widget.store.runtime.identity;
                               final previousActive = previousIdentity
                                   .activeSyncTransportNormalized;
                               final result =
@@ -202,16 +202,16 @@ extension _SyncConnectDialog on _UnifiedSyncSettingsCardState {
                               );
                               if (!result.ok) throw Exception(result.message);
                               final claimedIdentity =
-                                  result.identity ?? widget.store.appIdentity;
+                                  result.identity ?? widget.store.runtime.identity;
                               _validateExpectedPairingTarget(claimedIdentity);
                               _validateAgainstExistingClientIdentity(
                                   previousIdentity, claimedIdentity);
                               if (previousActive == 'lan') {
                                 await widget.store
-                                    .setActiveSyncTransport('lan');
+                                    .sync.setActiveSyncTransport('lan');
                               } else {
                                 await widget.store
-                                    .setActiveSyncTransport('direct');
+                                    .sync.setActiveSyncTransport('direct');
                               }
                             }
                             if (dialogContext.mounted) {

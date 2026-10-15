@@ -37,10 +37,10 @@ extension LanSyncServiceSplitPart4 on LanSyncService {
         _attachToken(pushRequest, token);
         pushRequest.headers.contentType = ContentType.json;
         pushRequest.write(jsonEncode({
-          'deviceId': store.deviceId,
-          'storeId': store.appIdentity.storeId,
-          'branchId': store.appIdentity.branchId,
-          'deviceName': store.appIdentity.deviceName,
+          'deviceId': store.sync.deviceId,
+          'storeId': store.runtime.identity.storeId,
+          'branchId': store.runtime.identity.branchId,
+          'deviceName': store.runtime.identity.deviceName,
           'cursor': settings.lastPullCursor?.toIso8601String(),
           'changes': pending.map((item) => item.toJson()).toList(),
         }));
@@ -70,11 +70,11 @@ extension LanSyncServiceSplitPart4 on LanSyncService {
 
       final ackCursor = settings.lastPullCursor?.toIso8601String() ?? '';
       final lastSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
-          store.appIdentity, 'lan');
+          store.runtime.identity, 'lan');
       final seqParam = '&since_sequence=$lastSequence';
       final path = settings.lastPullCursor == null
-          ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
-          : '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}&since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}$seqParam';
+          ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.sync.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
+          : '/changes/pull?device_id=${Uri.encodeQueryComponent(store.sync.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}&since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}$seqParam';
       onProgress?.call(0.62, 'Pulling new changes from LAN Host...');
       final pullRequest = await client.get(host.trim(), port, path);
       _attachToken(pullRequest, token);
@@ -104,7 +104,7 @@ extension LanSyncServiceSplitPart4 on LanSyncService {
       if (generationRebuild != null) return generationRebuild;
       if (_syncCore.shouldHandlePulledSnapshotAsRepair(
         decodedPull,
-        isClient: store.appIdentity.isClient,
+        isClient: store.runtime.identity.isClient,
       )) {
         final repair = await repairFromHostSnapshot(host,
             port: port, token: token, onProgress: onProgress);
@@ -121,7 +121,7 @@ extension LanSyncServiceSplitPart4 on LanSyncService {
           .normalizePulledChanges(decodedPull['changes'] as List<dynamic>?);
       if (_syncCore.shouldRebuildClientFromRestoreMarker(
         changes,
-        isClient: store.appIdentity.isClient,
+        isClient: store.runtime.identity.isClient,
       )) {
         final commandId = _restoreCommandIdFromChanges(changes);
         if (_restoreCommandAlreadyExecuted('lan', commandId)) {
@@ -131,7 +131,7 @@ extension LanSyncServiceSplitPart4 on LanSyncService {
           onProgress?.call(0.72,
               'Host restore detected. Rebuilding from LAN Host snapshot...');
           await settings.copyWith(clearLastPullCursor: true).save();
-          await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+          await SyncDeviceStateStore.resetClientProgress(store.runtime.identity,
               transport: 'lan');
           return repairFromHostSnapshot(host,
               port: port, token: token, onProgress: onProgress);
@@ -151,9 +151,9 @@ extension LanSyncServiceSplitPart4 on LanSyncService {
           token: token,
           cursor: generatedAt,
           sequence: generatedSequence);
-      await store.clearSuspendedByHost();
+      await store.runtime.clearSuspendedByHost();
       onProgress?.call(0.97, 'Running Client sync log maintenance...');
-      await store.compactClientSyncedSyncHistoryForMaintenance();
+      await store.sync.compactClientSyncedHistoryForMaintenance();
       onProgress?.call(1.0, 'LAN sync completed.');
       return LanSyncResult(
         ok: true,

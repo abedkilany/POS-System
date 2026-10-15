@@ -1,6 +1,11 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitCoreLoadingPart2 on AppStore {
+  static const InventoryReadService _inventoryReadService =
+      InventoryReadService();
+  static const AccountLedgerReadService _accountLedgerReadService =
+      AccountLedgerReadService();
+
   void _ensureSaleQuotationsCache() {
     if (_isDerivedCacheCurrent(_cachedSaleQuotationsGeneration) &&
         _cachedSaleQuotations != null) {
@@ -89,38 +94,26 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
   void _ensureWarehouseStockCache() {
     if (!_warehouseStockCacheDirty) return;
     _ensureDefaultWarehouse();
-    final warehouseIds = _warehouses
-        .where((item) => !item.isDeleted)
-        .map((item) => item.id)
-        .toList(growable: false);
-    _warehouseStockByProductCache.clear();
-    for (final product in _products.where((item) => !item.isDeleted)) {
-      _warehouseStockByProductCache[product.id] = <String, double>{
-        for (final id in warehouseIds) id: 0,
-      };
-    }
-
-    for (final movement in _stockMovements) {
-      final productId = movement.productId.trim();
-      if (productId.isEmpty) continue;
-      final wid = movement.warehouseId.trim().isEmpty
-          ? Warehouse.defaultId
-          : movement.warehouseId.trim();
-      final result = _warehouseStockByProductCache.putIfAbsent(
-        productId,
-        () => <String, double>{for (final id in warehouseIds) id: 0},
+    _warehouseStockByProductCache
+      ..clear()
+      ..addAll(
+        _inventoryReadService.warehouseStockBalances(
+          products: _products,
+          warehouses: _warehouses,
+          movements: _stockMovements,
+        ),
       );
-      result[wid] = (result[wid] ?? 0) + movement.quantity;
-    }
 
     _warehouseStockCacheDirty = false;
   }
 
   double stockForWarehouse(String productId, String warehouseId) {
     _ensureWarehouseStockCache();
-    final wid =
-        warehouseId.trim().isEmpty ? Warehouse.defaultId : warehouseId.trim();
-    return _warehouseStockByProductCache[productId]?[wid] ?? 0;
+    return _inventoryReadService.stockForWarehouse(
+      _warehouseStockByProductCache,
+      productId: productId,
+      warehouseId: warehouseId,
+    );
   }
 
   Future<double> warehouseStockFromSqlite(
@@ -227,14 +220,13 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
   }
 
   List<AccountTransaction> get accountTransactions {
+    return _accountTransactionsReadImpl;
+  }
+
+  List<AccountTransaction> get _accountTransactionsReadImpl {
     unawaited(ensureAccountTransactionsLoaded());
-    return List.unmodifiable(
-      _accountTransactions
-          .where((item) => !item.isDeleted)
-          .toList(growable: false)
-          .reversed
-          .toList(growable: false),
-    );
+    return _accountLedgerReadService
+        .activeTransactionsNewestFirst(_accountTransactions);
   }
 
   void _invalidateAccountLedgerCache() {
@@ -242,10 +234,7 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
   }
 
   bool _isLedgerTrackedAccountTransaction(AccountTransaction item) {
-    if (item.isDeleted) return false;
-    final type = item.accountType.trim().toLowerCase();
-    if (type != 'customer' && type != 'supplier') return false;
-    return item.accountId.trim().isNotEmpty;
+    return _accountLedgerReadService.isTracked(item);
   }
 
   void _removeAccountTransactionFromLedgerCache(AccountTransaction item) {
@@ -297,24 +286,13 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
 
   void _ensureAccountLedgerCache() {
     if (!_accountLedgerCacheDirty) return;
-    _accountBalanceCache.clear();
-    _accountTransactionsByAccountCache.clear();
-    for (final item in _accountTransactions) {
-      if (item.isDeleted) continue;
-      final type = item.accountType.trim().toLowerCase();
-      if (type != 'customer' && type != 'supplier') continue;
-      final accountId = item.accountId.trim();
-      if (accountId.isEmpty) continue;
-      final key = _accountLedgerKey(type, accountId);
-      _accountBalanceCache[key] =
-          (_accountBalanceCache[key] ?? 0) + item.signedAmount;
-      (_accountTransactionsByAccountCache[key] ??= <AccountTransaction>[]).add(
-        item,
-      );
-    }
-    for (final rows in _accountTransactionsByAccountCache.values) {
-      rows.sort((a, b) => b.date.compareTo(a.date));
-    }
+    final index = _accountLedgerReadService.buildIndex(_accountTransactions);
+    _accountBalanceCache
+      ..clear()
+      ..addAll(index.balanceByAccount);
+    _accountTransactionsByAccountCache
+      ..clear()
+      ..addAll(index.transactionsByAccount);
     _accountLedgerCacheDirty = false;
   }
 
@@ -322,21 +300,34 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
     String accountType,
     String accountId,
   ) {
+    return _accountTransactionsForAccountReadImpl(accountType, accountId);
+  }
+
+  List<AccountTransaction> _accountTransactionsForAccountReadImpl(
+    String accountType,
+    String accountId,
+  ) {
     _requestLedgerDataLoad();
     _ensureAccountLedgerCache();
-    return List.unmodifiable(
-      _accountTransactionsByAccountCache[_accountLedgerKey(
-            accountType,
-            accountId,
-          )] ??
-          const <AccountTransaction>[],
+    return _accountLedgerReadService.transactionsForAccount(
+      accountType: accountType,
+      accountId: accountId,
+      index: _accountTransactionsByAccountCache,
     );
   }
 
   double accountBalance(String accountType, String accountId) {
+    return _accountBalanceReadImpl(accountType, accountId);
+  }
+
+  double _accountBalanceReadImpl(String accountType, String accountId) {
     _requestLedgerDataLoad();
     _ensureAccountLedgerCache();
-    return _accountBalanceCache[_accountLedgerKey(accountType, accountId)] ?? 0;
+    return _accountLedgerReadService.accountBalance(
+      accountType: accountType,
+      accountId: accountId,
+      balances: _accountBalanceCache,
+    );
   }
 
   List<Map<String, dynamic>> databaseRows(String entity) {
@@ -487,11 +478,19 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
   }
 
   List<SyncChange> get syncChanges {
+    return _syncChangesReadImpl;
+  }
+
+  List<SyncChange> get _syncChangesReadImpl {
     _requestSyncDataLoad();
     return List.unmodifiable(_syncChanges);
   }
 
   List<SyncQueueItem> get syncQueue {
+    return _syncQueueReadImpl;
+  }
+
+  List<SyncQueueItem> get _syncQueueReadImpl {
     _requestSyncDataLoad();
     return List.unmodifiable(_syncQueue);
   }

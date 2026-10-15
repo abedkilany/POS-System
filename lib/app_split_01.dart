@@ -51,7 +51,7 @@ class _VentioAppState extends State<VentioApp> {
     _registerPageTimings();
     AccountingService.setMutationListener(() {
       _store.notifyListeners();
-      unawaited(_store.recordPhase8AccountingMutationForSync());
+      unawaited(_store.sync.recordPhase8AccountingMutationForSync());
     });
     _initializeApp();
   }
@@ -98,9 +98,9 @@ class _VentioAppState extends State<VentioApp> {
       await StartupTimingService.measure(
         'ventio_app.initialize',
         () async {
-          await _store.initialize(hydrateHeavyData: false);
-          final savedTheme = await _store.loadThemeMode();
-          final savedLocale = await _store.loadLocale();
+          await _store.runtime.initialize(hydrateHeavyData: false);
+          final savedTheme = await _store.runtime.loadThemeMode();
+          final savedLocale = await _store.runtime.loadLocale();
           if (mounted) {
             setState(() {
               _startupError = '';
@@ -108,7 +108,7 @@ class _VentioAppState extends State<VentioApp> {
               _locale = savedLocale;
             });
           }
-          if (_store.activeUser != null) {
+          if (_store.security.activeUser != null) {
             unawaited(_startSyncAfterLogin());
           }
         },
@@ -123,15 +123,15 @@ class _VentioAppState extends State<VentioApp> {
   }
 
   Future<void> _startSyncAfterLogin() async {
-    if (_syncStarted || _store.activeUser == null) return;
+    if (_syncStarted || _store.security.activeUser == null) return;
     _syncStarted = true;
     await StartupTimingService.measure(
       'ventio_app.start_sync_after_login',
       () async {
         await Future<void>.delayed(const Duration(milliseconds: 500));
-        if (!mounted || _store.activeUser == null) return;
-        await _store.recoverPhase8AccountingSyncAfterStartup();
-        if (!mounted || _store.activeUser == null) return;
+        if (!mounted || _store.security.activeUser == null) return;
+        await _store.sync.recoverPhase8AccountingSyncAfterStartup();
+        if (!mounted || _store.security.activeUser == null) return;
         unawaited(_autoSyncController.start());
         unawaited(_autoDirectSyncController.start());
         unawaited(_startBackupsAfterLogin());
@@ -142,7 +142,7 @@ class _VentioAppState extends State<VentioApp> {
 
   Future<void> _startBackupsAfterLogin() async {
     await Future<void>.delayed(const Duration(seconds: 15));
-    if (!mounted || _store.activeUser == null) return;
+    if (!mounted || _store.security.activeUser == null) return;
     try {
       await StartupTimingService.measure(
         'ventio_app.run_local_backup_after_login',
@@ -153,7 +153,7 @@ class _VentioAppState extends State<VentioApp> {
       // The backup service records its own error status. Keep Google Drive
       // backup independent if the local backup fails.
     }
-    if (!mounted || _store.activeUser == null) return;
+    if (!mounted || _store.security.activeUser == null) return;
     try {
       await StartupTimingService.measure(
         'ventio_app.run_google_backup_after_login',
@@ -174,7 +174,7 @@ class _VentioAppState extends State<VentioApp> {
 
   void _handleAutoSnapshotProgress(
       String transport, double value, String label) {
-    if (!mounted || _store.activeUser == null) return;
+    if (!mounted || _store.security.activeUser == null) return;
     final safeValue = value.clamp(0.0, 1.0).toDouble();
     _autoSnapshotProgress.value = _AutoSnapshotProgressState(
       transport: transport,
@@ -296,7 +296,7 @@ class _VentioAppState extends State<VentioApp> {
     _autoDirectSyncController.stop();
     await UnifiedSyncFactory.disposeDirect(_store);
 
-    await _store.prepareForShutdown();
+    await _store.runtime.prepareForShutdown();
     await SqliteMigrationManager.shutdown();
   }
 
@@ -313,12 +313,12 @@ class _VentioAppState extends State<VentioApp> {
   }
 
   Future<void> _changeLocale(Locale locale) async {
-    await _store.saveLocale(locale);
+    await _store.runtime.saveLocale(locale);
     if (mounted) setState(() => _locale = locale);
   }
 
   Future<void> _changeThemeMode(ThemeMode mode) async {
-    await _store.saveThemeMode(mode);
+    await _store.runtime.saveThemeMode(mode);
     if (mounted) setState(() => _themeMode = mode);
   }
 
@@ -336,10 +336,10 @@ class _VentioAppState extends State<VentioApp> {
     return AnimatedBuilder(
       animation: _store,
       builder: (context, _) {
-        if (_store.activeUser != null && !_syncStarted) {
+        if (_store.security.activeUser != null && !_syncStarted) {
           WidgetsBinding.instance
               .addPostFrameCallback((_) => _startSyncAfterLogin());
-        } else if (_store.activeUser == null && _syncStarted) {
+        } else if (_store.security.activeUser == null && _syncStarted) {
           WidgetsBinding.instance
               .addPostFrameCallback((_) => _stopSyncForLogout());
         }
@@ -394,7 +394,7 @@ class _VentioAppState extends State<VentioApp> {
                     ),
                   );
                 })
-              : _store.isReady
+              : _store.runtime.isReady
                   ? Builder(builder: (context) {
                       final tr = AppLocalizations.of(context);
                       return LoginGatePage(

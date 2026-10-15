@@ -22,7 +22,7 @@ class ReportsPage extends StatelessWidget {
     final arabic = tr.locale.languageCode == 'ar';
     await SimpleReportPdfService.printReport(
       context: context,
-      profile: store.storeProfile,
+      profile: store.runtime.profile,
       documentKey: PrintDocumentKeys.report,
       title: tr.text('reports'),
       arabic: arabic,
@@ -89,13 +89,13 @@ class ReportsPage extends StatelessWidget {
       animation: store,
       builder: (context, _) {
         final tr = AppLocalizations.of(context);
-        if (!store.canViewReports) {
+        if (!store.security.canViewReports) {
           return _AccessDeniedScaffold(
             title: tr.text('reports'),
             message: tr.text('no_access_reports'),
           );
         }
-        if (!store.isCoreDataLoaded || !store.isLedgerDataLoaded) {
+        if (!store.runtime.isCoreDataLoaded || !store.runtime.isLedgerDataLoaded) {
           return const Center(child: CircularProgressIndicator.adaptive());
         }
         final reference = DateTime.now().toLocal();
@@ -184,27 +184,27 @@ class ReportsPage extends StatelessWidget {
               ReportCard(
                   title: tr.text('daily_sales_report'),
                   subtitle:
-                      '${tr.text('current_total_sales')}: ${formatUsdReferenceAmount(todaySales, store.storeProfile)}'),
+                      '${tr.text('current_total_sales')}: ${formatUsdReferenceAmount(todaySales, store.runtime.profile)}'),
               ReportCard(
                   title: tr.text('monthly_sales'),
                   subtitle:
-                      formatUsdReferenceAmount(monthSales, store.storeProfile)),
+                      formatUsdReferenceAmount(monthSales, store.runtime.profile)),
               ReportCard(
                   title: tr.text('monthly_purchases'),
                   subtitle: formatUsdReferenceAmount(
-                      monthPurchases, store.storeProfile)),
+                      monthPurchases, store.runtime.profile)),
               ReportCard(
                   title: tr.text('profit_report'),
                   subtitle:
-                      '${tr.text('net_profit')}: ${formatUsdReferenceAmount(netProfit, store.storeProfile)}'),
+                      '${tr.text('net_profit')}: ${formatUsdReferenceAmount(netProfit, store.runtime.profile)}'),
               ReportCard(
                   title: tr.text('expenses_report'),
                   subtitle:
-                      '${tr.text('expenses')}: ${formatUsdReferenceAmount(totalExpenses, store.storeProfile)}'),
+                      '${tr.text('expenses')}: ${formatUsdReferenceAmount(totalExpenses, store.runtime.profile)}'),
               ReportCard(
                   title: tr.text('inventory_value_report'),
                   subtitle:
-                      '${tr.text('inventory_value')}: ${formatUsdReferenceAmount(inventoryRetailValue, store.storeProfile)}'),
+                      '${tr.text('inventory_value')}: ${formatUsdReferenceAmount(inventoryRetailValue, store.runtime.profile)}'),
               ReportCard(
                   title: tr.text('inventory_health_report'),
                   subtitle:
@@ -219,15 +219,15 @@ class ReportsPage extends StatelessWidget {
               ReportCard(
                   title: tr.text('customer_receivables'),
                   subtitle: formatUsdReferenceAmount(
-                      customerReceivables, store.storeProfile)),
+                      customerReceivables, store.runtime.profile)),
               ReportCard(
                   title: tr.text('supplier_payables'),
                   subtitle: formatUsdReferenceAmount(
-                      supplierPayables, store.storeProfile)),
+                      supplierPayables, store.runtime.profile)),
               ReportCard(
                   title: tr.text('today_cash_movement'),
                   subtitle:
-                      '${tr.text('cash_in')}: ${formatUsdReferenceAmount(todayCashIn, store.storeProfile)} • ${tr.text('cash_out')}: ${formatUsdReferenceAmount(todayCashOut, store.storeProfile)}'),
+                      '${tr.text('cash_in')}: ${formatUsdReferenceAmount(todayCashIn, store.runtime.profile)} • ${tr.text('cash_out')}: ${formatUsdReferenceAmount(todayCashOut, store.runtime.profile)}'),
             ],
           ),
           const SizedBox(height: 16),
@@ -245,9 +245,9 @@ class ReportsPage extends StatelessWidget {
                         ? tr.text('not_specified')
                         : method),
                     subtitle: Text(
-                        '${tr.text('cash_in')}: ${formatUsdReferenceAmount(todayCashInByMethod[method] ?? 0, store.storeProfile)}'),
+                        '${tr.text('cash_in')}: ${formatUsdReferenceAmount(todayCashInByMethod[method] ?? 0, store.runtime.profile)}'),
                     trailing: Text(
-                        '${tr.text('cash_out')}: ${formatUsdReferenceAmount(todayCashOutByMethod[method] ?? 0, store.storeProfile)}')))
+                        '${tr.text('cash_out')}: ${formatUsdReferenceAmount(todayCashOutByMethod[method] ?? 0, store.runtime.profile)}')))
                 .toList(),
           ),
           const SizedBox(height: 16),
@@ -261,7 +261,7 @@ class ReportsPage extends StatelessWidget {
                     leading: const Icon(Icons.person_outline),
                     title: Text(entry.key),
                     trailing: Text(formatUsdReferenceAmount(
-                        entry.value, store.storeProfile))))
+                        entry.value, store.runtime.profile))))
                 .toList(),
           ),
           const SizedBox(height: 16),
@@ -275,7 +275,7 @@ class ReportsPage extends StatelessWidget {
                     leading: const Icon(Icons.local_shipping_outlined),
                     title: Text(entry.key),
                     trailing: Text(formatUsdReferenceAmount(
-                        entry.value.abs(), store.storeProfile))))
+                        entry.value.abs(), store.runtime.profile))))
                 .toList(),
           ),
           const SizedBox(height: 16),
@@ -420,11 +420,11 @@ class _ReportsPageData {
   }
 
   factory _ReportsPageData.fromStore(AppStore store, DateTime today) {
-    final totalExpenses = store.totalExpensesAmount;
+    final totalExpenses = store.commerce.totalExpensesAmount;
     const netProfit = 0.0;
-    final sales = store.sales;
-    final purchases = store.purchases;
-    final stockMovements = store.stockMovements;
+    final sales = store.commerce.sales;
+    final purchases = store.commerce.purchases;
+    final stockMovements = store.inventory.stockMovements;
     var todaySales = 0.0;
     var monthSales = 0.0;
     final activeSales = <dynamic>[];
@@ -465,19 +465,19 @@ class _ReportsPageData {
       ..sort((a, b) => b.value.compareTo(a.value));
     final lowStock = <Product>[];
     var inventoryRetailValue = 0.0;
-    for (final product in store.stockTrackedProducts) {
+    for (final product in store.catalog.stockTrackedProducts) {
       inventoryRetailValue += product.usdPrice * product.stock;
       if (product.stock <= product.lowStockThreshold) {
         lowStock.add(product);
       }
     }
     final customerReceivables =
-        store.customers.fold<double>(0, (sum, customer) {
-      final balance = store.accountBalance('customer', customer.id);
+        store.commerce.customers.fold<double>(0, (sum, customer) {
+      final balance = store.accounting.accountBalance('customer', customer.id);
       return balance > 0 ? sum + balance : sum;
     });
-    final supplierPayables = store.suppliers.fold<double>(0, (sum, supplier) {
-      final balance = store.accountBalance('supplier', supplier.id);
+    final supplierPayables = store.commerce.suppliers.fold<double>(0, (sum, supplier) {
+      final balance = store.accounting.accountBalance('supplier', supplier.id);
       return balance < 0 ? sum + balance.abs() : sum;
     });
     // Accounting cash/profit metrics never fall back to customer/supplier
@@ -488,15 +488,15 @@ class _ReportsPageData {
     const todayCashOut = 0.0;
     const todayCashInByMethod = <String, double>{};
     const todayCashOutByMethod = <String, double>{};
-    final topCustomerDebts = store.customers
+    final topCustomerDebts = store.commerce.customers
         .map((customer) => MapEntry(
-            customer.name, store.accountBalance('customer', customer.id)))
+            customer.name, store.accounting.accountBalance('customer', customer.id)))
         .where((entry) => entry.value > 0)
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    final topSupplierDebts = store.suppliers
+    final topSupplierDebts = store.commerce.suppliers
         .map((supplier) => MapEntry(
-            supplier.name, store.accountBalance('supplier', supplier.id)))
+            supplier.name, store.accounting.accountBalance('supplier', supplier.id)))
         .where((entry) => entry.value < 0)
         .toList()
       ..sort((a, b) => a.value.compareTo(b.value));

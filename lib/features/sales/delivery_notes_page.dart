@@ -27,7 +27,7 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
   void initState() {
     super.initState();
     widget.store.addListener(_handleStoreChanged);
-    widget.store.ensureDeliveryNotesPageDataLoaded();
+    widget.store.commerce.ensureDeliveryNotesLoaded();
   }
 
   @override
@@ -36,7 +36,7 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
     if (oldWidget.store != widget.store) {
       oldWidget.store.removeListener(_handleStoreChanged);
       widget.store.addListener(_handleStoreChanged);
-      widget.store.ensureDeliveryNotesPageDataLoaded();
+      widget.store.commerce.ensureDeliveryNotesLoaded();
     }
   }
 
@@ -69,11 +69,11 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
         await LocalDatabaseService.queryEligibleDeliveryNoteSalesFromSqlite(
               limit: 100,
             ) ??
-            widget.store.sales
+            widget.store.commerce.sales
                 .where(
                   (item) =>
                       !item.isCancelled &&
-                      widget.store.deliveryNoteForSale(item.id) == null,
+                      widget.store.commerce.deliveryNoteForSale(item.id) == null,
                 )
                 .take(100)
                 .toList(growable: false);
@@ -114,7 +114,7 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
       return;
     }
     try {
-      await widget.store.createDeliveryNoteFromSale(sale.id);
+      await widget.store.commerce.createDeliveryNoteFromSale(sale.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(tr.text('delivery_note_created'))));
@@ -129,7 +129,7 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
 
   Future<void> _markDelivered(DeliveryNote note) async {
     final tr = AppLocalizations.of(context);
-    await widget.store.markDeliveryNoteDelivered(note.id);
+    await widget.store.commerce.markDeliveryNoteDelivered(note.id);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('delivery_note_delivered'))));
@@ -154,14 +154,14 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
         ],
       ),
     );
-    if (confirm == true) await widget.store.deleteDeliveryNote(note.id);
+    if (confirm == true) await widget.store.commerce.deleteDeliveryNote(note.id);
   }
 
   Future<void> _printNote(DeliveryNote note) async {
     final tr = AppLocalizations.of(context);
     await SimpleReportPdfService.printReport(
       context: context,
-      profile: widget.store.storeProfile,
+      profile: widget.store.runtime.profile,
       documentKey: PrintDocumentKeys.deliveryNote,
       title: '${tr.text('delivery_note')} ${note.deliveryNo}',
       arabic: tr.locale.languageCode == 'ar',
@@ -178,11 +178,11 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final canCreate = widget.store.hasAnyPermission(<String>{
+    final canCreate = widget.store.security.hasAnyPermission(<String>{
       AppPermission.deliveryNotesManage,
       AppPermission.salesCreate,
     });
-    final canDelete = widget.store.hasAnyPermission(<String>{
+    final canDelete = widget.store.security.hasAnyPermission(<String>{
       AppPermission.deliveryNotesManage,
       AppPermission.salesCancel,
     });
@@ -193,7 +193,7 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
         message: tr.text('no_access_current_role'),
       );
     }
-    final notes = widget.store.deliveryNotes;
+    final notes = widget.store.commerce.deliveryNotes;
     return Scaffold(
       appBar: AppBar(
         title: Text(tr.text('delivery_notes')),

@@ -3,7 +3,7 @@ part of 'purchases_page.dart';
 
 extension _PurchasesPageStateMethods2 on _PurchasesPageState {
   Future<void> _deleteDraftPurchase(BuildContext context, String id) async {
-    if (!widget.store.canManagePurchases) return;
+    if (!widget.store.security.canManagePurchases) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -23,7 +23,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
     );
     if (ok != true) return;
     try {
-      await widget.store.deleteDraftPurchase(id);
+      await widget.store.commerce.deleteDraftPurchase(id);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -41,14 +41,14 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
     // Purchase managers should always use the independent partial-return
     // document. Keep the legacy full-reversal flow only for cancellation-only
     // roles that do not have permission to create purchase documents.
-    if (widget.store.canManagePurchases) {
+    if (widget.store.security.canManagePurchases) {
       await _openPurchaseReturnDialog(
         context,
         sourcePurchaseId: id,
       );
       return;
     }
-    if (!widget.store.hasAnyPermission(<String>{
+    if (!widget.store.security.hasAnyPermission(<String>{
       AppPermission.purchasesCancel,
       AppPermission.purchasesManage,
     })) {
@@ -101,7 +101,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
       return;
     }
     try {
-      await widget.store.returnPurchase(id, reason: reason);
+      await widget.store.commerce.returnPurchase(id, reason: reason);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(AppLocalizations.of(context)
@@ -120,7 +120,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
     String? sourcePurchaseId,
   }) async {
     final tr = AppLocalizations.of(context);
-    final sources = widget.store.purchases
+    final sources = widget.store.commerce.purchases
         .where((purchase) =>
             purchase.isReceived &&
             !purchase.isCancelled &&
@@ -189,7 +189,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
                     : item.lineId;
                 final controller = quantityControllers.putIfAbsent(
                     lineId, TextEditingController.new);
-                final alreadyReturned = widget.store.purchases
+                final alreadyReturned = widget.store.commerce.purchases
                     .where((purchase) =>
                         purchase.isPurchaseReturn &&
                         purchase.sourcePurchaseId == source.id)
@@ -323,7 +323,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
       return;
     }
     try {
-      await widget.store.createPurchaseReturn(
+      await widget.store.commerce.createPurchaseReturn(
         sourcePurchaseId: selection.sourceId,
         items: selection.items,
         reason: selection.reason,
@@ -445,7 +445,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
                         _DetailRow(
                             label: tr.text('final_total'),
                             value: formatUsdReferenceAmount(
-                                purchase.subtotal, widget.store.storeProfile)),
+                                purchase.subtotal, widget.store.runtime.profile)),
                         if (purchase.note.trim().isNotEmpty)
                           _DetailRow(
                               label: tr.text('notes'),
@@ -464,7 +464,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
                         subtitle: Text(
                             '${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
                         trailing: Text(formatUsdReferenceAmount(
-                            item.lineTotal, widget.store.storeProfile)),
+                            item.lineTotal, widget.store.runtime.profile)),
                       ),
                     )),
                 const SizedBox(height: 12),
@@ -474,7 +474,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
                   alignment: WrapAlignment.end,
                   children: [
                     if (widget.store
-                        .hasPermission(AppPermission.purchasesPrint))
+                        .security.hasPermission(AppPermission.purchasesPrint))
                       OutlinedButton.icon(
                         onPressed: () => _printPurchase(context, purchase),
                         icon: const Icon(Icons.print_outlined),
@@ -493,11 +493,11 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
                             !purchase.isCancelled &&
                             !purchase.isReturned &&
                             !purchase.isPurchaseReturn &&
-                            widget.store.canManagePurchases) ||
+                            widget.store.security.canManagePurchases) ||
                         (purchase.isReturned &&
-                            widget.store.canManagePurchases &&
+                            widget.store.security.canManagePurchases &&
                             widget.store
-                                .hasPermission(AppPermission.purchasesCancel)))
+                                .security.hasPermission(AppPermission.purchasesCancel)))
                       FilledButton.icon(
                         onPressed: () {
                           Navigator.pop(sheetContext);
@@ -556,7 +556,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
       await PurchasePdfService.printPurchase(
         context: context,
         purchase: purchase,
-        profile: widget.store.storeProfile,
+        profile: widget.store.runtime.profile,
         locale: tr.locale,
       );
     } catch (_) {
@@ -569,14 +569,14 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
 
   Future<void> _openPurchaseDialog(BuildContext context,
       {Purchase? template, Purchase? editPurchase}) async {
-    if (!widget.store.canManagePurchases) return;
+    if (!widget.store.security.canManagePurchases) return;
     final tr = AppLocalizations.of(context);
     // The list/details view may hold an older version after another user or
     // device updated the invoice. Always build the edit form from SQLite's
     // latest snapshot; the save path still performs the final version check.
     if (editPurchase != null) {
       final latest =
-          await widget.store.reloadPurchaseFromSqlite(editPurchase.id);
+          await widget.store.commerce.reloadPurchaseFromSqlite(editPurchase.id);
       if (latest == null) return;
       editPurchase = latest;
     }
@@ -594,16 +594,16 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
     );
     if (!mounted || !context.mounted) return;
     var purchaseProducts = sqliteProducts?.items ??
-        widget.store.products
+        widget.store.catalog.products
             .where((product) => product.trackStock && product.isActive)
             .toList();
     var purchaseSuppliers = sqliteSuppliers?.items ??
-        widget.store.suppliers.toList(growable: false);
+        widget.store.commerce.suppliers.toList(growable: false);
     String supplierId = source?.supplierId ??
         (purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.id : '');
     String supplierName = source?.supplierName ??
         (purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.name : '');
-    final initialWarehouse = widget.store.resolveWarehouseForPurchase(
+    final initialWarehouse = widget.store.inventory.resolveWarehouseForPurchase(
       warehouseId: source?.warehouseId ?? '',
     );
     String selectedWarehouseId = initialWarehouse.id;
@@ -644,7 +644,7 @@ extension _PurchasesPageStateMethods2 on _PurchasesPageState {
           orElse: () => '',
         );
     String costCurrency = sourceCurrency.isEmpty
-        ? widget.store.storeProfile.defaultProductCurrency
+        ? widget.store.runtime.profile.defaultProductCurrency
         : sourceCurrency;
     bool receiveNow = editingPostedPurchase;
 

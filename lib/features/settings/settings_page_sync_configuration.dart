@@ -3,7 +3,7 @@ part of 'settings_page.dart';
 
 extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
   String _runtimeClientTransport() {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final state = SyncDeviceStateStore.load(identity);
     final active = state.activeTransport.trim().toLowerCase();
     if (active == 'lan' || active == 'direct') return active;
@@ -17,7 +17,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
     // Do not treat the local cache as an entitlement. The Admin subscription
     // response must positively authorize Direct on every verification.
     bool? planAllowed;
-    final identityAtStart = widget.store.appIdentity;
+    final identityAtStart = widget.store.runtime.identity;
     final directAtStart = VpsControlPlaneSettings.load();
 
     String boolLabel(bool? value) {
@@ -101,7 +101,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
       }
 
       if (!mounted) return;
-      final identity = widget.store.appIdentity;
+      final identity = widget.store.runtime.identity;
       setState(() {
         _directSyncPlanAllowed = planAllowed;
         _directEnabled = identity.isDirectEnabled;
@@ -146,7 +146,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
   }
 
   bool get _hasUnsavedSyncChanges {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final lan = LanSyncSettings.load();
     final role = identity.isClient ? DeviceRole.client : DeviceRole.host;
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
@@ -161,7 +161,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
   }
 
   void _resetSyncDraft({String? status}) {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final lan = LanSyncSettings.load();
     final direct = DirectSyncSettings.load();
     setState(() {
@@ -184,7 +184,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
   }
 
   Future<void> _testCurrentConnection() async {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (identity.isHost || _deviceRole == DeviceRole.host) {
       await _testPairedClientConnections();
       return;
@@ -224,15 +224,15 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
   }
 
   Future<void> _saveSyncSettings() => _run(() async {
-        widget.store.requirePermission(AppPermission.syncManage);
-        final identity = widget.store.appIdentity;
+        widget.store.security.requirePermission(AppPermission.syncManage);
+        final identity = widget.store.runtime.identity;
         final tr = AppLocalizations.of(context);
         if (_deviceRole == DeviceRole.host) {
           if (_directEnabled && _directSyncPlanDenied) {
             throw Exception(tr.text('direct_sync_plan_required'));
           }
           final effectiveDirectEnabled = _effectiveDirectEnabled;
-          await widget.store.updateAppIdentityLocalOnly(
+          await widget.store.sync.updateAppIdentityLocalOnly(
             identity.copyWith(
               deviceRole: DeviceRole.host,
               syncMode: effectiveDirectEnabled
@@ -248,7 +248,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
           );
           final existingLan = LanSyncSettings.load();
           final migratedLan =
-              existingLan.withMigratedHostRegistry(widget.store.deviceId);
+              existingLan.withMigratedHostRegistry(widget.store.sync.deviceId);
           await LanSyncSettings(
             host: _lanHostController.text.trim().isEmpty
                 ? migratedLan.host
@@ -290,7 +290,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
           if (activeTransport == 'direct' && !directConfigured) {
             throw Exception('Direct is not configured on this device.');
           }
-          await widget.store.updateAppIdentityLocalOnly(
+          await widget.store.sync.updateAppIdentityLocalOnly(
             identity.copyWith(
               deviceRole: DeviceRole.client,
               syncMode: _clientSyncMode,
@@ -312,7 +312,7 @@ extension _SyncConfiguration on _UnifiedSyncSettingsCardState {
           await directSettings
               .copyWith(autoSyncEnabled: activeTransport == 'direct')
               .save();
-          await widget.store.setActiveSyncTransport(activeTransport);
+          await widget.store.sync.setActiveSyncTransport(activeTransport);
         }
         if (mounted) {
           _resetSyncDraft(

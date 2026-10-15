@@ -72,8 +72,8 @@ Future<void> _recoverSyncQueues(
   List<String> targets,
 ) async {
   for (final target in targets) {
-    await store.recoverStaleInProgressSyncQueue(target: target);
-    await store.retryFailedSyncQueue(target: target);
+    await store.sync.recoverStale(target: target);
+    await store.sync.retryFailed(target: target);
   }
 }
 
@@ -124,7 +124,7 @@ class UnifiedSyncFactory {
     VpsControlPlaneSettings? directSettings,
     LanSyncSettings? lanSettings,
   }) {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (identity.activeSyncTransportNormalized == 'direct') {
       return directEngine(store);
     }
@@ -179,7 +179,7 @@ class UnifiedAutoLanSyncController {
 
   bool _lanAllowedForCurrentRole(LanSyncSettings settings) {
     return UnifiedSyncPolicy.isLanAllowedForCurrentRole(
-      store.appIdentity,
+      store.runtime.identity,
       setupComplete: settings.setupComplete,
       isHostModeEnabled: settings.isHost,
       isClientModeEnabled: settings.isClient,
@@ -193,23 +193,23 @@ class UnifiedAutoLanSyncController {
 
     // A LAN-only Host is the authority; it must not retain legacy queue rows
     // that were incorrectly targeted back to the Host itself.
-    await store.settleLegacyLanHostQueue();
+    await store.sync.settleLegacyLanHostQueue();
     // Reconcile Direct Host events that were already acknowledged before the
     // current process started. This also repairs queues created by test runs
     // without requiring a new data mutation.
-    await store.settleHostQueueThroughPeerAck();
+    await store.sync.settleHostQueueThroughPeerAck();
 
     final allowed = _lanAllowedForCurrentRole(settings);
     SyncDiagnosticsLog.add(
-      '[SYNC_TRACE] autoLan:start device=${store.deviceId} '
-      'role=${store.appIdentity.deviceRole.name} allowed=$allowed '
+      '[SYNC_TRACE] autoLan:start device=${store.sync.deviceId} '
+      'role=${store.runtime.identity.deviceRole.name} allowed=$allowed '
       'auto=${settings.autoSyncEnabled} mode=${settings.mode.name} '
       'host=${settings.host}:${settings.port}',
     );
     if (!allowed) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
           .stopHostIfSupported();
-    } else if (store.appIdentity.isHost && settings.isHost) {
+    } else if (store.runtime.identity.isHost && settings.isHost) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
           .registerCurrentHost(transportName: 'lan');
     }
@@ -219,7 +219,7 @@ class UnifiedAutoLanSyncController {
     _restartPeriodicTimer(settings);
 
     if (allowed &&
-        store.appIdentity.isClient &&
+        store.runtime.identity.isClient &&
         settings.autoSyncEnabled &&
         settings.isClient) {
       unawaited(_signalLoop());
@@ -317,7 +317,7 @@ class UnifiedAutoLanSyncController {
           .stopHostIfSupported());
       return;
     }
-    if (store.appIdentity.isHost && settings.isHost) {
+    if (store.runtime.identity.isHost && settings.isHost) {
       unawaited(UnifiedSyncFactory.lanEngine(store, settings: settings)
           .registerCurrentHost(transportName: 'lan'));
       return;
@@ -337,7 +337,7 @@ class UnifiedAutoLanSyncController {
     } else {
       await engine.registerCurrentHost(transportName: 'lan');
     }
-    if (store.appIdentity.isClient &&
+    if (store.runtime.identity.isClient &&
         _lanAllowedForCurrentRole(settings) &&
         settings.autoSyncEnabled &&
         settings.isClient) {
@@ -383,10 +383,10 @@ class UnifiedAutoLanSyncController {
     _running = true;
     try {
       SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] autoLan:runClientSync start device=${store.deviceId} '
+        '[SYNC_TRACE] autoLan:runClientSync start device=${store.sync.deviceId} '
         'queue=${await LocalDatabaseService.pendingSyncQueueCountForTarget('host', readyOnly: false)}',
       );
-      await store.retryFailedSyncQueue(target: UnifiedSyncQueueTarget.host);
+      await store.sync.retryFailed(target: UnifiedSyncQueueTarget.host);
       final result =
           await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow(
         onProgress: _snapshotOnlyProgress('LAN'),
@@ -436,8 +436,8 @@ class UnifiedAutoDirectSyncController {
 
   void _onStoreChanged() {
     if (_disposed ||
-        store.appIdentity.activeSyncTransportNormalized != 'direct' ||
-        !store.appIdentity.isClient) {
+        store.runtime.identity.activeSyncTransportNormalized != 'direct' ||
+        !store.runtime.identity.isClient) {
       return;
     }
     _localPushDebounce?.cancel();
@@ -449,8 +449,8 @@ class UnifiedAutoDirectSyncController {
     _signalLoopRunning = true;
     try {
       while (!_disposed) {
-        if (store.appIdentity.activeSyncTransportNormalized != 'direct' ||
-            store.appIdentity.isHost) {
+        if (store.runtime.identity.activeSyncTransportNormalized != 'direct' ||
+            store.runtime.identity.isHost) {
           await Future<void>.delayed(const Duration(seconds: 5));
           continue;
         }
@@ -469,19 +469,19 @@ class UnifiedAutoDirectSyncController {
 
   Future<void> _tick() async {
     if (_disposed ||
-        store.appIdentity.activeSyncTransportNormalized != 'direct') {
+        store.runtime.identity.activeSyncTransportNormalized != 'direct') {
       return;
     }
     if (_running) {
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] [DIRECT_RUN] skipped reason=already_running device=${store.deviceId}');
+          '[SYNC_TRACE] [DIRECT_RUN] skipped reason=already_running device=${store.sync.deviceId}');
       return;
     }
     _running = true;
     final runId = 'direct-run-${++_syncRunCounter}';
     final runWatch = Stopwatch()..start();
     SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] [DIRECT_RUN] start runId=$runId device=${store.deviceId}');
+        '[SYNC_TRACE] [DIRECT_RUN] start runId=$runId device=${store.sync.deviceId}');
     try {
       final result = await UnifiedSyncFactory.directEngine(store).syncNow();
       SyncDiagnosticsLog.add(

@@ -44,7 +44,7 @@ void main() {
     expect(expenses, contains(':expense_edit:v'));
     expect(accounting, contains(r"'$normalizedReferenceId:expense_edit:'"));
     expect(reversal, contains(':expense_edit:'));
-    expect(ui, contains('widget.store.editPostedExpense('));
+    expect(ui, contains('widget.store.commerce.editPostedExpense('));
   });
 
   test(
@@ -95,7 +95,7 @@ void main() {
     expect(accounting,
         contains(r"'$normalizedReferenceId:inventory_adjustment_edit:'"));
     expect(ui, contains('_editManualAdjustment('));
-    expect(ui, contains('widget.store.editStockAdjustment('));
+    expect(ui, contains('widget.store.inventory.editStockAdjustment('));
   });
 
   test(
@@ -120,7 +120,7 @@ void main() {
     expect(note, contains('final int version;'));
     expect(accounting, contains(r"'$normalizedReferenceId:sale_return_edit:'"));
     expect(ui, contains('_editLatestSaleReturn('));
-    expect(ui, contains('widget.store.editSaleReturn('));
+    expect(ui, contains('widget.store.commerce.editSaleReturn('));
   });
 
   test('completed manufacturing edit is atomic versioned and batch-traceable',
@@ -170,7 +170,7 @@ void main() {
         contains('Edited purchase return left an active stock receipt.'));
     expect(purchases,
         contains('Edited purchase return left an active purchase journal.'));
-    expect(ui, contains('widget.store.editPurchaseReturn('));
+    expect(ui, contains('widget.store.commerce.editPurchaseReturn('));
     expect(ui, contains('editingReturnedPurchase'));
   });
 }

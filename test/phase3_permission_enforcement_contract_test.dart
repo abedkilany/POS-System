@@ -5,7 +5,6 @@ import 'package:ventio/core/services/cash_operation_service.dart';
 import 'package:ventio/core/storage/sqlite/ventio_drift_database.dart';
 import 'package:ventio/models/user_role.dart';
 import 'support/test_business_session_context.dart';
-import 'helpers/app_store_source.dart';
 import 'helpers/accounting_page_source.dart';
 import 'helpers/settings_page_source.dart';
 import 'helpers/sales_page_source.dart';
@@ -107,26 +106,29 @@ void main() {
       final settings = readSettingsPageImplementationSource();
       expect(
         settings,
-        contains('widget.store.requirePermission(AppPermission.syncManage);'),
+        contains(
+          'widget.store.security.requirePermission(AppPermission.syncManage);',
+        ),
       );
     });
 
     test('derived manage flags do not grant unrelated permissions', () {
-      final store = readAppStoreImplementationSource();
-      final normalizedStore = store.replaceAll(RegExp(r'\s+'), ' ');
+      final security = _source('lib/data/app_store_domains.dart');
+      final normalizedSecurity = security.replaceAll(RegExp(r'\s+'), ' ');
 
       expect(
-        normalizedStore,
+        normalizedSecurity,
         contains(
           'bool get canManagePurchases => hasPermission(AppPermission.purchasesManage);',
         ),
       );
-      final inventoryStart = store.indexOf('bool get canManageInventory =>');
+      final inventoryStart =
+          security.lastIndexOf('bool get canManageInventory =>');
       final inventoryEnd =
-          store.indexOf('bool get canViewReports', inventoryStart);
+          security.indexOf('bool get canViewReports', inventoryStart);
       expect(inventoryStart, greaterThanOrEqualTo(0));
       expect(inventoryEnd, greaterThan(inventoryStart));
-      final inventoryBlock = store.substring(inventoryStart, inventoryEnd);
+      final inventoryBlock = security.substring(inventoryStart, inventoryEnd);
       expect(inventoryBlock, isNot(contains('inventoryMovementsView')));
     });
 

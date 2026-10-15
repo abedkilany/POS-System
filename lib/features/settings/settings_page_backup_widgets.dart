@@ -224,7 +224,7 @@ class _AutoLocalBackupSettingsCardState
     if (settings == null) {
       return const Center(child: LinearProgressIndicator());
     }
-    final disabled = widget.store.appIdentity.isClient;
+    final disabled = widget.store.runtime.identity.isClient;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -684,7 +684,7 @@ class _GoogleDriveBackupSettingsCardState
     if (settings == null) {
       return const Center(child: LinearProgressIndicator());
     }
-    final disabled = widget.store.appIdentity.isClient;
+    final disabled = widget.store.runtime.identity.isClient;
     final connected = settings.isAuthorized;
     final showDeveloperSetup = _showAdvancedSetup;
     final googleConfigured =

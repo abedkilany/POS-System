@@ -9,8 +9,8 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
 
   Future<void> _refreshPricingData() async {
     try {
-      await widget.store.refreshAfterDatabaseChange('price_lists_v1');
-      await widget.store.refreshAfterDatabaseChange('product_prices_v1');
+      await widget.store.runtime.refreshAfterDatabaseChange('price_lists_v1');
+      await widget.store.runtime.refreshAfterDatabaseChange('product_prices_v1');
     } catch (_) {
       // If the targeted refresh fails, the page will still fall back to the
       // existing store state instead of blocking the UI.
@@ -95,7 +95,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
     AppLocalizations tr,
     String localeTag,
   ) {
-    final allProducts = widget.store.products;
+    final allProducts = widget.store.catalog.products;
     final products = _filteredProducts(allProducts);
     final categories = _categoriesFor(allProducts);
     _syncProductReveal(products.length);
@@ -115,7 +115,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
   Future<_ProductsQueryResult?> _queryProductsFromSqlite(String value) {
     final limit = math.max(1, _visibleProductCount);
     final key =
-        '${widget.store.productsPageRevision}|$value|$categoryFilter|$limit';
+        '${widget.store.catalog.productsPageRevision}|$value|$categoryFilter|$limit';
     if (_productsQueryFuture == null || _productsQueryFutureKey != key) {
       _productsQueryFutureKey = key;
       _productsQueryFuture = () async {
@@ -129,7 +129,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
             await LocalDatabaseService.queryProductCategoriesFromSqlite() ??
                 const <String>[];
         final costSnapshots =
-            await widget.store.productCostSnapshotsForProducts(page.items);
+            await widget.store.catalog.productCostSnapshotsForProducts(page.items);
         return _ProductsQueryResult(
           items: page.items,
           totalCount: page.totalCount,
@@ -174,7 +174,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
     bool loading = false,
     VoidCallback? onLoadMore,
   }) {
-    final canBulkAdjustPrices = widget.store.hasAnyPermission(<String>{
+    final canBulkAdjustPrices = widget.store.security.hasAnyPermission(<String>{
       AppPermission.productsManage,
       AppPermission.productsEdit,
     });
@@ -223,28 +223,28 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
                   label: Text(tr.text('price_list')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: widget.store.canManageProducts
+                  onPressed: widget.store.security.canManageProducts
                       ? () => _openCatalogManager(context, 'category')
                       : null,
                   icon: const Icon(Icons.category_outlined),
                   label: Text(tr.text('manage_categories')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: widget.store.canManageProducts
+                  onPressed: widget.store.security.canManageProducts
                       ? () => _openCatalogManager(context, 'brand')
                       : null,
                   icon: const Icon(Icons.label_outline),
                   label: Text(tr.text('brand')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: widget.store.canManageProducts
+                  onPressed: widget.store.security.canManageProducts
                       ? () => _openCatalogManager(context, 'unit')
                       : null,
                   icon: const Icon(Icons.straighten_outlined),
                   label: Text(tr.text('manage_units')),
                 ),
                 FilledButton.icon(
-                  onPressed: widget.store.canManageProducts
+                  onPressed: widget.store.security.canManageProducts
                       ? () => _openProductForm(context)
                       : null,
                   icon: const Icon(Icons.add),
@@ -384,12 +384,12 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
                                     context,
                                     row.product,
                                   ),
-                                  onEdit: widget.store.canManageProducts
+                                  onEdit: widget.store.security.canManageProducts
                                       ? () => _openProductForm(context,
                                           product: row.product)
                                       : null,
                                   onDelete: widget.store
-                                          .hasAnyPermission(<String>{
+                                          .security.hasAnyPermission(<String>{
                                     AppPermission.productsDelete,
                                     AppPermission.productsManage,
                                   })
@@ -421,7 +421,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
   }
 
   double _roundedPreviewPrice(double amount, String currencyCode) {
-    final decimals = widget.store.storeProfile
+    final decimals = widget.store.runtime.profile
         .currencyByCode(currencyCode)
         .decimalPlaces
         .clamp(0, 6);
@@ -432,8 +432,8 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
   Future<void> _openBulkPriceAdjustment(BuildContext context) async {
     if (_selectedProductIds.isEmpty) return;
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-    await widget.store.ensureProductsLoaded();
-    await widget.store.ensureProductPricesLoaded();
+    await widget.store.catalog.ensureLoaded();
+    await widget.store.catalog.ensureProductPricesLoaded();
     if (!context.mounted) return;
     var priceListId = 'retail';
     var increase = true;
@@ -448,7 +448,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
           final percentage = double.tryParse(
                   percentController.text.trim().replaceAll(',', '.')) ??
               0;
-          final selectedProducts = widget.store.products
+          final selectedProducts = widget.store.catalog.products
               .where((item) => _selectedProductIds.contains(item.id))
               .toList(growable: false);
           final previewRows = <String>[];
@@ -459,7 +459,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
               percentage.isFinite &&
               (increase || percentage <= 100);
           for (final product in selectedProducts) {
-            final price = widget.store.productPriceFor(
+            final price = widget.store.catalog.productPriceFor(
               product.id,
               priceListId,
             );
@@ -636,7 +636,7 @@ extension _ProductsPageStatePart1 on _ProductsPageState {
                         setDialogState(() => submitting = true);
                         try {
                           final result =
-                              await widget.store.bulkAdjustProductPrices(
+                              await widget.store.catalog.bulkAdjustProductPrices(
                             productIds: _selectedProductIds,
                             priceListId: priceListId,
                             percentage: percentage,

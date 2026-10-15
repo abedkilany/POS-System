@@ -22,8 +22,10 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final store = widget.store;
-    final canManageRoles = store.hasPermission(AppPermission.rolesManage);
-    final canManageUsers = store.hasPermission(AppPermission.usersManage);
+    final canManageRoles =
+        store.security.hasPermission(AppPermission.rolesManage);
+    final canManageUsers =
+        store.security.hasPermission(AppPermission.usersManage);
     if (!canManageRoles && !canManageUsers) {
       return _AccessDeniedScaffold(
         title: tr.text('users_permissions'),
@@ -52,7 +54,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                 label: Text(tr.text('add_role')),
               ),
             ),
-            for (final role in store.roles)
+            for (final role in store.security.roles)
               Card(
                 child: ListTile(
                   leading: Icon(role.isSystem
@@ -91,12 +93,12 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
             _SectionHeader(
               title: tr.text('users'),
               action: FilledButton.icon(
-                onPressed: store.roles.isEmpty ? null : () => _editUser(),
+                onPressed: store.security.roles.isEmpty ? null : () => _editUser(),
                 icon: const Icon(Icons.person_add_alt),
                 label: Text(tr.text('add_user')),
               ),
             ),
-            for (final user in store.users)
+            for (final user in store.security.users)
               Card(
                 child: ListTile(
                   leading: CircleAvatar(
@@ -108,8 +110,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   ),
                   title: Text('${user.fullName} (${user.username})'),
                   subtitle: Text(user.isSystem && user.roleId == 'admin'
-                      ? '${store.roleById(user.roleId)?.name ?? user.roleId} • Store Owner • Full Access locked'
-                      : '${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
+                      ? '${store.security.roleById(user.roleId)?.name ?? user.roleId} • Store Owner • Full Access locked'
+                      : '${store.security.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
                   trailing: Wrap(
                     spacing: 8,
                     children: [
@@ -270,7 +272,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       return;
     }
     try {
-      await widget.store.addOrUpdateRole(result);
+      await widget.store.security.addOrUpdateRole(result);
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
@@ -311,7 +313,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       return;
     }
     try {
-      await widget.store.deleteRole(role.id);
+      await widget.store.security.deleteRole(role.id);
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
@@ -329,7 +331,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     final usernameController =
         TextEditingController(text: user?.username ?? '');
     final passwordController = TextEditingController();
-    String roleId = user?.roleId ?? widget.store.roles.first.id;
+    String roleId = user?.roleId ?? widget.store.security.roles.first.id;
     bool isActive = user?.isActive ?? true;
     final extra = Set<String>.from(user?.extraPermissions ?? const <String>{});
     final denied =
@@ -388,7 +390,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       initialValue: roleId,
                       decoration: InputDecoration(labelText: tr.text('role')),
                       items: [
-                        for (final role in widget.store.roles)
+                        for (final role in widget.store.security.roles)
                           DropdownMenuItem(
                               value: role.id, child: Text(role.name)),
                       ],
@@ -532,8 +534,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       return;
     }
     try {
-      await widget.store
-          .addOrUpdateUser(result.user, password: result.password);
+      await widget.store.security.addOrUpdateUser(result.user, password: result.password);
       if (mounted) {
         setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
@@ -738,7 +739,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       return;
     }
     try {
-      await widget.store.deleteUser(user.id);
+      await widget.store.security.deleteUser(user.id);
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {

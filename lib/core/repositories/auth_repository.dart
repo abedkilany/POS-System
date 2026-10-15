@@ -13,9 +13,9 @@ class AuthRepository {
     String password, {
     bool remember = false,
   }) async {
-    if (store.isSuspendedByHost) return false;
+    if (store.runtime.isSuspendedByHost) return false;
     final normalized = username.trim().toLowerCase();
-    final users = store.users;
+    final users = store.security.users;
     final activeMatches = users
         .where(
           (user) =>
@@ -29,12 +29,12 @@ class AuthRepository {
           action: 'login_conflict',
           message: 'Duplicate active username prevented login.',
           details: 'username=$normalized count=${activeMatches.length}',
-          storeId: store.appIdentity.storeId,
-          branchId: store.appIdentity.branchId,
-          devicePlatform: store.appIdentity.platform.name,
-          deviceModel: store.appIdentity.deviceName.isNotEmpty
-              ? store.appIdentity.deviceName
-              : store.deviceId,
+          storeId: store.runtime.identity.storeId,
+          branchId: store.runtime.identity.branchId,
+          devicePlatform: store.runtime.identity.platform.name,
+          deviceModel: store.runtime.identity.deviceName.isNotEmpty
+              ? store.runtime.identity.deviceName
+              : store.sync.deviceId,
           isImportant: true,
         ),
       );
@@ -48,12 +48,12 @@ class AuthRepository {
           action: 'login_failed',
           message: 'User not found or inactive.',
           details: 'username=$normalized',
-          storeId: store.appIdentity.storeId,
-          branchId: store.appIdentity.branchId,
-          devicePlatform: store.appIdentity.platform.name,
-          deviceModel: store.appIdentity.deviceName.isNotEmpty
-              ? store.appIdentity.deviceName
-              : store.deviceId,
+          storeId: store.runtime.identity.storeId,
+          branchId: store.runtime.identity.branchId,
+          devicePlatform: store.runtime.identity.platform.name,
+          deviceModel: store.runtime.identity.deviceName.isNotEmpty
+              ? store.runtime.identity.deviceName
+              : store.sync.deviceId,
           isImportant: true,
         ),
       );
@@ -66,19 +66,19 @@ class AuthRepository {
           action: 'login_failed',
           message: 'Invalid credentials.',
           details: 'username=$normalized',
-          storeId: store.appIdentity.storeId,
-          branchId: store.appIdentity.branchId,
-          devicePlatform: store.appIdentity.platform.name,
-          deviceModel: store.appIdentity.deviceName.isNotEmpty
-              ? store.appIdentity.deviceName
-              : store.deviceId,
+          storeId: store.runtime.identity.storeId,
+          branchId: store.runtime.identity.branchId,
+          devicePlatform: store.runtime.identity.platform.name,
+          deviceModel: store.runtime.identity.deviceName.isNotEmpty
+              ? store.runtime.identity.deviceName
+              : store.sync.deviceId,
           isImportant: true,
         ),
       );
       return false;
     }
 
-    final role = store.roleById(user.roleId);
+    final role = store.security.roleById(user.roleId);
     final permissions = <String>{
       ...?role?.permissions,
       ...user.extraPermissions,
@@ -86,7 +86,7 @@ class AuthRepository {
     final roleName = role?.name ?? user.roleId;
     final now = DateTime.now();
     final updated = user.copyWith(lastLoginAt: now);
-    await store.applySessionUser(
+    await store.security.applySessionUser(
       activeUser: updated,
       currentRole: roleName,
       permissions: permissions,
@@ -100,14 +100,14 @@ class AuthRepository {
         details:
             'userId=${updated.id} username=${updated.username} remember=$remember',
         userId: updated.id,
-        storeId: store.appIdentity.storeId,
-        branchId: store.appIdentity.branchId,
-        sessionId: store.deviceId,
-        traceId: store.deviceId,
-        devicePlatform: store.appIdentity.platform.name,
-        deviceModel: store.appIdentity.deviceName.isNotEmpty
-            ? store.appIdentity.deviceName
-            : store.deviceId,
+        storeId: store.runtime.identity.storeId,
+        branchId: store.runtime.identity.branchId,
+        sessionId: store.sync.deviceId,
+        traceId: store.sync.deviceId,
+        devicePlatform: store.runtime.identity.platform.name,
+        deviceModel: store.runtime.identity.deviceName.isNotEmpty
+            ? store.runtime.identity.deviceName
+            : store.sync.deviceId,
         isImportant: true,
       ),
     );
@@ -115,8 +115,8 @@ class AuthRepository {
   }
 
   static Future<void> logout(AppStore store) async {
-    final user = store.activeUser;
-    await store.clearSessionUser();
+    final user = store.security.activeUser;
+    await store.security.clearSessionUser();
     unawaited(
       AppLogger.info(
         area: 'login',
@@ -125,24 +125,24 @@ class AuthRepository {
         details:
             user == null ? '' : 'userId=${user.id} username=${user.username}',
         userId: user?.id ?? '',
-        storeId: store.appIdentity.storeId,
-        branchId: store.appIdentity.branchId,
-        devicePlatform: store.appIdentity.platform.name,
-        deviceModel: store.appIdentity.deviceName.isNotEmpty
-            ? store.appIdentity.deviceName
-            : store.deviceId,
+        storeId: store.runtime.identity.storeId,
+        branchId: store.runtime.identity.branchId,
+        devicePlatform: store.runtime.identity.platform.name,
+        deviceModel: store.runtime.identity.deviceName.isNotEmpty
+            ? store.runtime.identity.deviceName
+            : store.sync.deviceId,
         isImportant: true,
       ),
     );
   }
 
   static Future<bool> hasLocalAdminUser(AppStore store) async {
-    final users = store.users;
+    final users = store.security.users;
     return users.any((user) => user.roleId == 'admin' && user.isActive);
   }
 
   static Future<bool> needsInitialAdminSetup(AppStore store) async {
-    final users = store.users;
+    final users = store.security.users;
     if (users.isEmpty) return true;
     if (users.length != 1) return false;
     final user = users.first;

@@ -79,7 +79,7 @@ class DirectPeerConnectionService {
       try {
         final material = await DirectPeerHandshake.authenticateHost(
           session: result,
-          identity: store.appIdentity,
+          identity: store.runtime.identity,
           expectedClientDeviceId: clientDeviceId,
           expectedClientPublicKey: await _signaling.fetchPeerPublicKey(
             signalingSettings,
@@ -263,7 +263,7 @@ class DirectPeerConnectionService {
       try {
         final material = await DirectPeerHandshake.authenticateClient(
           session: result!,
-          identity: store.appIdentity,
+          identity: store.runtime.identity,
           expectedHostDeviceId: hostDeviceId,
           expectedHostPublicKey: await _signaling.fetchPeerPublicKey(
             signalingSettings,
@@ -464,7 +464,7 @@ class DirectPeerConnectionService {
       try {
         final material = await DirectPeerHandshake.authenticateHost(
           session: result!,
-          identity: store.appIdentity,
+          identity: store.runtime.identity,
           expectedClientDeviceId: sourceDeviceId,
         );
         if (!connection.isCompleted) {

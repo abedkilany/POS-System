@@ -9,7 +9,8 @@ class SensitiveAction {
   static const String saleReverse = 'sales.reverse';
   static const String purchaseReverse = 'purchases.reverse';
   static const String databaseDestructive = 'database.destructive';
-  static const String storeOwnerCredentials = 'security.store_owner.credentials';
+  static const String storeOwnerCredentials =
+      'security.store_owner.credentials';
 }
 
 class SensitiveActionAuthRequiredException implements Exception {
@@ -23,7 +24,47 @@ class SensitiveActionAuthRequiredException implements Exception {
 }
 
 extension _AppStoreSplitAccessAuth on AppStore {
+  static const PermissionService _permissionService = PermissionService();
+
+  AppUser? get _activeUserReadImpl => _activeUser;
+
+  String get _currentRoleReadImpl => currentUserRole?.name ?? _currentRole;
+
+  bool _hasPermissionReadImpl(String permission) =>
+      _permissionService.hasPermission(
+        user: _activeUser,
+        roles: _roles,
+        permission: permission,
+      );
+
+  bool _canAccessPageReadImpl(String pageId) {
+    final page = AppPermission.pageById(pageId);
+    if (page == null) return false;
+    final permissions = page.navigationPermissions.isEmpty
+        ? page.permissions
+        : page.navigationPermissions;
+    return permissions.any(_hasPermissionReadImpl);
+  }
+
+  void _requirePermissionReadImpl(String permission) =>
+      _permissionService.requirePermission(
+        user: _activeUser,
+        roles: _roles,
+        permission: permission,
+      );
+
   Future<bool> authorizeSensitiveAction({
+    required String action,
+    required String password,
+    Duration validity = const Duration(minutes: 3),
+  }) =>
+      _authorizeSensitiveActionDomainImpl(
+        action: action,
+        password: password,
+        validity: validity,
+      );
+
+  Future<bool> _authorizeSensitiveActionDomainImpl({
     required String action,
     required String password,
     Duration validity = const Duration(minutes: 3),
@@ -73,12 +114,20 @@ extension _AppStoreSplitAccessAuth on AppStore {
   }
 
   void clearSensitiveActionAuthorization() {
+    _clearSensitiveActionAuthorizationDomainImpl();
+  }
+
+  void _clearSensitiveActionAuthorizationDomainImpl() {
     _sensitiveAuthorizationExpiresAt = null;
     _sensitiveAuthorizationUserId = '';
     _sensitiveAuthorizationActions.clear();
   }
 
   void requireSensitiveActionAuthorization(String action) {
+    _requireSensitiveActionAuthorizationDomainImpl(action);
+  }
+
+  void _requireSensitiveActionAuthorizationDomainImpl(String action) {
     // Domain tests use isolated stores without an interactive identity challenge.
     // Production paths never bypass this gate.
     if (LocalDatabaseService.isInMemoryStoreForTesting ||
@@ -98,15 +147,10 @@ extension _AppStoreSplitAccessAuth on AppStore {
   }
 
   bool canAccessPage(String pageId) {
-    final page = AppPermission.pageById(pageId);
-    if (page == null) return false;
-    final permissions = page.navigationPermissions.isEmpty
-        ? page.permissions
-        : page.navigationPermissions;
-    return hasAnyPermission(permissions);
+    return _canAccessPageReadImpl(pageId);
   }
 
-bool get hasLocalStoreData {
+  bool get hasLocalStoreData {
     final hasRealUser = _users.isNotEmpty && !_hasOnlyLegacyDefaultAdminUser;
     return hasRealUser ||
         _products.any((item) => !item.isDeleted) ||
@@ -124,7 +168,7 @@ bool get hasLocalStoreData {
         _accountTransactions.any((item) => !item.isDeleted);
   }
 
-Future<void> markSuspendedByHost({String reason = ''}) async {
+  Future<void> markSuspendedByHost({String reason = ''}) async {
     if (!appIdentity.isClient) return;
     await ClientSuspensionStateStore.markSuspended(reason: reason);
     if (_activeUser != null || _rememberLogin) {
@@ -136,38 +180,39 @@ Future<void> markSuspendedByHost({String reason = ''}) async {
     notifyListeners();
   }
 
-Future<void> clearSuspendedByHost() async {
+  Future<void> clearSuspendedByHost() async {
     if (!appIdentity.isClient) return;
     if (!ClientSuspensionStateStore.isSuspended) return;
     await ClientSuspensionStateStore.clear();
     notifyListeners();
   }
 
-Future<ThemeMode> loadThemeMode() async {
-    final raw = LocalDatabaseService.getString(AppStore._themeModeKey) ?? 'system';
+  Future<ThemeMode> loadThemeMode() async {
+    final raw =
+        LocalDatabaseService.getString(AppStore._themeModeKey) ?? 'system';
     return ThemeMode.values.firstWhere(
       (mode) => mode.name == raw,
       orElse: () => ThemeMode.system,
     );
   }
 
-Future<void> saveThemeMode(ThemeMode mode) async {
+  Future<void> saveThemeMode(ThemeMode mode) async {
     await LocalDatabaseService.setString(AppStore._themeModeKey, mode.name);
   }
 
-Future<Locale> loadLocale() async {
+  Future<Locale> loadLocale() async {
     final raw = LocalDatabaseService.getString(AppStore._localeKey) ?? 'en';
     return ['en', 'ar', 'fr'].contains(raw) ? Locale(raw) : const Locale('en');
   }
 
-Future<void> saveLocale(Locale locale) async {
+  Future<void> saveLocale(Locale locale) async {
     final languageCode = ['en', 'ar', 'fr'].contains(locale.languageCode)
         ? locale.languageCode
         : 'en';
     await LocalDatabaseService.setString(AppStore._localeKey, languageCode);
   }
 
-bool get _hasOnlyLegacyDefaultAdminUser {
+  bool get _hasOnlyLegacyDefaultAdminUser {
     if (_users.length != 1) return false;
     final user = _users.first;
     final legacyPassword = String.fromCharCodes(const [
@@ -186,7 +231,7 @@ bool get _hasOnlyLegacyDefaultAdminUser {
         user.lastLoginAt == null;
   }
 
-Future<void> completeInitialAdminSetup({
+  Future<void> completeInitialAdminSetup({
     required String fullName,
     required String username,
     required String password,
@@ -272,7 +317,7 @@ Future<void> completeInitialAdminSetup({
     notifyListeners();
   }
 
-Future<void> recoverOnlineStoreOwnerIdentity({
+  Future<void> recoverOnlineStoreOwnerIdentity({
     required String storeId,
     required String branchId,
     required String storeName,
@@ -389,35 +434,22 @@ Future<void> recoverOnlineStoreOwnerIdentity({
     notifyListeners();
   }
 
-UserRole? roleById(String id) {
+  UserRole? roleById(String id) {
     for (final role in _roles) {
       if (role.id == id) return role;
     }
     return null;
   }
 
-bool hasPermission(String permission) {
-    if (_activeUser == null) return false;
-    final role = roleById(_activeUser!.roleId);
-    // The built-in admin role is privileged by identity as well as by its
-    // persisted role record. This keeps permissions stable while role data is
-    // being rehydrated or refreshed from the local database.
-    if (_activeUser!.roleId == 'admin' || role?.isAdmin == true) return true;
-    final effective = <String>{
-      ...?role?.permissions,
-      ..._activeUser!.extraPermissions,
-    };
-    effective.removeAll(_activeUser!.deniedPermissions);
-    return effective.contains(permission);
+  bool hasPermission(String permission) {
+    return _hasPermissionReadImpl(permission);
   }
 
-void requirePermission(String permission) {
-    if (!hasPermission(permission)) {
-      throw StateError('You do not have permission: $permission');
-    }
+  void requirePermission(String permission) {
+    _requirePermissionReadImpl(permission);
   }
 
-void requireAnyPermission(Iterable<String> permissions) {
+  void requireAnyPermission(Iterable<String> permissions) {
     final required = permissions.toList(growable: false);
     if (required.isEmpty || !hasAnyPermission(required)) {
       throw StateError(
@@ -426,14 +458,14 @@ void requireAnyPermission(Iterable<String> permissions) {
     }
   }
 
-void requireAllPermissions(Iterable<String> permissions) {
+  void requireAllPermissions(Iterable<String> permissions) {
     final required = permissions.toList(growable: false);
     for (final permission in required) {
       requirePermission(permission);
     }
   }
 
-double get totalSalesAmount {
+  double get totalSalesAmount {
     final gross = _sales
         .where((sale) => !sale.isCancelled)
         .fold<double>(0, (sum, sale) => sum + sale.total);
@@ -446,5 +478,4 @@ double get totalSalesAmount {
         returnedOnInvoices > 0 ? returnedOnInvoices : creditedInLedger;
     return (gross - credited).clamp(0, double.infinity).toDouble();
   }
-
 }

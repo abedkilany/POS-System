@@ -141,21 +141,21 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       localizeRuntimeMessage(message, AppLocalizations.of(context));
 
   String _roleLabel() {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (identity.isHost) return _t('connection_role_host');
     if (identity.isClient) return _t('connection_role_client');
     return _t('connection_role_local');
   }
 
   String _roleMessage() {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (identity.isHost) return _t('connection_role_host_desc');
     if (identity.isClient) return _t('connection_role_client_desc');
     return _t('connection_role_local_desc');
   }
 
   String _activeTransportLabel() {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (identity.isHost) {
       final lan =
           UnifiedSyncFactory.isLanSetupComplete ? _t('connection_lan') : '';
@@ -173,7 +173,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   bool _isActiveTransport(_TransportSnapshot snapshot) {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (identity.isHost) {
       if (snapshot.label == _t('connection_lan')) {
         return UnifiedSyncFactory.isLanSetupComplete;
@@ -196,7 +196,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       );
     }
 
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final settings = LanSyncSettings.load();
     final hasSavedLanSettings =
         settings.host.trim().isNotEmpty || settings.secret.trim().isNotEmpty;
@@ -262,7 +262,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   Future<_TransportSnapshot> _readDirectStatus() async {
     final tr = AppLocalizations.of(context);
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     final settings = DirectSyncSettings.load();
     final directEnabledForRole = identity.isHost
         ? true
@@ -314,22 +314,22 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   _TransportSnapshot _readSyncHealthStatus() {
-    final identity = widget.store.appIdentity;
-    final pending = widget.store.isSyncDataLoaded
+    final identity = widget.store.runtime.identity;
+    final pending = widget.store.runtime.isSyncDataLoaded
         ? (identity.isClient
-            ? widget.store.activeClientPendingSyncCount
-            : widget.store.pendingSyncCount)
+            ? widget.store.sync.activeClientPendingCount
+            : widget.store.sync.pendingCount)
         : 0;
     final lastSuccessfulSync =
         SyncDeviceStateStore.lastSuccessfulSyncAt(identity);
 
-    if (identity.isClient && widget.store.isSuspendedByHost) {
+    if (identity.isClient && widget.store.runtime.isSuspendedByHost) {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
         state: _TransportState.suspended,
-        message: widget.store.suspendedByHostReason.trim().isEmpty
+        message: widget.store.runtime.suspendedByHostReason.trim().isEmpty
             ? _t('client_suspended_by_host_desc')
-            : _rt(widget.store.suspendedByHostReason),
+            : _rt(widget.store.runtime.suspendedByHostReason),
         lastSuccessfulSyncAt: lastSuccessfulSync,
       );
     }
@@ -402,10 +402,10 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           state: _TransportState.checking,
           message: _t('connection_sync_checking')),
       activeTransportLabel: _activeTransportLabel(),
-      pendingChanges: widget.store.isSyncDataLoaded
-          ? (widget.store.appIdentity.isClient
-              ? widget.store.activeClientPendingSyncCount
-              : widget.store.pendingSyncCount)
+      pendingChanges: widget.store.runtime.isSyncDataLoaded
+          ? (widget.store.runtime.identity.isClient
+              ? widget.store.sync.activeClientPendingCount
+              : widget.store.sync.pendingCount)
           : 0,
     );
     if (mounted) setState(() => _snapshot = checking);
@@ -422,10 +422,10 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         direct: direct,
         syncHealth: syncHealth,
         activeTransportLabel: _activeTransportLabel(),
-        pendingChanges: widget.store.isSyncDataLoaded
-            ? (widget.store.appIdentity.isClient
-                ? widget.store.activeClientPendingSyncCount
-                : widget.store.pendingSyncCount)
+        pendingChanges: widget.store.runtime.isSyncDataLoaded
+            ? (widget.store.runtime.identity.isClient
+                ? widget.store.sync.activeClientPendingCount
+                : widget.store.sync.pendingCount)
             : 0,
       );
     });
@@ -488,7 +488,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   _TransportSnapshot get _activeConnectionSnapshot {
-    final identity = widget.store.appIdentity;
+    final identity = widget.store.runtime.identity;
     if (identity.isHost) {
       final candidates = <_TransportSnapshot>[];
       if (UnifiedSyncFactory.isLanSetupComplete) candidates.add(_snapshot.lan);
@@ -552,7 +552,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     if (sync.state == _TransportState.active) return _t('synced');
     if (sync.state == _TransportState.suspended) return _t('suspended');
     if (sync.state == _TransportState.pending) {
-      return widget.store.appIdentity.isClient
+      return widget.store.runtime.identity.isClient
           ? _t('sync_pending')
           : _t('connection_state_pending');
     }

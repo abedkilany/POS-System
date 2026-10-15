@@ -421,7 +421,7 @@ class _ReportError extends StatelessWidget {
 }
 
 String _money(AppStore store, double amount) =>
-    formatUsdReferenceAmount(amount, store.storeProfile);
+    formatUsdReferenceAmount(amount, store.runtime.profile);
 
 String _dateText(DateTime date) =>
     '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';

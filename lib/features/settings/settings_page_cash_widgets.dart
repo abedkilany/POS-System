@@ -23,10 +23,9 @@ class _SaleWarehouseSettingsCardState
   }
 
   Future<void> _load() async {
-    await widget.store.ensureWarehousesLoaded();
-    _selectedWarehouseId = widget.store
-        .resolveWarehouseForSale(
-          warehouseId: widget.store.saleWarehouseId,
+    await widget.store.inventory.ensureWarehousesLoaded();
+    _selectedWarehouseId = widget.store.inventory.resolveWarehouseForSale(
+          warehouseId: widget.store.inventory.saleWarehouseId,
         )
         .id;
   }
@@ -39,7 +38,7 @@ class _SaleWarehouseSettingsCardState
       _saving = true;
     });
     try {
-      await widget.store.setSaleWarehouseId(id);
+      await widget.store.inventory.setSaleWarehouseId(id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(AppLocalizations.of(context).text('saved'))),
@@ -67,7 +66,7 @@ class _SaleWarehouseSettingsCardState
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const LinearProgressIndicator();
           }
-          final warehouses = widget.store.warehouses;
+          final warehouses = widget.store.inventory.warehouses;
           if (warehouses.isEmpty) {
             return Text(tr.text('no_warehouses'));
           }
@@ -115,8 +114,8 @@ class _CurrentDeviceCashDrawerSettingsCardState
   String _selectedDrawerId = '';
   bool _saving = false;
 
-  String get _deviceId => widget.store.deviceId.trim();
-  String get _branchId => widget.store.appIdentity.branchId.trim();
+  String get _deviceId => widget.store.sync.deviceId.trim();
+  String get _branchId => widget.store.runtime.identity.branchId.trim();
 
   @override
   void initState() {
@@ -140,7 +139,7 @@ class _CurrentDeviceCashDrawerSettingsCardState
   }
 
   Future<void> _save() async {
-    widget.store.requirePermission(AppPermission.cashBoxManage);
+    widget.store.security.requirePermission(AppPermission.cashBoxManage);
     final tr = AppLocalizations.of(context);
     setState(() => _saving = true);
     try {
@@ -171,7 +170,7 @@ class _CurrentDeviceCashDrawerSettingsCardState
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final canManage = widget.store.hasPermission(AppPermission.cashBoxManage);
+    final canManage = widget.store.security.hasPermission(AppPermission.cashBoxManage);
     return _SectionCard(
       icon: Icons.point_of_sale_outlined,
       title: tr.text('current_device_cash_drawer'),

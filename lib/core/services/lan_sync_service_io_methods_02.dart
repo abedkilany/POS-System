@@ -61,7 +61,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
         final registry = HostRegistryDevice.migrateFromPairedDevices(
           paired,
           existing: settings.hostRegistry,
-          hostDeviceId: store.deviceId,
+          hostDeviceId: store.sync.deviceId,
         );
 
         // Single-use LAN pairing: immediately clear the pairing code after the
@@ -76,9 +76,9 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
           'message': 'LAN device paired successfully.',
           'deviceId': deviceId,
           'deviceToken': deviceToken,
-          'storeId': store.appIdentity.storeId,
-          'branchId': store.appIdentity.branchId,
-          'hostDeviceId': store.deviceId,
+          'storeId': store.runtime.identity.storeId,
+          'branchId': store.runtime.identity.branchId,
+          'hostDeviceId': store.sync.deviceId,
           'snapshotAvailable': true,
           'snapshotManifest': snapshotInfo['snapshotManifest'],
           'totalChunks': snapshotInfo['totalChunks'],
@@ -148,8 +148,8 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
         await _json(request, {
           'ok': true,
           'mode': 'host',
-          'deviceId': store.deviceId,
-          'pending': store.pendingSyncCount,
+          'deviceId': store.sync.deviceId,
+          'pending': store.sync.pendingCount,
           'generatedAt': DateTime.now().toIso8601String(),
         });
         return;
@@ -228,7 +228,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
         // Pull is delivery only. The Host must not mark changes as applied or
         // ACKed until the Client posts /changes/ack after local apply succeeds.
         request.response.headers.contentType = ContentType.json;
-        request.response.write(store.exportSyncChangesJson(
+        request.response.write(store.sync.exportChangesJson(
             since: since, sinceSequence: sinceSequence));
         await request.response.close();
         return;
@@ -258,8 +258,8 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
           appliedSequence: sequence,
           ackSequence: sequence,
         );
-        await store.settleHostQueueThroughPeerAck();
-        await store.compactSyncedSyncHistoryForMaintenance();
+        await store.sync.settleHostQueueThroughPeerAck();
+        await store.sync.compactSyncedHistoryForMaintenance();
         await _json(request,
             {'ok': true, 'serverTime': DateTime.now().toIso8601String()});
         return;
@@ -293,7 +293,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
         final accepted = await _syncCore.acceptClientChangesOnHost(
           changes,
           mirrorToDirect:
-              store.appIdentity.isDirectEnabled && store.appIdentity.isHost,
+              store.runtime.identity.isDirectEnabled && store.runtime.identity.isHost,
         );
         final clientDeviceId =
             decoded['deviceId']?.toString() ?? receivedDeviceId ?? '';
@@ -348,7 +348,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
   }
 
   Future<void> _handleRealtimeSocket(HttpRequest request) async {
-    if (!store.appIdentity.isHost) {
+    if (!store.runtime.identity.isHost) {
       request.response.statusCode = HttpStatus.forbidden;
       await request.response.close();
       return;
@@ -361,7 +361,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
     socket.add(jsonEncode({
       'type': 'realtime_welcome',
       'changed': false,
-      'hostDeviceId': store.deviceId,
+      'hostDeviceId': store.sync.deviceId,
       'serverTime': DateTime.now().toIso8601String(),
     }));
     socket.listen(
@@ -389,7 +389,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
       HttpClient()..connectionTimeout = const Duration(seconds: 15);
 
   Future<String?> discoverHost({int port = 8787}) async {
-    if (store.appIdentity.isHost || store.appIdentity.storeId.trim().isEmpty) {
+    if (store.runtime.identity.isHost || store.runtime.identity.storeId.trim().isEmpty) {
       return null;
     }
     RawDatagramSocket? socket;
@@ -400,9 +400,9 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
       final request = jsonEncode({
         'protocol': LanSyncService._discoveryProtocol,
         'type': 'discover',
-        'storeId': store.appIdentity.storeId,
-        'branchId': store.appIdentity.branchId,
-        'hostDeviceId': store.appIdentity.hostDeviceId,
+        'storeId': store.runtime.identity.storeId,
+        'branchId': store.runtime.identity.branchId,
+        'hostDeviceId': store.runtime.identity.hostDeviceId,
       });
       final completer = Completer<String?>();
       subscription = socket.listen((event) {
@@ -415,12 +415,12 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
                 decoded['protocol'] != LanSyncService._discoveryProtocol ||
                 decoded['type'] != 'host' ||
                 '${decoded['storeId'] ?? ''}'.trim() !=
-                    store.appIdentity.storeId.trim() ||
+                    store.runtime.identity.storeId.trim() ||
                 '${decoded['branchId'] ?? ''}'.trim() !=
-                    store.appIdentity.branchId.trim()) {
+                    store.runtime.identity.branchId.trim()) {
               continue;
             }
-            final expectedHostId = store.appIdentity.hostDeviceId.trim();
+            final expectedHostId = store.runtime.identity.hostDeviceId.trim();
             final discoveredHostId = '${decoded['hostDeviceId'] ?? ''}'.trim();
             if (expectedHostId.isNotEmpty &&
                 discoveredHostId != expectedHostId) {
@@ -450,7 +450,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
       try {
         final client = _client();
         final health = await client.get(host, port, '/health');
-        _attachToken(health, store.appIdentity.deviceToken);
+        _attachToken(health, store.runtime.identity.deviceToken);
         final response = await health.close();
         await utf8.decoder.bind(response).drain();
         client.close(force: true);
@@ -473,7 +473,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
 
   void _attachToken(HttpClientRequest request, String token,
       {String? deviceId}) {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     final headerDeviceId = (deviceId ?? identity.deviceId).trim();
     final headerToken =
         token.trim().isNotEmpty ? token.trim() : identity.deviceToken.trim();
@@ -488,7 +488,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
       {int port = 8787,
       required String code,
       LanSyncProgressCallback? onProgress}) async {
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     if (!UnifiedSyncPolicy.canClaimLanPairingCode(identity)) {
       return const LanSyncResult(
           ok: false,
@@ -506,9 +506,9 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode({
         'code': code.trim(),
-        'deviceId': store.deviceId,
-        'deviceName': store.appIdentity.deviceName,
-        'platform': store.appIdentity.platform.name,
+        'deviceId': store.sync.deviceId,
+        'deviceName': store.runtime.identity.deviceName,
+        'platform': store.runtime.identity.platform.name,
       }));
       final response = await request.close();
       final body = await utf8.decoder.bind(response).join();
@@ -543,7 +543,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
         return LanSyncResult(ok: false, message: mismatch);
       }
 
-      final current = store.appIdentity;
+      final current = store.runtime.identity;
       onProgress?.call(0.22, 'Registering this device...');
       final clientIdentity = UnifiedPairingLifecycle.buildClientIdentity(
         current,
@@ -551,7 +551,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
         syncMode: SyncMode.lanOnly,
         activeTransport: 'lan',
       );
-      await store.updateAppIdentityDuringSetup(clientIdentity);
+      await store.runtime.updateIdentityDuringSetup(clientIdentity);
       final snapshotEnvelope = await _downloadLanSnapshotEnvelope(
         host,
         port: port,
@@ -602,7 +602,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
       return LanSyncResult(
         ok: true,
         message: 'LAN pairing completed.',
-        identity: store.appIdentity,
+        identity: store.runtime.identity,
       );
     } catch (error) {
       return LanSyncResult(ok: false, message: 'LAN pairing failed: $error');
@@ -645,7 +645,7 @@ extension LanSyncServiceSplitPart2 on LanSyncService {
         host: host,
         port: port,
         token: token,
-        deviceId: deviceId ?? store.appIdentity.deviceId,
+        deviceId: deviceId ?? store.runtime.identity.deviceId,
         attachToken: _attachToken,
         newClient: _client,
       ),

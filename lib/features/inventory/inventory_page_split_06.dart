@@ -68,9 +68,9 @@ class _StockCountProductTile extends StatelessWidget {
     );
     if (shouldReset != true) return;
     try {
-      final activeSessionId = store.activeInventoryCountSession?.id;
+      final activeSessionId = store.inventory.activeInventoryCountSession?.id;
       if (activeSessionId == null) return;
-      await store.resetInventoryCountLine(
+      await store.inventory.resetInventoryCountLine(
         sessionId: activeSessionId,
         productId: product.id,
       );
@@ -110,9 +110,9 @@ class _StockCountProductTile extends StatelessWidget {
     );
     if (value == null) return;
     try {
-      final activeSessionId = store.activeInventoryCountSession?.id;
+      final activeSessionId = store.inventory.activeInventoryCountSession?.id;
       if (activeSessionId == null) return;
-      await store.countInventoryLine(
+      await store.inventory.countInventoryLine(
           sessionId: activeSessionId, productId: product.id, countedQty: value);
     } catch (error) {
       if (context.mounted) {
@@ -126,13 +126,13 @@ class _StockCountProductTile extends StatelessWidget {
 
 Future<void> _openWasteLossDialog(BuildContext context, AppStore store) async {
   final tr = AppLocalizations.of(context);
-  final products = store.stockTrackedProducts;
-  final warehouses = store.warehouses;
+  final products = store.catalog.stockTrackedProducts;
+  final warehouses = store.inventory.warehouses;
   if (products.isEmpty || warehouses.isEmpty) return;
   final quantityController = TextEditingController();
   final notesController = TextEditingController();
   var productId = products.first.id;
-  var warehouseId = store.resolveWarehouseForPurchase().id;
+  var warehouseId = store.inventory.resolveWarehouseForPurchase().id;
   var category = 'damage';
   final categories = <String, String>{
     'damage': tr.text('adjustment_damage'),
@@ -226,7 +226,7 @@ Future<void> _openWasteLossDialog(BuildContext context, AppStore store) async {
                   double.tryParse(quantityController.text.trim()) ?? 0;
               if (quantity <= 0) return;
               try {
-                await store.recordWasteLoss(
+                await store.inventory.recordWasteLoss(
                   productId: productId,
                   warehouseId: warehouseId,
                   quantity: quantity,
@@ -259,7 +259,7 @@ Future<void> _openWasteLossDialog(BuildContext context, AppStore store) async {
 }
 
 bool _hasWasteReversal(AppStore store, StockMovement movement) {
-  return store.stockMovements.any(
+  return store.inventory.stockMovements.any(
     (item) => item.reversalOfMovementId == movement.id,
   );
 }
@@ -285,7 +285,7 @@ Future<void> _showWasteLossDetails(
             _wasteDetailRow(tr.text('waste_detail_quantity'),
                 movement.quantity.abs().toString()),
             _wasteDetailRow(tr.text('waste_detail_value'),
-                formatUsdReferenceAmount(movement.value, store.storeProfile)),
+                formatUsdReferenceAmount(movement.value, store.runtime.profile)),
             _wasteDetailRow(tr.text('waste_detail_reason'),
                 _adjustmentCategoryLabel(tr, movement.adjustmentCategory)),
             _wasteDetailRow(
@@ -393,7 +393,7 @@ class _WasteLossReportDbState extends State<_WasteLossReportDb> {
 
   Future<_StockMovementsQueryResult?> _queryWasteLossFromSqlite() {
     final limit = _visibleCount.clamp(1, 500).toInt();
-    final key = '${widget.store.stockMovementsRevision}|$limit';
+    final key = '${widget.store.inventory.revision}|$limit';
     if (_future == null || _futureKey != key) {
       _futureKey = key;
       _future = () async {
@@ -420,7 +420,7 @@ class _WasteLossReportDbState extends State<_WasteLossReportDb> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!widget.store.hasAnyPermission(<String>{
+    if (!widget.store.security.hasAnyPermission(<String>{
       AppPermission.inventoryWasteView,
       AppPermission.reportsView,
     })) {
@@ -455,7 +455,7 @@ class _WasteLossReportDbState extends State<_WasteLossReportDb> {
           totalCount: result.totalCount,
           canManageWaste: widget.canManageWaste,
           onDelete: (movement) async {
-            await widget.store.deleteWasteLoss(movement.id);
+            await widget.store.inventory.deleteWasteLoss(movement.id);
             if (mounted) {
               setState(() {
                 _future = null;
@@ -536,7 +536,7 @@ class _WasteLossReportView extends StatelessWidget {
                 icon: Icons.remove_circle_outline),
             SummaryCard(
                 title: tr.text('loss_value'),
-                value: formatUsdReferenceAmount(totalValue, store.storeProfile),
+                value: formatUsdReferenceAmount(totalValue, store.runtime.profile),
                 icon: Icons.money_off_outlined),
           ],
         ),
@@ -578,7 +578,7 @@ class _WasteLossReportView extends StatelessWidget {
                       '${movement.date.toLocal().toString().substring(0, 16)}',
                     ),
                     trailing: Text(formatUsdReferenceAmount(
-                        movement.value, store.storeProfile)),
+                        movement.value, store.runtime.profile)),
                     onTap: () => _showWasteLossDetails(
                       context,
                       store,
@@ -613,7 +613,7 @@ class _WasteLossReportView extends StatelessWidget {
                         subtitle: Text(
                             '${tr.text('movements')}: ${entry.value.count} • ${tr.text('quantity')}: ${entry.value.quantity}'),
                         trailing: Text(formatUsdReferenceAmount(
-                            entry.value.value, store.storeProfile)),
+                            entry.value.value, store.runtime.profile)),
                       ),
                       const Divider(height: 1),
                     ],
@@ -649,7 +649,7 @@ class _WasteLossReport extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!store.hasAnyPermission(<String>{
+    if (!store.security.hasAnyPermission(<String>{
       AppPermission.inventoryWasteView,
       AppPermission.reportsView,
     })) {
@@ -659,9 +659,9 @@ class _WasteLossReport extends StatelessWidget {
       );
     }
     final lossMovements = _rowsCache.getOrCompute(
-      store.stockMovementsRevision,
-      store.appIdentity.storeId,
-      () => store.stockMovements
+      store.inventory.revision,
+      store.runtime.identity.storeId,
+      () => store.inventory.stockMovements
           .where((item) =>
               item.type == 'inventory_loss' ||
               (item.type == 'inventory_adjustment' && item.quantity < 0))
@@ -672,7 +672,7 @@ class _WasteLossReport extends StatelessWidget {
       movements: lossMovements,
       totalCount: lossMovements.length,
       canManageWaste: canManageWaste,
-      onDelete: (movement) => store.deleteWasteLoss(movement.id),
+      onDelete: (movement) => store.inventory.deleteWasteLoss(movement.id),
     );
   }
 }

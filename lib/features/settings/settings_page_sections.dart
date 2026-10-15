@@ -13,7 +13,7 @@ extension _Sections on SettingsPage {
 
   List<Widget> _generalCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final profile = store.storeProfile;
+    final profile = store.runtime.profile;
     final displayName =
         profile.tradeName.trim().isNotEmpty ? profile.tradeName : profile.name;
     final legalName =
@@ -35,7 +35,7 @@ extension _Sections on SettingsPage {
         title: tr.text('organization_general'),
         subtitle: tr.text('organization_general_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editOrganizationGeneral(context, profile)
               : null,
           icon: const Icon(Icons.edit_outlined),
@@ -71,7 +71,7 @@ extension _Sections on SettingsPage {
         title: tr.text('organization_legal'),
         subtitle: tr.text('organization_legal_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editOrganizationLegal(context, profile)
               : null,
           icon: const Icon(Icons.edit_outlined),
@@ -152,7 +152,7 @@ extension _Sections on SettingsPage {
         title: tr.text('organization_branding'),
         subtitle: tr.text('organization_branding_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editOrganizationBranding(context, profile)
               : null,
           icon: const Icon(Icons.edit_outlined),
@@ -184,9 +184,9 @@ extension _Sections on SettingsPage {
           title: Text(tr.text('allow_negative_stock')),
           subtitle: Text(tr.text('allow_negative_stock_desc')),
           value: profile.allowNegativeStock,
-          onChanged: store.hasPermission(AppPermission.settingsManage)
+          onChanged: store.security.hasPermission(AppPermission.settingsManage)
               ? (value) async {
-                  await store.updateStoreProfile(
+                  await store.runtime.updateStoreProfile(
                     profile.copyWith(allowNegativeStock: value),
                   );
                 }
@@ -202,9 +202,9 @@ extension _Sections on SettingsPage {
           title: Text(tr.text('allow_negative_cash_balance')),
           subtitle: Text(tr.text('allow_negative_cash_balance_desc')),
           value: profile.allowNegativeCashBalance,
-          onChanged: store.hasPermission(AppPermission.settingsManage)
+          onChanged: store.security.hasPermission(AppPermission.settingsManage)
               ? (value) async {
-                  await store.updateStoreProfile(
+                  await store.runtime.updateStoreProfile(
                     profile.copyWith(allowNegativeCashBalance: value),
                   );
                 }
@@ -277,7 +277,7 @@ extension _Sections on SettingsPage {
 
   List<Widget> _aboutCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
+    final identity = store.runtime.identity;
     return [
       _SectionCard(
         icon: Icons.info_outline,
@@ -302,7 +302,7 @@ extension _Sections on SettingsPage {
                 _InfoGridItem(Icons.dns_outlined, tr.text('device_role'),
                     identity.deviceRole.name),
                 _InfoGridItem(Icons.storefront_outlined, tr.text('store_name'),
-                    store.storeProfile.name),
+                    store.runtime.profile.name),
                 _InfoGridItem(Icons.sync, tr.text('sync_mode'),
                     identity.isHost ? tr.text('host') : identity.syncMode.name),
               ],
@@ -316,7 +316,7 @@ extension _Sections on SettingsPage {
 
   List<Widget> _documentCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final profile = store.storeProfile;
+    final profile = store.runtime.profile;
     final docs = profile.documentNumbering;
     return [
       _SectionCard(
@@ -324,7 +324,7 @@ extension _Sections on SettingsPage {
         title: tr.text('document_settings'),
         subtitle: tr.text('document_settings_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editDocumentNumbering(context, profile)
               : null,
           icon: const Icon(Icons.edit_outlined),
@@ -371,7 +371,7 @@ extension _Sections on SettingsPage {
 
   List<Widget> _branchCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final profile = store.storeProfile;
+    final profile = store.runtime.profile;
     final branches = profile.branches;
     return [
       _SectionCard(
@@ -379,7 +379,7 @@ extension _Sections on SettingsPage {
         title: tr.text('branches'),
         subtitle: tr.text('branches_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editBranch(context, profile, null)
               : null,
           icon: const Icon(Icons.add_outlined),
@@ -413,7 +413,7 @@ extension _Sections on SettingsPage {
                         tooltip: tr.text('edit'),
                         icon: const Icon(Icons.edit_outlined),
                         onPressed:
-                            store.hasPermission(AppPermission.settingsManage)
+                            store.security.hasPermission(AppPermission.settingsManage)
                                 ? () => _editBranch(context, profile, branch)
                                 : null,
                       ),
@@ -481,7 +481,7 @@ extension _Sections on SettingsPage {
 
   Widget _inventoryCostingCard(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final method = store.inventoryCostingMethod;
+    final method = store.inventory.inventoryCostingMethod;
     return _SectionCard(
       icon: Icons.inventory_2_outlined,
       title: tr.text('inventory_costing_method'),
@@ -504,11 +504,11 @@ extension _Sections on SettingsPage {
             tr.text('inventory_costing_method_note'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
-          if (store.costingMethodHistory.isNotEmpty) ...[
+          if (store.catalog.costingMethodHistory.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(tr.text('history'),
                 style: Theme.of(context).textTheme.titleSmall),
-            for (final row in store.costingMethodHistory.reversed.take(5))
+            for (final row in store.catalog.costingMethodHistory.reversed.take(5))
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
@@ -525,7 +525,7 @@ extension _Sections on SettingsPage {
 
   List<Widget> _financialCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final profile = store.storeProfile;
+    final profile = store.runtime.profile;
     final activeCurrencies =
         profile.currencies.where((item) => item.isActive).toList();
     final base = profile.currencyByCode(profile.baseCurrency);
@@ -538,7 +538,7 @@ extension _Sections on SettingsPage {
         title: tr.text('currencies_pricing'),
         subtitle: tr.text('currencies_pricing_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editFinancialSettings(context, profile)
               : null,
           icon: const Icon(Icons.edit_outlined),
@@ -583,7 +583,7 @@ extension _Sections on SettingsPage {
         title: tr.text('currencies'),
         subtitle: tr.text('currencies_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editCurrency(context, profile)
               : null,
           icon: const Icon(Icons.add_outlined),
@@ -609,7 +609,7 @@ extension _Sections on SettingsPage {
                       tooltip: tr.text('edit'),
                       icon: const Icon(Icons.edit_outlined),
                       onPressed:
-                          store.hasPermission(AppPermission.settingsManage)
+                          store.security.hasPermission(AppPermission.settingsManage)
                               ? () => _editCurrency(context, profile,
                                   currency: currency)
                               : null,
@@ -625,7 +625,7 @@ extension _Sections on SettingsPage {
         title: tr.text('exchange_rates'),
         subtitle: tr.text('exchange_rates_desc'),
         trailing: FilledButton.icon(
-          onPressed: store.hasPermission(AppPermission.settingsManage)
+          onPressed: store.security.hasPermission(AppPermission.settingsManage)
               ? () => _editExchangeRate(context, profile)
               : null,
           icon: const Icon(Icons.add_outlined),
@@ -654,7 +654,7 @@ extension _Sections on SettingsPage {
                 trailing: IconButton(
                   tooltip: tr.text('edit'),
                   icon: const Icon(Icons.edit_outlined),
-                  onPressed: store.hasPermission(AppPermission.settingsManage)
+                  onPressed: store.security.hasPermission(AppPermission.settingsManage)
                       ? () => _editExchangeRate(context, profile, rate: rate)
                       : null,
                 ),
@@ -677,7 +677,7 @@ extension _Sections on SettingsPage {
 
   List<Widget> _backupCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isClient = store.appIdentity.isClient;
+    final isClient = store.runtime.identity.isClient;
     return [
       Card(
         child: Padding(
@@ -714,9 +714,9 @@ extension _Sections on SettingsPage {
                       ? constraints.maxWidth
                       : (constraints.maxWidth - 12) / 2;
                   final hasStoreIdentity =
-                      store.appIdentity.hostDeviceId.trim().isNotEmpty;
+                      store.runtime.identity.hostDeviceId.trim().isNotEmpty;
                   final canRecoverStoreData =
-                      store.hasPermission(AppPermission.syncManage);
+                      store.security.hasPermission(AppPermission.syncManage);
                   final recoverLabelKey = hasStoreIdentity
                       ? 'recover_store_data'
                       : 'recover_store_identity';
@@ -735,7 +735,7 @@ extension _Sections on SettingsPage {
                           child: OutlinedButton.icon(
                             onPressed:
                                 (hasStoreIdentity && !canRecoverStoreData) ||
-                                        !store.hasPermission(
+                                        !store.security.hasPermission(
                                             AppPermission.backupManage)
                                     ? null
                                     : () => _recoverExistingStore(context),
@@ -746,7 +746,7 @@ extension _Sections on SettingsPage {
                         SizedBox(
                           width: itemWidth,
                           child: OutlinedButton.icon(
-                            onPressed: store.hasAnyPermission(<String>{
+                            onPressed: store.security.hasAnyPermission(<String>{
                               AppPermission.backupRestore,
                               AppPermission.backupManage,
                             })
@@ -759,7 +759,7 @@ extension _Sections on SettingsPage {
                         SizedBox(
                           width: itemWidth,
                           child: FilledButton.icon(
-                            onPressed: store.hasAnyPermission(<String>{
+                            onPressed: store.security.hasAnyPermission(<String>{
                               AppPermission.backupExport,
                               AppPermission.backupManage,
                             })
@@ -772,7 +772,7 @@ extension _Sections on SettingsPage {
                         SizedBox(
                           width: itemWidth,
                           child: OutlinedButton.icon(
-                            onPressed: store.hasAnyPermission(<String>{
+                            onPressed: store.security.hasAnyPermission(<String>{
                               AppPermission.backupRestore,
                               AppPermission.backupManage,
                             })
@@ -802,8 +802,8 @@ extension _Sections on SettingsPage {
 
   Widget _dataManagementTile(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isHost = store.appIdentity.isHost;
-    final isClient = store.appIdentity.isClient;
+    final isHost = store.runtime.identity.isHost;
+    final isClient = store.runtime.identity.isClient;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -835,7 +835,7 @@ extension _Sections on SettingsPage {
             child: FilledButton.icon(
               style: FilledButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error),
-              onPressed: store.hasPermission(AppPermission.databaseManage)
+              onPressed: store.security.hasPermission(AppPermission.databaseManage)
                   ? () => _resetBusinessData(context)
                   : null,
               icon: const Icon(Icons.delete_forever_outlined),
@@ -846,7 +846,7 @@ extension _Sections on SettingsPage {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: store.hasPermission(AppPermission.syncManage)
+              onPressed: store.security.hasPermission(AppPermission.syncManage)
                   ? () => _clearLocalData(context)
                   : null,
               icon: const Icon(Icons.cleaning_services_outlined),
@@ -857,7 +857,7 @@ extension _Sections on SettingsPage {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: store.hasPermission(AppPermission.syncManage)
+              onPressed: store.security.hasPermission(AppPermission.syncManage)
                   ? () => _rebuildFromHost(context)
                   : null,
               icon: const Icon(Icons.restore_page_outlined),
@@ -871,7 +871,7 @@ extension _Sections on SettingsPage {
 
   List<Widget> _adminCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!store.canManageUsers) {
+    if (!store.security.canManageUsers) {
       return [
         Card(
           child: ListTile(
@@ -888,11 +888,11 @@ extension _Sections on SettingsPage {
           leading: const Icon(Icons.people),
           title: Text(tr.text('users_permissions')),
           subtitle: Text(tr.format('signed_in_as_role', {
-            'user': store.activeUser?.fullName ?? tr.text('unknown_user'),
-            'role': store.currentRole
+            'user': store.security.activeUser?.fullName ?? tr.text('unknown_user'),
+            'role': store.security.currentRole
           })),
           trailing: FilledButton.icon(
-            onPressed: store.canManageUsers
+            onPressed: store.security.canManageUsers
                 ? () => Navigator.push(
                     context,
                     MaterialPageRoute(

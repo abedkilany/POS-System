@@ -17,10 +17,10 @@ class AccountingSnapshotService {
       <String, Map<String, Object?>>{};
 
   String _cacheKey(AppStore store, DateTime reference) =>
-      '$_cacheKeyPrefix:${store.appIdentity.storeId}:${store.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
+      '$_cacheKeyPrefix:${store.runtime.identity.storeId}:${store.accounting.revision}:${reference.year}-${reference.month}-${reference.day}';
 
   String _sqliteCacheKey(AppStore store, DateTime reference) =>
-      '$_cacheKeyPrefix:${store.appIdentity.storeId}:${store.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
+      '$_cacheKeyPrefix:${store.runtime.identity.storeId}:${store.accounting.revision}:${reference.year}-${reference.month}-${reference.day}';
 
   Map<String, Object?>? peekMetrics(AppStore store, {DateTime? now}) {
     final reference = (now ?? DateTime.now()).toLocal();
@@ -80,7 +80,8 @@ class AccountingSnapshotService {
           category: 'accounting',
         );
         if (sqliteMetrics != null) {
-          final enriched = await _enrichFinancialMetrics(sqliteMetrics, reference);
+          final enriched =
+              await _enrichFinancialMetrics(sqliteMetrics, reference);
           _summaryCache[_cacheKey(store, reference)] = enriched;
           unawaited(_saveCachedMetrics(store, reference, enriched));
           return enriched;
@@ -95,8 +96,10 @@ class AccountingSnapshotService {
       () async {
         final summary = _computeSnapshotFromStore(store, reference);
         try {
-          final start = DateTime(reference.year, reference.month, reference.day);
-          final end = start.add(const Duration(days: 1))
+          final start =
+              DateTime(reference.year, reference.month, reference.day);
+          final end = start
+              .add(const Duration(days: 1))
               .subtract(const Duration(microseconds: 1));
           final cashSummary = await CashLedgerService.current().summary(
             from: start,
@@ -197,7 +200,7 @@ Map<String, Object?> _computeSnapshotFromStore(
   AppStore store,
   DateTime reference,
 ) {
-  final transactions = store.accountTransactions;
+  final transactions = store.accounting.transactions;
 
   final accountBalances = <String, double>{};
   var customerReceivables = 0.0;

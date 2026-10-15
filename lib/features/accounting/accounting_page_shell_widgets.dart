@@ -402,7 +402,7 @@ class _SummaryTile extends StatelessWidget {
                       style: Theme.of(context).textTheme.labelMedium),
                   const SizedBox(height: 3),
                   Text(
-                    formatUsdReferenceAmount(metric.amount, store.storeProfile),
+                    formatUsdReferenceAmount(metric.amount, store.runtime.profile),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context)

@@ -265,9 +265,9 @@ class AssistantConversationService {
   }
 
   static _AssistantScope _currentScope(AppStore store) {
-    final user = store.activeUser;
+    final user = store.security.activeUser;
     final userId = user?.id.trim() ?? '';
-    final storeId = store.appIdentity.storeId.trim();
+    final storeId = store.runtime.identity.storeId.trim();
     if (user == null || !user.isActive || userId.isEmpty || storeId.isEmpty) {
       throw const AssistantConversationException(
         'active_user_required',

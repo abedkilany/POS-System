@@ -24,12 +24,12 @@ class _AssistantChatPageState extends State<AssistantChatPage> {
   String? _configurationError;
 
   bool get _hasReportAccess =>
-      widget.store.canViewAccounting ||
-      widget.store.canViewSales ||
-      widget.store.canViewPurchases ||
-      widget.store.canViewExpenses ||
-      widget.store.canViewCashBox ||
-      widget.store.canViewInventory;
+      widget.store.security.canViewAccounting ||
+      widget.store.security.canViewSales ||
+      widget.store.security.canViewPurchases ||
+      widget.store.security.canViewExpenses ||
+      widget.store.security.canViewCashBox ||
+      widget.store.security.canViewInventory;
 
   @override
   void initState() {

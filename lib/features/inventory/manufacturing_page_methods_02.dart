@@ -4,12 +4,12 @@ part of 'manufacturing_page.dart';
 
 extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
   Future<void> _showBomDialog({BillOfMaterials? bom}) async {
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryManufacturingManage,
     )) {
       return;
     }
-    final products = widget.store.stockTrackedProducts;
+    final products = widget.store.catalog.stockTrackedProducts;
     if (products.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_t('create_two_stock_products_first'))));
@@ -288,14 +288,14 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
         ));
       }
       if (bom == null) {
-        await widget.store.createBillOfMaterials(
+        await widget.store.inventory.createBillOfMaterials(
           name: nameController.text,
           outputProductId: selectedOutput.id,
           outputQuantity: double.tryParse(outputQtyController.text) ?? 1,
           components: components,
         );
       } else {
-        await widget.store.updateBillOfMaterials(
+        await widget.store.inventory.updateBillOfMaterials(
           id: bom.id,
           name: nameController.text,
           outputProductId: selectedOutput.id,
@@ -337,7 +337,7 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
     );
     if (confirmed != true) return;
     try {
-      await widget.store.deleteBillOfMaterials(bom.id);
+      await widget.store.inventory.deleteBillOfMaterials(bom.id);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -347,20 +347,22 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
   }
 
   Future<void> _showCompleteOrderDialog(BillOfMaterials bom) async {
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryManufacturingManage,
     )) return;
     final qtyController =
         TextEditingController(text: bom.outputQuantity.toString());
-    final warehouses = widget.store.warehouses;
+    final warehouses = widget.store.inventory.warehouses;
     if (warehouses.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_t('warehouse_not_found'))),
       );
       return;
     }
-    var rawWarehouseId = widget.store.resolveWarehouseForPurchase().id;
-    var finishedWarehouseId = widget.store.resolveWarehouseForSale().id;
+    var rawWarehouseId =
+        widget.store.inventory.resolveWarehouseForPurchase().id;
+    var finishedWarehouseId =
+        widget.store.inventory.resolveWarehouseForSale().id;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -374,7 +376,7 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
             orElse: () => warehouses.first,
           );
           final componentAvailability = bom.components.map((component) {
-            final available = widget.store
+            final available = widget.store.inventory
                 .stockForWarehouse(component.productId, rawWarehouse.id);
             return '${component.productName}: ${available.toStringAsFixed(2)}';
           }).toList(growable: false);
@@ -443,7 +445,8 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
                     ...componentAvailability.map(Text.new),
                     const SizedBox(height: 12),
                     FutureBuilder<double>(
-                      future: widget.store.estimateBillOfMaterialsUnitCost(
+                      future: widget.store.inventory
+                          .estimateBillOfMaterialsUnitCost(
                         bom,
                         warehouseId: rawWarehouse.id,
                       ),
@@ -487,7 +490,7 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
     if (!mounted) return;
     try {
       final quantity = double.tryParse(qtyController.text) ?? 0;
-      await widget.store.startManufacturingOrder(
+      await widget.store.inventory.startManufacturingOrder(
         bomId: bom.id,
         quantity: quantity,
         rawMaterialsWarehouseId: rawWarehouseId,
@@ -512,7 +515,7 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
   Future<void> _confirmDeleteManufacturingOrder(
     ManufacturingOrder order,
   ) async {
-    if (!widget.store.hasPermission(
+    if (!widget.store.security.hasPermission(
       AppPermission.inventoryManufacturingManage,
     )) {
       return;
@@ -556,7 +559,7 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
     if (confirmed != true || !mounted) return;
 
     try {
-      await widget.store.deleteManufacturingOrder(order.id);
+      await widget.store.inventory.deleteManufacturingOrder(order.id);
       if (!mounted) return;
       setState(() {
         _selectedOrderIds.remove(order.id);
@@ -584,7 +587,7 @@ extension _ManufacturingPageStatePart2 on _ManufacturingPageState {
 
   Future<void> _showOrderDetails(ManufacturingOrder order) async {
     BillOfMaterials? bom;
-    for (final candidate in widget.store.billsOfMaterials) {
+    for (final candidate in widget.store.inventory.billsOfMaterials) {
       if (candidate.id == order.bomId) {
         bom = candidate;
         break;
