@@ -78,9 +78,8 @@ void main() {
       );
     });
 
-    test('high-risk sync and developer actions have internal guards', () {
+    test('high-risk sync actions have internal guards', () {
       final identity = _source('lib/data/app_store_identity_users.dart');
-      final access = _source('lib/data/app_store_access_auth.dart');
 
       expect(
         identity,
@@ -101,13 +100,6 @@ void main() {
         contains(
           'Future<void> activateApprovedHostTransfer() async {\n'
           '    requirePermission(AppPermission.syncManage);',
-        ),
-      );
-      expect(
-        access,
-        contains(
-          'Future<void> setStressLabEnabled(bool enabled) async {\n'
-          '    requirePermission(AppPermission.maintenanceManage);',
         ),
       );
       final settings = _source('lib/features/settings/settings_page.dart');

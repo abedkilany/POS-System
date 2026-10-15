@@ -7,6 +7,8 @@ Business operations are stored locally in SQLite and shared between authorized d
 
 `README.md` is the canonical project-level documentation for the current Ventio architecture, operating rules, and release gates. Do not add phase-completion, fix-report, audit-report, or temporary implementation Markdown files in the project root or a separate `docs/` folder. Historical implementation detail belongs in version control; durable behavior belongs here and in executable tests.
 
+AI coding tools should start with [`AGENTS.md`](AGENTS.md) for concise task-to-code routing and context-loading rules.
+
 ## Pure DB-First Contract
 
 SQLite is the only source of truth for business, accounting, inventory, and manufacturing state. SharedPreferences may contain presentation preferences or connection settings only; it is not a business datastore. legacy JSON blobs are compatibility input and are never used as the runtime source of truth.
@@ -217,7 +219,7 @@ Windows remains the required environment for the desktop integration suite. Also
 
 ## Current release
 
-- Version: `1.0.63+63`
+- Version: `1.0.64+64`
 - Primary client: Flutter.
 - Local operational database: SQLite.
 - Direct control plane: Ventio VPS API.

@@ -1931,7 +1931,7 @@ void _recordSyncChange({
       final queued = _enqueueSyncChange(changeId, now);
       // If no sync transport is enabled by the current Sync settings, keep the
       // local audit envelope but mark it complete immediately. This prevents
-      // Stress Lab/local-only usage from accumulating misleading pending LAN work
+      // local-only usage from accumulating misleading pending LAN work
       // just because a legacy AppIdentity still says syncMode=lanOnly.
       final change = queued == null
           ? draftChange.copyWith(isSynced: true, syncedAt: now)
@@ -2075,7 +2075,7 @@ SyncQueueItem? _enqueueSyncChange(String changeId, DateTime now) {
     // authoritative locally, but Clients still need a broadcast wake-up and
     // must be able to pull them from the Host timeline. Previously Host local
     // writes were marked synced immediately and never reached the publish
-    // path, which is especially visible under Stress Lab.
+    // path, which is especially visible under synthetic sync workloads.
     final target =
         isLanClient || isDirectClient || isDirectHost ? 'host' : 'local';
     if (target == 'local') return null;

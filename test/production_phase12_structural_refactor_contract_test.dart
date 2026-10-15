@@ -63,8 +63,6 @@ void main() {
   });
 
   test('Phase 12 domain ports are consumed by production UI paths', () {
-    final stress =
-        File('lib/features/dev_tools/stress_lab_page.dart').readAsStringSync();
     final settings =
         File('lib/features/settings/settings_page_backup.dart').readAsStringSync();
     final accounting =
@@ -77,9 +75,6 @@ void main() {
     final purchases =
         File('lib/features/purchases/purchases_page.dart').readAsStringSync();
 
-    expect(stress, contains('store.security.authorizeSensitiveAction('));
-    expect(stress, contains('store.security.clearSensitiveActionAuthorization()'));
-    expect(stress, contains('store.recovery.exportBackupJson()'));
     expect(settings, contains('store.recovery.importBackupJson('));
     expect(settings, contains('store.recovery.exportRecoveryFileJson('));
     expect(guard, contains('store.security.authorizeSensitiveAction('));

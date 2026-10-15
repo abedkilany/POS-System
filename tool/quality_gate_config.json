@@ -8,7 +8,6 @@
     "lib/features/**/*_page.dart",
     "lib/features/**/*_page_*.dart",
     "lib/features/**/*_widgets.dart",
-    "lib/features/dev_tools/stress_lab_page.dart",
     "lib/features/maintenance/diagnostics_page.dart",
     "lib/features/settings/settings_page_backup.dart",
     "lib/core/services/*_io.dart",

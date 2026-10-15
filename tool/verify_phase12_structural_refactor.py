@@ -9,7 +9,6 @@ DOMAINS = (ROOT / 'lib/data/app_store_domains.dart').read_text(encoding='utf-8')
 COMPAT = (ROOT / 'lib/data/app_store_forwarding_api.dart').read_text(encoding='utf-8')
 ORCH = (ROOT / 'lib/data/app_store_orchestration.dart').read_text(encoding='utf-8')
 DATABASE = (ROOT / 'lib/core/storage/sqlite/ventio_drift_database.dart').read_text(encoding='utf-8')
-STRESS = (ROOT / 'lib/features/dev_tools/stress_lab_page.dart').read_text(encoding='utf-8')
 SETTINGS = (ROOT / 'lib/features/settings/settings_page_backup.dart').read_text(encoding='utf-8')
 ACCOUNTING = (ROOT / 'lib/features/accounting/accounting_page.dart').read_text(encoding='utf-8')
 DASHBOARD = (ROOT / 'lib/features/dashboard/dashboard_snapshot_service.dart').read_text(encoding='utf-8')
@@ -53,8 +52,6 @@ check('AppStore exposes typed domains', all(
         'CatalogDomainPort', 'CommerceDomainPort', 'AccountingDomainPort',
         'InventoryDomainPort', 'SecurityDomainPort', 'SyncDomainPort',
         'RecoveryDomainPort')))
-check('Stress Lab uses security domain', 'store.security.authorizeSensitiveAction(' in STRESS)
-check('Stress Lab uses recovery domain', 'store.recovery.exportBackupJson()' in STRESS)
 check('Settings restore uses recovery domain', 'store.recovery.importBackupJson(' in SETTINGS)
 check('Sensitive action guard uses security domain', 'store.security.authorizeSensitiveAction(' in GUARD)
 check('Accounting UI uses accounting domain', 'store.accounting.accountBalance(' in ACCOUNTING and 'store.accounting.transactions' in ACCOUNTING)

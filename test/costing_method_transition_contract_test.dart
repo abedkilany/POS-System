@@ -13,8 +13,6 @@ void main() {
   final closure = File(
           'lib/core/services/unified_batch_phase4_closure_service.dart')
       .readAsStringSync();
-  final lab = File('lib/features/dev_tools/stress_lab_page.dart')
-      .readAsStringSync();
 
   test('Phase 4 locks production costing to Unified Batch', () {
     expect(store, contains('InventoryCostingMethod.batch;'));
@@ -38,9 +36,4 @@ void main() {
     expect(integrity, contains('SUM(bb.quantity * b.unit_cost)'));
   });
 
-  test('scenario lab verifies the permanent Phase 4 lock', () {
-    expect(lab, contains('S13 Unified Batch Lock'));
-    expect(lab, contains('legacySwitchBlocked=true'));
-    expect(lab, contains("openHistory=batch:1"));
-  });
 }

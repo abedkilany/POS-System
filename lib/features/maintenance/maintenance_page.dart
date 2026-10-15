@@ -1,6 +1,3 @@
-import 'dart:async';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,7 +8,6 @@ import '../../data/app_store.dart';
 import '../../models/user_role.dart';
 import '../../core/localization/app_localizations.dart';
 import '../database/database_page.dart';
-import '../dev_tools/stress_lab_page.dart';
 import 'diagnostics_page.dart';
 import 'disaster_recovery_service.dart';
 import 'maintenance_models.dart';
@@ -33,17 +29,9 @@ class _MaintenancePageState extends State<MaintenancePage> {
   bool _loading = true;
   bool _lastRunWasDeep = false;
   bool _showDatabaseExplorer = false;
-  int _advancedToolsTapCount = 0;
-  bool _stressLabUnlocked = false;
-  bool _stressLabButtonHidden = false;
   bool _phase7Running = false;
   bool _recoveryRunning = false;
   bool _costRepairRunning = false;
-  Timer? _stressLabHideTimer;
-  bool get _showAdvancedTools =>
-      kDebugMode || widget.store.canManageMaintenance;
-  bool get _showStressLabButton =>
-      !_stressLabButtonHidden && _stressLabUnlocked;
 
   @override
   void initState() {
@@ -314,41 +302,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
     };
   }
 
-  void _unlockStressLab() {
-    if (_stressLabUnlocked) return;
-    final nextCount = _advancedToolsTapCount + 1;
-    if (nextCount < 7) {
-      setState(() => _advancedToolsTapCount = nextCount);
-      return;
-    }
-    setState(() {
-      _advancedToolsTapCount = 0;
-      _stressLabUnlocked = true;
-      _stressLabButtonHidden = false;
-    });
-    _stressLabHideTimer?.cancel();
-    _stressLabHideTimer = Timer(const Duration(seconds: 30), () {
-      if (!mounted) return;
-      _hideStressLabButton();
-    });
-  }
-
-  void _hideStressLabButton() {
-    _stressLabHideTimer?.cancel();
-    _stressLabHideTimer = null;
-    if (!mounted) {
-      _advancedToolsTapCount = 0;
-      _stressLabUnlocked = false;
-      _stressLabButtonHidden = true;
-      return;
-    }
-    setState(() {
-      _advancedToolsTapCount = 0;
-      _stressLabUnlocked = false;
-      _stressLabButtonHidden = true;
-    });
-  }
-
   String _formatBytes(int bytes) {
     if (bytes <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
@@ -492,8 +445,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
 
   @override
   void dispose() {
-    _hideStressLabButton();
-    _stressLabHideTimer?.cancel();
     super.dispose();
   }
 
@@ -638,7 +589,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
         padding: const EdgeInsets.all(16),
         children: [
           const SizedBox(height: 16),
-          if (_showAdvancedTools) _buildAdvancedToolsCard(tr),
           Row(
             children: [
               const Icon(Icons.health_and_safety_outlined, size: 32),
@@ -896,101 +846,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
           ],
         ),
       ],
-    );
-  }
-
-  Future<void> _openRealUserScenario() async {
-    final tr = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('comprehensive_scenario_lab')),
-        content: Text(tr.text('comprehensive_scenario_lab_desc')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(tr.text('cancel')),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            icon: const Icon(Icons.play_arrow),
-            label: Text(tr.text('run')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    await widget.store.setStressLabEnabled(true);
-    if (!mounted) return;
-    _hideStressLabButton();
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PageTimingScope(
-          key: const ValueKey('RealUserScenarioPage'),
-          pageKey: 'RealUserScenarioPage',
-          pageLabel: 'Comprehensive scenario lab',
-          child: StressLabPage(
-            store: widget.store,
-            autoRunRealUserScenario: true,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAdvancedToolsCard(AppLocalizations tr) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            InkWell(
-              key: const ValueKey('AdvancedToolsUnlockTarget'),
-              onTap: _unlockStressLab,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(tr.text('advanced_tools')),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                if (_showStressLabButton) ...[
-                  FilledButton.icon(
-                    key: const ValueKey('RealUserScenarioLaunchButton'),
-                    onPressed: _openRealUserScenario,
-                    icon: const Icon(Icons.play_circle_outline),
-                    label: Text(tr.text('comprehensive_scenario_lab')),
-                  ),
-                  FilledButton.icon(
-                    key: const ValueKey('StressLabButton'),
-                    onPressed: () async {
-                      await widget.store.setStressLabEnabled(true);
-                      if (!mounted) return;
-                      _hideStressLabButton();
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => PageTimingScope(
-                            key: const ValueKey('StressLabPage'),
-                            pageKey: 'StressLabPage',
-                            pageLabel: 'Stress lab',
-                            child: StressLabPage(store: widget.store),
-                          ),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.speed_outlined),
-                    label: Text(tr.text('stress_lab')),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

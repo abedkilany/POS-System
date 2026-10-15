@@ -25,7 +25,6 @@ import 'core/services/startup_timing_service.dart';
 import 'core/shortcuts/app_shortcuts.dart';
 import 'data/app_store.dart';
 import 'widgets/shortcut_key_picker.dart';
-import 'features/dev_tools/stress_lab_coverage_manifest.dart';
 import 'features/accounting/accounting_page.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
@@ -105,7 +104,35 @@ class _VentioAppState extends State<VentioApp> {
   }
 
   void _registerPageTimings() {
-    for (final page in stressLabRegisteredPages) {
+    const registeredPages = <({String key, String label})>[
+      (key: 'LoginGatePage', label: 'Login gate'),
+      (key: 'MainShell', label: 'Main shell'),
+      (key: 'DashboardPage', label: 'Dashboard'),
+      (key: 'ProductsPage', label: 'Products'),
+      (key: 'CustomersPage', label: 'Customers'),
+      (key: 'SuppliersPage', label: 'Suppliers'),
+      (key: 'SalesPage', label: 'Sales'),
+      (key: 'QuotationsPage', label: 'Quotations'),
+      (key: 'DeliveryNotesPage', label: 'Delivery notes'),
+      (key: 'PurchasesPage', label: 'Purchases'),
+      (key: 'ExpensesPage', label: 'Expenses'),
+      (key: 'AccountingPage', label: 'Accounting'),
+      (key: 'InventoryPage', label: 'Inventory'),
+      (key: 'ManufacturingPage', label: 'Manufacturing'),
+      (key: 'ReportsPage', label: 'Reports'),
+      (key: 'MaintenancePage', label: 'Maintenance'),
+      (key: 'DatabasePage', label: 'Database'),
+      (key: 'SettingsPage', label: 'Settings'),
+      (key: 'AdminSubscribersPage', label: 'Admin subscribers'),
+      (key: 'StoreAccountDashboardPage', label: 'Store account dashboard'),
+      (key: 'PlatformAdminDashboardPage', label: 'Platform admin dashboard'),
+      (key: 'DiagnosticsPage', label: 'Diagnostics'),
+      (key: 'SyncSetupPage', label: 'Sync setup'),
+      (key: 'UsersPermissionsPage', label: 'Users permissions'),
+      (key: 'BarcodeScannerPage', label: 'Barcode scanner'),
+      (key: '_NoAccessPage', label: 'No access'),
+    ];
+    for (final page in registeredPages) {
       StartupTimingService.registerPage(
         pageKey: page.key,
         pageLabel: page.label,

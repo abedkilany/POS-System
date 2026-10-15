@@ -167,43 +167,6 @@ Future<void> saveLocale(Locale locale) async {
     await LocalDatabaseService.setString(AppStore._localeKey, languageCode);
   }
 
-Map<String, dynamic> _loadDevFeatureFlags() {
-    final raw = LocalDatabaseService.getString(AppStore._devFeatureFlagsKey);
-    if (raw == null || raw.trim().isEmpty) return <String, dynamic>{};
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        return Map<String, dynamic>.from(decoded);
-      }
-      if (decoded is Map) {
-        return decoded.map((key, value) => MapEntry(key.toString(), value));
-      }
-    } catch (_) {
-      // Keep Developer/QA feature gates safe-by-default if the local setting is malformed.
-    }
-    return <String, dynamic>{};
-  }
-
-bool get isStressLabEnabled {
-    final flags = _loadDevFeatureFlags();
-    final value = flags[AppStore._stressLabEnabledFlag];
-    if (value is bool) return value;
-    if (value is String) return value.trim().toLowerCase() == 'true';
-    return false;
-  }
-
-Future<void> setStressLabEnabled(bool enabled) async {
-    requirePermission(AppPermission.maintenanceManage);
-    final flags = _loadDevFeatureFlags();
-    flags[AppStore._stressLabEnabledFlag] = enabled;
-    flags['updatedAt'] = DateTime.now().toUtc().toIso8601String();
-    await LocalDatabaseService.setString(
-      AppStore._devFeatureFlagsKey,
-      jsonEncode(flags),
-    );
-    notifyListeners();
-  }
-
 bool get _hasOnlyLegacyDefaultAdminUser {
     if (_users.length != 1) return false;
     final user = _users.first;

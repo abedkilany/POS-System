@@ -357,12 +357,6 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
   Future<void> saveLocale(Locale locale) =>
       _AppStoreSplitAccessAuth(this as AppStore).saveLocale(locale);
 
-  bool get isStressLabEnabled =>
-      _AppStoreSplitAccessAuth(this as AppStore).isStressLabEnabled;
-
-  Future<void> setStressLabEnabled(bool enabled) =>
-      _AppStoreSplitAccessAuth(this as AppStore).setStressLabEnabled(enabled);
-
   bool get _hasOnlyLegacyDefaultAdminUser =>
       _AppStoreSplitAccessAuth(this as AppStore)._hasOnlyLegacyDefaultAdminUser;
 

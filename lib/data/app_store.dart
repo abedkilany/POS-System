@@ -406,8 +406,6 @@ class AppStore extends ChangeNotifier
       'host_transfer_approved_device_v1';
   static const _hostTransferRequestKey = 'host_transfer_request_v1';
   static const _hostTransferNotificationKey = 'host_transfer_notification_v1';
-  static const _devFeatureFlagsKey = 'dev_feature_flags_v1';
-  static const _stressLabEnabledFlag = 'stressLabEnabled';
   static const int _maxPurchaseAccountingBacklog = 200;
 
   @override
