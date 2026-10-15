@@ -3,19 +3,18 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   test('pure db-first contract is documented and startup is db-first', () {
     final readme = File('README.md').readAsStringSync();
     final appStore = readAppStoreImplementationSource();
     final appStoreRecovery =
-        File('lib/data/app_store_recovery.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_recovery.dart');
     final localDatabaseService =
-        File('lib/core/services/local_database_service.dart')
-            .readAsStringSync();
-    final dashboardSnapshot =
-        File('lib/features/dashboard/dashboard_snapshot_service.dart')
-            .readAsStringSync();
+        readDartLibrarySource('lib/core/services/local_database_service.dart');
+    final dashboardSnapshot = readDartLibrarySource(
+        'lib/features/dashboard/dashboard_snapshot_service.dart');
     final reportsSnapshot =
         File('lib/features/reports/reports_snapshot_service.dart')
             .readAsStringSync();

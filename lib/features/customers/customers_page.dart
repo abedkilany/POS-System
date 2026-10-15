@@ -265,6 +265,7 @@ class _CustomersPageState extends State<CustomersPage> {
           .where((customer) => customer.balance > 0.0001)
           .toList(growable: false)
         ..sort((a, b) => b.balance.compareTo(a.balance));
+      if (!mounted) return;
       await CustomerReceivablesPdfService.print(
         context: context,
         customers: customers,

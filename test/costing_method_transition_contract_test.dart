@@ -3,16 +3,16 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   final store = readAppStoreImplementationSource();
   final model = File('lib/models/product_costing.dart').readAsStringSync();
-  final integrity = File(
-          'lib/core/services/accounting_production_integrity_service.dart')
-      .readAsStringSync();
-  final closure = File(
-          'lib/core/services/unified_batch_phase4_closure_service.dart')
-      .readAsStringSync();
+  final integrity = readDartLibrarySource(
+      'lib/core/services/accounting_production_integrity_service.dart');
+  final closure =
+      File('lib/core/services/unified_batch_phase4_closure_service.dart')
+          .readAsStringSync();
 
   test('Phase 4 locks production costing to Unified Batch', () {
     expect(store, contains('InventoryCostingMethod.batch;'));
@@ -35,5 +35,4 @@ void main() {
     expect(integrity, contains('legacy_cost_layer_post_phase4_write'));
     expect(integrity, contains('SUM(bb.quantity * b.unit_cost)'));
   });
-
 }

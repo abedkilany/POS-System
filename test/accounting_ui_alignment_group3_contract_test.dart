@@ -1,12 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/accounting_page_source.dart';
+import 'helpers/accounting_service_source.dart';
 
 void main() {
-  final page = File('lib/features/accounting/accounting_page.dart')
-      .readAsStringSync();
-  final accountingService =
-      File('lib/core/services/accounting_service.dart').readAsStringSync();
+  final page = readAccountingPageImplementationSource();
+  final accountingService = readAccountingServiceSource();
 
   test('accounting navigation separates operations from subledgers', () {
     expect(page, contains('TabController(length: 5'));

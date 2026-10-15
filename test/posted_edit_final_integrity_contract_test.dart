@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'helpers/accounting_service_source.dart';
+import 'helpers/dart_library_source.dart';
+
 void main() {
   test('production integrity recognizes versioned posted-edit families', () {
-    final integrity = File(
-      'lib/core/services/accounting_production_integrity_service.dart',
-    ).readAsStringSync();
+    final integrity = readDartLibrarySource(
+        'lib/core/services/accounting_production_integrity_service.dart');
 
     expect(integrity, contains('_checkPostedEditFamilyUniqueness(issues)'));
     expect(integrity, contains('duplicate_active_posted_edit_family'));
@@ -38,9 +40,8 @@ void main() {
   });
 
   test('phase7 cash integrity accepts edited vouchers and sales', () {
-    final phase7 = File(
-      'lib/core/services/cash_phase7_migration_service.dart',
-    ).readAsStringSync();
+    final phase7 = readDartLibrarySource(
+        'lib/core/services/cash_phase7_migration_service.dart');
 
     expect(phase7, contains("s.id || ':sale_edit:'"));
     expect(phase7, contains("v.id || ':receipt_edit:'"));
@@ -64,10 +65,12 @@ void main() {
       contains('rev.reversal_of_movement_id = scoped.id'),
     );
     expect(traceability, contains('COUNT(DISTINCT b.id)'));
-    expect(traceability, contains("sm.movement_type = 'manufacturing_produce'"));
+    expect(
+        traceability, contains("sm.movement_type = 'manufacturing_produce'"));
   });
 
-  test('all posted edit APIs remain wired to shared pipeline or safe family', () {
+  test('all posted edit APIs remain wired to shared pipeline or safe family',
+      () {
     final files = <String, String>{
       'sales': 'lib/data/app_store_sales_returns.dart',
       'purchases': 'lib/data/app_store_purchases.dart',
@@ -80,13 +83,17 @@ void main() {
     };
     final sources = <String, String>{
       for (final entry in files.entries)
-        entry.key: File(entry.value).readAsStringSync(),
+        entry.key: readDartLibrarySource(entry.value),
     };
+    sources['accounting'] = readAccountingServiceSource();
 
     expect(sources['sales'], contains('PostedDocumentEditPipeline<Sale>('));
-    expect(sources['sales'], contains('PostedDocumentEditPipeline<CreditNote>('));
-    expect(sources['purchases'], contains('PostedDocumentEditPipeline<Purchase>('));
-    expect(sources['expenses'], contains('PostedDocumentEditPipeline<Expense>('));
+    expect(
+        sources['sales'], contains('PostedDocumentEditPipeline<CreditNote>('));
+    expect(sources['purchases'],
+        contains('PostedDocumentEditPipeline<Purchase>('));
+    expect(
+        sources['expenses'], contains('PostedDocumentEditPipeline<Expense>('));
     expect(
       sources['warehouse'],
       contains('PostedDocumentEditPipeline<WarehouseTransferOrder>('),

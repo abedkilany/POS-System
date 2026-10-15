@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/settings_page_source.dart';
+import 'helpers/business_sqlite_store_source.dart';
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +10,8 @@ import 'package:ventio/core/services/unified_batch_phase4_closure_service.dart';
 import 'package:ventio/core/storage/sqlite/business_sqlite_store.dart';
 import 'package:ventio/core/storage/sqlite/ventio_drift_database.dart';
 import 'package:ventio/models/product.dart';
+
+import 'helpers/dart_library_source.dart';
 
 Product _product({required String id, required bool expiry}) => Product(
       id: id,
@@ -82,27 +86,33 @@ void main() {
 
     expect(first.cutoversCreated, 1);
     expect(second.cutoversCreated, 0);
-    final qty = await db.customSelect(
-      "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-plain'",
-    ).getSingle();
+    final qty = await db
+        .customSelect(
+          "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-plain'",
+        )
+        .getSingle();
     expect((qty.data['qty'] as num).toDouble(), 7);
-    final method = await db.customSelect(
-      "SELECT value FROM settings WHERE key = 'inventory_costing_method_v1'",
-    ).getSingle();
+    final method = await db
+        .customSelect(
+          "SELECT value FROM settings WHERE key = 'inventory_costing_method_v1'",
+        )
+        .getSingle();
     expect(method.data['value'], 'batch');
-    final history = await db.customSelect(
-      "SELECT method FROM costing_method_history WHERE deleted_at = '' AND trim(effective_to) = ''",
-    ).get();
+    final history = await db
+        .customSelect(
+          "SELECT method FROM costing_method_history WHERE deleted_at = '' AND trim(effective_to) = ''",
+        )
+        .get();
     expect(history, hasLength(1));
     expect(history.single.data['method'], 'batch');
-    final meta = await db.customSelect(
-      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
-    ).getSingleOrNull();
+    final meta = await db
+        .customSelect(
+          "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
+        )
+        .getSingleOrNull();
     expect(meta, isNotNull);
     expect(meta!.data['value'], '2026-08-29T01:00:00.000Z');
   });
-
-
 
   test('phase 4 repairs duplicate post-cutover costing rows idempotently',
       () async {
@@ -164,9 +174,11 @@ void main() {
     );
 
     expect(retry.closedAt, closedAt);
-    final openRows = await db.customSelect(
-      "SELECT id, method FROM costing_method_history WHERE deleted_at = '' AND trim(effective_to) = ''",
-    ).get();
+    final openRows = await db
+        .customSelect(
+          "SELECT id, method FROM costing_method_history WHERE deleted_at = '' AND trim(effective_to) = ''",
+        )
+        .get();
     expect(openRows, hasLength(1));
     expect(
       openRows.single.data['id'],
@@ -174,25 +186,32 @@ void main() {
     );
     expect(openRows.single.data['method'], 'batch');
 
-    final repaired = await db.customSelect(
-      "SELECT id, effective_from, effective_to FROM costing_method_history WHERE id IN ('costing_lazy_bug', 'costing_bad_interval') ORDER BY id",
-    ).get();
+    final repaired = await db
+        .customSelect(
+          "SELECT id, effective_from, effective_to FROM costing_method_history WHERE id IN ('costing_lazy_bug', 'costing_bad_interval') ORDER BY id",
+        )
+        .get();
     expect(repaired, hasLength(2));
     for (final row in repaired) {
       expect(row.data['effective_to'], row.data['effective_from']);
     }
 
-    final state = await db.customSelect(
-      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_state'",
-    ).getSingle();
+    final state = await db
+        .customSelect(
+          "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_state'",
+        )
+        .getSingle();
     expect(state.data['value'], 'completed');
-    final error = await db.customSelect(
-      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_error'",
-    ).getSingle();
+    final error = await db
+        .customSelect(
+          "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_error'",
+        )
+        .getSingle();
     expect(error.data['value'], '');
   });
 
-  test('phase 4 converts allowed negative warehouse stock into a tracked deficit',
+  test(
+      'phase 4 converts allowed negative warehouse stock into a tracked deficit',
       () async {
     final db = VentioDriftDatabase(NativeDatabase.memory());
     await db.initializeFoundation();
@@ -220,26 +239,35 @@ void main() {
     expect(first.cutoversCreated, 1);
     expect(second.cutoversCreated, 0);
 
-    final warehouse = await db.customSelect(
-      "SELECT quantity FROM warehouse_inventory WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative'",
-    ).getSingle();
+    final warehouse = await db
+        .customSelect(
+          "SELECT quantity FROM warehouse_inventory WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative'",
+        )
+        .getSingle();
     expect((warehouse.data['quantity'] as num).toDouble(), -3);
 
-    final physical = await db.customSelect(
-      "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative'",
-    ).getSingle();
+    final physical = await db
+        .customSelect(
+          "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative'",
+        )
+        .getSingle();
     expect((physical.data['qty'] as num).toDouble(), 0);
 
-    final deficit = await db.customSelect(
-      "SELECT COALESCE(SUM(quantity_open), 0) AS qty, COUNT(*) AS count FROM inventory_stock_deficits WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative' AND status = 'open'",
-    ).getSingle();
+    final deficit = await db
+        .customSelect(
+          "SELECT COALESCE(SUM(quantity_open), 0) AS qty, COUNT(*) AS count FROM inventory_stock_deficits WHERE store_id = 'store-1' AND warehouse_id = 'main' AND product_id = 'phase4-negative' AND status = 'open'",
+        )
+        .getSingle();
     expect((deficit.data['qty'] as num).toDouble(), 3);
     expect((deficit.data['count'] as num).toInt(), 1);
 
-    final deficitBatch = await db.customSelect(
-      "SELECT supplier_batch_number, source_type FROM inventory_batches WHERE store_id = 'store-1' AND product_id = 'phase4-negative' AND source_type = 'inventory_deficit'",
-    ).getSingle();
-    expect(deficitBatch.data['supplier_batch_number'], 'NEGATIVE-STOCK-DEFICIT');
+    final deficitBatch = await db
+        .customSelect(
+          "SELECT supplier_batch_number, source_type FROM inventory_batches WHERE store_id = 'store-1' AND product_id = 'phase4-negative' AND source_type = 'inventory_deficit'",
+        )
+        .getSingle();
+    expect(
+        deficitBatch.data['supplier_batch_number'], 'NEGATIVE-STOCK-DEFICIT');
     expect(deficitBatch.data['source_type'], 'inventory_deficit');
   });
 
@@ -263,13 +291,17 @@ void main() {
       throwsA(isA<StateError>()),
     );
 
-    final deficit = await db.customSelect(
-      "SELECT COUNT(*) AS count FROM inventory_stock_deficits WHERE store_id = 'store-1' AND product_id = 'phase4-negative-blocked'",
-    ).getSingle();
+    final deficit = await db
+        .customSelect(
+          "SELECT COUNT(*) AS count FROM inventory_stock_deficits WHERE store_id = 'store-1' AND product_id = 'phase4-negative-blocked'",
+        )
+        .getSingle();
     expect((deficit.data['count'] as num).toInt(), 0);
-    final meta = await db.customSelect(
-      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
-    ).getSingleOrNull();
+    final meta = await db
+        .customSelect(
+          "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
+        )
+        .getSingleOrNull();
     expect(meta, isNull);
   });
 
@@ -299,9 +331,11 @@ void main() {
       throwsA(isA<StateError>()),
     );
 
-    final probe = await db.customSelect(
-      "SELECT value FROM settings WHERE key = 'snapshot_atomic_probe'",
-    ).getSingleOrNull();
+    final probe = await db
+        .customSelect(
+          "SELECT value FROM settings WHERE key = 'snapshot_atomic_probe'",
+        )
+        .getSingleOrNull();
     expect(probe, isNull);
   });
 
@@ -322,19 +356,21 @@ void main() {
       ),
       throwsA(anything),
     );
-    final meta = await db.customSelect(
-      "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
-    ).getSingleOrNull();
+    final meta = await db
+        .customSelect(
+          "SELECT value FROM migration_meta WHERE key = 'unified_batch_phase4_closed_at'",
+        )
+        .getSingleOrNull();
     expect(meta, isNull);
   });
 
   test('product-only lazy loading cannot seed duplicate costing history', () {
     final orchestration =
-        File('lib/data/app_store_orchestration.dart').readAsStringSync();
-    final catalog = File('lib/data/app_store_catalog_parties_expenses.dart')
-        .readAsStringSync();
-    final persistence = File('lib/data/app_store_persistence_sync_core.dart')
-        .readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_orchestration.dart');
+    final catalog = readDartLibrarySource(
+        'lib/data/app_store_catalog_parties_expenses.dart');
+    final persistence =
+        readDartLibrarySource('lib/data/app_store_persistence_sync_core.dart');
 
     final productsStart = orchestration.indexOf(
       'Future<void> ensureProductsLoaded()',
@@ -362,17 +398,13 @@ void main() {
   test('phase 4 production source locks costing and values inventory by batch',
       () {
     final store = readAppStoreImplementationSource();
-    final settings =
-        File('lib/features/settings/settings_page.dart').readAsStringSync();
-    final integrity = File(
-            'lib/core/services/accounting_production_integrity_service.dart')
-        .readAsStringSync();
-    final dashboard =
-        File('lib/core/storage/sqlite/business_sqlite_store.dart')
-            .readAsStringSync();
+    final settings = readSettingsPageImplementationSource();
+    final integrity = readDartLibrarySource(
+        'lib/core/services/accounting_production_integrity_service.dart');
+    final dashboard = readBusinessSqliteStoreImplementationSource();
     final snapshot =
         File('lib/core/snapshot/unified_snapshot.dart').readAsStringSync();
-    final recovery = File('lib/data/app_store_recovery.dart').readAsStringSync();
+    final recovery = readDartLibrarySource('lib/data/app_store_recovery.dart');
 
     expect(
       store,
@@ -383,13 +415,15 @@ void main() {
       settings,
       contains("subtitle: Text(tr.text('unified_batch_fixed_desc'))"),
     );
-    expect(settings, isNot(contains('SegmentedButton<InventoryCostingMethod>')));
+    expect(
+        settings, isNot(contains('SegmentedButton<InventoryCostingMethod>')));
     expect(integrity, contains('unified_batch_quantity_mismatch'));
     expect(integrity, contains('SUM(bb.quantity * b.unit_cost)'));
     expect(dashboard, contains('SUM(bb.quantity * b.unit_cost)'));
     expect(snapshot, contains("'inventoryBatches'"));
     expect(snapshot, contains("'inventoryBatchBalances'"));
-    expect(recovery, contains("_snapshotListMaps(decoded, 'inventoryBatches')"));
+    expect(
+        recovery, contains("_snapshotListMaps(decoded, 'inventoryBatches')"));
     expect(
       recovery,
       contains("_snapshotListMaps(decoded, 'inventoryBatchBalances')"),

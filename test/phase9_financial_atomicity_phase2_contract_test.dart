@@ -4,17 +4,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
 
+import 'helpers/dart_library_source.dart';
+
 void main() {
   group('Phase 9 financial atomicity - phase 2 contracts', () {
     test(
         'expense posting commits expense row and compatibility ledger with accounting',
         () {
-      final source =
-          File('lib/core/services/accounting_service.dart').readAsStringSync();
-      final start =
-          source.indexOf('static Future<void> recordExpense(');
-      final end =
-          source.indexOf('static Future<void> recordExpensesBulk', start);
+      final source = readDartLibrarySource(
+              'lib/core/services/accounting_service_expenses.dart')
+          .replaceAll('\r\n', '\n');
+      final start = source.indexOf('Future<void> recordExpense(');
+      final end = source.indexOf('Future<void> recordExpenseOnCredit(', start);
       expect(start, greaterThanOrEqualTo(0));
       expect(end, greaterThan(start));
       final body = source.substring(start, end);
@@ -58,8 +59,8 @@ void main() {
     test(
         'supplier refunds expose a stable refund key and key journal/ledger reference by it',
         () {
-      final service = File('lib/core/services/payment_voucher_service.dart')
-          .readAsStringSync();
+      final service = readDartLibrarySource(
+          'lib/core/services/payment_voucher_service.dart');
       final start = service.indexOf('Future<double> refundPurchaseCash({');
       final end = service.indexOf('/// Phase 6:', start);
       expect(start, greaterThanOrEqualTo(0));
@@ -78,8 +79,8 @@ void main() {
 
       final store = readAppStoreImplementationSource();
       final storeStart = store.indexOf('Future<double> refundPurchaseCash({');
-      final storeEnd =
-          store.indexOf('Future<double> refundableExpenseCashAmount(', storeStart);
+      final storeEnd = store.indexOf(
+          'Future<double> refundableExpenseCashAmount(', storeStart);
       final storeBody = store.substring(storeStart, storeEnd);
       expect(storeBody, contains("String idempotencyKey = ''"));
       expect(storeBody, contains('refundKey: refundKey'));
@@ -120,8 +121,8 @@ void main() {
     test(
         'customer refund and voucher reversal retain transaction-owned compatibility ledger',
         () {
-      final voucher = File('lib/core/services/payment_voucher_service.dart')
-          .readAsStringSync();
+      final voucher = readDartLibrarySource(
+          'lib/core/services/payment_voucher_service.dart');
       expect(voucher, contains('await _insertCompatibilityRefundMovement('));
       expect(voucher, contains('Future<bool> _reverseVoucher({'));
       expect(voucher, contains('account_transactions'));

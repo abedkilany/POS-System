@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ventio/core/services/accounting_service.dart';
@@ -8,9 +6,12 @@ import 'package:ventio/core/storage/sqlite/ventio_drift_database.dart';
 import 'package:ventio/models/user_role.dart';
 import 'support/test_business_session_context.dart';
 import 'helpers/app_store_source.dart';
+import 'helpers/accounting_page_source.dart';
+import 'helpers/settings_page_source.dart';
+import 'helpers/sales_page_source.dart';
+import 'helpers/dart_library_source.dart';
 
-String _source(String path) =>
-    File(path).readAsStringSync().replaceAll('\r\n', '\n');
+String _source(String path) => readDartLibrarySource(path);
 
 void main() {
   group('Phase 3 permission enforcement contracts', () {
@@ -25,7 +26,8 @@ void main() {
       );
       expect(
         inventory,
-        contains('requirePermission(AppPermission.inventoryCorrectionsManage);'),
+        contains(
+            'requirePermission(AppPermission.inventoryCorrectionsManage);'),
       );
       expect(
         manufacturing,
@@ -102,7 +104,7 @@ void main() {
           '    requirePermission(AppPermission.syncManage);',
         ),
       );
-      final settings = _source('lib/features/settings/settings_page.dart');
+      final settings = readSettingsPageImplementationSource();
       expect(
         settings,
         contains('widget.store.requirePermission(AppPermission.syncManage);'),
@@ -120,7 +122,8 @@ void main() {
         ),
       );
       final inventoryStart = store.indexOf('bool get canManageInventory =>');
-      final inventoryEnd = store.indexOf('bool get canViewReports', inventoryStart);
+      final inventoryEnd =
+          store.indexOf('bool get canViewReports', inventoryStart);
       expect(inventoryStart, greaterThanOrEqualTo(0));
       expect(inventoryEnd, greaterThan(inventoryStart));
       final inventoryBlock = store.substring(inventoryStart, inventoryEnd);
@@ -128,9 +131,9 @@ void main() {
     });
 
     test('direct accounting and cash mutation UIs enforce permissions', () {
-      final accounting = _source('lib/features/accounting/accounting_page.dart');
+      final accounting = readAccountingPageImplementationSource();
       final cash = _source('lib/features/cash/cash_page.dart');
-      final sales = _source('lib/features/sales/sales_page.dart');
+      final sales = readSalesPageImplementationSource();
 
       expect(
         accounting,
@@ -146,9 +149,8 @@ void main() {
       );
     });
 
-
-
-    test('cash mutation services reject direct calls without cash permission', () async {
+    test('cash mutation services reject direct calls without cash permission',
+        () async {
       final denied = TestBusinessSessionContext(permissions: <String>{});
       final db = VentioDriftDatabase(NativeDatabase.memory());
       addTearDown(db.close);

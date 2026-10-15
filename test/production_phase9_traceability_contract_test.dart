@@ -4,18 +4,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
 import 'helpers/schema_version_contract.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   test('Phase 9 traceability service covers production invariants', () {
-    final service = File('lib/core/services/inventory_traceability_service.dart')
-        .readAsStringSync();
+    final service =
+        File('lib/core/services/inventory_traceability_service.dart')
+            .readAsStringSync();
     final manufacturing =
-        File('lib/data/app_store_manufacturing.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_manufacturing.dart');
     final transfers =
-        File('lib/data/app_store_warehouse_cash.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_warehouse_cash.dart');
     final appStore = readAppStoreImplementationSource();
-    final database = File('lib/core/storage/sqlite/ventio_drift_database.dart')
-        .readAsStringSync();
+    final database = readDartLibrarySource(
+        'lib/core/storage/sqlite/ventio_drift_database.dart');
 
     expect(service, contains('Future<Map<String, dynamic>> traceBatch'));
     expect(service, contains('manufacturing_input_to_output'));

@@ -1,16 +1,13 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/accounting_page_source.dart';
+import 'helpers/accounting_service_source.dart';
 
 void main() {
-  final page = File('lib/features/accounting/accounting_page.dart')
-      .readAsStringSync();
-  final accountingService =
-      File('lib/core/services/accounting_service.dart')
-          .readAsStringSync()
-          .replaceAll('\r\n', '\n');
+  final page = readAccountingPageImplementationSource();
+  final accountingService = readAccountingServiceSource();
 
-  test('general ledger exposes real accounting filters and opening balance', () {
+  test('general ledger exposes real accounting filters and opening balance',
+      () {
     expect(page, contains('class _GeneralLedgerFilterBar'));
     expect(page, contains("'general_ledger_report_v2'"));
     expect(page, contains('branchId: _branchId'));
@@ -19,24 +16,29 @@ void main() {
     expect(page, contains("'إجمالي الفترة / الرصيد الختامي'"));
 
     expect(
-      accountingService,
-      contains("String branchId = '',\n    String costCenterId = '',"),
+      RegExp(r"String branchId = '',\s+String costCenterId = '',")
+          .hasMatch(accountingService),
+      isTrue,
     );
     expect(accountingService, contains('listGeneralLedgerBranches()'));
     expect(accountingService, contains("je.branch_id = ?"));
     expect(accountingService, contains("jl.cost_center_id = ?"));
-    expect(accountingService, contains('openingBalance: _roundMoney(openingBalance)'));
+    expect(accountingService,
+        contains('openingBalance: _roundMoney(openingBalance)'));
   });
 
-  test('trial balance separates debit and credit balances and checks equality', () {
+  test('trial balance separates debit and credit balances and checks equality',
+      () {
     expect(accountingService, contains('double get debitBalance'));
     expect(accountingService, contains('double get creditBalance'));
     expect(page, contains("'رصيد مدين'"));
     expect(page, contains("'رصيد دائن'"));
-    expect(page, contains('final movementDifference = totalDebit - totalCredit'));
+    expect(
+        page, contains('final movementDifference = totalDebit - totalCredit'));
     expect(
       page,
-      contains('final balanceDifference = totalDebitBalance - totalCreditBalance'),
+      contains(
+          'final balanceDifference = totalDebitBalance - totalCreditBalance'),
     );
     expect(page, contains("'ميزان المراجعة متوازن'"));
   });
@@ -56,9 +58,12 @@ void main() {
     expect(accountingService, contains("subtype == 'fixed_assets'"));
     expect(accountingService, contains("subtype == 'long_term_loans'"));
     expect(accountingService, contains('currentAssetLines: currentAssetLines'));
-    expect(accountingService, contains('nonCurrentAssetLines: nonCurrentAssetLines'));
-    expect(accountingService, contains('currentLiabilityLines: currentLiabilityLines'));
-    expect(accountingService, contains('nonCurrentLiabilityLines: nonCurrentLiabilityLines'));
+    expect(accountingService,
+        contains('nonCurrentAssetLines: nonCurrentAssetLines'));
+    expect(accountingService,
+        contains('currentLiabilityLines: currentLiabilityLines'));
+    expect(accountingService,
+        contains('nonCurrentLiabilityLines: nonCurrentLiabilityLines'));
     expect(page, contains("'الأصول المتداولة'"));
     expect(page, contains("'الأصول غير المتداولة'"));
     expect(page, contains("'الالتزامات المتداولة'"));
@@ -70,7 +75,8 @@ void main() {
     expect(page, contains("'cash_flow_report_v2|"));
     expect(
       page,
-      contains('report.openingCash + report.netChangeInCash - report.closingCash'),
+      contains(
+          'report.openingCash + report.netChangeInCash - report.closingCash'),
     );
     expect(page, contains("'التدفقات النقدية متصالحة مع الرصيد'"));
     expect(page, contains('class _FinancialSummaryChip'));

@@ -1,8 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   test('account transaction writers are SQLite-first and awaited', () {
@@ -54,8 +53,8 @@ void main() {
   test(
       'voucher payment compatibility ledger is owned by PaymentVoucherService transaction',
       () {
-    final service = File('lib/core/services/payment_voucher_service.dart')
-        .readAsStringSync();
+    final service =
+        readDartLibrarySource('lib/core/services/payment_voucher_service.dart');
     final store = readAppStoreImplementationSource();
 
     expect(service, contains('await _insertCompatibilityAccountMovement('));

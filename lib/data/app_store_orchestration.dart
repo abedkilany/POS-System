@@ -6,7 +6,14 @@ part of 'app_store.dart';
 /// span domains. It owns no mutable state and keeps the concrete AppStore facade
 /// intentionally small.
 mixin _AppStoreOrchestration
-    on ChangeNotifier, _AppStoreStateAccessors, _AppStoreForwardingApi {
+    on
+        ChangeNotifier,
+        _AppStoreStateAccessors,
+        _AppStoreForwardingApi,
+        _AppStoreForwardingApiPart2,
+        _AppStoreForwardingApiPart3,
+        _AppStoreForwardingApiPart4,
+        _AppStoreForwardingApiPart5 {
   bool get sqliteSourceOfTruth => LocalDatabaseService.isSqliteAuthoritative;
 
   StorageLayerSnapshot get storageLayerSnapshot => StorageLayerSnapshot(

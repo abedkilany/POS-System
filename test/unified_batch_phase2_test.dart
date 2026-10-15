@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'helpers/app_store_source.dart';
 
 import 'package:drift/native.dart';
@@ -12,6 +10,7 @@ import 'package:ventio/models/inventory_batch.dart';
 import 'package:ventio/models/product.dart';
 import 'package:ventio/models/product_costing.dart';
 import 'package:ventio/models/sale_item.dart';
+import 'helpers/dart_library_source.dart';
 
 Product _phase2Product({
   required String id,
@@ -75,14 +74,15 @@ void main() {
     await db.initializeFoundation();
     addTearDown(db.close);
 
-    final cutover = await db.customSelect(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='unified_batch_cutovers'",
-    ).getSingleOrNull();
+    final cutover = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='unified_batch_cutovers'",
+        )
+        .getSingleOrNull();
     expect(cutover, isNotNull);
 
-    final purchaseColumns = await db
-        .customSelect('PRAGMA table_info(purchase_items);')
-        .get();
+    final purchaseColumns =
+        await db.customSelect('PRAGMA table_info(purchase_items);').get();
     expect(
       purchaseColumns.map((row) => row.data['name']),
       contains('requested_expiration_date'),
@@ -120,15 +120,19 @@ void main() {
       );
     }
 
-    final batches = await db.customSelect(
-      "SELECT COUNT(*) AS count, COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE product_id = 'legacy-plain'",
-    ).getSingle();
+    final batches = await db
+        .customSelect(
+          "SELECT COUNT(*) AS count, COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE product_id = 'legacy-plain'",
+        )
+        .getSingle();
     expect((batches.data['count'] as num).toInt(), 1);
     expect((batches.data['qty'] as num).toDouble(), 9);
 
-    final marker = await db.customSelect(
-      "SELECT opening_quantity, opening_unit_cost FROM unified_batch_cutovers WHERE product_id = 'legacy-plain'",
-    ).getSingle();
+    final marker = await db
+        .customSelect(
+          "SELECT opening_quantity, opening_unit_cost FROM unified_batch_cutovers WHERE product_id = 'legacy-plain'",
+        )
+        .getSingle();
     expect(marker.read<double>('opening_quantity'), 9);
     expect(marker.read<double>('opening_unit_cost'), 2.25);
   });
@@ -154,14 +158,18 @@ void main() {
       ),
     );
 
-    final physical = await db.customSelect(
-      "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE product_id = 'legacy-negative'",
-    ).getSingle();
+    final physical = await db
+        .customSelect(
+          "SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_batch_balances WHERE product_id = 'legacy-negative'",
+        )
+        .getSingle();
     expect((physical.data['qty'] as num).toDouble(), 0);
 
-    final deficit = await db.customSelect(
-      "SELECT quantity_open, status FROM inventory_stock_deficits WHERE product_id = 'legacy-negative'",
-    ).getSingle();
+    final deficit = await db
+        .customSelect(
+          "SELECT quantity_open, status FROM inventory_stock_deficits WHERE product_id = 'legacy-negative'",
+        )
+        .getSingle();
     expect(deficit.read<double>('quantity_open'), 9);
     expect(deficit.read<String>('status'), 'open');
 
@@ -174,9 +182,11 @@ void main() {
     expect(check.warehouseQuantity, -9);
     expect(check.batchQuantity, -9);
 
-    final marker = await db.customSelect(
-      "SELECT opening_quantity FROM unified_batch_cutovers WHERE product_id = 'legacy-negative'",
-    ).getSingle();
+    final marker = await db
+        .customSelect(
+          "SELECT opening_quantity FROM unified_batch_cutovers WHERE product_id = 'legacy-negative'",
+        )
+        .getSingle();
     expect(marker.read<double>('opening_quantity'), 0);
   });
 
@@ -224,7 +234,8 @@ void main() {
     );
   });
 
-  test('expiry cutover backfills legacy batch cost before activation', () async {
+  test('expiry cutover backfills legacy batch cost before activation',
+      () async {
     final db = VentioDriftDatabase(NativeDatabase.memory());
     await db.initializeFoundation();
     addTearDown(db.close);
@@ -268,9 +279,11 @@ void main() {
       ),
     );
 
-    final row = await db.customSelect(
-      "SELECT unit_cost FROM inventory_batches WHERE id = 'old-exp-b1'",
-    ).getSingle();
+    final row = await db
+        .customSelect(
+          "SELECT unit_cost FROM inventory_batches WHERE id = 'old-exp-b1'",
+        )
+        .getSingle();
     expect(row.read<double>('unit_cost'), 2.5);
   });
 
@@ -343,9 +356,11 @@ void main() {
       ),
       throwsA(isA<LocalizedDomainException>()),
     );
-    final row = await db.customSelect(
-      "SELECT quantity FROM inventory_batch_balances WHERE batch_id = 'rb-1'",
-    ).getSingle();
+    final row = await db
+        .customSelect(
+          "SELECT quantity FROM inventory_batch_balances WHERE batch_id = 'rb-1'",
+        )
+        .getSingle();
     expect(row.read<double>('quantity'), 5);
   });
 
@@ -412,9 +427,11 @@ void main() {
       ],
     );
 
-    final row = await db.customSelect(
-      "SELECT requested_expiration_date FROM purchase_items WHERE id = 'draft-line-1'",
-    ).getSingle();
+    final row = await db
+        .customSelect(
+          "SELECT requested_expiration_date FROM purchase_items WHERE id = 'draft-line-1'",
+        )
+        .getSingle();
     expect(row.read<String>('requested_expiration_date').substring(0, 10),
         '2027-01-15');
   });
@@ -429,22 +446,24 @@ void main() {
     expect(source, contains('purchase_edit_repost'));
     expect(source, contains('restoreUnifiedInTransaction'));
     expect(source, contains('ensuredUnifiedCutovers'));
-    expect(source, contains('_assertUnifiedBatchMovementBalancesInTransaction'));
+    expect(
+        source, contains('_assertUnifiedBatchMovementBalancesInTransaction'));
     expect(source, contains('_remainingReversibleStockQuantityInTransaction'));
   });
 
   test('phase 2 audit hardens legacy, service-item and edit guards', () {
     final source = readAppStoreImplementationSource();
     final purchasesUi =
-        File('lib/features/purchases/purchases_page.dart').readAsStringSync();
+        readDartLibrarySource('lib/features/purchases/purchases_page.dart');
     expect(source, contains('_unifiedOpeningCostForProductInTransaction'));
     expect(source, contains('SUM(sm.quantity * sm.unit_cost)'));
-    expect(source,
-        contains('was already absorbed into the Unified Batch opening balance'));
+    expect(
+        source,
+        contains(
+            'was already absorbed into the Unified Batch opening balance'));
     expect(source, contains('if (!product.trackStock) continue;'));
     expect(source, contains('Sale return changed concurrently'));
     expect(source, contains('assertWarehouseBatchBalanceInTransaction'));
     expect(purchasesUi, contains('(purchase.isDraft || purchase.isReceived)'));
   });
-
 }

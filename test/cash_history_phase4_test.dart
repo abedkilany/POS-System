@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ventio/core/services/cash_ledger_service.dart';
 import 'package:ventio/core/storage/sqlite/ventio_drift_database.dart';
+import 'helpers/dart_library_source.dart';
 
 Future<VentioDriftDatabase> _openDb() async {
   final db = VentioDriftDatabase(NativeDatabase.memory());
@@ -204,8 +205,7 @@ void main() {
   test(
       'cash page uses phase 4 ledger history instead of accountTransactions history',
       () {
-    final cashPage =
-        File('lib/features/cash/cash_page.dart').readAsStringSync();
+    final cashPage = readDartLibrarySource('lib/features/cash/cash_page.dart');
     final historyPanel =
         File('lib/features/cash/cash_history_panel.dart').readAsStringSync();
     expect(cashPage, contains('CashHistoryPanel('));

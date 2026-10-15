@@ -353,7 +353,7 @@ class _AssistantProviderSettingsPageState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 DropdownButtonFormField<AssistantProvider>(
-                  value: _provider,
+                  initialValue: _provider,
                   decoration: InputDecoration(
                     labelText: tr.text('assistant_provider'),
                     border: const OutlineInputBorder(),
@@ -404,7 +404,7 @@ class _AssistantProviderSettingsPageState
                 if (_availableModels.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
-                    value: _availableModels.contains(_modelController.text)
+                    initialValue: _availableModels.contains(_modelController.text)
                         ? _modelController.text
                         : null,
                     decoration: InputDecoration(
@@ -426,7 +426,7 @@ class _AssistantProviderSettingsPageState
                 ],
                 const SizedBox(height: 16),
                 DropdownButtonFormField<AssistantThinkingLevel>(
-                  value: _thinkingLevel,
+                  initialValue: _thinkingLevel,
                   decoration: InputDecoration(
                     labelText: tr.text('assistant_thinking_level'),
                     border: const OutlineInputBorder(),

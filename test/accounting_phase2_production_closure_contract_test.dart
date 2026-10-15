@@ -1,14 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   final appStore = readAppStoreImplementationSource();
-  final audit = File(
-    'lib/core/services/accounting_production_integrity_service.dart',
-  ).readAsStringSync();
+  final audit = readDartLibrarySource(
+      'lib/core/services/accounting_production_integrity_service.dart');
 
   String methodBody(String signature, String nextSignature) {
     final start = appStore.indexOf(signature);
@@ -23,8 +21,12 @@ void main() {
       'Future<void> adjustExpiryBatchStock({',
       'Future<void> reverseExpiryBatchAdjustment(',
     );
-    expect(body, contains('Expiry stock loss requires a posted accounting journal.'));
-    expect(body, contains('Batch inventory adjustment requires a posted accounting journal.'));
+    expect(body,
+        contains('Expiry stock loss requires a posted accounting journal.'));
+    expect(
+        body,
+        contains(
+            'Batch inventory adjustment requires a posted accounting journal.'));
     expect(body, contains("referenceType: 'inventory_waste'"));
     expect(body, contains("referenceType: 'inventory_adjustment'"));
     expect(body, contains('await _requirePostedJournalInTransaction('));
@@ -55,7 +57,9 @@ void main() {
     expect(single, contains('AccountingService.notifyCommittedMutation();'));
   });
 
-  test('waste and inventory count cannot commit material change without journal', () {
+  test(
+      'waste and inventory count cannot commit material change without journal',
+      () {
     final waste = methodBody(
       'Future<void> recordWasteLoss({',
       'Future<void> reverseWasteLossGroup(String movementId) async {',
@@ -65,17 +69,20 @@ void main() {
 
     expect(
       appStore,
-      contains('Inventory count variance requires a posted accounting journal.'),
+      contains(
+          'Inventory count variance requires a posted accounting journal.'),
     );
     expect(
       appStore,
-      contains('Inventory count journal was not persisted; approval was rolled back.'),
+      contains(
+          'Inventory count journal was not persisted; approval was rolled back.'),
     );
   });
 
   test('production audit is read only and gates critical invariants', () {
     expect(audit, contains('class AccountingProductionIntegrityService'));
-    expect(audit, contains('bool get isProductionReady => criticalCount == 0;'));
+    expect(
+        audit, contains('bool get isProductionReady => criticalCount == 0;'));
     expect(audit, contains("code: 'unbalanced_or_empty_journal'"));
     expect(audit, contains("code: 'orphan_journal_line'"));
     expect(audit, contains("code: 'journal_account_missing'"));

@@ -4,18 +4,24 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
 import 'helpers/schema_version_contract.dart';
+import 'helpers/accounting_page_source.dart';
+import 'helpers/sales_page_source.dart';
+
+import 'helpers/dart_library_source.dart';
 
 void main() {
-  test('Phase 12 keeps AppStore as a thin facade with domain state ownership', () {
+  test('Phase 12 keeps AppStore as a thin facade with domain state ownership',
+      () {
     final appStore = File('lib/data/app_store.dart').readAsStringSync();
-    final state = File('lib/data/app_store_state.dart').readAsStringSync();
-    final domains = File('lib/data/app_store_domains.dart').readAsStringSync();
+    final state = readDartLibrarySource('lib/data/app_store_state.dart');
+    final domains = readDartLibrarySource('lib/data/app_store_domains.dart');
     final compatibility =
-        File('lib/data/app_store_forwarding_api.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_forwarding_api.dart');
     final orchestration =
-        File('lib/data/app_store_orchestration.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_orchestration.dart');
 
-    final classStart = appStore.indexOf('class AppStore extends ChangeNotifier');
+    final classStart =
+        appStore.indexOf('class AppStore extends ChangeNotifier');
     expect(classStart, greaterThanOrEqualTo(0));
     final concreteFacade = appStore.substring(classStart);
     expect(concreteFacade.split('\n').length, lessThan(220));
@@ -63,20 +69,27 @@ void main() {
   });
 
   test('Phase 12 domain ports are consumed by production UI paths', () {
-    final settings =
-        File('lib/features/settings/settings_page_backup.dart').readAsStringSync();
-    final accounting =
-        File('lib/features/accounting/accounting_page.dart').readAsStringSync();
+    final settings = readDartLibrarySource(
+        'lib/features/settings/settings_page_backup.dart');
+    final accounting = readAccountingPageImplementationSource();
     final guard = File('lib/features/security/sensitive_action_guard.dart')
         .readAsStringSync();
-    final dashboard = File('lib/features/dashboard/dashboard_snapshot_service.dart')
-        .readAsStringSync();
-    final sales = File('lib/features/sales/sales_page.dart').readAsStringSync();
+    final dashboard = readDartLibrarySource(
+        'lib/features/dashboard/dashboard_snapshot_service.dart');
+    final sales = readSalesPageImplementationSource();
     final purchases =
-        File('lib/features/purchases/purchases_page.dart').readAsStringSync();
+        readDartLibrarySource('lib/features/purchases/purchases_page.dart');
 
-    expect(settings, contains('store.recovery.importBackupJson('));
-    expect(settings, contains('store.recovery.exportRecoveryFileJson('));
+    expect(
+      settings,
+      matches(RegExp(r'store\s*\.\s*recovery\s*\.\s*importBackupJson\s*\(')),
+    );
+    expect(
+      settings,
+      matches(
+        RegExp(r'store\s*\.\s*recovery\s*\.\s*exportRecoveryFileJson\s*\('),
+      ),
+    );
     expect(guard, contains('store.security.authorizeSensitiveAction('));
     expect(accounting, contains('widget.store.accounting.revision'));
     expect(
@@ -91,13 +104,15 @@ void main() {
     expect(dashboard, contains('store.accounting.transactions'));
     expect(dashboard, contains('store.sync.queue'));
     expect(sales, contains('widget.store.commerce.ensureSalesLoaded()'));
-    expect(purchases, contains('widget.store.commerce.ensurePurchasesLoaded()'));
+    expect(
+        purchases, contains('widget.store.commerce.ensurePurchasesLoaded()'));
   });
 
-  test('Phase 12 preserves compatibility API and production schema contract', () {
+  test('Phase 12 preserves compatibility API and production schema contract',
+      () {
     final source = readAppStoreImplementationSource();
-    final database = File('lib/core/storage/sqlite/ventio_drift_database.dart')
-        .readAsStringSync();
+    final database = readDartLibrarySource(
+        'lib/core/storage/sqlite/ventio_drift_database.dart');
 
     for (final api in <String>[
       'createPurchase(',

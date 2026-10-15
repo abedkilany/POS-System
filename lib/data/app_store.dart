@@ -97,6 +97,57 @@ part 'app_store_state.dart';
 part 'app_store_forwarding_api.dart';
 part 'app_store_orchestration.dart';
 part 'app_store_domains.dart';
+part 'app_store_backup_recovery_split_02.dart';
+part 'app_store_backup_recovery_split_03.dart';
+part 'app_store_backup_recovery_split_04.dart';
+part 'app_store_catalog_parties_expenses_split_02.dart';
+part 'app_store_catalog_parties_expenses_split_03.dart';
+part 'app_store_catalog_parties_expenses_split_04.dart';
+part 'app_store_core_loading_split_02.dart';
+part 'app_store_forwarding_api_split_02.dart';
+part 'app_store_forwarding_api_split_03.dart';
+part 'app_store_forwarding_api_split_04.dart';
+part 'app_store_forwarding_api_split_05.dart';
+part 'app_store_identity_users_split_02.dart';
+part 'app_store_identity_users_split_03.dart';
+part 'app_store_inventory_split_02.dart';
+part 'app_store_inventory_split_03.dart';
+part 'app_store_inventory_split_04.dart';
+part 'app_store_inventory_split_05.dart';
+part 'app_store_inventory_split_06.dart';
+part 'app_store_manufacturing_split_02.dart';
+part 'app_store_manufacturing_split_03.dart';
+part 'app_store_manufacturing_split_04.dart';
+part 'app_store_manufacturing_split_05.dart';
+part 'app_store_persistence_sync_core_split_02.dart';
+part 'app_store_persistence_sync_core_split_03.dart';
+part 'app_store_persistence_sync_core_split_04.dart';
+part 'app_store_persistence_sync_core_split_05.dart';
+part 'app_store_pricing_costing_split_02.dart';
+part 'app_store_pricing_costing_split_03.dart';
+part 'app_store_purchases_split_02.dart';
+part 'app_store_purchases_split_03.dart';
+part 'app_store_purchases_split_04.dart';
+part 'app_store_purchases_split_05.dart';
+part 'app_store_purchases_split_06.dart';
+part 'app_store_purchases_split_07.dart';
+part 'app_store_sales_returns_split_02.dart';
+part 'app_store_sales_returns_split_03.dart';
+part 'app_store_sales_returns_split_04.dart';
+part 'app_store_sales_returns_split_05.dart';
+part 'app_store_sales_returns_split_06.dart';
+part 'app_store_sales_returns_split_07.dart';
+part 'app_store_sales_returns_split_08.dart';
+part 'app_store_startup_migrations_split_02.dart';
+part 'app_store_startup_migrations_split_03.dart';
+part 'app_store_sync_apply_split_02.dart';
+part 'app_store_sync_apply_split_03.dart';
+part 'app_store_sync_apply_split_04.dart';
+part 'app_store_warehouse_cash_split_02.dart';
+part 'app_store_warehouse_cash_split_03.dart';
+part 'app_store_warehouse_cash_split_04.dart';
+part 'app_store_recovery_methods_01.dart';
+part 'app_store_recovery_methods_02.dart';
 
 String _encodePrettyBackupPayload(Map<String, dynamic> payload) =>
     const JsonEncoder.withIndent('  ').convert(payload);
@@ -327,7 +378,14 @@ typedef AppStoreTraceSink = void Function(
 );
 
 class AppStore extends ChangeNotifier
-    with _AppStoreStateAccessors, _AppStoreForwardingApi, _AppStoreOrchestration
+    with
+        _AppStoreStateAccessors,
+        _AppStoreForwardingApi,
+        _AppStoreForwardingApiPart2,
+        _AppStoreForwardingApiPart3,
+        _AppStoreForwardingApiPart4,
+        _AppStoreForwardingApiPart5,
+        _AppStoreOrchestration
     implements BusinessSessionContext {
   static AppStoreTraceSink? _traceSink;
 

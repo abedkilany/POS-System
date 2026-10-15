@@ -1,14 +1,14 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/accounting_service_source.dart';
+
+import 'helpers/dart_library_source.dart';
 
 void main() {
   test('phase 3 routes operational cash settlement through voucher methods',
       () {
-    final cashPage =
-        File('lib/features/cash/cash_page.dart').readAsStringSync();
+    final cashPage = readDartLibrarySource('lib/features/cash/cash_page.dart');
     expect(cashPage, contains('settleSalePayment('));
     expect(cashPage, contains('settlePurchasePayment('));
     expect(cashPage, isNot(contains('editSale(')));
@@ -16,8 +16,7 @@ void main() {
 
   test('phase 3 separates invoice accounting from voucher payment posting', () {
     final appStore = readAppStoreImplementationSource();
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
+    final accounting = readAccountingServiceSource();
 
     expect(
         appStore, contains('PaymentVoucherService(sqliteDb).createReceipt('));
@@ -50,19 +49,22 @@ void main() {
 
   test('sale and purchase settlement flush account transactions and sync', () {
     final appStore = readAppStoreImplementationSource();
-    const flush =
-        'await _saveDirty(accountTransactions: true, sync: true);';
+    const flush = 'await _saveDirty(accountTransactions: true, sync: true);';
 
     final saleSettlement = RegExp(
-      r'Future<Sale> _settleSalePaymentInternal\(\{[\s\S]*?Future<Purchase> settlePurchasePayment\(\{',
-    ).firstMatch(appStore)?.group(0) ?? '';
+          r'Future<Sale> _settleSalePaymentInternal\(\{[\s\S]*?Future<Purchase> settlePurchasePayment\(\{',
+        ).firstMatch(appStore)?.group(0) ??
+        '';
     final purchaseSettlement = RegExp(
-      r'Future<Purchase> settlePurchasePayment\(\{[\s\S]*?PurchaseItem _copyPurchaseItemWith\(\{',
-    ).firstMatch(appStore)?.group(0) ?? '';
+          r'Future<Purchase> settlePurchasePayment\(\{[\s\S]*?PurchaseItem _copyPurchaseItemWith\(\{',
+        ).firstMatch(appStore)?.group(0) ??
+        '';
 
-    expect(saleSettlement, contains('await refreshAccountTransactionsFromSqlite();'));
+    expect(saleSettlement,
+        contains('await refreshAccountTransactionsFromSqlite();'));
     expect(saleSettlement, contains(flush));
-    expect(purchaseSettlement, contains('await refreshAccountTransactionsFromSqlite();'));
+    expect(purchaseSettlement,
+        contains('await refreshAccountTransactionsFromSqlite();'));
     expect(purchaseSettlement, contains(flush));
   });
 }

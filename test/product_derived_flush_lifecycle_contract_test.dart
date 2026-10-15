@@ -1,11 +1,11 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
-  test('product-derived flush drains in-flight SQLite work before dirty exit', () {
+  test('product-derived flush drains in-flight SQLite work before dirty exit',
+      () {
     final source =
-        File('lib/data/app_store_identity_users.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_identity_users.dart');
     final methodStart =
         source.indexOf('Future<void> _flushProductDerivedData() async');
     final methodEnd = source.indexOf(
@@ -27,11 +27,13 @@ void main() {
     expect(method, isNot(contains('_markProductDerivedDataDirty();')));
   });
 
-  test('shutdown prevents timer rescheduling and performs a deterministic drain', () {
+  test(
+      'shutdown prevents timer rescheduling and performs a deterministic drain',
+      () {
     final identitySource =
-        File('lib/data/app_store_identity_users.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_identity_users.dart');
     final syncSource =
-        File('lib/data/app_store_sync_apply.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_sync_apply.dart');
 
     expect(
       identitySource,

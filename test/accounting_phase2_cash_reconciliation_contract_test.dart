@@ -1,13 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
-  final source = File(
-    'lib/core/services/cash_phase7_migration_service.dart',
-  ).readAsStringSync();
+  final source = readDartLibrarySource(
+      'lib/core/services/cash_phase7_migration_service.dart');
 
-  test('returned purchases are not treated as missing active purchase journals', () {
+  test('returned purchases are not treated as missing active purchase journals',
+      () {
     expect(
       source,
       contains("lower(trim(p.status)) = 'received'"),
@@ -18,7 +17,8 @@ void main() {
     );
   });
 
-  test('voucher reconciliation subtracts refunds before allocation balance', () {
+  test('voucher reconciliation subtracts refunds before allocation balance',
+      () {
     expect(source, contains('FROM cash_refund_allocations cra'));
     expect(source, contains("pa.allocation_kind = 'reversal'"));
     expect(source, contains('THEN -pa.amount ELSE pa.amount END'));
@@ -30,11 +30,13 @@ void main() {
   test('party control reconciliation includes reversed journal pairs', () {
     expect(
       source,
-      contains("je.status IN ('posted', 'reversed') AND jl.party_type = 'customer'"),
+      contains(
+          "je.status IN ('posted', 'reversed') AND jl.party_type = 'customer'"),
     );
     expect(
       source,
-      contains("je.status IN ('posted', 'reversed') AND jl.party_type = 'supplier'"),
+      contains(
+          "je.status IN ('posted', 'reversed') AND jl.party_type = 'supplier'"),
     );
   });
 }

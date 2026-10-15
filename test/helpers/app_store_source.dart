@@ -8,7 +8,8 @@ String readAppStoreImplementationSource() {
       .readAsStringSync()
       .replaceAll('\r\n', '\n');
   final partPattern = RegExp(r"^\s*part\s+'([^']+)';", multiLine: true);
-  final buffer = StringBuffer();
+  final implementationParts = <String>[];
+  final forwardingParts = <String>[];
 
   for (final match in partPattern.allMatches(mainSource)) {
     final relativePath = match.group(1);
@@ -17,11 +18,20 @@ String readAppStoreImplementationSource() {
     }
     final partFile = File('lib/data/$relativePath');
     if (!partFile.existsSync()) continue;
-    buffer
-      ..writeln('// ---- $relativePath ----')
-      ..writeln(partFile.readAsStringSync().replaceAll('\r\n', '\n'))
-      ..writeln();
+    final section = '// ---- $relativePath ----\n'
+        '${partFile.readAsStringSync().replaceAll('\r\n', '\n')}\n';
+    if (relativePath.startsWith('app_store_forwarding_api')) {
+      forwardingParts.add(section);
+    } else {
+      implementationParts.add(section);
+    }
   }
 
-  return buffer.toString();
+  // Source-contract tests should find the real method implementation before
+  // the compatibility forwarding mixins, whose method signatures are the same.
+  return <String>[
+    ...implementationParts,
+    '// ---- app_store.dart ----\n$mainSource',
+    ...forwardingParts,
+  ].join('\n');
 }

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/accounting_service_source.dart';
+import 'helpers/sales_page_source.dart';
 
 void main() {
   test('posted sale edit follows the shared safe edit pipeline', () {
@@ -43,7 +45,8 @@ void main() {
     );
   });
 
-  test('sale edit protects returns, delivery notes, payments and version races', () {
+  test('sale edit protects returns, delivery notes, payments and version races',
+      () {
     final store = readAppStoreImplementationSource();
     final start = store.indexOf('Future<Sale> editPostedSale({');
     final end = store.indexOf('String _saleStockMovementId({', start);
@@ -54,10 +57,12 @@ void main() {
     expect(editPath, contains('while a delivery note is linked'));
     expect(editPath, contains('sale with allocated payments'));
     expect(editPath, contains('below its already allocated payment'));
-    expect(editPath, contains('_remainingReversibleStockQuantityInTransaction('));
+    expect(
+        editPath, contains('_remainingReversibleStockQuantityInTransaction('));
   });
 
-  test('sale edit stock movement identity remains valid across edit and cancel', () {
+  test('sale edit stock movement identity remains valid across edit and cancel',
+      () {
     final store = readAppStoreImplementationSource();
     expect(store, contains("postedSnapshot?.extra['postedEditVersion']"));
     expect(store, contains('int? operationalVersion'));
@@ -72,12 +77,13 @@ void main() {
     final cancelPath = store.substring(cancelStart, cancelEnd);
     expect(cancelPath, contains('_saleStockMovementId('));
     expect(cancelPath, contains('includeSaleEditFamily: true'));
-    expect(cancelPath, contains('AccountingService.reverseSaleEntriesForSale('));
+    expect(
+        cancelPath, contains('AccountingService.reverseSaleEntriesForSale('));
   });
 
-  test('sale accounting supports versioned edit references and snapshot guards', () {
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
+  test('sale accounting supports versioned edit references and snapshot guards',
+      () {
+    final accounting = readAccountingServiceSource();
 
     expect(accounting, contains('String? accountingReferenceId'));
     expect(accounting, contains('_requireSalePostedSnapshotMatches('));
@@ -95,9 +101,10 @@ void main() {
 
   test('sales edit permission and UI action are exposed', () {
     final permissions = File('lib/models/user_role.dart').readAsStringSync();
-    final page = File('lib/features/sales/sales_page.dart').readAsStringSync();
+    final page = readSalesPageImplementationSource();
 
-    expect(permissions, contains("static const String salesEdit = 'sales.edit';"));
+    expect(
+        permissions, contains("static const String salesEdit = 'sales.edit';"));
     expect(permissions, contains("salesEdit: 'Edit posted sales'"));
     expect(page, contains('AppPermission.salesEdit'));
     expect(page, contains("tr.text('edit_sale')"));

@@ -1,19 +1,18 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/accounting_page_source.dart';
+
+import 'helpers/dart_library_source.dart';
 
 void main() {
-  final service = File('lib/core/services/accounting_service.dart')
-      .readAsStringSync()
+  final service = readDartLibrarySource(
+          'lib/core/services/accounting_service_fixed_assets.dart')
       .replaceAll('\r\n', '\n');
-  final page = File('lib/features/accounting/accounting_page.dart')
-      .readAsStringSync()
-      .replaceAll('\r\n', '\n');
+  final page = readAccountingPageImplementationSource();
 
   test('cash fixed-asset purchase is atomic with the asset transaction', () {
-    final start = service.indexOf('static Future<void> createFixedAsset({');
+    final start = service.indexOf('Future<void> createFixedAsset({');
     final end = service.indexOf(
-      'static Future<int> runDepreciationForAsset(',
+      'Future<int> runDepreciationForAsset(',
       start,
     );
     final body = service.substring(start, end);
@@ -36,7 +35,8 @@ void main() {
   });
 
   test('fixed-asset dialog defaults to real cash drawer payment', () {
-    final start = page.indexOf('Future<void> _createFixedAssetDialog() async {');
+    final start =
+        page.indexOf('Future<void> _createFixedAssetDialog() async {');
     final end = page.indexOf(
       'Future<void> _createPaymentAccountDialog() async {',
       start,

@@ -1,11 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   test('Direct bootstrap uses the same snapshot acceptance policy as LAN', () {
-    final recovery =
-        File('lib/data/app_store_recovery.dart').readAsStringSync();
+    final recovery = readDartLibrarySource('lib/data/app_store_recovery.dart');
     final directProtocol =
         File('lib/core/services/direct_sync_protocol_service.dart')
             .readAsStringSync();

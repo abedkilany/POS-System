@@ -1,15 +1,20 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/accounting_page_source.dart';
+import 'helpers/accounting_service_source.dart';
+import 'helpers/sales_page_source.dart';
+
+import 'helpers/dart_library_source.dart';
 
 void main() {
   test('receipt and payment edits keep append-only allocation history', () {
     final vouchers =
-        File('lib/core/services/payment_voucher_service.dart').readAsStringSync();
-    final schema = File('lib/core/storage/sqlite/ventio_drift_database.dart')
-        .readAsStringSync();
+        readDartLibrarySource('lib/core/services/payment_voucher_service.dart');
+    final schema = readDartLibrarySource(
+        'lib/core/storage/sqlite/ventio_drift_database.dart');
     final appStore =
-        File('lib/data/app_store_warehouse_cash.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_warehouse_cash.dart');
 
     expect(vouchers, contains('Future<ReceiptVoucher> editReceipt({'));
     expect(vouchers, contains('Future<PaymentVoucher> editPayment({'));
@@ -26,13 +31,13 @@ void main() {
   });
 
   test('posted expense edit is versioned and cancel remains family-aware', () {
-    final expenses = File('lib/data/app_store_catalog_parties_expenses.dart')
-        .readAsStringSync();
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
+    final expenses = readDartLibrarySource(
+        'lib/data/app_store_catalog_parties_expenses.dart');
+    final accounting = readAccountingServiceSource();
     final reversal =
         File('lib/core/services/cash_reversal_service.dart').readAsStringSync();
-    final ui = File('lib/features/expenses/expenses_page.dart').readAsStringSync();
+    final ui =
+        readDartLibrarySource('lib/features/expenses/expenses_page.dart');
 
     expect(expenses, contains('Future<Expense> editPostedExpense({'));
     expect(expenses, contains('PostedDocumentEditPipeline<Expense>('));
@@ -42,15 +47,17 @@ void main() {
     expect(ui, contains('widget.store.editPostedExpense('));
   });
 
-  test('completed warehouse transfer edit reverses and rebuilds batch movements',
+  test(
+      'completed warehouse transfer edit reverses and rebuilds batch movements',
       () {
     final store =
-        File('lib/data/app_store_warehouse_cash.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_warehouse_cash.dart');
     final ui = File('lib/features/inventory/warehouse_transfer_page.dart')
         .readAsStringSync();
 
     expect(store, contains('editWarehouseTransferOrder({'));
-    expect(store, contains('PostedDocumentEditPipeline<WarehouseTransferOrder>('));
+    expect(
+        store, contains('PostedDocumentEditPipeline<WarehouseTransferOrder>('));
     expect(store, contains(':transfer_edit:v'));
     expect(store, contains('has a downstream movement'));
     expect(store, contains('reversalOfMovementId: original.id'));
@@ -60,10 +67,8 @@ void main() {
   });
 
   test('manual journal edit is restricted to manual entries and versioned', () {
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
-    final ui =
-        File('lib/features/accounting/accounting_page.dart').readAsStringSync();
+    final accounting = readAccountingServiceSource();
+    final ui = readAccountingPageImplementationSource();
 
     expect(accounting, contains('editManualJournalEntry({'));
     expect(accounting, contains("current.referenceType != 'manual_journal'"));
@@ -77,10 +82,10 @@ void main() {
 
   test('manual stock adjustment edit is versioned and batch-safe', () {
     final inventory =
-        File('lib/data/app_store_inventory.dart').readAsStringSync();
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
-    final ui = File('lib/features/inventory/inventory_page.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_inventory.dart');
+    final accounting = readAccountingServiceSource();
+    final ui =
+        readDartLibrarySource('lib/features/inventory/inventory_page.dart');
 
     expect(inventory, contains('Future<void> editStockAdjustment({'));
     expect(inventory,
@@ -93,19 +98,22 @@ void main() {
     expect(ui, contains('widget.store.editStockAdjustment('));
   });
 
-  test('sale return edit rebuilds stock accounting snapshot and version history',
+  test(
+      'sale return edit rebuilds stock accounting snapshot and version history',
       () {
     final returns =
-        File('lib/data/app_store_sales_returns.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_sales_returns.dart');
     final note = File('lib/models/credit_note.dart').readAsStringSync();
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
-    final ui = File('lib/features/sales/sales_page.dart').readAsStringSync();
+    final accounting = readAccountingServiceSource();
+    final ui = readSalesPageImplementationSource();
 
     expect(returns, contains('Future<CreditNote> editSaleReturn({'));
     expect(returns, contains('PostedDocumentEditPipeline<CreditNote>('));
     expect(returns, contains(':sale_return_edit:v'));
-    expect(returns, contains('Only the latest active return for a sale can be edited safely.'));
+    expect(
+        returns,
+        contains(
+            'Only the latest active return for a sale can be edited safely.'));
     expect(returns, contains('PostedDocumentSnapshotService.forSaleReturn('));
     expect(returns, contains('recordSaleReturn('));
     expect(note, contains('final String operationReferenceId;'));
@@ -115,40 +123,42 @@ void main() {
     expect(ui, contains('widget.store.editSaleReturn('));
   });
 
-
   test('completed manufacturing edit is atomic versioned and batch-traceable',
       () {
     final manufacturing =
-        File('lib/data/app_store_manufacturing.dart').readAsStringSync();
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
-    final traceability = File(
-            'lib/core/services/inventory_traceability_service.dart')
-        .readAsStringSync();
-    final ui = File('lib/features/inventory/manufacturing_page.dart')
-        .readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_manufacturing.dart');
+    final accounting = readAccountingServiceSource();
+    final traceability =
+        File('lib/core/services/inventory_traceability_service.dart')
+            .readAsStringSync();
+    final ui =
+        readDartLibrarySource('lib/features/inventory/manufacturing_page.dart');
 
-    expect(manufacturing,
-        contains('Future<ManufacturingOrder> editCompletedManufacturingOrder({'));
+    expect(
+        manufacturing,
+        contains(
+            'Future<ManufacturingOrder> editCompletedManufacturingOrder({'));
     expect(manufacturing,
         contains('PostedDocumentEditPipeline<ManufacturingOrder>('));
     expect(manufacturing, contains(':manufacturing_edit:v'));
     expect(manufacturing, contains('withinExistingTransactionInternal: true'));
     expect(manufacturing, contains('suppressPostCommitInternal: true'));
     expect(manufacturing, contains('downstream consumption'));
-    expect(accounting,
-        contains(r"'$normalizedReferenceId:manufacturing_edit:'"));
+    expect(
+        accounting, contains(r"'$normalizedReferenceId:manufacturing_edit:'"));
     expect(traceability, contains('movement_group_id = ?'));
     expect(traceability, contains('operationReferenceId'));
     expect(ui, contains('editCompletedManufacturingOrder('));
     expect(ui, contains('editCompleted: true'));
   });
 
-  test('purchase return edit rebuilds and re-reverses stock accounting atomically',
+  test(
+      'purchase return edit rebuilds and re-reverses stock accounting atomically',
       () {
-    final purchases = File('lib/data/app_store_purchases.dart').readAsStringSync();
+    final purchases =
+        readDartLibrarySource('lib/data/app_store_purchases.dart');
     final ui =
-        File('lib/features/purchases/purchases_page.dart').readAsStringSync();
+        readDartLibrarySource('lib/features/purchases/purchases_page.dart');
 
     expect(purchases, contains('Future<Purchase> editPurchaseReturn({'));
     expect(purchases, contains('PostedDocumentEditPipeline<Purchase>('));
@@ -156,11 +166,11 @@ void main() {
     expect(purchases, contains('purchase_return_edit_rebuild'));
     expect(purchases, contains('AccountingService.recordPurchase('));
     expect(purchases, contains('reversePurchaseEntriesForPurchase('));
-    expect(purchases, contains('Edited purchase return left an active stock receipt.'));
-    expect(purchases, contains('Edited purchase return left an active purchase journal.'));
+    expect(purchases,
+        contains('Edited purchase return left an active stock receipt.'));
+    expect(purchases,
+        contains('Edited purchase return left an active purchase journal.'));
     expect(ui, contains('widget.store.editPurchaseReturn('));
     expect(ui, contains('editingReturnedPurchase'));
   });
-
-
 }

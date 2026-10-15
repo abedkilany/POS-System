@@ -1,11 +1,11 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/accounting_service_source.dart';
 
 void main() {
-  test('received purchase edit is guarded by downstream Unified Batch usage', () {
+  test('received purchase edit is guarded by downstream Unified Batch usage',
+      () {
     final store = readAppStoreImplementationSource();
     final start = store.indexOf('Future<Purchase> updatePurchaseDraft({');
     final end = store.indexOf('Future<void> receivePurchase(', start);
@@ -17,7 +17,8 @@ void main() {
     expect(editPath, contains('else if (current.isReceived)'));
     expect(
       editPath,
-      contains('await _requirePurchaseBatchesUnusedInTransaction(sqliteDb, current);'),
+      contains(
+          'await _requirePurchaseBatchesUnusedInTransaction(sqliteDb, current);'),
     );
     expect(editPath, contains('clearPostedSnapshot: current.isReceived'));
     expect(editPath, contains('_receivedPurchasePaymentStatus('));
@@ -31,15 +32,15 @@ void main() {
     );
     expect(
       editPath,
-      contains("referenceId: '\${updated.id}:purchase_edit:v\${updated.version}'"),
+      contains(
+          "referenceId: '\${updated.id}:purchase_edit:v\${updated.version}'"),
     );
     expect(editPath, contains('purchase_edit:v'));
     expect(editPath, contains(r'Purchase edit reverse v${current.version}'));
   });
 
   test('purchase accounting rejects stale posted snapshots before posting', () {
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
+    final accounting = readAccountingServiceSource();
     expect(accounting, contains('_requirePurchasePostedSnapshotMatches('));
     expect(accounting, contains("mismatch('line identity at index \$index')"));
     expect(accounting, contains("mismatch('line values at index \$index')"));
@@ -61,8 +62,7 @@ void main() {
   });
 
   test('purchase reversal covers base and all purchase_edit references', () {
-    final accounting =
-        File('lib/core/services/accounting_service.dart').readAsStringSync();
+    final accounting = readAccountingServiceSource();
 
     expect(
       accounting,

@@ -582,8 +582,9 @@ class PurchasePdfService {
     double rate,
     _PurchasePdfLabels labels,
   ) {
-    if (mode == 'exempt')
+    if (mode == 'exempt') {
       return code.isEmpty ? labels.exempt : '$code ${labels.exempt}';
+    }
     if (mode == 'out_of_scope') {
       return code.isEmpty ? labels.outOfScope : '$code ${labels.outOfScope}';
     }

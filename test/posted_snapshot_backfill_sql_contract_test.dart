@@ -1,11 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   test('posted snapshot backfill writes only typed snapshot columns', () {
     final source =
-        File('lib/data/app_store_startup_migrations.dart').readAsStringSync();
+        readDartLibrarySource('lib/data/app_store_startup_migrations.dart');
 
     expect(
       source,

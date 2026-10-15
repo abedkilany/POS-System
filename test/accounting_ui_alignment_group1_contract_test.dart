@@ -1,20 +1,17 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/accounting_page_source.dart';
+import 'helpers/accounting_service_source.dart';
+import 'helpers/business_sqlite_store_source.dart';
 
 void main() {
-  final page = File('lib/features/accounting/accounting_page.dart')
-      .readAsStringSync();
+  final page = readAccountingPageImplementationSource();
   final snapshot =
       File('lib/features/accounting/accounting_snapshot_service.dart')
           .readAsStringSync();
-  final sqliteStore =
-      File('lib/core/storage/sqlite/business_sqlite_store.dart')
-          .readAsStringSync();
-  final accountingService =
-      File('lib/core/services/accounting_service.dart')
-          .readAsStringSync()
-          .replaceAll('\r\n', '\n');
+  final sqliteStore = readBusinessSqliteStoreImplementationSource();
+  final accountingService = readAccountingServiceSource();
   final accountLedgerWidgets =
       File('lib/features/accounts/account_ledger_widgets.dart')
           .readAsStringSync();
@@ -34,10 +31,10 @@ void main() {
 
   test('accounting summary cash totals are sourced from cash ledger', () {
     final metricsStart = sqliteStore.indexOf(
-      'static Future<Map<String, Object?>> buildAccountingMetrics(',
+      'Future<Map<String, Object?>> buildAccountingMetrics(',
     );
     final metricsEnd = sqliteStore.indexOf(
-      'static Future<List<Map<String, Object?>>> queryAccountingAccountRows(',
+      'Future<List<Map<String, Object?>>> queryAccountingAccountRows(',
       metricsStart,
     );
     final metricsSource = sqliteStore.substring(metricsStart, metricsEnd);
@@ -58,7 +55,8 @@ void main() {
     expect(page, contains("Text(tr.text('credit')"));
     expect(page, contains('final debitText = transaction.debit > 0'));
     expect(page, contains('final creditText = transaction.credit > 0'));
-    expect(accountLedgerWidgets, contains('final isDebit = transaction.debit > 0'));
+    expect(accountLedgerWidgets,
+        contains('final isDebit = transaction.debit > 0'));
     expect(
       accountLedgerWidgets,
       contains("text(isDebit ? 'debit' : 'credit')"),
@@ -93,18 +91,20 @@ void main() {
     );
     expect(
       accountingService,
-      contains('incomeStatementReport({\n    DateTime? from,\n    DateTime? to,'),
+      contains('static Future<IncomeStatementReport> incomeStatementReport('),
     );
     expect(
       accountingService,
-      contains('balanceSheetReport({DateTime? asOf})'),
+      contains(
+          'static Future<BalanceSheetReport> balanceSheetReport({DateTime? asOf})'),
     );
   });
 
-  test('legacy default account mapping is no longer editable in settings UI', () {
-    final settingsStart =
-        page.indexOf('class _AccountingSettingsTabState');
-    final settingsEnd = page.indexOf('class _AccountingSettingsData', settingsStart);
+  test('legacy default account mapping is no longer editable in settings UI',
+      () {
+    final settingsStart = page.indexOf('class _AccountingSettingsTabState');
+    final settingsEnd =
+        page.indexOf('class _AccountingSettingsData', settingsStart);
     final settingsSource = page.substring(settingsStart, settingsEnd);
     expect(settingsSource, isNot(contains('readDefaultAccountMap')));
     expect(settingsSource, isNot(contains('updateDefaultAccount')));
