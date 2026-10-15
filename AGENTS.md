@@ -1,10 +1,11 @@
 # Ventio Agent Guide
 
-Use this file to route work to relevant code. `README.md` remains the source for detailed architecture and business rules.
+Use this file to route work to relevant code. `README.md` remains the source for durable architecture and business rules. [`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md) explains directory ownership, [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md) is a searchable source/test index, and [`docs/PLATFORM_INDEX.md`](docs/PLATFORM_INDEX.md) catalogs platform scaffolding and bundled resources.
 
 ## Context rules
 
 - Start from the requested screen, behavior, or symbol. Search exact names with `rg`; read only matching code, its direct dependencies, the database schema when relevant, and focused tests.
+- Use the project map for ownership and the relevant file index to locate a path or declaration. Search the index for the relevant row; do not read the entire catalog as task context. The indexes are navigational and source files remain authoritative.
 - Do not read all of `lib/`, `test/`, or `README.md` by default. Open only the README section needed for the task.
 - For large files, search for the relevant class/method first and inspect only its line range. Avoid opening an entire screen, service, or storage file unless the task truly spans it.
 - Inspect only the requested platform. Do not scan iOS, macOS, or Linux scaffolds for a Windows/Web/Android task.
@@ -40,6 +41,7 @@ Use this file to route work to relevant code. `README.md` remains the source for
 - For an accounting or stock mutation, trace the workflow through its service and transaction boundary; preserve atomicity and reversal history.
 - Do not infer that disabled, generated, or platform-specific files are active code. Check their references and the task's target platform first.
 - Keep detailed explanations in `README.md` only when they describe durable behavior; do not add temporary task reports.
+- Update `docs/PROJECT_MAP.md` when directory ownership or durable architecture changes. Regenerate `docs/FILE_INDEX.md` after source/test paths or declarations change with `python tool/generate_project_file_index.py`.
 
 ## Compact task brief
 

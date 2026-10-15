@@ -5,9 +5,16 @@ Business operations are stored locally in SQLite and shared between authorized d
 
 ## Documentation policy
 
-`README.md` is the canonical project-level documentation for the current Ventio architecture, operating rules, and release gates. Do not add phase-completion, fix-report, audit-report, or temporary implementation Markdown files in the project root or a separate `docs/` folder. Historical implementation detail belongs in version control; durable behavior belongs here and in executable tests.
+`README.md` is the canonical reference for durable Ventio architecture, business rules, operating behavior, and release gates. The structural directory guide and searchable source catalog are maintained separately so a reader can load only the level of detail needed. Do not add phase-completion, fix-report, audit-report, or temporary implementation Markdown files.
 
-AI coding tools should start with [`AGENTS.md`](AGENTS.md) for concise task-to-code routing and context-loading rules.
+| Need | Read |
+| --- | --- |
+| Coding-agent context and task routing | [`AGENTS.md`](AGENTS.md) |
+| Directory responsibilities and architecture path | [`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md) |
+| Per-file declaration and test index | [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md) |
+| Platform scaffolding, root configuration, and bundled resources | [`docs/PLATFORM_INDEX.md`](docs/PLATFORM_INDEX.md) |
+
+AI coding tools should start with `AGENTS.md`, search the file index for the requested area, then read only the matching source and relevant README rules. Do not load the full file index by default.
 
 ## Pure DB-First Contract
 
