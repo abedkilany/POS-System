@@ -49,3 +49,144 @@ String readDartLibrarySource(String path) {
           .replaceAll('\r\n', '\n'),
   ].join('\n');
 }
+
+/// Extracts one block-bodied Dart method by its declaration prefix.
+///
+/// The method may be followed by another declaration in a different `part`
+/// file, so tests should not use that next declaration as the method boundary.
+String extractDartMethodSource(String source, String declarationPrefix) {
+  final start = source.indexOf(declarationPrefix);
+  if (start < 0) {
+    throw StateError('Dart method was not found: $declarationPrefix');
+  }
+
+  final parametersStart = source.indexOf('(', start);
+  if (parametersStart < 0) {
+    throw StateError('Dart method has no parameter list: $declarationPrefix');
+  }
+
+  var parameterDepth = 0;
+  var parametersEnd = -1;
+  for (var index = parametersStart; index < source.length; index += 1) {
+    final skipped = _skipDartNonCode(source, index);
+    if (skipped != index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    switch (source[index]) {
+      case '(':
+        parameterDepth += 1;
+        break;
+      case ')':
+        parameterDepth -= 1;
+        if (parameterDepth == 0) {
+          parametersEnd = index;
+          index = source.length;
+        }
+        break;
+    }
+  }
+  if (parametersEnd < 0) {
+    throw StateError(
+        'Dart method parameters are not closed: $declarationPrefix');
+  }
+
+  final bodyStart = _findNextMethodBody(source, parametersEnd + 1);
+  final bodyEnd = _findMatchingDartBrace(source, bodyStart);
+  return source.substring(start, bodyEnd + 1);
+}
+
+/// Returns the brace-delimited block that follows [marker].
+String extractDartBlockAfter(String source, String marker) {
+  final markerStart = source.indexOf(marker);
+  if (markerStart < 0) {
+    throw StateError('Dart block marker was not found: $marker');
+  }
+  final bodyStart = source.indexOf('{', markerStart);
+  if (bodyStart < 0) {
+    throw StateError('Dart block has no opening brace: $marker');
+  }
+  final bodyEnd = _findMatchingDartBrace(source, bodyStart);
+  return source.substring(bodyStart, bodyEnd + 1);
+}
+
+int _findNextMethodBody(String source, int start) {
+  for (var index = start; index < source.length; index += 1) {
+    final skipped = _skipDartNonCode(source, index);
+    if (skipped != index) {
+      index = skipped - 1;
+      continue;
+    }
+    if (source[index] == '{') return index;
+    if (source[index] == ';' || source.startsWith('=>', index)) break;
+  }
+  throw StateError('Dart method body was not found.');
+}
+
+int _findMatchingDartBrace(String source, int bodyStart) {
+  var depth = 0;
+  for (var index = bodyStart; index < source.length; index += 1) {
+    final skipped = _skipDartNonCode(source, index);
+    if (skipped != index) {
+      index = skipped - 1;
+      continue;
+    }
+    if (source[index] == '{') depth += 1;
+    if (source[index] == '}') {
+      depth -= 1;
+      if (depth == 0) return index;
+    }
+  }
+  throw StateError('Dart method body braces are not balanced.');
+}
+
+/// Skips a comment or string literal, returning [index] when it points to
+/// ordinary Dart code. Braces and parentheses inside these regions are not
+/// structural delimiters for source-contract tests.
+int _skipDartNonCode(String source, int index) {
+  if (source.startsWith('//', index)) {
+    final newline = source.indexOf('\n', index + 2);
+    return newline < 0 ? source.length : newline + 1;
+  }
+  if (source.startsWith('/*', index)) {
+    var depth = 1;
+    var cursor = index + 2;
+    while (cursor < source.length && depth > 0) {
+      if (source.startsWith('/*', cursor)) {
+        depth += 1;
+        cursor += 2;
+      } else if (source.startsWith('*/', cursor)) {
+        depth -= 1;
+        cursor += 2;
+      } else {
+        cursor += 1;
+      }
+    }
+    return cursor;
+  }
+
+  final quote = source[index];
+  if (quote != "'" && quote != '"') return index;
+  final isRaw = index > 0 &&
+      (source[index - 1] == 'r' || source[index - 1] == 'R') &&
+      (index < 2 || !_isDartIdentifierCharacter(source[index - 2]));
+  final isTriple = source.startsWith('$quote$quote$quote', index);
+  final delimiterLength = isTriple ? 3 : 1;
+  var cursor = index + delimiterLength;
+  while (cursor < source.length) {
+    if (isTriple && source.startsWith('$quote$quote$quote', cursor)) {
+      return cursor + 3;
+    }
+    if (!isTriple && source[cursor] == quote) return cursor + 1;
+    if (!isRaw && source[cursor] == r'\' && cursor + 1 < source.length) {
+      cursor += 2;
+    } else {
+      cursor += 1;
+    }
+  }
+  return source.length;
+}
+
+bool _isDartIdentifierCharacter(String character) =>
+    RegExp(r'[A-Za-z0-9_$]').hasMatch(character);

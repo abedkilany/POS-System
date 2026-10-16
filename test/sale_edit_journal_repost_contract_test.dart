@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
 import 'helpers/accounting_service_source.dart';
+import 'helpers/dart_library_source.dart';
 import 'helpers/sales_page_source.dart';
 
 void main() {
@@ -70,11 +71,8 @@ void main() {
     expect(store, contains("'\${sale.id}:sale_edit:v\$effectiveVersion'"));
     expect(store, contains("'postedEditVersion': candidate.version"));
 
-    final cancelStart = store.indexOf('Future<void> cancelSale(');
-    final cancelEnd = store.indexOf('Future<void> deleteSale(', cancelStart);
-    expect(cancelStart, isNonNegative);
-    expect(cancelEnd, greaterThan(cancelStart));
-    final cancelPath = store.substring(cancelStart, cancelEnd);
+    final cancelPath =
+        extractDartMethodSource(store, 'Future<void> cancelSale(');
     expect(cancelPath, contains('_saleStockMovementId('));
     expect(cancelPath, contains('includeSaleEditFamily: true'));
     expect(

@@ -5,34 +5,27 @@ import 'helpers/dart_library_source.dart';
 
 void main() {
   test('account transaction writers are SQLite-first and awaited', () {
-    final source = readAppStoreImplementationSource();
-
-    final persistStart = source.indexOf(
+    final persistenceSource = readDartLibrarySource(
+      'lib/data/app_store_persistence_sync_core_split_04.dart',
+    );
+    final writerSource = readDartLibrarySource(
+      'lib/data/app_store_persistence_sync_core_split_05.dart',
+    );
+    final persistenceHelper = extractDartMethodSource(
+      persistenceSource,
       'Future<void> _persistAccountTransactionSqliteFirst(',
     );
-    final publicStart = source.indexOf(
-      'Future<void> addOrUpdateAccountTransaction(',
-      persistStart,
-    );
-    expect(persistStart, greaterThanOrEqualTo(0));
-    expect(publicStart, greaterThan(persistStart));
-    final persistenceHelper = source.substring(persistStart, publicStart);
     expect(
       persistenceHelper,
       contains('await LocalDatabaseService.upsertBusinessEntityJsons('),
     );
+    expect(persistenceHelper, contains('finally {'));
+    expect(persistenceHelper, contains('_sqliteDirtyBusinessRows'));
 
-    final internalStart = source.indexOf(
+    final writer = extractDartMethodSource(
+      writerSource,
       'Future<void> _upsertAccountTransactionInternal(',
-      publicStart,
     );
-    final internalEnd = source.indexOf(
-      'Future<void> _recordPurchaseLedger(',
-      internalStart,
-    );
-    expect(internalStart, greaterThan(publicStart));
-    expect(internalEnd, greaterThan(internalStart));
-    final writer = source.substring(internalStart, internalEnd);
     expect(
       writer,
       contains('await _persistAccountTransactionSqliteFirst(synced);'),
@@ -42,10 +35,16 @@ void main() {
       lessThan(writer.indexOf('_putAccountTransactionAtIndex(')),
     );
 
-    final directCalls = RegExp(
+    final appStore = readAppStoreImplementationSource();
+    final implementation = extractDartMethodSource(
+      appStore,
+      'Future<void> _upsertAccountTransactionInternal(',
+    );
+    final callSites = appStore.replaceFirst(implementation, '');
+    final unawaitedWrites = RegExp(
       r'(?<!await )_upsertAccountTransactionInternal\s*\(',
-    ).allMatches(source.substring(internalEnd));
-    expect(directCalls, isEmpty);
+    ).allMatches(callSites);
+    expect(unawaitedWrites, isEmpty);
   });
 
   // Phase 9 contract: voucher-backed customer/supplier payments must not depend
@@ -61,24 +60,26 @@ void main() {
     expect(service, contains('await _reverseCompatibilityAccountMovements('));
     expect(service, contains('await _insertCompatibilityRefundMovement('));
 
-    final saleStart =
-        store.indexOf('Future<Sale> _settleSalePaymentInternal({');
-    final saleEnd =
-        store.indexOf('Future<Purchase> settlePurchasePayment({', saleStart);
-    final salePath = store.substring(saleStart, saleEnd);
+    final salePath = extractDartMethodSource(
+      store,
+      'Future<Sale> _settleSalePaymentInternal(',
+    );
     expect(salePath,
         contains('await PaymentVoucherService(sqliteDb).createReceipt('));
-    expect(salePath, contains('await refreshAccountTransactionsFromSqlite();'));
+    expect(
+      salePath,
+      contains('await _refreshAccountTransactionsFromSqlite();'),
+    );
     expect(salePath, isNot(contains('_upsertAccountTransactionInternal(')));
 
-    final purchaseStart = saleEnd;
-    final purchaseEnd =
-        store.indexOf('Future<Purchase> createPurchase({', purchaseStart);
-    final purchasePath = store.substring(purchaseStart, purchaseEnd);
+    final purchasePath = extractDartMethodSource(
+      store,
+      'Future<Purchase> settlePurchasePayment(',
+    );
     expect(purchasePath,
         contains('await PaymentVoucherService(sqliteDb).createPayment('));
     expect(purchasePath,
-        contains('await refreshAccountTransactionsFromSqlite();'));
+        contains('await _refreshAccountTransactionsFromSqlite();'));
     expect(purchasePath, isNot(contains('_upsertAccountTransactionInternal(')));
   });
 }

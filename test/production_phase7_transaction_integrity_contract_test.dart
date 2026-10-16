@@ -43,30 +43,27 @@ void main() {
 
   test('account transaction row and accounting effects share one transaction',
       () {
-    final source = read('lib/data/app_store_persistence_sync_core.dart');
-    final addStart =
-        source.indexOf('Future<void> addOrUpdateAccountTransaction(');
-    final addEnd =
-        source.indexOf('Future<void> deleteAccountTransaction(', addStart);
-    final add = source.substring(addStart, addEnd);
-    expect(add, contains('await sqliteDb.transaction(() async {'));
-    expect(add,
-        contains('await _persistAccountTransactionInExistingTransaction('));
-    expect(add, contains('await AccountingService.recordAccountPayment('));
-    expect(add, contains('withinExistingTransaction: true'));
-    expect(add, contains('Account payment edited'));
-
-    final deleteStart = addEnd;
-    final deleteEnd = source.indexOf(
-      'Future<void> _upsertAccountTransactionInternal(',
-      deleteStart,
+    final purchaseSource =
+        readDartLibrarySource('lib/data/app_store_purchases_split_07.dart');
+    final cancellation = extractDartMethodSource(
+      purchaseSource,
+      'Future<void> cancelPurchase(',
     );
-    final delete = source.substring(deleteStart, deleteEnd);
-    expect(delete, contains('await sqliteDb.transaction(() async {'));
+    final transaction = extractDartBlockAfter(
+      cancellation,
+      'await sqliteDb.transaction(() async {',
+    );
+
     expect(
-        delete, contains('await AccountingService.reverseEntryForReference('));
-    expect(delete,
-        contains('await _persistAccountTransactionInExistingTransaction('));
+      transaction,
+      contains('await AccountingService.reversePurchaseEntriesForPurchase('),
+    );
+    expect(transaction, contains('withinExistingTransaction: true'));
+    expect(
+      transaction,
+      contains('await _persistAccountTransactionInExistingTransaction('),
+    );
+    expect(transaction, contains("id: '\${purchase.id}-purchase-cancel'"));
   });
 
   test('standalone account payment owns journal and cash transaction', () {

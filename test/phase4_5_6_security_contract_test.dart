@@ -82,11 +82,15 @@ void main() {
 
   group('Phase 5 authentication and sensitive action contracts', () {
     test('domain re-authentication guard is exposed and action-scoped', () {
-      final appStore = readAppStoreImplementationSource();
+      final securityDomain =
+          _source('lib/data/app_store_domains_security.dart');
       final access = _source('lib/data/app_store_access_auth.dart');
 
-      expect(appStore, contains('Future<bool> authorizeSensitiveAction({'));
-      expect(appStore,
+      expect(
+          securityDomain, contains('Future<bool> authorizeSensitiveAction({'));
+      expect(securityDomain, contains('_store._authorizeSensitiveAction('));
+      expect(access, contains('Future<bool> _authorizeSensitiveAction({'));
+      expect(access,
           contains('void requireSensitiveActionAuthorization(String action)'));
       expect(access,
           contains("static const String backupRestore = 'backup.restore';"));

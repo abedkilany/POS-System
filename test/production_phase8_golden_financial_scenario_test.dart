@@ -532,7 +532,6 @@ void main() {
       'store.commerce.settleSalePayment(',
       'store.commerce.returnSale(',
       'store.commerce.addOrUpdateExpense(',
-      'store.commerce.postExpense(',
       'AccountingService.createCashLocation(',
       'AccountingService.recordOpeningCashLocationBalance(',
       'AccountingService.openCashDrawer(',
@@ -544,6 +543,10 @@ void main() {
     ]) {
       expect(scenarioSource, contains(required), reason: required);
     }
+    expect(
+      scenarioSource,
+      matches(RegExp(r'store\.commerce\s*\.postExpense\(')),
+    );
     expect(source, contains('inventory_batch_balances'));
     for (final forbidden in <String>[
       '.customInsert(',

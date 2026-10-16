@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'helpers/accounting_page_source.dart';
 import 'helpers/accounting_service_source.dart';
 import 'helpers/sales_page_source.dart';
+import 'helpers/app_store_source.dart';
 
 import 'helpers/dart_library_source.dart';
 
@@ -13,8 +14,7 @@ void main() {
         readDartLibrarySource('lib/core/services/payment_voucher_service.dart');
     final schema = readDartLibrarySource(
         'lib/core/storage/sqlite/ventio_drift_database.dart');
-    final appStore =
-        readDartLibrarySource('lib/data/app_store_warehouse_cash.dart');
+    final appStore = readAppStoreImplementationSource();
 
     expect(vouchers, contains('Future<ReceiptVoucher> editReceipt({'));
     expect(vouchers, contains('Future<PaymentVoucher> editPayment({'));
@@ -26,8 +26,9 @@ void main() {
     expect(schema,
         contains('idx_payment_allocations_target_per_voucher_kind_active'));
     expect(schema, contains("status = 'active'"));
-    expect(appStore, contains('editReceiptVoucher({'));
-    expect(appStore, contains('editPaymentVoucher({'));
+    // Unused AppStore forwarding wrappers were removed from the public facade.
+    expect(appStore, isNot(contains('editReceiptVoucher(')));
+    expect(appStore, isNot(contains('editPaymentVoucher(')));
   });
 
   test('posted expense edit is versioned and cancel remains family-aware', () {

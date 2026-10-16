@@ -369,14 +369,14 @@ void main() {
         readDartLibrarySource('lib/data/app_store_orchestration.dart');
     final catalog = readDartLibrarySource(
         'lib/data/app_store_catalog_parties_expenses.dart');
-    final persistence =
-        readDartLibrarySource('lib/data/app_store_persistence_sync_core.dart');
-
-    final productsStart = orchestration.indexOf(
-      'Future<void> ensureProductsLoaded()',
+    final costing = readDartLibrarySource(
+      'lib/data/app_store_pricing_costing_split_02.dart',
     );
+
+    final productsStart =
+        orchestration.indexOf('Future<void> _ensureProductsLoadedImpl()');
     final customersStart = orchestration.indexOf(
-      'Future<void> ensureCustomersLoaded()',
+      'Future<void> _ensureCustomersLoaded()',
       productsStart,
     );
     expect(productsStart, greaterThanOrEqualTo(0));
@@ -387,11 +387,11 @@ void main() {
 
     expect(
       catalog,
-      contains('await ensureCostingMethodHistoryLoaded();'),
+      contains('await _ensureCostingMethodHistoryLoaded();'),
     );
     expect(
-      persistence,
-      contains('await ensureCostingMethodHistoryLoaded();'),
+      costing,
+      contains('if (_costingMethodHistory.isNotEmpty) return;'),
     );
   });
 

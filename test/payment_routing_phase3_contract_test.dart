@@ -61,10 +61,10 @@ void main() {
         '';
 
     expect(saleSettlement,
-        contains('await refreshAccountTransactionsFromSqlite();'));
+        contains('await _refreshAccountTransactionsFromSqlite();'));
     expect(saleSettlement, contains(flush));
     expect(purchaseSettlement,
-        contains('await refreshAccountTransactionsFromSqlite();'));
+        contains('await _refreshAccountTransactionsFromSqlite();'));
     expect(purchaseSettlement, contains(flush));
   });
 }

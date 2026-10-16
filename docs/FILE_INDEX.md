@@ -1011,7 +1011,7 @@ Use search to open the matching row; the source file remains authoritative for b
 | [`app_store_source.dart`](../test/helpers/app_store_source.dart) | Test helpers module; provides `readAppStoreImplementationSource`. |
 | [`app_store_test_accessors.dart`](../test/helpers/app_store_test_accessors.dart) | Test helpers module; provides `_decodeEntityList`, `_decodeCachedEntityList`, `_sortProducts`, `_CachedEntityList`, `Function`, `AppStoreTestAccessors`. |
 | [`business_sqlite_store_source.dart`](../test/helpers/business_sqlite_store_source.dart) | Test helpers module; provides `readBusinessSqliteStoreSource`, `readBusinessSqliteStoreImplementationSource`. |
-| [`dart_library_source.dart`](../test/helpers/dart_library_source.dart) | Test helpers module; provides `readDartLibrarySource`. |
+| [`dart_library_source.dart`](../test/helpers/dart_library_source.dart) | Test helpers module; provides `readDartLibrarySource`, `extractDartMethodSource`, `extractDartBlockAfter`, `_findNextMethodBody`, `_findMatchingDartBrace`, `_skipDartNonCode`, … (2 more). |
 | [`sales_page_source.dart`](../test/helpers/sales_page_source.dart) | Test helpers module; provides `readSalesPageImplementationSource`. |
 | [`schema_version_contract.dart`](../test/helpers/schema_version_contract.dart) | Test helpers module; provides `expectSchemaVersionAtLeast`. |
 | [`settings_page_source.dart`](../test/helpers/settings_page_source.dart) | Test helpers module; provides `readSettingsPageImplementationSource`. |
