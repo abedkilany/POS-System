@@ -6,7 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'local_database_service.dart';
 
 class LocalAutoBackupSettings {
@@ -115,7 +115,7 @@ class LocalAutoBackupService {
     return '${support.path}${Platform.pathSeparator}Backup';
   }
 
-  static Future<void> runDueBackup(AppStore store) async {
+  static Future<void> runDueBackup(BackupSession store) async {
     if (_isRunning || kIsWeb) {
       return;
     }
@@ -138,7 +138,7 @@ class LocalAutoBackupService {
   }
 
   static Future<File> createBackupNow(
-    AppStore store, {
+    BackupSession store, {
     LocalAutoBackupSettings? settings,
     String reason = 'manual',
   }) async {

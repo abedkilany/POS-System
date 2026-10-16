@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/sync_change.dart';
 import '../sync_unified/sync_contracts.dart';
 import '../sync_unified/sync_device_state.dart';
@@ -35,9 +35,9 @@ class DirectHostSyncEndpoint {
   static const int _maxChangePayloadBytes = 16 * 1024;
   static const int _maxPullChunkBytes = 8 * 1024;
 
-  DirectHostSyncEndpoint(this.store) : _core = UnifiedSyncCoreService(store);
+  DirectHostSyncEndpoint(this.store) : _core = UnifiedSyncCoreService(store.sync);
 
-  final AppStore store;
+  final SyncSession store;
   final UnifiedSyncCoreService _core;
   List<Map<String, dynamic>>? _snapshotChunks;
   final Map<String, _DirectPullJob> _pullJobs = <String, _DirectPullJob>{};
@@ -298,9 +298,9 @@ class DirectClientSyncService {
   static const int _maxChangePayloadBytes = 16 * 1024;
 
   DirectClientSyncService(this.store, this.session)
-      : _core = UnifiedSyncCoreService(store);
+      : _core = UnifiedSyncCoreService(store.sync);
 
-  final AppStore store;
+  final SyncSession store;
   final DirectPeerRequestSession session;
   final UnifiedSyncCoreService _core;
 

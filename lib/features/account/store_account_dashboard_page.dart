@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../shared/sync_monitoring_section.dart';
 
 class StoreAccountDashboardPage extends StatefulWidget {
@@ -20,7 +20,7 @@ class StoreAccountDashboardPage extends StatefulWidget {
     required this.onLocaleChanged,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final AccountAuthCache cache;
   final bool hasStoreIdentity;
   final bool hasLocalStoreData;

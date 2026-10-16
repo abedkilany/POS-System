@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'assistant_provider.dart';
 import 'assistant_provider_settings_service.dart';
 import 'assistant_provider_transport.dart';
@@ -16,7 +16,7 @@ import 'assistant_provider_transport.dart';
 class AssistantProviderSettingsPage extends StatefulWidget {
   const AssistantProviderSettingsPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<AssistantProviderSettingsPage> createState() =>

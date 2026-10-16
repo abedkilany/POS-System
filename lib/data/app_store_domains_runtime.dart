@@ -11,7 +11,7 @@ final class _AppRuntimeDomain implements AppRuntimeDomainPort {
 
   @override
   Future<void> prepareForShutdown() =>
-      _AppStoreSplitSyncApplyPart4(_store).prepareForShutdown();
+      _AppStoreSyncApplyQueueRecovery(_store).prepareForShutdown();
 
   @override
   Future<ThemeMode> loadThemeMode() =>
@@ -79,21 +79,21 @@ final class _AppRuntimeDomain implements AppRuntimeDomainPort {
 
   @override
   Future<void> updateStoreProfile(StoreProfile profile) =>
-      _AppStoreSplitPersistenceSyncCorePart3(_store)
+      _AppStorePersistenceSyncCoreMaintenance(_store)
           .updateStoreProfile(profile);
 
   @override
   Future<void> refreshAfterDatabaseChange(String key) =>
-      _AppStoreSplitStartupMigrationsPart2(_store)
+      _AppStoreStartupMigrationsDeferredLoading(_store)
           .refreshAfterDatabaseChange(key);
 
   @override
   Future<void> refreshSalesProductData() =>
-      _AppStoreSplitStartupMigrationsPart2(_store).refreshSalesProductData();
+      _AppStoreStartupMigrationsDeferredLoading(_store).refreshSalesProductData();
 
   @override
   Future<void> reloadAllAfterDatabaseChange() =>
-      _AppStoreSplitStartupMigrationsPart2(_store)
+      _AppStoreStartupMigrationsDeferredLoading(_store)
           .reloadAllAfterDatabaseChange();
 
   @override

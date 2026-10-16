@@ -504,7 +504,7 @@ class _InventoryOverview extends StatelessWidget {
       required this.loading,
       required this.onLoadMore});
 
-  final AppStore store;
+  final ApplicationSession store;
   final List<Product> products;
   final int totalCount;
   final _InventoryOverviewMetrics overview;
@@ -670,7 +670,7 @@ class _InventoryProductTile extends StatelessWidget {
       required this.canAdjust});
 
   final Product product;
-  final AppStore store;
+  final ApplicationSession store;
   final bool compact;
   final ValueChanged<String>? onAdjust;
   final bool canAdjust;
@@ -749,7 +749,7 @@ List<Product> _filterProducts(List<Product> products, String query) {
 
 class _WarehousesTab extends StatefulWidget {
   const _WarehousesTab({required this.store});
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_WarehousesTab> createState() => _WarehousesTabState();

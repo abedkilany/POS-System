@@ -9,7 +9,7 @@ import '../../core/services/cash_shift_report_pdf_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/accounting_account.dart';
 import '../../models/cash_ledger_transaction.dart';
 import '../../models/expense.dart';
@@ -35,7 +35,7 @@ class _ExpenseSettlementSelection {
 class CashPage extends StatefulWidget {
   const CashPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<CashPage> createState() => _CashPageState();

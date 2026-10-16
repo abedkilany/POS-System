@@ -3,7 +3,7 @@ part of 'settings_page.dart';
 class SettingsBackupActions {
   static Future<void> downloadBackupFile(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     try {
@@ -34,7 +34,7 @@ class SettingsBackupActions {
 
   static Future<void> importBackupFile(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     final authorized = await requestSensitiveActionAuthorization(
@@ -121,7 +121,7 @@ class SettingsBackupActions {
 
   static Future<void> downloadRecoveryFile(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     final identity = store.runtime.identity;
@@ -196,7 +196,7 @@ class SettingsBackupActions {
 
   static Future<void> recoverExistingStore(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     if (store.runtime.identity.hostDeviceId.trim().isNotEmpty) {
@@ -216,7 +216,7 @@ class SettingsBackupActions {
 
   static Future<void> recoverStoreIdentity(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
@@ -319,7 +319,7 @@ class SettingsBackupActions {
 
   static Future<void> recoverStoreData(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
@@ -436,7 +436,7 @@ class SettingsBackupActions {
 
   static Future<void> clearLocalData(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     const confirmationWord = 'CONFIRM';
     final confirmed = await showDialog<bool>(
@@ -518,7 +518,7 @@ class SettingsBackupActions {
 
   static Future<void> rebuildFromHost(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
@@ -633,7 +633,7 @@ class SettingsBackupActions {
 
   static Future<void> resetBusinessData(
     BuildContext context,
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final tr = AppLocalizations.of(context);
     const confirmationWord = 'CONFIRM';

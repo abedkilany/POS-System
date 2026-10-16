@@ -4,7 +4,7 @@ import '../../core/services/accounting_aging_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/aging_report.dart';
 import '../../models/sale.dart';
 
@@ -159,7 +159,7 @@ class DashboardService {
   const DashboardService();
 
   Future<DashboardState> buildState(
-    AppStore store, {
+    ApplicationSession store, {
     DateTime? now,
   }) async {
     final reference = (now ?? DateTime.now()).toLocal();
@@ -234,13 +234,13 @@ class DashboardService {
     return sale.total;
   }
 
-  double todaySalesAmount(AppStore store, DateTime reference) {
+  double todaySalesAmount(ApplicationSession store, DateTime reference) {
     return store.commerce.sales
         .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
         .fold<double>(0, (sum, sale) => sum + _saleReportingTotal(sale));
   }
 
-  double todayProfitAmount(AppStore store, DateTime reference) {
+  double todayProfitAmount(ApplicationSession store, DateTime reference) {
     final salesProfit = store.commerce.sales
         .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
         .fold<double>(0, (sum, sale) => sum + sale.grossProfit);
@@ -253,15 +253,15 @@ class DashboardService {
     return salesProfit - expenses;
   }
 
-  int todayInvoiceCount(AppStore store, DateTime reference) {
+  int todayInvoiceCount(ApplicationSession store, DateTime reference) {
     return store.commerce.sales
         .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
         .length;
   }
 
-  int lowStockCount(AppStore store) => store.inventory.lowStockCount;
+  int lowStockCount(ApplicationSession store) => store.inventory.lowStockCount;
 
-  Future<CashBalanceTotals> currentCashTotals(AppStore store) async {
+  Future<CashBalanceTotals> currentCashTotals(ApplicationSession store) async {
     if (!AccountingService.isAvailable) return CashBalanceTotals();
     try {
       final rows = await AccountingService.listCashBalancesReport();
@@ -287,7 +287,7 @@ class DashboardService {
   }
 
   List<DashboardAlertItem> dashboardAlerts(
-    AppStore store, {
+    ApplicationSession store, {
     required DateTime reference,
     required AgingReportResult customerAging,
     required AgingReportResult supplierAging,
@@ -401,7 +401,7 @@ class DashboardService {
   }
 
   List<DashboardFinancialItem> dashboardFinancialSummary(
-    AppStore store, {
+    ApplicationSession store, {
     required AgingReportResult customerAging,
     required AgingReportResult supplierAging,
     required CashBalanceTotals cashTotals,
@@ -476,7 +476,7 @@ class DashboardService {
   }
 
   List<DashboardChartSeries> dashboardCharts(
-    AppStore store, {
+    ApplicationSession store, {
     required DateTime reference,
     required AgingReportResult customerAging,
     required AgingReportResult supplierAging,
@@ -573,7 +573,7 @@ class DashboardService {
   }
 
   List<DashboardChartItem> _dailySalesSeries(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
     int days,
   ) {
@@ -601,7 +601,7 @@ class DashboardService {
         .toList(growable: false);
   }
 
-  double _salesTotalSince(AppStore store, DateTime from) {
+  double _salesTotalSince(ApplicationSession store, DateTime from) {
     return store.commerce.sales
         .where((sale) =>
             !sale.isDeleted &&
@@ -610,7 +610,7 @@ class DashboardService {
         .fold<double>(0, (sum, sale) => sum + _saleReportingTotal(sale));
   }
 
-  double _profitTotalSince(AppStore store, DateTime from) {
+  double _profitTotalSince(ApplicationSession store, DateTime from) {
     final salesProfit = store.commerce.sales
         .where((sale) =>
             !sale.isDeleted &&
@@ -626,7 +626,7 @@ class DashboardService {
     return salesProfit - expenses;
   }
 
-  List<DashboardChartItem> _groupExpensesByCategory(AppStore store, int limit) {
+  List<DashboardChartItem> _groupExpensesByCategory(ApplicationSession store, int limit) {
     final totals = <String, double>{};
     for (final expense in store.commerce.expenses) {
       if (!expense.isPosted || expense.isDeleted) continue;
@@ -649,7 +649,7 @@ class DashboardService {
         .toList(growable: false);
   }
 
-  List<DashboardChartItem> _topProductsByQuantity(AppStore store, int limit) {
+  List<DashboardChartItem> _topProductsByQuantity(ApplicationSession store, int limit) {
     final totals = <String, double>{};
     for (final sale in store.commerce.sales) {
       if (sale.isDeleted || sale.isCancelled) continue;
@@ -672,7 +672,7 @@ class DashboardService {
         .toList(growable: false);
   }
 
-  List<DashboardChartItem> _topCustomersBySales(AppStore store, int limit) {
+  List<DashboardChartItem> _topCustomersBySales(ApplicationSession store, int limit) {
     final totals = <String, double>{};
     for (final sale in store.commerce.sales) {
       if (sale.isDeleted || sale.isCancelled) continue;
@@ -696,7 +696,7 @@ class DashboardService {
   }
 
   List<DashboardOperationItem> recentOperations(
-    AppStore store, {
+    ApplicationSession store, {
     DateTime? reference,
     int limit = 5,
   }) {
@@ -758,7 +758,7 @@ class DashboardService {
   }
 
   DashboardHealthSnapshot syncStatus(
-    AppStore store, {
+    ApplicationSession store, {
     DateTime? reference,
   }) {
     final pending = store.sync.pendingCount;
@@ -835,7 +835,7 @@ class DashboardService {
     );
   }
 
-  double _averageDailyExpense(AppStore store, DateTime reference, int days) {
+  double _averageDailyExpense(ApplicationSession store, DateTime reference, int days) {
     if (days <= 0) return 0;
     final start = reference.subtract(Duration(days: days - 1));
     final total = store.commerce.expenses

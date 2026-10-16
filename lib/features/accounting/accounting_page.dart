@@ -16,7 +16,7 @@ import '../../core/services/accounting_aging_service.dart';
 import '../../core/services/cash_ledger_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/print_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'accounting_snapshot_service.dart';
 import '../../models/account_transaction.dart';
 import '../../models/cash_ledger_transaction.dart';
@@ -54,7 +54,7 @@ const int _kCashFlowDetailRowLimit = 200;
 class AccountingPage extends StatefulWidget {
   const AccountingPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<AccountingPage> createState() => _AccountingPageState();

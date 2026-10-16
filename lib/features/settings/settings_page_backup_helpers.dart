@@ -41,7 +41,7 @@ Future<String?> _requestBackupPassword(BuildContext context) async {
 }
 
 Future<void> _publishImportedSnapshotToDirectIfNeeded(
-  AppStore store,
+  ApplicationSession store,
 ) async {
   final identity = store.runtime.identity;
   final direct = VpsControlPlaneSettings.load();

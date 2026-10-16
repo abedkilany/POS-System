@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _GeneralLedgerTab extends StatefulWidget {
   const _GeneralLedgerTab({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override
@@ -379,7 +379,7 @@ class _GeneralLedgerFilterBar extends StatelessWidget {
 class _LedgerLinesTable extends StatelessWidget {
   const _LedgerLinesTable({required this.store, required this.account});
 
-  final AppStore store;
+  final ApplicationSession store;
   final GeneralLedgerAccountReport account;
 
   @override

@@ -14,7 +14,7 @@ class DirectPeerHostManager {
     this.onStopped,
   });
 
-  final AppStore store;
+  final SyncSession store;
   final DirectPeerSignalingService signalingService;
   final DirectPeerSignalingSettings signalingSettings;
   final List<Map<String, dynamic>> iceServers;
@@ -188,7 +188,7 @@ class _DirectHostPeerState {
     required this.onClosed,
   });
 
-  final AppStore store;
+  final SyncSession store;
   final String deviceId;
   final RTCPeerConnection peerConnection;
   final DirectPeerSignalingSession signaling;

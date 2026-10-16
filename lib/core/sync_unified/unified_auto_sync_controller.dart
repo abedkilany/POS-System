@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:http/http.dart' as http;
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../services/direct_control_plane_service.dart';
 import '../services/local_database_service.dart';
 import '../services/lan_sync_service.dart';
@@ -68,7 +68,7 @@ Future<void> _runUnifiedRealtimeSignalLoop<TSettings>({
 }
 
 Future<void> _recoverSyncQueues(
-  AppStore store,
+  SyncSession store,
   List<String> targets,
 ) async {
   for (final target in targets) {
@@ -77,18 +77,18 @@ Future<void> _recoverSyncQueues(
   }
 }
 
-Future<void> _recoverClientSyncQueue(AppStore store) =>
+Future<void> _recoverClientSyncQueue(SyncSession store) =>
     _recoverSyncQueues(store, const ['host']);
 
 class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
 
-  static final Map<AppStore, LanSyncService> _lanServices =
-      <AppStore, LanSyncService>{};
-  static final Map<AppStore, DirectSyncTransportAdapter> _directAdapters =
-      <AppStore, DirectSyncTransportAdapter>{};
+  static final Map<SyncSession, LanSyncService> _lanServices =
+      <SyncSession, LanSyncService>{};
+  static final Map<SyncSession, DirectSyncTransportAdapter> _directAdapters =
+      <SyncSession, DirectSyncTransportAdapter>{};
 
-  static UnifiedSyncEngine lanEngine(AppStore store,
+  static UnifiedSyncEngine lanEngine(SyncSession store,
       {LanSyncSettings? settings}) {
     return UnifiedSyncEngine(
       LanSyncTransportAdapter(
@@ -99,7 +99,7 @@ class UnifiedSyncFactory {
   }
 
   static UnifiedSyncEngine directEngine(
-    AppStore store, {
+    SyncSession store, {
     VpsControlPlaneSettings? settings,
     bool enabled = true,
     http.Client? client,
@@ -113,13 +113,13 @@ class UnifiedSyncFactory {
     );
   }
 
-  static Future<void> disposeDirect(AppStore store) async {
+  static Future<void> disposeDirect(SyncSession store) async {
     final adapter = _directAdapters.remove(store);
     await adapter?.stopHostIfSupported();
   }
 
   static UnifiedSyncEngine activeEngine(
-    AppStore store, {
+    SyncSession store, {
     bool directEnabled = true,
     VpsControlPlaneSettings? directSettings,
     LanSyncSettings? lanSettings,
@@ -134,11 +134,11 @@ class UnifiedSyncFactory {
   static bool get isLanSetupComplete => LanSyncSettings.load().setupComplete;
   static bool get isLanHost => LanSyncSettings.load().isHost;
   static bool get isDirectConfigured => false;
-  static bool directCanCheck(AppStore store) {
+  static bool directCanCheck(SyncSession store) {
     return false;
   }
 
-  static bool directFallbackCanCheck(AppStore store) {
+  static bool directFallbackCanCheck(SyncSession store) {
     return false;
   }
 }
@@ -146,7 +146,7 @@ class UnifiedSyncFactory {
 class UnifiedAutoLanSyncController {
   UnifiedAutoLanSyncController(this.store, {this.onSnapshotProgress});
 
-  final AppStore store;
+  final SyncSession store;
   final AutoSnapshotProgressPresenter? onSnapshotProgress;
   Timer? _periodicTimer;
   Timer? _debounceTimer;
@@ -408,7 +408,7 @@ class UnifiedAutoLanSyncController {
 class UnifiedAutoDirectSyncController {
   UnifiedAutoDirectSyncController(this.store);
 
-  final AppStore store;
+  final SyncSession store;
   Timer? _timer;
   Timer? _localPushDebounce;
   bool _running = false;

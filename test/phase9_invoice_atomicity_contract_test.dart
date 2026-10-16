@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
@@ -42,9 +43,16 @@ void main() {
       'sale create commits invoice accounting and customer ledger with stock/document',
       () {
     final body = methodBody('Future<Sale> createSale(');
-    expect(body, contains('await AccountingService.recordSale('));
-    expect(body, contains("id: '\${sale.id}-sale-invoice'"));
-    expect(body, contains('_persistAccountTransactionInExistingTransaction('));
+    expect(body, contains('await SalePostingService('));
+    final posting =
+        File('lib/core/services/sale_posting_service.dart').readAsStringSync();
+    final transaction =
+        extractDartBlockAfter(posting, 'await sqliteDb.transaction(');
+    expect(transaction, contains('await postAccounting(sale)'));
+    expect(transaction, contains("id: '\${sale.id}-sale-invoice'"));
+    expect(transaction, contains('await _persistCustomerLedger('));
+    expect(transaction,
+        contains('await stockService.recordMovementsInTransaction('));
     expect(body, isNot(contains("_scheduleSaleAccounting(sale);")));
   });
 

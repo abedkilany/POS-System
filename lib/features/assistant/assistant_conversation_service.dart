@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'assistant_how_to_knowledge_service.dart';
 import 'assistant_provider.dart';
 import 'assistant_provider_settings_service.dart';
@@ -24,7 +24,7 @@ class AssistantConversationService {
   final AssistantProviderTransport _transport;
 
   Future<AssistantConversationResult> ask({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
     required String model,
     required String question,
@@ -169,7 +169,7 @@ class AssistantConversationService {
   }
 
   static Future<({String content, AssistantJsonMap? report})> _executeTool({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProviderToolCall call,
     required Set<String> offeredToolNames,
     required bool canExecute,
@@ -239,7 +239,7 @@ class AssistantConversationService {
   static const String _appGuideHeading = 'Relevant Ventio help article:';
 
   static Future<void> _requireConsent(
-    AppStore store,
+    ApplicationSession store,
     AssistantProvider provider,
     _AssistantScope expected,
   ) async {
@@ -264,7 +264,7 @@ class AssistantConversationService {
     }
   }
 
-  static _AssistantScope _currentScope(AppStore store) {
+  static _AssistantScope _currentScope(ApplicationSession store) {
     final user = store.security.activeUser;
     final userId = user?.id.trim() ?? '';
     final storeId = store.runtime.identity.storeId.trim();

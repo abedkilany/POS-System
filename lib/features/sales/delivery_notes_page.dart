@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/local_database_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/delivery_note.dart';
 import '../../models/sale.dart';
 import '../../models/user_role.dart';
@@ -11,7 +11,7 @@ import '../../core/services/simple_report_pdf_service.dart';
 
 class DeliveryNotesPage extends StatefulWidget {
   const DeliveryNotesPage({super.key, required this.store});
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<DeliveryNotesPage> createState() => _DeliveryNotesPageState();

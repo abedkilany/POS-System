@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _CashLedgerTransactionsTab extends StatefulWidget {
   const _CashLedgerTransactionsTab({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override
@@ -384,7 +384,7 @@ class _CashLedgerTransactionRow extends StatelessWidget {
     required this.isWide,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final CashLedgerTransaction transaction;
   final bool isWide;
 
@@ -612,7 +612,7 @@ String _cashLedgerTypeLabel(BuildContext context, String type) {
 
 Future<void> _showJournalForCashLedgerTransaction(
   BuildContext context, {
-  required AppStore store,
+  required ApplicationSession store,
   required CashLedgerTransaction transaction,
 }) async {
   final referenceType = transaction.referenceType.trim();
@@ -628,7 +628,7 @@ Future<void> _showJournalForCashLedgerTransaction(
 
 Future<void> _showJournalForAccountTransaction(
   BuildContext context, {
-  required AppStore store,
+  required ApplicationSession store,
   required AccountTransaction transaction,
 }) async {
   String referenceType = '';

@@ -5,6 +5,10 @@ final class _SyncDomain implements SyncDomainPort {
   final AppStore _store;
 
   @override
+  Future<List<Map<String, dynamic>>> exportDirectLoginBootstrapSnapshotChunks() =>
+      _AppStoreSplitBackupRecovery(_store).exportDirectLoginBootstrapSnapshotChunks();
+
+  @override
   String get deviceId => _store._deviceId;
 
   @override
@@ -13,17 +17,17 @@ final class _SyncDomain implements SyncDomainPort {
   List<SyncQueueItem> get queue => _store._syncQueueReadImpl;
   @override
   List<SyncChange> get pendingChanges =>
-      _AppStoreSplitCoreLoadingPart2(_store).pendingSyncChanges;
+      _AppStoreCoreLoadingProjections(_store).pendingSyncChanges;
   @override
   List<SyncQueueItem> get pendingQueue =>
-      _AppStoreSplitCoreLoadingPart2(_store).pendingSyncQueue;
+      _AppStoreCoreLoadingProjections(_store).pendingSyncQueue;
   @override
   int get sequence => _store._syncSequence;
   @override
   int get pendingCount => pendingQueue.length;
   @override
   int get activeClientPendingCount =>
-      _AppStoreSplitCoreLoadingPart2(_store).activeClientPendingSyncCount;
+      _AppStoreCoreLoadingProjections(_store).activeClientPendingSyncCount;
   @override
   int get latestStoredAuthoritativeSequence =>
       _store._latestStoredAuthoritativeSequence();
@@ -39,14 +43,14 @@ final class _SyncDomain implements SyncDomainPort {
 
   @override
   DateTime? get latestResetAt =>
-      _AppStoreSplitCoreLoadingPart2(_store).latestResetSyncAt;
+      _AppStoreCoreLoadingProjections(_store).latestResetSyncAt;
 
   @override
   Future<void> ensureLoaded() => _store._requestSyncDataLoad();
 
   @override
   bool hasOutstandingWorkForTarget(String target) =>
-      _AppStoreSplitCoreLoadingPart2(_store)
+      _AppStoreCoreLoadingProjections(_store)
           .outstandingSyncQueueCountForTarget(target) >
       0;
 
@@ -55,40 +59,40 @@ final class _SyncDomain implements SyncDomainPort {
     String target, {
     bool readyOnly = true,
   }) =>
-      _AppStoreSplitCoreLoadingPart2(_store)
+      _AppStoreCoreLoadingProjections(_store)
           .pendingSyncChangesForTarget(target, readyOnly: readyOnly);
 
   @override
   List<SyncChange> submittedChangesForTarget(String target) =>
-      _AppStoreSplitCoreLoadingPart2(_store)
+      _AppStoreCoreLoadingProjections(_store)
           .submittedSyncChangesForTarget(target);
 
   @override
   String? validateClientDraftForHostAcceptance(SyncChange change) =>
-      _AppStoreSplitStartupMigrationsPart3(_store)
+      _AppStoreStartupMigrationsCatalogSync(_store)
           .validateClientDraftForHostAcceptance(change);
 
   @override
   Future<void> markPushInProgress(Iterable<String> changeIds) =>
-      _AppStoreSplitSyncApplyPart4(_store)
+      _AppStoreSyncApplyQueueRecovery(_store)
           .markSyncQueueChangesInProgress(changeIds);
 
   @override
   Future<void> markSubmitted(Iterable<String> ids) =>
-      _AppStoreSplitSyncApplyPart3(_store).markSyncChangesSubmittedByIds(ids);
+      _AppStoreSyncApplyPayloadAck(_store).markSyncChangesSubmittedByIds(ids);
 
   @override
   Future<void> markAcknowledged(Iterable<String> ids) =>
-      _AppStoreSplitSyncApplyPart3(_store).markSyncChangesSyncedByIds(ids);
+      _AppStoreSyncApplyPayloadAck(_store).markSyncChangesSyncedByIds(ids);
 
   @override
   Future<void> markFailed(Iterable<String> changeIds, String message) =>
-      _AppStoreSplitSyncApplyPart4(_store)
+      _AppStoreSyncApplyQueueRecovery(_store)
           .markSyncQueueChangesFailed(changeIds, message);
 
   @override
   Future<void> markRejected(Map<String, String> rejected) =>
-      _AppStoreSplitSyncApplyPart4(_store)
+      _AppStoreSyncApplyQueueRecovery(_store)
           .markSyncChangesRejectedByIds(rejected);
 
   @override
@@ -97,7 +101,7 @@ final class _SyncDomain implements SyncDomainPort {
     bool markAppliedAsSynced = false,
     bool mirrorToDirect = false,
   }) =>
-      _AppStoreSplitSyncApplyPart2(_store)._applyRemoteSyncChanges(
+      _AppStoreSyncApplyRemoteChanges(_store)._applyRemoteSyncChanges(
         changes.toList(),
         markAppliedAsSynced: markAppliedAsSynced,
         mirrorToDirect: mirrorToDirect,
@@ -105,7 +109,7 @@ final class _SyncDomain implements SyncDomainPort {
 
   @override
   Future<void> assertRemoteChangesApplied(List<SyncChange> changes) =>
-      _AppStoreSplitSyncApplyPart3(_store)
+      _AppStoreSyncApplyPayloadAck(_store)
           .assertRemoteSyncChangesApplied(changes);
 
   @override
@@ -130,24 +134,24 @@ final class _SyncDomain implements SyncDomainPort {
 
   @override
   Future<BusinessDataIntegrityResult> verifyLocalBusinessDataIntegrity() =>
-      _AppStoreSplitPersistenceSyncCorePart3(_store)
+      _AppStorePersistenceSyncCoreMaintenance(_store)
           .verifyLocalBusinessDataIntegrity();
 
   @override
   Future<int> cleanupSoftDeletedRecords({
     Duration retention = const Duration(days: 30),
   }) =>
-      _AppStoreSplitPersistenceSyncCorePart3(_store)
+      _AppStorePersistenceSyncCoreMaintenance(_store)
           .cleanupSoftDeletedRecords(retention: retention);
 
   @override
   Future<void> recordPhase8AccountingMutationForSync() =>
-      _AppStoreSplitPersistenceSyncCorePart4(_store)
+      _AppStorePersistenceSyncCoreOutbox(_store)
           .recordPhase8AccountingMutationForSync();
 
   @override
   Future<void> recoverPhase8AccountingSyncAfterStartup() =>
-      _AppStoreSplitPersistenceSyncCorePart4(_store)
+      _AppStorePersistenceSyncCoreOutbox(_store)
           .recoverPhase8AccountingSyncAfterStartup();
 
   @override
@@ -172,11 +176,11 @@ final class _SyncDomain implements SyncDomainPort {
 
   @override
   Future<int> settleHostQueueThroughPeerAck() =>
-      _AppStoreSplitSyncApplyPart3(_store).settleHostQueueThroughPeerAck();
+      _AppStoreSyncApplyPayloadAck(_store).settleHostQueueThroughPeerAck();
 
   @override
   Future<void> settleLegacyLanHostQueue() =>
-      _AppStoreSplitSyncApplyPart3(_store).settleLegacyLanHostQueue();
+      _AppStoreSyncApplyPayloadAck(_store).settleLegacyLanHostQueue();
 
   @override
   Future<void> importSnapshotJson(String rawJson) =>
@@ -209,12 +213,12 @@ final class _SyncDomain implements SyncDomainPort {
 
   @override
   DateTime snapshotGeneratedAtFromJson(String rawJson) =>
-      _AppStoreSplitBackupRecoveryPart2(_store)
+      _AppStoreBackupRecoverySnapshotCrypto(_store)
           .syncSnapshotGeneratedAtFromJson(rawJson);
 
   @override
   int snapshotGeneratedSequenceFromJson(String rawJson) =>
-      _AppStoreSplitBackupRecoveryPart2(_store)
+      _AppStoreBackupRecoverySnapshotCrypto(_store)
           .syncSnapshotGeneratedSequenceFromJson(rawJson);
 
   @override
@@ -223,7 +227,7 @@ final class _SyncDomain implements SyncDomainPort {
     int? sinceSequence,
     int? maxEncodedPayloadBytes,
   }) =>
-      _AppStoreSplitBackupRecoveryPart2(_store).exportSyncChangesJson(
+      _AppStoreBackupRecoverySnapshotCrypto(_store).exportSyncChangesJson(
         since: since,
         sinceSequence: sinceSequence,
         maxEncodedPayloadBytes: maxEncodedPayloadBytes,
@@ -270,7 +274,7 @@ final class _SyncDomain implements SyncDomainPort {
 
   @override
   Future<int> clearLocalOnlyPendingSyncChanges() =>
-      _AppStoreSplitPersistenceSyncCorePart2(_store)
+      _AppStorePersistenceSyncCoreDirtyWrites(_store)
           .clearLocalOnlyPendingSyncChanges();
 
   @override
@@ -278,20 +282,20 @@ final class _SyncDomain implements SyncDomainPort {
     String target, {
     bool readyOnly = true,
   }) =>
-      _AppStoreSplitCoreLoadingPart2(_store)
+      _AppStoreCoreLoadingProjections(_store)
           .pendingSyncQueueForTarget(target, readyOnly: readyOnly);
 
   @override
   Future<void> clearPendingSyncQueue({bool notify = true}) =>
-      _AppStoreSplitStartupMigrationsPart3(_store)
+      _AppStoreStartupMigrationsCatalogSync(_store)
           .clearPendingSyncQueue(notify: notify);
 
   @override
   Future<void> markSyncQueueItemFailed(String queueItemId, String error) =>
-      _AppStoreSplitSyncApplyPart4(_store)
+      _AppStoreSyncApplyQueueRecovery(_store)
           .markSyncQueueItemFailed(queueItemId, error);
 
   @override
   Future<String> exportSyncSnapshotJson() =>
-      _AppStoreSplitBackupRecoveryPart2(_store).exportSyncSnapshotJson();
+      _AppStoreBackupRecoverySnapshotCrypto(_store).exportSyncSnapshotJson();
 }

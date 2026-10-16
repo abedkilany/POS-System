@@ -10,7 +10,7 @@ import '../../core/services/payment_voucher_service.dart';
 import '../../core/services/cash_reversal_service.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/utils/currency_utils.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/cash_ledger_transaction.dart';
 
 class CashHistoryPanel extends StatefulWidget {
@@ -22,7 +22,7 @@ class CashHistoryPanel extends StatefulWidget {
     required this.refreshKey,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String cashLocationId;
   final String currentSessionId;
   final int refreshKey;

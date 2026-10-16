@@ -578,7 +578,7 @@ class _MovementsListState extends State<_MovementsList> {
 class _AutoCorrectionsTab extends StatefulWidget {
   const _AutoCorrectionsTab({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_AutoCorrectionsTab> createState() => _AutoCorrectionsTabState();

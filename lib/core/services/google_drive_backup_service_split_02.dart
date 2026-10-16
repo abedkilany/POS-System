@@ -360,7 +360,7 @@ class GoogleDriveBackupService {
     );
   }
 
-  static Future<void> runDueBackup(AppStore store) async {
+  static Future<void> runDueBackup(BackupSession store) async {
     if (_isRunning || kIsWeb) return;
     if (store.runtime.identity.isClient) return;
     final settings = await loadSettings();
@@ -379,7 +379,7 @@ class GoogleDriveBackupService {
   }
 
   static Future<String> createBackupNow(
-    AppStore store, {
+    BackupSession store, {
     GoogleDriveBackupSettings? settings,
     String reason = 'manual',
   }) async {

@@ -12,7 +12,7 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/snapshot/unified_snapshot_progress.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../barcode/barcode_scanner_page.dart';
 
@@ -37,7 +37,7 @@ enum _ClientPairingState {
 class SyncSetupPage extends StatefulWidget {
   const SyncSetupPage({super.key, required this.store, required this.onDone});
 
-  final AppStore store;
+  final ApplicationSession store;
   final Future<void> Function() onDone;
 
   @override

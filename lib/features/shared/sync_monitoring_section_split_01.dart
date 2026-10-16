@@ -9,7 +9,7 @@ class SyncMonitoringSection extends StatefulWidget {
     this.branchIdOverride,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final bool forceHostView;
   final String? storeIdOverride;
   final String? branchIdOverride;
@@ -22,7 +22,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   Future<_DirectMonitoringSnapshot>? _directMonitoringFuture;
   StreamSubscription<SyncPeerLiveEvent>? _liveSubscription;
 
-  AppStore get store => widget.store;
+  ApplicationSession get store => widget.store;
   DirectControlPlaneService get _controlPlaneService =>
       DirectControlPlaneService(store);
 
@@ -389,7 +389,7 @@ class _DirectMonitoringSnapshot {
 }
 
 DirectDeviceLimitStatus? _localClientDeviceLimitStatus(
-  AppStore store,
+  ApplicationSession store,
   LanSyncSettings settings, {
   String excludeDeviceId = '',
 }) {
@@ -573,7 +573,7 @@ String _activeTransportForHostPeer(
 
 String _pendingChangesForHostPeer(
   BuildContext context, {
-  required AppStore store,
+  required ApplicationSession store,
   required String deviceId,
   required HostPeerSyncState? state,
   required DirectDeviceStatus? peerDevice,
@@ -594,7 +594,7 @@ String _pendingChangesForHostPeer(
 }
 
 int _pendingChangesCountForHostPeer({
-  required AppStore store,
+  required ApplicationSession store,
   required String deviceId,
   required HostPeerSyncState? state,
   required DirectDeviceStatus? peerDevice,

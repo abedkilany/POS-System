@@ -4,7 +4,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/storage/sqlite/ventio_drift_database.dart';
 import 'assistant_provider.dart';
@@ -67,7 +67,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<List<AssistantSavedConversation>> listConversations(
-    AppStore store,
+    ApplicationSession store,
   ) async {
     final scopeHash = _scopeHash(store);
     final rows = await _database.customSelect(
@@ -94,7 +94,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<List<AssistantSavedExchange>> loadConversation(
-    AppStore store, {
+    ApplicationSession store, {
     required String conversationId,
   }) async {
     final scopeHash = _scopeHash(store);
@@ -142,7 +142,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<AssistantPendingExchange> beginExchange(
-    AppStore store, {
+    ApplicationSession store, {
     String? conversationId,
     required String userContent,
     String? attachmentName,
@@ -217,7 +217,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<AssistantPendingExchange?> retryExchange(
-    AppStore store, {
+    ApplicationSession store, {
     required String exchangeId,
   }) async {
     final scopeHash = _scopeHash(store);
@@ -269,7 +269,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<void> completeExchange(
-    AppStore store, {
+    ApplicationSession store, {
     required String exchangeId,
     required String assistantContent,
     required List<AssistantJsonMap> reports,
@@ -296,7 +296,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<void> failExchange(
-    AppStore store, {
+    ApplicationSession store, {
     required String exchangeId,
     required String friendlyMessage,
   }) async {
@@ -320,7 +320,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<void> renameConversation(
-    AppStore store, {
+    ApplicationSession store, {
     required String conversationId,
     required String title,
   }) async {
@@ -342,7 +342,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<void> deleteConversation(
-    AppStore store, {
+    ApplicationSession store, {
     required String conversationId,
   }) async {
     await _database.customUpdate(
@@ -355,7 +355,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<String?> conversationTitle(
-    AppStore store, {
+    ApplicationSession store, {
     required String conversationId,
   }) async {
     final rows = await _database.customSelect(
@@ -369,7 +369,7 @@ class AssistantChatHistoryStore {
   }
 
   Future<void> _touchConversation(
-    AppStore store,
+    ApplicationSession store,
     String exchangeId,
     String updatedAt,
   ) async {
@@ -417,7 +417,7 @@ class AssistantChatHistoryStore {
     );
   }
 
-  static String _scopeHash(AppStore store) {
+  static String _scopeHash(ApplicationSession store) {
     final user = store.security.activeUser;
     final userId = user?.id.trim() ?? '';
     final storeId = store.runtime.identity.storeId.trim();

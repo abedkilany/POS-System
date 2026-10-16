@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _AdvancedAccountingTab extends StatefulWidget {
   const _AdvancedAccountingTab({required this.store, this.cashOnly = false});
 
-  final AppStore store;
+  final ApplicationSession store;
   final bool cashOnly;
 
   @override

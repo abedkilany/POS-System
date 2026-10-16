@@ -9,7 +9,7 @@ import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/startup_timing_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'dashboard_service.dart';
 
 part 'dashboard_snapshot_service_methods_01.dart';
@@ -402,7 +402,7 @@ class DashboardSnapshotService {
   }
 
   static List<DashboardChartItem> _resolveSalesSeries(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
     dynamic raw, {
     required int days,
@@ -419,7 +419,7 @@ class DashboardSnapshotService {
   }
 
   static List<DashboardChartItem> _salesSeriesFromStore(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
     int days,
   ) {

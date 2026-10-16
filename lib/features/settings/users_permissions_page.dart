@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/services/account_auth_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_user.dart';
 import '../../models/user_role.dart';
 import '../security/sensitive_action_guard.dart';
@@ -11,7 +11,7 @@ import '../security/sensitive_action_guard.dart';
 class UsersPermissionsPage extends StatefulWidget {
   const UsersPermissionsPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<UsersPermissionsPage> createState() => _UsersPermissionsPageState();

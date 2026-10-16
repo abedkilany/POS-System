@@ -3,7 +3,7 @@ part of 'settings_page.dart';
 class _AdvancedSyncDebugCard extends StatefulWidget {
   const _AdvancedSyncDebugCard({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_AdvancedSyncDebugCard> createState() => _AdvancedSyncDebugCardState();
@@ -371,7 +371,7 @@ class _HostSyncMonitoringTable extends StatefulWidget {
     required this.onPermanentDelete,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final List<DirectDeviceStatus> directDevices;
   final DirectDeviceLimitStatus? deviceLimit;
   final Map<String, HostPeerSyncState> peerStates;
@@ -693,7 +693,7 @@ class _HostStatusMonitoringCard extends StatelessWidget {
     required this.peerStates,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final LanSyncSettings lanSettings;
   final List<DirectDeviceStatus> directDevices;
   final Map<String, HostPeerSyncState> peerStates;
@@ -775,7 +775,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
     required this.onPermanentDelete,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String deviceId;
   final HostPeerSyncState? state;
   final HostRegistryDevice? registryDevice;
@@ -911,7 +911,7 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
   });
 
   final SyncDeviceState state;
-  final AppStore store;
+  final ApplicationSession store;
   final LanSyncSettings lanSettings;
   final VpsControlPlaneSettings directSettings;
   final Future<void> Function() onRefresh;

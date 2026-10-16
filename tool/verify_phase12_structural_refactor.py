@@ -22,8 +22,8 @@ def read_library_source(relative_path: str) -> str:
 
 APP = (ROOT / 'lib/data/app_store.dart').read_text(encoding='utf-8-sig')
 APP_LIBRARY = read_library_source('lib/data/app_store.dart')
-STATE = read_library_source('lib/data/app_store_state.dart')
-DOMAINS = '\n'.join(path.read_text(encoding='utf-8-sig') for path in sorted((ROOT / 'lib/data').glob('app_store_domains*.dart')))
+STATE = read_library_source('lib/data/app_store_state.dart') + '\n'.join(p.read_text(encoding='utf-8-sig') for p in sorted((ROOT / 'lib/data/state').glob('*.dart')))
+DOMAINS = '\n'.join(p.read_text(encoding='utf-8-sig') for p in sorted((ROOT / 'lib/core/contracts').glob('*_domain_port.dart'))) + '\n'.join(path.read_text(encoding='utf-8-sig') for path in sorted((ROOT / 'lib/data').glob('app_store_domains*.dart')))
 COMPAT = '\n'.join(
     path.read_text(encoding='utf-8-sig')
     for path in sorted((ROOT / 'lib/data').glob('app_store_forwarding_api*.dart'))
@@ -67,8 +67,8 @@ check('AppStore concrete facade exists', class_start >= 0)
 check('AppStore concrete facade is thin', len(concrete.splitlines()) < 220)
 check('state partition has seven domain states', all(
     f'class {name}' in STATE for name in (
-        '_CatalogState', '_CommerceState', '_InventoryState',
-        '_AccountingState', '_SecurityState', '_SyncState', '_RuntimeState')))
+        'CatalogState', 'CommerceState', 'InventoryState',
+        'AccountingState', 'SecurityState', 'SyncState', 'RuntimeState')))
 accessors = re.findall(r'^\s{2}.+\sget\s+(_[A-Za-z][A-Za-z0-9_]*)\s*=>', STATE, re.M)
 check('state compatibility accessors are unique', len(accessors) == len(set(accessors)))
 check('all 130 active state fields are represented', len(accessors) == 130)
@@ -118,7 +118,7 @@ check('financial screens use security permission port', all(token in source for 
 check('accounting and cash screens read session identity through security port', all(token in source for source in (ACCOUNTING_ADVANCED_UI, CASH_UI) for token in ('widget.store.security.activeUser', 'widget.store.security.currentRole')))
 check('cash ledger refresh uses accounting port',
       'widget.store.accounting.refreshFromSqlite(' in CASH_HISTORY_UI)
-check('Unified sync core uses typed sync port for queue and apply operations', all(token in SYNC_CORE for token in ('store.sync.pendingChangesForTarget(', 'store.sync.markPushInProgress(', 'store.sync.markAcknowledged(', 'store.sync.applyRemoteChanges(')) and not any(token in SYNC_CORE for token in ('store.applyRemoteSyncChanges(', 'store.markSyncChangesSyncedByIds(', 'store.pendingSyncChangesForTarget(')))
+check('Unified sync core uses typed sync port for queue and apply operations', all(token in SYNC_CORE for token in ('sync.pendingChangesForTarget(', 'sync.markPushInProgress(', 'sync.markAcknowledged(', 'sync.applyRemoteChanges(')) and not any(token in SYNC_CORE for token in ('store.applyRemoteSyncChanges(', 'store.markSyncChangesSyncedByIds(', 'store.pendingSyncChangesForTarget(')))
 check('Dashboard consumes catalog/commerce/inventory/accounting/sync ports', all(token in DASHBOARD for token in ('store.catalog.products', 'store.commerce.sales', 'store.commerce.purchases', 'store.commerce.expenses', 'store.inventory.stockMovements', 'store.accounting.transactions', 'store.sync.queue')))
 check('Sales UI uses commerce loader port', 'widget.store.commerce.ensureSalesLoaded()' in SALES_UI)
 check('Purchases UI uses commerce loader port', 'widget.store.commerce.ensurePurchasesLoaded()' in PURCHASES_UI)

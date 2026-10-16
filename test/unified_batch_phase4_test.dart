@@ -370,7 +370,7 @@ void main() {
     final catalog = readDartLibrarySource(
         'lib/data/app_store_catalog_parties_expenses.dart');
     final costing = readDartLibrarySource(
-      'lib/data/app_store_pricing_costing_split_02.dart',
+      'lib/data/app_store_pricing_costing_policy.dart',
     );
 
     final productsStart =

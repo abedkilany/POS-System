@@ -6,7 +6,7 @@ import 'package:drift/drift.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/storage/sqlite/business_sqlite_store.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/product.dart';
 
 class ProductCostRepairResult {
@@ -42,7 +42,7 @@ class ProductCostRepairResult {
 class ProductCostRepairService {
   const ProductCostRepairService(this.store);
 
-  final AppStore store;
+  final ApplicationSession store;
 
   Future<ProductCostRepairResult> repair() async {
     final db = SqliteMigrationManager.database;

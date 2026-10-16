@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'assistant_chat_history_store.dart';
 
 class AssistantChatHistoryDialog extends StatefulWidget {
@@ -11,12 +11,12 @@ class AssistantChatHistoryDialog extends StatefulWidget {
     required this.historyStore,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final AssistantChatHistoryStore historyStore;
 
   static Future<String?> show(
     BuildContext context, {
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantChatHistoryStore historyStore,
   }) =>
       showDialog<String>(

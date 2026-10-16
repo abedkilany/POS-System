@@ -11,7 +11,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/catalog_item.dart';
 import '../../models/product.dart';
 import '../../models/product_pricing.dart';

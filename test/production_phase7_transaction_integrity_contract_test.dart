@@ -44,7 +44,7 @@ void main() {
   test('account transaction row and accounting effects share one transaction',
       () {
     final purchaseSource =
-        readDartLibrarySource('lib/data/app_store_purchases_split_07.dart');
+        readDartLibrarySource('lib/data/app_store_purchases_reversal.dart');
     final cancellation = extractDartMethodSource(
       purchaseSource,
       'Future<void> cancelPurchase(',

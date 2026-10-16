@@ -7,7 +7,7 @@ import 'dart:math';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'account_auth_service.dart';
@@ -476,8 +476,8 @@ class LanSyncService {
   static const int _discoveryPort = 8788;
   static const String _discoveryProtocol = 'ventio-lan-discovery-v1';
 
-  final AppStore store;
-  late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
+  final SyncSession store;
+  late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store.sync);
   Map<String, dynamic>? _snapshotTransferCache;
   DateTime? _snapshotTransferCacheAt;
   static HttpServer? _sharedServer;

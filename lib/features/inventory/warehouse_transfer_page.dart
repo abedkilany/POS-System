@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/localization/localized_domain_exception.dart';
 import '../../core/services/warehouse_transfer_pdf_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/product.dart';
 import '../../models/warehouse.dart';
 import '../../models/warehouse_transfer_order.dart';
@@ -12,7 +12,7 @@ import '../../models/user_role.dart';
 class WarehouseTransferPage extends StatefulWidget {
   const WarehouseTransferPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<WarehouseTransferPage> createState() => _WarehouseTransferPageState();

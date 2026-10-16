@@ -6,7 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'direct_control_plane_service.dart';
 import 'google_drive_browser_auth.dart';
 import 'local_database_service.dart';

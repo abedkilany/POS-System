@@ -73,7 +73,8 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
                                 const TextStyle(fontWeight: FontWeight.w600))),
                     const SizedBox(height: 10),
                     Wrap(spacing: 8, runSpacing: 8, children: [
-                      if (widget.store.security.hasPermission(AppPermission.salesPrint))
+                      if (widget.store.security
+                          .hasPermission(AppPermission.salesPrint))
                         OutlinedButton.icon(
                             onPressed: () => _handleInvoiceAction(() =>
                                 InvoicePdfService.printSaleReturn(
@@ -85,15 +86,18 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
                             icon: const Icon(Icons.print_outlined),
                             label: Text(tr.text('print_invoice'))),
                       if (isLatestActive &&
-                          widget.store.security.hasPermission(AppPermission.salesEdit) &&
-                          widget.store.security.hasPermission(AppPermission.salesCancel))
+                          widget.store.security
+                              .hasPermission(AppPermission.salesEdit) &&
+                          widget.store.security
+                              .hasPermission(AppPermission.salesCancel))
                         FilledButton.icon(
                             onPressed: () => _editCreditNote(context, note),
                             icon: const Icon(Icons.edit_outlined),
                             label: Text(
                                 '${tr.text('edit')} ${_saleReturnLabel(tr)}')),
                       if (isLatestActive &&
-                          widget.store.security.hasPermission(AppPermission.salesCancel))
+                          widget.store.security
+                              .hasPermission(AppPermission.salesCancel))
                         OutlinedButton.icon(
                             onPressed: () => _cancelSaleReturn(context, note),
                             icon: const Icon(Icons.cancel_outlined),
@@ -168,7 +172,8 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
 
   Map<String, String> _invoiceSearchIndex(List<Sale> sales) {
     return _invoiceSearchIndexCache.getOrCompute(
-        widget.store.commerce.salesRevision, 'recent_invoices_search_index', () {
+        widget.store.commerce.salesRevision, 'recent_invoices_search_index',
+        () {
       final index = <String, String>{};
       for (final sale in sales) {
         final buffer = StringBuffer()
@@ -196,16 +201,9 @@ extension _SalesPageCreditNotesReturns on _SalesPageState {
 
   void _changeCartQuantity(int index, double quantity) {
     if (index < 0 || index >= _cart.length) return;
-    final item = _cart[index];
-    final minQuantity = item.product.allowsDecimalQuantity ? 0.001 : 1.0;
-    final rounded = item.product.allowsDecimalQuantity
-        ? quantity
-        : quantity.roundToDouble();
-    final cleanQuantity = rounded < minQuantity ? minQuantity : rounded;
-    final willNeedCorrection = item.product.trackStock &&
-        cleanQuantity * item.conversionToBase > item.product.stock;
+    var willNeedCorrection = false;
     setState(() {
-      _cart[index] = item.copyWith(quantity: cleanQuantity);
+      willNeedCorrection = _saleCart.changeQuantity(index, quantity);
       _selectedCartIndex = index;
       _pendingDeleteCartIndex = null;
     });

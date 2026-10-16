@@ -8,14 +8,14 @@ import '../../core/services/payment_voucher_service.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'account_statement_actions.dart';
 import '../../models/account_transaction.dart';
 import '../../models/cash_ledger_transaction.dart';
 import '../../models/payment_allocation.dart';
 import '../../models/sale.dart';
 
-String accountBalanceText(BuildContext context, AppStore store,
+String accountBalanceText(BuildContext context, ApplicationSession store,
     String accountType, String accountId) {
   final tr = AppLocalizations.of(context);
   final balance = store.accounting.accountBalance(accountType, accountId);
@@ -31,7 +31,7 @@ String accountBalanceText(BuildContext context, AppStore store,
       : '${tr.text('account_payable')}: $amount';
 }
 
-Color accountBalanceColor(BuildContext context, AppStore store,
+Color accountBalanceColor(BuildContext context, ApplicationSession store,
     String accountType, String accountId) {
   final balance = store.accounting.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return Theme.of(context).colorScheme.primary;
@@ -43,7 +43,7 @@ Color accountBalanceColor(BuildContext context, AppStore store,
 
 Future<void> showAccountLedgerSheet({
   required BuildContext context,
-  required AppStore store,
+  required ApplicationSession store,
   required String accountType,
   required String accountId,
   required String accountName,
@@ -62,7 +62,7 @@ Future<void> showAccountLedgerSheet({
 
 Future<void> showAccountPaymentDialog({
   required BuildContext context,
-  required AppStore store,
+  required ApplicationSession store,
   required String accountType,
   required String accountId,
   required String accountName,
@@ -135,7 +135,7 @@ class _AccountLedgerSheet extends StatelessWidget {
       required this.accountId,
       required this.accountName});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String accountType, accountId, accountName;
 
   @override
@@ -228,7 +228,7 @@ class _AccountLedgerSheet extends StatelessWidget {
 class _TransactionTile extends StatelessWidget {
   const _TransactionTile({required this.store, required this.transaction});
 
-  final AppStore store;
+  final ApplicationSession store;
   final AccountTransaction transaction;
 
   @override
@@ -472,7 +472,7 @@ class _PaymentDialog extends StatefulWidget {
     required this.customerInvoices,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String accountType, accountName;
   final List<Sale> customerInvoices;
 

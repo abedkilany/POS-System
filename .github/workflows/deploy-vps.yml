@@ -62,12 +62,23 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
+          SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          if [ -z "$SSH_KNOWN_HOSTS" ]; then
+            echo "VPS_SSH_KNOWN_HOSTS must contain the verified VPS host key." >&2
+            exit 1
+          fi
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ventio_deploy_key
           chmod 600 ~/.ssh/ventio_deploy_key
-          ssh-keyscan -p "${VPS_PORT:-22}" "$VPS_HOST" >> ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          KNOWN_HOST_TARGET="$VPS_HOST"
+          if [ "${VPS_PORT:-22}" != "22" ]; then
+            KNOWN_HOST_TARGET="[$VPS_HOST]:$VPS_PORT"
+          fi
+          ssh-keygen -F "$KNOWN_HOST_TARGET" -f ~/.ssh/known_hosts >/dev/null
 
       - name: Upload files
         env:
@@ -97,11 +108,10 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
           VPS_HEALTH_URL: ${{ secrets.VPS_HEALTH_URL }}
-          VPS_HEALTH_TOKEN: ${{ secrets.VPS_HEALTH_TOKEN }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/ventio_deploy_key -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" \
-            "VPS_APP_DIR='$VPS_APP_DIR' VPS_HEALTH_URL='$VPS_HEALTH_URL' VPS_HEALTH_TOKEN='$VPS_HEALTH_TOKEN' bash -s" <<'DEPLOY'
+            "VPS_APP_DIR='$VPS_APP_DIR' VPS_HEALTH_URL='$VPS_HEALTH_URL' bash -s" <<'DEPLOY'
           set -euo pipefail
 
           cd "$VPS_APP_DIR"

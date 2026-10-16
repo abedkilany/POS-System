@@ -1,7 +1,6 @@
 part of 'direct_control_plane_service.dart';
 
 extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
-
   http.Client get client => _client;
   UnifiedSyncCoreService get syncCore => _syncCore;
 
@@ -411,7 +410,8 @@ extension DirectControlPlaneServiceSplitPart1 on DirectControlPlaneService {
   }
 
   Future<void> compactAfterSuccessfulSync() {
-    return _syncCore.compactAfterSuccessfulSync();
+    return _syncCore
+        .compactAfterSuccessfulSync(store.runtime.identity.deviceRole);
   }
 
   Future<DirectPairingCodeResult> createPairingCode(

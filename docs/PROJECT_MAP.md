@@ -11,13 +11,13 @@ This guide explains where responsibilities live and how to locate the implementa
 | Find a particular source or test file | [FILE_INDEX.md](FILE_INDEX.md) | Search the exact filename or symbol, then open the source. |
 | Review AppStore and feature boundaries | [ARCHITECTURE_BOUNDARY_BASELINE.md](ARCHITECTURE_BOUNDARY_BASELINE.md) | See current use counts, classifications, and focused tests before a domain move. |
 | Find platform, config, or resource files | [PLATFORM_INDEX.md](PLATFORM_INDEX.md) | Search by filename; generated build output is omitted. |
-| Trace a business workflow | `lib/features/` → `lib/data/` → `lib/core/services/` → repositories/SQLite | Follow the matching feature and its focused tests. |
+| Trace a business workflow | `lib/features/` → `lib/core/contracts/` → data adapters → `lib/core/services/` → repositories/SQLite | Follow the matching feature and its focused tests. |
 | Trace a database change | `lib/core/storage/sqlite/` and `database/` | Client business SQLite lives under `lib`; `database/` contains VPS/control-plane SQL. |
 
 ## Runtime shape
 
 1. Flutter screens and user actions live under `lib/features/`.
-2. `AppStore` and its typed domain ports coordinate application state and workflows in `lib/data/`.
+2. `lib/core/contracts/` defines the typed domain/session boundary. `AppStore` implements it in `lib/data/`, composing domain adapters and isolated caches under `lib/data/state/`.
 3. Business rules, reports, posting, backup, and transport operations live in `lib/core/services/` and the relevant repositories.
 4. Local operational data is authoritative in SQLite, implemented under `lib/core/storage/sqlite/`. In-memory state is a cache, not a second business database.
 5. Authorized Host and Client devices exchange business data over LAN or Direct peer synchronization. `server.js` and `server_api/` provide the VPS control plane; they do not store the store's operational business records.
@@ -29,7 +29,9 @@ For accounting, inventory, synchronization, backup, and assistant data-access ru
 | Path | Responsibility |
 | --- | --- |
 | `lib/` | Flutter application, domain models, application state, services, persistence, and UI. |
-| `lib/data/` | AppStore facade, domain state, typed ports, and workflow implementation parts. |
+| `lib/core/contracts/` | Independent typed domain ports, capability-specific session interfaces, and shared contract defaults. |
+| `lib/data/` | AppStore composition, typed-port adapters, hydration, orchestration, and workflow implementation parts. |
+| `lib/data/state/` | Seven domain cache/state libraries; imported only by data implementations. |
 | `lib/core/services/` | Focused domain read projections and accounting, sales and purchase lifecycle rules, inventory, backup, database, reporting, and sync workflows. |
 | `lib/core/storage/sqlite/` | Drift database, schema, migrations, typed SQLite stores, and query implementations. |
 | `lib/core/repositories/` | Domain persistence and reconciliation boundaries. |
@@ -38,6 +40,7 @@ For accounting, inventory, synchronization, backup, and assistant data-access ru
 | `lib/core/security/`, `lib/core/snapshot/` | Audit integrity/security helpers and snapshot/recovery primitives. |
 | `lib/core/localization/`, `lib/core/theme/`, `lib/core/utils/`, `lib/core/shortcuts/` | Localization, design system, shared helpers, and keyboard shortcut definitions. |
 | `lib/features/` | Screens and UI workflows grouped by business area; see the feature map below. |
+| `lib/features/sales/domain/` | Widget-independent sale cart lines/totals and payment/currency preview rules. |
 | `lib/models/` | Typed business and application data models. |
 | `lib/widgets/` | Reusable UI components shared across feature screens. |
 | `server.js`, `server_api/` | VPS API entry point and control-plane handlers for accounts, devices, pairing, signaling, health, and entitlements. |
@@ -124,12 +127,16 @@ Large Dart libraries are divided into `part` files so each implementation unit s
 
 Names such as `_widgets`, `_layout`, `_actions`, `_reports`, and `_persistence` describe the responsibility of a part. The index lists the methods or tests declared in each file to make these splits searchable.
 
+AppStore workflow parts use semantic suffixes such as `_create_sale`, `_receipt`, `_reversal`, and `_outbox`. New files should describe their responsibility rather than a sequence number. A `part` shares its parent library's private scope; use a separate library with explicit constructor dependencies when a component needs isolation or independent behavior tests. The existing data workflow parts still share AppStore's private orchestration helpers.
+
 ## Persistence and API boundaries
 
 - `lib/core/storage/sqlite/` owns the client SQLite schema and local persistence implementation.
 - `lib/core/services/local_database_service.dart` is the app-facing database access boundary; business workflows should use typed service/repository APIs rather than write raw storage from UI code.
 - `lib/data/app_store.dart` is the session coordinator and typed-port composition root. App-shell lifecycle and presentation preferences use `store.runtime`; feature workflows use the narrowest available domain port. Forwarding methods used by split data modules and backup helpers are library-private; `BusinessSessionContext` remains the small session bridge for core workflows.
-- `lib/data/app_store_domains.dart` declares the eight typed domain contracts; matching `app_store_domains_<domain>.dart` parts implement each adapter. Keep contracts and adapters grouped by domain and below the 1,000-line file limit.
+- `lib/core/contracts/*_domain_port.dart` declares the eight typed domain contracts; `application_session.dart` composes narrower capabilities for UI, backup, authentication, and sync. Matching `lib/data/app_store_domains_<domain>.dart` parts implement each adapter. Keep contracts and adapters grouped by domain and below the 1,000-line file limit.
+- `SalePostingService` owns sale invoice/stock/journal/customer-ledger atomicity; `InventoryPostingService`, `SaleCostService`, and `JournalPostingGuard` share the associated persistence rules. Start with `test/app_store_sale_posting_cases.dart` (a part of `app_store_workflow_test.dart`) for injected-failure rollback coverage.
+- `lib/features/sales/domain/` and `UnifiedSyncCoreService` can be tested without constructing AppStore; see `test/sale_cart_test.dart` and `test/sync_domain_isolation_test.dart`.
 - `server_api/` and `database/` serve the VPS control plane. Do not treat them as the client's operational business database.
 - `test/` includes executable behavior checks as well as source-structure contract checks. Use the exact relevant test file from the index when changing one workflow.
 

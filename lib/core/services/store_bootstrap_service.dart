@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import '../../models/app_user.dart';
 import '../../models/catalog_item.dart';
@@ -14,7 +14,7 @@ class StoreBootstrapService {
   StoreBootstrapService._();
 
   static Future<void> completeInitialAdminSetup(
-    AppStore store, {
+    ApplicationSession store, {
     required String fullName,
     required String username,
     required String password,
@@ -134,7 +134,7 @@ class StoreBootstrapService {
   }
 
   static Future<void> recoverOnlineStoreOwnerIdentity(
-    AppStore store, {
+    ApplicationSession store, {
     required String storeId,
     required String branchId,
     required String storeName,
@@ -270,7 +270,7 @@ class StoreBootstrapService {
   }
 
   static Future<void> applyStoreOwnerCredentials(
-    AppStore store, {
+    ApplicationSession store, {
     required String username,
     required String password,
     String? fullName,
@@ -317,7 +317,7 @@ class StoreBootstrapService {
     );
   }
 
-  static Future<void> _seedCatalogDefaultsIfMissing(AppStore store) async {
+  static Future<void> _seedCatalogDefaultsIfMissing(ApplicationSession store) async {
     if (((await ProductRepository.getCategories()) ?? const <String>[])
         .isEmpty) {
       await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(

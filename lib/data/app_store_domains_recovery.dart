@@ -72,7 +72,7 @@ final class _RecoveryDomain implements RecoveryDomainPort {
     int maxItemsPerChunk = 250,
     int maxEncodedPayloadBytes = 900 * 1024,
   }) =>
-      _AppStoreSplitBackupRecoveryPart2(_store).exportUnifiedSnapshotEnvelope(
+      _AppStoreBackupRecoverySnapshotCrypto(_store).exportUnifiedSnapshotEnvelope(
         kind: kind,
         maxItemsPerChunk: maxItemsPerChunk,
         maxEncodedPayloadBytes: maxEncodedPayloadBytes,
@@ -87,13 +87,13 @@ final class _RecoveryDomain implements RecoveryDomainPort {
     bool enforcePermission = true,
     bool preserveAdminUsers = false,
   }) =>
-      _AppStoreSplitPersistenceSyncCorePart3(_store).factoryResetLocalDevice(
+      _AppStorePersistenceSyncCoreMaintenance(_store).factoryResetLocalDevice(
         enforcePermission: enforcePermission,
         preserveAdminUsers: preserveAdminUsers,
       );
 
   @override
   Future<void> resetBusinessData({bool keepStoreProfile = true}) =>
-      _AppStoreSplitPersistenceSyncCorePart2(_store)
+      _AppStorePersistenceSyncCoreDirtyWrites(_store)
           .resetBusinessData(keepStoreProfile: keepStoreProfile);
 }

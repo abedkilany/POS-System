@@ -8,7 +8,7 @@ class _TrialBalanceTab extends StatelessWidget {
     required this.to,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
   final DateTime from;
   final DateTime to;
@@ -192,7 +192,7 @@ class _IncomeStatementTab extends StatelessWidget {
     required this.to,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final DateTime from;
   final DateTime to;
 
@@ -327,7 +327,7 @@ class _InventoryManufacturingReportBundle {
 class _InventoryManufacturingReportsTab extends StatelessWidget {
   const _InventoryManufacturingReportsTab({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   Widget build(BuildContext context) {
@@ -576,7 +576,7 @@ class _InventoryManufacturingReportsTab extends StatelessWidget {
 class _BalanceSheetTab extends StatelessWidget {
   const _BalanceSheetTab({required this.store, required this.asOf});
 
-  final AppStore store;
+  final ApplicationSession store;
   final DateTime asOf;
 
   @override

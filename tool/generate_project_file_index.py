@@ -41,7 +41,7 @@ OUTPUT = ROOT / "docs" / "FILE_INDEX.md"
 PLATFORM_OUTPUT = ROOT / "docs" / "PLATFORM_INDEX.md"
 
 DART_TYPES = re.compile(
-    r"(?m)^\s*(?:(?:abstract|base|final|sealed|interface)\s+)?"
+    r"(?m)^\s*(?:(?:abstract|base|final|sealed|interface)\s+)*"
     r"(?:class|enum|mixin|extension|typedef)\s+([A-Za-z_$][\w$]*)"
 )
 DART_MEMBERS = re.compile(
@@ -293,7 +293,10 @@ def git_project_files() -> list[Path]:
         check=True,
         stdout=subprocess.PIPE,
     )
-    return [ROOT / item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
+    paths = (ROOT / item.decode("utf-8") for item in result.stdout.split(b"\0") if item)
+    # Unstaged renames leave the old path in Git's index until staging.
+    # Index the working tree, including new files and excluding removed ones.
+    return [path for path in paths if path.is_file()]
 
 
 def main() -> None:

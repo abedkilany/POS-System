@@ -6,10 +6,10 @@ import 'helpers/dart_library_source.dart';
 void main() {
   test('account transaction writers are SQLite-first and awaited', () {
     final persistenceSource = readDartLibrarySource(
-      'lib/data/app_store_persistence_sync_core_split_04.dart',
+      'lib/data/app_store_persistence_sync_core_outbox.dart',
     );
     final writerSource = readDartLibrarySource(
-      'lib/data/app_store_persistence_sync_core_split_05.dart',
+      'lib/data/app_store_persistence_sync_core_ledger.dart',
     );
     final persistenceHelper = extractDartMethodSource(
       persistenceSource,

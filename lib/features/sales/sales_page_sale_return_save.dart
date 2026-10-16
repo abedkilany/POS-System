@@ -290,12 +290,12 @@ extension _SalesPageSaleReturnSave on _SalesPageState {
     }
     if (!mounted) return;
     setState(() {
-      _cart.clear();
+      _saleCart.clear();
       _selectedCartIndex = null;
       _pendingDeleteCartIndex = null;
       _discountController.clear();
       _paidAmountController.clear();
-      _selectedCustomerId = AppStore.walkInCustomerId;
+      _selectedCustomerId = CommerceDefaults.walkInCustomerId;
       _paymentMethod = 'Cash';
       _invoiceCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
       _paymentCurrency = widget.store.runtime.profile.defaultSalePaymentCurrency;

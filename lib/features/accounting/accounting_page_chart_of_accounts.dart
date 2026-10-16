@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _ChartOfAccountsTab extends StatefulWidget {
   const _ChartOfAccountsTab({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import 'local_database_service.dart';
 
@@ -416,7 +416,7 @@ class LanSyncResult {
 
 class LanSyncService {
   LanSyncService(this.store);
-  final AppStore store;
+  final SyncSession store;
   bool get isHosting => false;
   int? get port => null;
   Future<void> startHost({int port = 8787}) async {}

@@ -58,7 +58,7 @@ String _movementTypeLabel(AppLocalizations tr, String type) {
 class InventoryPage extends StatefulWidget {
   const InventoryPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<InventoryPage> createState() => _InventoryPageState();
@@ -79,7 +79,7 @@ class _InventoryOverviewMetrics {
   final double inventoryRetailValue;
   final int pendingAutoCorrectionCount;
 
-  factory _InventoryOverviewMetrics.fromStore(AppStore store) {
+  factory _InventoryOverviewMetrics.fromStore(ApplicationSession store) {
     final products = store.catalog.stockTrackedProducts;
     var totalUnits = 0.0;
     var lowStockCount = 0;
@@ -105,7 +105,7 @@ class _InventoryOverviewMetrics {
 class _InventoryBatchesTab extends StatefulWidget {
   const _InventoryBatchesTab({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_InventoryBatchesTab> createState() => _InventoryBatchesTabState();

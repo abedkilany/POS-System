@@ -4,7 +4,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/startup_timing_service.dart';
 import '../../core/services/cash_ledger_service.dart';
 import '../../core/services/accounting_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/sale.dart';
 
 class ReportsSnapshotService {
@@ -15,16 +15,16 @@ class ReportsSnapshotService {
   static final Map<String, Map<String, Object?>> _summaryCache =
       <String, Map<String, Object?>>{};
 
-  String _cacheKey(AppStore store, DateTime reference) =>
+  String _cacheKey(ApplicationSession store, DateTime reference) =>
       '${store.runtime.identity.storeId}:${store.runtime.reportsRevision}:${reference.year}-${reference.month}-${reference.day}';
 
-  Map<String, Object?>? peekSummary(AppStore store, {DateTime? now}) {
+  Map<String, Object?>? peekSummary(ApplicationSession store, {DateTime? now}) {
     final reference = (now ?? DateTime.now()).toLocal();
     return _summaryCache[_cacheKey(store, reference)];
   }
 
   Future<Map<String, Object?>> summaryFor(
-    AppStore store, {
+    ApplicationSession store, {
     DateTime? now,
   }) {
     final reference = (now ?? DateTime.now()).toLocal();
@@ -43,12 +43,12 @@ class ReportsSnapshotService {
     return future;
   }
 
-  Future<void> prewarm(AppStore store, {DateTime? now}) async {
+  Future<void> prewarm(ApplicationSession store, {DateTime? now}) async {
     await summaryFor(store, now: now);
   }
 
   Future<Map<String, Object?>> _computeAndCacheSummary(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
   ) async {
     if (LocalDatabaseService.canQueryBusinessSqlite) {
@@ -80,7 +80,7 @@ class ReportsSnapshotService {
 }
 
 Future<Map<String, Object?>> _computeSnapshotFromStore(
-  AppStore store,
+  ApplicationSession store,
   DateTime reference,
 ) async {
   final today = DateTime(reference.year, reference.month, reference.day);

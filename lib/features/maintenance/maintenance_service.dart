@@ -9,7 +9,7 @@ import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/maintenance_storage_info.dart';
 import '../../core/services/startup_timing_service.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'maintenance_models.dart';
 import 'phase10_health_service.dart';
 import 'product_cost_repair_service.dart';
@@ -17,7 +17,7 @@ import 'product_cost_repair_service.dart';
 class MaintenanceService {
   const MaintenanceService(this.store);
 
-  final AppStore store;
+  final ApplicationSession store;
 
   Future<MaintenanceSummary> runHealthCheck({bool deep = false}) async {
     final storage = await getMaintenanceStorageInfo();

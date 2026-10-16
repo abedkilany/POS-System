@@ -8,7 +8,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/services/startup_timing_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../widgets/page_data_load_indicator.dart';
 import '../accounting/accounting_page.dart';
 import '../expenses/expenses_page.dart';

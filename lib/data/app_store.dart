@@ -2,84 +2,98 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
+
+import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:archive/archive.dart';
 import 'package:pointycastle/export.dart' as pc;
 
+import '../core/contracts/application_session.dart';
+import '../core/localization/localized_domain_exception.dart';
 import '../core/repositories/business_session_context.dart';
-import '../core/services/local_database_service.dart';
-import '../core/services/direct_sync_settings.dart';
-import '../core/services/accounting_service.dart';
-import '../core/services/account_ledger_read_service.dart';
 import '../core/services/account_auth_service.dart';
+import '../core/services/account_ledger_read_service.dart';
+import '../core/services/accounting_service.dart';
 import '../core/services/app_logging_service.dart';
-import '../core/services/startup_timing_service.dart';
-import '../core/services/sync_diagnostics_log.dart';
-import '../core/services/stock_transaction_service.dart';
 import '../core/services/batch_inventory_service.dart';
-import '../core/services/inventory_traceability_service.dart';
-import '../core/services/inventory_read_service.dart';
-import '../core/services/unified_batch_phase4_closure_service.dart';
-import '../core/services/payment_voucher_service.dart';
-import '../core/services/permission_service.dart';
-import '../core/services/posted_document_snapshot_service.dart';
-import '../core/services/posted_document_edit_framework.dart';
-import '../core/services/cash_reversal_service.dart';
 import '../core/services/cash_ledger_service.dart';
+import '../core/services/cash_reversal_service.dart';
 import '../core/services/catalog_read_service.dart';
 import '../core/services/commerce_read_service.dart';
-import '../core/services/recovery_file_service.dart';
-import '../core/services/sync_queue_recovery_service.dart';
+import '../core/services/direct_sync_settings.dart';
+import '../core/services/inventory_posting_service.dart';
+import '../core/services/inventory_read_service.dart';
+import '../core/services/inventory_traceability_service.dart';
+import '../core/services/journal_posting_guard.dart';
+import '../core/services/local_database_service.dart';
+import '../core/services/payment_voucher_service.dart';
+import '../core/services/permission_service.dart';
+import '../core/services/posted_document_edit_framework.dart';
+import '../core/services/posted_document_snapshot_service.dart';
 import '../core/services/purchase_draft_service.dart';
 import '../core/services/purchase_receipt_service.dart';
+import '../core/services/recovery_file_service.dart';
+import '../core/services/sale_cost_service.dart';
+import '../core/services/sale_posting_service.dart';
 import '../core/services/sale_workflow_service.dart';
-import '../core/localization/localized_domain_exception.dart';
-import '../core/sync_unified/sync_device_state.dart';
+import '../core/services/startup_timing_service.dart';
+import '../core/services/stock_transaction_service.dart';
+import '../core/services/sync_diagnostics_log.dart';
+import '../core/services/sync_queue_recovery_service.dart';
+import '../core/services/unified_batch_phase4_closure_service.dart';
 import '../core/snapshot/unified_snapshot.dart';
 import '../core/storage/sqlite/business_sqlite_store.dart';
 import '../core/storage/sqlite/sqlite_migration_manager.dart';
-import '../core/storage/sqlite/ventio_drift_database.dart';
 import '../core/storage/sqlite/sync_sqlite_store.dart';
+import '../core/storage/sqlite/ventio_drift_database.dart';
+import '../core/sync_unified/sync_device_state.dart';
 import '../core/utils/currency_utils.dart';
-import 'backup_inventory_normalizer.dart';
-
 import '../models/account_transaction.dart';
+import '../models/app_identity.dart';
+import '../models/app_user.dart';
 import '../models/catalog_item.dart';
+import '../models/credit_note.dart';
 import '../models/customer.dart';
 import '../models/delivery_note.dart';
-import '../models/manufacturing.dart';
 import '../models/expense.dart';
-import '../models/inventory_count.dart';
-import '../models/product.dart';
-import '../models/product_pricing.dart';
-import '../models/product_costing.dart';
-import '../models/inventory_cost_layer.dart';
 import '../models/inventory_batch.dart';
+import '../models/inventory_cost_layer.dart';
+import '../models/inventory_count.dart';
+import '../models/journal_entry.dart';
+import '../models/manufacturing.dart';
+import '../models/payment_allocation.dart';
+import '../models/posted_document_snapshot.dart';
+import '../models/product.dart';
+import '../models/product_costing.dart';
+import '../models/product_pricing.dart';
 import '../models/purchase.dart';
 import '../models/purchase_item.dart';
-import '../models/supplier_purchase_price.dart';
-import '../models/supplier_product_price.dart';
-import '../models/stock_movement.dart';
-import '../models/warehouse.dart';
-import '../models/warehouse_transfer_order.dart';
 import '../models/sale.dart';
 import '../models/sale_item.dart';
 import '../models/sale_quotation.dart';
-import '../models/credit_note.dart';
+import '../models/stock_movement.dart';
 import '../models/store_profile.dart';
-import '../models/tax_profile.dart';
 import '../models/supplier.dart';
+import '../models/supplier_product_price.dart';
+import '../models/supplier_purchase_price.dart';
 import '../models/sync_change.dart';
 import '../models/sync_queue_item.dart';
+import '../models/tax_profile.dart';
 import '../models/user_role.dart';
-import '../models/app_user.dart';
-import '../models/app_identity.dart';
-import '../models/payment_allocation.dart';
-import '../models/posted_document_snapshot.dart';
-import '../models/journal_entry.dart';
+import '../models/warehouse.dart';
+import '../models/warehouse_transfer_order.dart';
+import 'backup_inventory_normalizer.dart';
+import 'state/accounting_state.dart';
+import 'state/catalog_state.dart';
+import 'state/commerce_state.dart';
+import 'state/inventory_state.dart';
+import 'state/runtime_state.dart';
+import 'state/security_state.dart';
+import 'state/sync_state.dart';
+
+export '../core/contracts/application_session.dart';
 
 part 'app_store_backup.dart';
 part 'app_store_purchase_insights.dart';
@@ -104,7 +118,6 @@ part 'app_store_recovery.dart';
 part 'app_store_state.dart';
 part 'app_store_forwarding_api.dart';
 part 'app_store_orchestration.dart';
-part 'app_store_domains.dart';
 part 'app_store_domains_runtime.dart';
 part 'app_store_domains_catalog.dart';
 part 'app_store_domains_commerce.dart';
@@ -113,57 +126,56 @@ part 'app_store_domains_inventory.dart';
 part 'app_store_domains_security.dart';
 part 'app_store_domains_sync.dart';
 part 'app_store_domains_recovery.dart';
-part 'app_store_backup_recovery_split_02.dart';
-part 'app_store_backup_recovery_split_03.dart';
-part 'app_store_backup_recovery_split_04.dart';
-part 'app_store_catalog_parties_expenses_split_02.dart';
-part 'app_store_catalog_parties_expenses_split_03.dart';
-part 'app_store_catalog_parties_expenses_split_04.dart';
-part 'app_store_core_loading_split_02.dart';
-part 'app_store_forwarding_api_split_02.dart';
-part 'app_store_forwarding_api_split_03.dart';
-part 'app_store_forwarding_api_split_04.dart';
-part 'app_store_forwarding_api_split_05.dart';
-part 'app_store_identity_users_split_02.dart';
-part 'app_store_identity_users_split_03.dart';
-part 'app_store_inventory_split_02.dart';
-part 'app_store_inventory_split_03.dart';
-part 'app_store_inventory_split_04.dart';
-part 'app_store_inventory_split_05.dart';
-part 'app_store_inventory_split_06.dart';
-part 'app_store_manufacturing_split_02.dart';
-part 'app_store_manufacturing_split_03.dart';
-part 'app_store_manufacturing_split_04.dart';
-part 'app_store_manufacturing_split_05.dart';
-part 'app_store_persistence_sync_core_split_02.dart';
-part 'app_store_persistence_sync_core_split_03.dart';
-part 'app_store_persistence_sync_core_split_04.dart';
-part 'app_store_persistence_sync_core_split_05.dart';
-part 'app_store_pricing_costing_split_02.dart';
-part 'app_store_pricing_costing_split_03.dart';
-part 'app_store_purchases_split_02.dart';
-part 'app_store_purchases_split_03.dart';
-part 'app_store_purchases_split_04.dart';
-part 'app_store_purchases_split_05.dart';
-part 'app_store_purchases_split_06.dart';
-part 'app_store_purchases_split_07.dart';
-part 'app_store_sales_returns_split_02.dart';
-part 'app_store_sales_returns_split_03.dart';
-part 'app_store_sales_returns_split_04.dart';
-part 'app_store_sales_returns_split_05.dart';
-part 'app_store_sales_returns_split_06.dart';
-part 'app_store_sales_returns_split_07.dart';
-part 'app_store_sales_returns_split_08.dart';
-part 'app_store_startup_migrations_split_02.dart';
-part 'app_store_startup_migrations_split_03.dart';
-part 'app_store_sync_apply_split_02.dart';
-part 'app_store_sync_apply_split_03.dart';
-part 'app_store_sync_apply_split_04.dart';
-part 'app_store_warehouse_cash_split_02.dart';
-part 'app_store_warehouse_cash_split_03.dart';
-part 'app_store_warehouse_cash_split_04.dart';
-part 'app_store_recovery_methods_01.dart';
-part 'app_store_recovery_methods_02.dart';
+part 'app_store_backup_recovery_snapshot_crypto.dart';
+part 'app_store_backup_recovery_import.dart';
+part 'app_store_backup_recovery_merge.dart';
+part 'app_store_catalog_parties_expenses_catalog_parties.dart';
+part 'app_store_catalog_parties_expenses_expense_posting.dart';
+part 'app_store_core_loading_projections.dart';
+part 'app_store_forwarding_api_startup_identity.dart';
+part 'app_store_forwarding_api_catalog_ledger.dart';
+part 'app_store_forwarding_api_inventory_payments.dart';
+part 'app_store_forwarding_api_sales_recovery.dart';
+part 'app_store_identity_users_authentication.dart';
+part 'app_store_identity_users_credentials_persistence.dart';
+part 'app_store_inventory_count_reversal_batches.dart';
+part 'app_store_inventory_batch_reversal.dart';
+part 'app_store_inventory_adjustment_edit.dart';
+part 'app_store_inventory_adjustments_waste.dart';
+part 'app_store_inventory_purchase_movements.dart';
+part 'app_store_manufacturing_order_lifecycle.dart';
+part 'app_store_manufacturing_completion.dart';
+part 'app_store_manufacturing_completed_edit.dart';
+part 'app_store_manufacturing_reversal.dart';
+part 'app_store_persistence_sync_core_dirty_writes.dart';
+part 'app_store_persistence_sync_core_maintenance.dart';
+part 'app_store_persistence_sync_core_outbox.dart';
+part 'app_store_persistence_sync_core_ledger.dart';
+part 'app_store_pricing_costing_policy.dart';
+part 'app_store_pricing_costing_layers.dart';
+part 'app_store_purchases_create.dart';
+part 'app_store_purchases_draft_edit.dart';
+part 'app_store_purchases_receipt.dart';
+part 'app_store_purchases_return_edit.dart';
+part 'app_store_purchases_return_create.dart';
+part 'app_store_purchases_reversal.dart';
+part 'app_store_sales_returns_create_sale.dart';
+part 'app_store_sales_returns_edit_sale.dart';
+part 'app_store_sales_returns_stock_links.dart';
+part 'app_store_sales_returns_create_return.dart';
+part 'app_store_sales_returns_edit_return.dart';
+part 'app_store_sales_returns_cancel_return.dart';
+part 'app_store_sales_returns_cancel_sale.dart';
+part 'app_store_startup_migrations_deferred_loading.dart';
+part 'app_store_startup_migrations_catalog_sync.dart';
+part 'app_store_sync_apply_remote_changes.dart';
+part 'app_store_sync_apply_payload_ack.dart';
+part 'app_store_sync_apply_queue_recovery.dart';
+part 'app_store_warehouse_cash_transfer_edit.dart';
+part 'app_store_warehouse_cash_transfers_refunds.dart';
+part 'app_store_warehouse_cash_settlement.dart';
+part 'app_store_recovery_import.dart';
+part 'app_store_recovery_reset.dart';
 
 String _encodePrettyBackupPayload(Map<String, dynamic> payload) =>
     const JsonEncoder.withIndent('  ').convert(payload);
@@ -225,167 +237,6 @@ List<Map<String, dynamic>> _decodeJsonListPayload(String rawJson) {
   }
 }
 
-class DataConflict {
-  const DataConflict({
-    required this.entityType,
-    required this.keyName,
-    required this.keyValue,
-    required this.recordIds,
-    this.blocking = false,
-    this.message = '',
-  });
-
-  final String entityType;
-  final String keyName;
-  final String keyValue;
-  final List<String> recordIds;
-  final bool blocking;
-  final String message;
-
-  String get title => '$entityType duplicate $keyName: $keyValue';
-}
-
-class BusinessDataIntegrityResult {
-  const BusinessDataIntegrityResult({
-    required this.ok,
-    required this.message,
-    this.problemCount = 0,
-  });
-  final bool ok;
-  final String message;
-  final int problemCount;
-}
-
-/// Result of the safe, explicit repair for historical documents that refer to
-/// products that are no longer present in the active catalog.
-class BusinessDataIntegrityRepairResult {
-  const BusinessDataIntegrityRepairResult({
-    required this.reactivatedProducts,
-    required this.archivedProductsCreated,
-    required this.unresolvedProductIds,
-  });
-
-  final int reactivatedProducts;
-  final int archivedProductsCreated;
-  final List<String> unresolvedProductIds;
-
-  bool get changed => reactivatedProducts > 0 || archivedProductsCreated > 0;
-}
-
-class PurchasesOverview {
-  const PurchasesOverview({
-    required this.totalCount,
-    required this.totalPurchasesAmount,
-    required this.monthlyTotal,
-    required this.monthlyCount,
-    required this.draftTotal,
-    required this.draftCount,
-    required this.receivedCount,
-    required this.returnedCount,
-    required this.cancelledCount,
-    required this.pendingPurchaseCount,
-  });
-
-  final int totalCount;
-  final double totalPurchasesAmount;
-  final double monthlyTotal;
-  final int monthlyCount;
-  final double draftTotal;
-  final int draftCount;
-  final int receivedCount;
-  final int returnedCount;
-  final int cancelledCount;
-  final int pendingPurchaseCount;
-}
-
-class ExpensesOverview {
-  const ExpensesOverview({
-    required this.totalCount,
-    required this.totalExpensesAmount,
-    required this.draftCount,
-    required this.postedCount,
-    required this.cancelledCount,
-    required this.categoryCount,
-  });
-
-  final int totalCount;
-  final double totalExpensesAmount;
-  final int draftCount;
-  final int postedCount;
-  final int cancelledCount;
-  final int categoryCount;
-}
-
-class StorageLayerSnapshot {
-  const StorageLayerSnapshot({
-    required this.sqliteAuthoritative,
-    required this.productCacheCount,
-    required this.salesCacheCount,
-    required this.supplierCacheCount,
-    required this.derivedCacheCount,
-    required this.syncChangeCount,
-    required this.syncQueueCount,
-  });
-
-  final bool sqliteAuthoritative;
-  final int productCacheCount;
-  final int salesCacheCount;
-  final int supplierCacheCount;
-  final int derivedCacheCount;
-  final int syncChangeCount;
-  final int syncQueueCount;
-
-  String toLogLine() =>
-      'sqliteAuthoritative=$sqliteAuthoritative products=$productCacheCount sales=$salesCacheCount '
-      'suppliers=$supplierCacheCount derivedCaches=$derivedCacheCount syncChanges=$syncChangeCount '
-      'syncQueue=$syncQueueCount';
-}
-
-class _ProductPurchaseMetrics {
-  const _ProductPurchaseMetrics({
-    this.lastCost,
-    this.averageCost = 0,
-    this.supplierCount = 0,
-  });
-
-  final double? lastCost;
-  final double averageCost;
-  final int supplierCount;
-}
-
-class ProductCostSnapshot {
-  const ProductCostSnapshot({
-    required this.productId,
-    required this.currentInventoryUnitCost,
-    required this.inventoryQuantity,
-    required this.batchCount,
-    required this.referenceUnitCost,
-    this.lastPurchaseUnitCost,
-    this.warehouseId = '',
-  });
-
-  final String productId;
-  final double currentInventoryUnitCost;
-  final double inventoryQuantity;
-  final int batchCount;
-  final double? lastPurchaseUnitCost;
-  final double referenceUnitCost;
-  final String warehouseId;
-
-  bool get hasInventory => inventoryQuantity > 0.000001;
-  bool get hasCurrentInventoryCost =>
-      hasInventory && currentInventoryUnitCost >= 0;
-}
-
-class AppStoreActionException implements Exception {
-  const AppStoreActionException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
 typedef AppStoreTraceSink = void Function(
   String section,
   String phase,
@@ -397,23 +248,30 @@ class AppStore extends ChangeNotifier
     with
         _AppStoreStateAccessors,
         _AppStoreForwardingApi,
-        _AppStoreForwardingApiPart2,
-        _AppStoreForwardingApiPart3,
-        _AppStoreForwardingApiPart4,
-        _AppStoreForwardingApiPart5,
+        _AppStoreForwardingApiStartupIdentity,
+        _AppStoreForwardingApiCatalogLedger,
+        _AppStoreForwardingApiInventoryPayments,
+        _AppStoreForwardingApiSalesRecovery,
         _AppStoreOrchestration
-    implements BusinessSessionContext {
+    implements BusinessSessionContext, ApplicationSession {
   static AppStoreTraceSink? _traceSink;
 
   /// Preferred typed domain boundaries for new callers.
+  @override
   late final AppRuntimeDomainPort runtime = _AppRuntimeDomain(this);
+  @override
   late final CatalogDomainPort catalog = _CatalogDomain(this);
+  @override
   late final CommerceDomainPort commerce = _CommerceDomain(this);
+  @override
   late final AccountingDomainPort accounting = _AccountingDomain(this);
+  @override
   late final InventoryDomainPort inventory = _InventoryDomain(this);
   @override
   late final SecurityDomainPort security = _SecurityDomain(this);
+  @override
   late final SyncDomainPort sync = _SyncDomain(this);
+  @override
   late final RecoveryDomainPort recovery = _RecoveryDomain(this);
 
   // Storage layers:
@@ -426,8 +284,8 @@ class AppStore extends ChangeNotifier
     _traceSink = sink;
   }
 
-  static const String walkInCustomerId = 'walk_in';
-  static const String walkInCustomerName = 'Walk-in Customer';
+  static const String walkInCustomerId = CommerceDefaults.walkInCustomerId;
+  static const String walkInCustomerName = CommerceDefaults.walkInCustomerName;
 
   static const _productsKey = 'products_v4';
   static const _phase8AccountingSyncCursorKey =
@@ -521,8 +379,10 @@ class AppStore extends ChangeNotifier
     'units',
   ];
 
-  static const int _syncMaintenanceKeepRecentChanges = 200;
-  static const int _syncMaintenanceMinChangesBeforeCompact = 1000;
+  static const int _syncMaintenanceKeepRecentChanges =
+      SyncHistoryPolicy.keepRecentChanges;
+  static const int _syncMaintenanceMinChangesBeforeCompact =
+      SyncHistoryPolicy.minChangesBeforeCompact;
 
   static const Set<String> _businessBackupBlockedKeys = {
     'deviceId',

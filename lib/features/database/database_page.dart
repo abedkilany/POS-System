@@ -8,7 +8,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/database_sql_editor_service.dart';
 import '../../core/services/app_logging_service.dart';
 import '../../core/services/sql_result_export_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../security/sensitive_action_guard.dart';
 import '../../models/user_role.dart';
 part 'database_page_methods_01.dart';
@@ -18,7 +18,7 @@ part 'database_page_methods_03.dart';
 class DatabasePage extends StatefulWidget {
   const DatabasePage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<DatabasePage> createState() => _DatabasePageState();

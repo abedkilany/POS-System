@@ -3,7 +3,7 @@ part of 'assistant_read_tool_service.dart';
 extension _AssistantReadToolServicePart2
     on _AssistantReadToolServiceImplementation {
   Future<AssistantJsonMap> execute({
-    required AppStore store,
+    required ApplicationSession store,
     required String name,
     required Map<String, Object?> arguments,
     DateTime? now,

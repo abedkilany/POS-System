@@ -7,7 +7,7 @@ class _StockCountProductTile extends StatelessWidget {
       required this.line,
       required this.movementsAfter});
 
-  final AppStore store;
+  final ApplicationSession store;
   final Product product;
   final InventoryCountLine? line;
   final int movementsAfter;
@@ -124,7 +124,7 @@ class _StockCountProductTile extends StatelessWidget {
   }
 }
 
-Future<void> _openWasteLossDialog(BuildContext context, AppStore store) async {
+Future<void> _openWasteLossDialog(BuildContext context, ApplicationSession store) async {
   final tr = AppLocalizations.of(context);
   final products = store.catalog.stockTrackedProducts;
   final warehouses = store.inventory.warehouses;
@@ -258,7 +258,7 @@ Future<void> _openWasteLossDialog(BuildContext context, AppStore store) async {
   notesController.dispose();
 }
 
-bool _hasWasteReversal(AppStore store, StockMovement movement) {
+bool _hasWasteReversal(ApplicationSession store, StockMovement movement) {
   return store.inventory.stockMovements.any(
     (item) => item.reversalOfMovementId == movement.id,
   );
@@ -266,7 +266,7 @@ bool _hasWasteReversal(AppStore store, StockMovement movement) {
 
 Future<void> _showWasteLossDetails(
   BuildContext context,
-  AppStore store,
+  ApplicationSession store,
   StockMovement movement, {
   required bool canManageWaste,
   required Future<void> Function(StockMovement movement) onDelete,
@@ -379,7 +379,7 @@ class _WasteLossReportDb extends StatefulWidget {
     required this.store,
     required this.canManageWaste,
   });
-  final AppStore store;
+  final ApplicationSession store;
   final bool canManageWaste;
 
   @override
@@ -480,7 +480,7 @@ class _WasteLossReportView extends StatelessWidget {
     this.onLoadMore,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final List<StockMovement> movements;
   final int totalCount;
   final bool canManageWaste;
@@ -641,7 +641,7 @@ class _WasteLossReport extends StatelessWidget {
     required this.store,
     required this.canManageWaste,
   });
-  final AppStore store;
+  final ApplicationSession store;
   final bool canManageWaste;
   static final RevisionKeyCache<List<StockMovement>> _rowsCache =
       RevisionKeyCache<List<StockMovement>>();

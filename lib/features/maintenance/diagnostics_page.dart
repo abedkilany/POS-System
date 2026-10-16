@@ -7,14 +7,14 @@ import '../../core/services/app_logging_service.dart';
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/startup_timing_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../core/localization/app_localizations.dart';
 import 'maintenance_service.dart';
 
 class DiagnosticsPage extends StatefulWidget {
   const DiagnosticsPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<DiagnosticsPage> createState() => _DiagnosticsPageState();

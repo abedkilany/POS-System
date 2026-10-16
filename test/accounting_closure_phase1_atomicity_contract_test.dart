@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/app_store_source.dart';
+import 'helpers/dart_library_source.dart';
 
 void main() {
   final source = readAppStoreImplementationSource();
@@ -20,16 +22,10 @@ void main() {
   }
 
   test('sale FIFO consumption is owned by the SQLite sale transaction', () {
-    final helperStart = source.indexOf(
-      'Future<InventoryCostResult> _resolveCostForSaleItemInTransaction(',
+    final helper = extractDartMethodSource(
+      File('lib/core/services/sale_cost_service.dart').readAsStringSync(),
+      'Future<InventoryCostResult> resolve(',
     );
-    final helperEnd = source.indexOf(
-      'Future<void> _restoreInventoryCostLayersFromSaleItemsInTransaction(',
-      helperStart,
-    );
-    expect(helperStart, isNonNegative);
-    expect(helperEnd, greaterThan(helperStart));
-    final helper = source.substring(helperStart, helperEnd);
     expect(helper, contains('BusinessSqliteStore.readInventoryCostLayers(db)'));
     expect(helper, contains('UPDATE inventory_cost_layers'));
     expect(helper, contains('SET quantity_remaining = ?'));
@@ -41,17 +37,14 @@ void main() {
       'Future<Sale> createSale(',
       'Future<Map<String, double>> _returnedSaleQuantitiesByProduct(',
     );
-    final transactionStart =
-        sale.indexOf('await sqliteDb.transaction(() async {');
-    final transactionEnd = sale.indexOf('});', transactionStart);
-    expect(transactionStart, isNonNegative);
-    expect(transactionEnd, greaterThan(transactionStart));
-    final transaction = sale.substring(transactionStart, transactionEnd);
-    expect(
-      transaction,
-      contains('await _resolveCostForSaleItemInTransaction('),
-    );
-    expect(transaction, contains('await AccountingService.recordSale('));
+    final posting =
+        File('lib/core/services/sale_posting_service.dart').readAsStringSync();
+    final transaction =
+        extractDartBlockAfter(posting, 'await sqliteDb.transaction(');
+    expect(sale, contains('await SalePostingService('));
+    expect(transaction, contains('await costService.resolve('));
+    expect(transaction, contains('await postAccounting(sale)'));
+    expect(posting, contains('withinExistingTransaction: true'));
     expect(
         sale,
         contains(
@@ -169,10 +162,8 @@ void main() {
     expect(
         source, contains('Future<void> _requireNoActiveJournalInTransaction('));
 
-    final sale = methodBody(
-      'Future<Sale> createSale(',
-      'Future<Map<String, double>> _returnedSaleQuantitiesByProduct(',
-    );
+    final sale =
+        File('lib/core/services/sale_posting_service.dart').readAsStringSync();
     expect(sale, contains("referenceType: 'sale'"));
     expect(sale, contains('Sale journal was not persisted'));
 

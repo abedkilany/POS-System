@@ -3,31 +3,27 @@ part of 'sales_page.dart';
 
 extension _SalesPageCustomerShift on _SalesPageState {
   double _salePriceFor(Product product, ProductSaleUnit unit) {
-    final configured = widget.store
-        .catalog.productPriceFor(product.id, _salePriceType, unitId: unit.id);
+    final configured = widget.store.catalog
+        .productPriceFor(product.id, _salePriceType, unitId: unit.id);
     if (configured != null) {
       final override = widget.store.catalog.productPriceOverrideFor(
           configured, widget.store.runtime.profile.defaultSaleInvoiceCurrency);
       if (override != null) {
-        return toUsdReferencePrice(
-            override.amount, override.currencyCode, widget.store.runtime.profile);
+        return toUsdReferencePrice(override.amount, override.currencyCode,
+            widget.store.runtime.profile);
       }
       return toUsdReferencePrice(configured.baseAmount,
           configured.baseCurrencyCode, widget.store.runtime.profile);
     }
-    return widget.store.catalog.defaultProductUsdPrice(product, unitId: unit.id);
+    return widget.store.catalog
+        .defaultProductUsdPrice(product, unitId: unit.id);
   }
 
   void _setSalePriceType(String value) {
     if (value == _salePriceType) return;
     setState(() {
       _salePriceType = value;
-      for (var index = 0; index < _cart.length; index++) {
-        final item = _cart[index];
-        _cart[index] = item.copyWith(
-            saleUnit: item.saleUnit
-                .copyWith(price: _salePriceFor(item.product, item.saleUnit)));
-      }
+      _saleCart.reprice(_salePriceFor);
     });
   }
 
@@ -56,18 +52,22 @@ extension _SalesPageCustomerShift on _SalesPageState {
   }
 
   Customer _selectedCustomer() {
-    final id = widget.store.commerce.sanitizeSelectedCustomerId(_selectedCustomerId);
-    return widget.store.commerce.customers.firstWhere((customer) => customer.id == id,
+    final id =
+        widget.store.commerce.sanitizeSelectedCustomerId(_selectedCustomerId);
+    return widget.store.commerce.customers.firstWhere(
+        (customer) => customer.id == id,
         orElse: () => widget.store.commerce.walkInCustomer);
   }
 
   String _walkInCustomerLabel(AppLocalizations tr) {
     final localized = tr.text('walk_in_customer');
-    return localized.isNotEmpty ? localized : widget.store.commerce.walkInCustomer.name;
+    return localized.isNotEmpty
+        ? localized
+        : widget.store.commerce.walkInCustomer.name;
   }
 
   String _customerSearchText(Customer customer, AppLocalizations tr) {
-    if (customer.id == AppStore.walkInCustomerId) {
+    if (customer.id == CommerceDefaults.walkInCustomerId) {
       return _walkInCustomerLabel(tr);
     }
     return customer.name;
@@ -92,8 +92,8 @@ extension _SalesPageCustomerShift on _SalesPageState {
       }
     }
     customers.sort((a, b) {
-      if (a.id == AppStore.walkInCustomerId) return -1;
-      if (b.id == AppStore.walkInCustomerId) return 1;
+      if (a.id == CommerceDefaults.walkInCustomerId) return -1;
+      if (b.id == CommerceDefaults.walkInCustomerId) return 1;
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
     return customers.take(20).toList();
@@ -147,8 +147,8 @@ extension _SalesPageCustomerShift on _SalesPageState {
                                     const Divider(height: 1),
                                 itemBuilder: (context, index) {
                                   final customer = list[index];
-                                  final isWalkIn =
-                                      customer.id == AppStore.walkInCustomerId;
+                                  final isWalkIn = customer.id ==
+                                      CommerceDefaults.walkInCustomerId;
                                   final phone = customer.phone.trim();
                                   final walkInLabel = _walkInCustomerLabel(tr);
                                   return ListTile(

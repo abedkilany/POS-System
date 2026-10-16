@@ -95,7 +95,7 @@ class _CachedFuturePanel<T> extends StatefulWidget {
     required this.builder,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final Object cacheKey;
   final Future<T> Function() loadFuture;
   final Widget Function(BuildContext context, AsyncSnapshot<T> snapshot)
@@ -156,7 +156,7 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
 class _AccountingSummaryStripLoader extends StatefulWidget {
   const _AccountingSummaryStripLoader({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_AccountingSummaryStripLoader> createState() =>
@@ -257,7 +257,7 @@ class _SummaryStripPlaceholder extends StatelessWidget {
 class _CompactSummaryStrip extends StatelessWidget {
   const _CompactSummaryStrip({required this.store, required this.metrics});
 
-  final AppStore store;
+  final ApplicationSession store;
   final _AccountingMetrics metrics;
 
   @override
@@ -374,7 +374,7 @@ class _SummaryMetric {
 class _SummaryTile extends StatelessWidget {
   const _SummaryTile({required this.store, required this.metric});
 
-  final AppStore store;
+  final ApplicationSession store;
   final _SummaryMetric metric;
 
   @override
@@ -494,7 +494,7 @@ class _AccountingTabs extends StatelessWidget {
 class _AccountsAccountingGroup extends StatelessWidget {
   const _AccountsAccountingGroup({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override
@@ -590,7 +590,7 @@ class _AccountsAccountingGroup extends StatelessWidget {
 class _OperationsAccountingGroup extends StatelessWidget {
   const _OperationsAccountingGroup({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override
@@ -665,7 +665,7 @@ class _OperationsAccountingGroup extends StatelessWidget {
 class _CashAccountingGroup extends StatelessWidget {
   const _CashAccountingGroup({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override

@@ -24,7 +24,7 @@ final class _AccountingDomain implements AccountingDomainPort {
       _store._accountTransactionsForAccountReadImpl(accountType, accountId);
   @override
   Future<void> refreshFromSqlite() =>
-      _AppStoreSplitStartupMigrationsPart2(_store)
+      _AppStoreStartupMigrationsDeferredLoading(_store)
           .refreshAccountTransactionsFromSqlite();
   @override
   Future<void> settleAccountPayment({
@@ -40,7 +40,7 @@ final class _AccountingDomain implements AccountingDomainPort {
     String idempotencyKey = '',
     DateTime? date,
   }) =>
-      _AppStoreSplitWarehouseCashPart4(_store).settleAccountPayment(
+      _AppStoreWarehouseCashSettlement(_store).settleAccountPayment(
         accountType: accountType,
         accountId: accountId,
         accountName: accountName,
@@ -58,12 +58,12 @@ final class _AccountingDomain implements AccountingDomainPort {
     required List<TaxProfile> profiles,
     required String defaultTaxProfileId,
   }) =>
-      _AppStoreSplitPersistenceSyncCorePart3(_store).updateTaxConfiguration(
+      _AppStorePersistenceSyncCoreMaintenance(_store).updateTaxConfiguration(
         profiles: profiles,
         defaultTaxProfileId: defaultTaxProfileId,
       );
   @override
   Future<void> updateDefaultTaxRatePercent(double ratePercent) =>
-      _AppStoreSplitPersistenceSyncCorePart3(_store)
+      _AppStorePersistenceSyncCoreMaintenance(_store)
           .updateDefaultTaxRatePercent(ratePercent);
 }

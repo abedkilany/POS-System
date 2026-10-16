@@ -4,7 +4,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import '../app_brand.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import '../sync_unified/unified_pairing_lifecycle.dart';
 import 'account_auth_service.dart';
@@ -52,7 +52,7 @@ class DirectPeerPairingService {
   DirectPeerPairingService(this.store, {http.Client? client})
       : _client = client ?? http.Client();
 
-  final AppStore store;
+  final SyncSession store;
   final http.Client _client;
 
   String _newCode() {

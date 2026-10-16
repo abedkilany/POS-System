@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _CashBankReportTab extends StatelessWidget {
   const _CashBankReportTab({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   Widget build(BuildContext context) {
@@ -65,7 +65,7 @@ class _CashFlowStatementTab extends StatelessWidget {
     required this.to,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final DateTime from;
   final DateTime to;
 
@@ -256,7 +256,7 @@ class _CashFlowSection extends StatelessWidget {
       required this.outflows,
       required this.net});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String title;
   final double inflows;
   final double outflows;
@@ -345,7 +345,7 @@ class _TaxReportTab extends StatelessWidget {
     required this.to,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final DateTime from;
   final DateTime to;
 

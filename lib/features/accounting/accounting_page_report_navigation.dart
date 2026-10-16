@@ -26,7 +26,7 @@ class _AccountingReportRange {
 class _ReportsAccountingGroup extends StatefulWidget {
   const _ReportsAccountingGroup({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override
@@ -566,7 +566,7 @@ String _topSectionSubtitle(BuildContext context, int index) {
 class _SettingsAccountingGroup extends StatelessWidget {
   const _SettingsAccountingGroup({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   Widget build(BuildContext context) {
@@ -760,7 +760,7 @@ class _AccountingPrintablePage extends StatefulWidget {
     required this.child,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String title;
   final Widget child;
 

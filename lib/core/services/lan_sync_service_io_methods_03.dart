@@ -169,7 +169,8 @@ extension LanSyncServiceSplitPart3 on LanSyncService {
   }
 
   Future<void> compactAfterSuccessfulSync() {
-    return _syncCore.compactAfterSuccessfulSync();
+    return _syncCore
+        .compactAfterSuccessfulSync(store.runtime.identity.deviceRole);
   }
 
   Future<LanSyncResult?> _handleLanAccessResponse(int statusCode, String body,

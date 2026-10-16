@@ -2,7 +2,7 @@ import 'package:drift/drift.dart';
 
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/storage/sqlite/ventio_drift_database.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'assistant_provider.dart';
 
 /// Runs bounded, read-only analyses over an allow-list of business datasets.
@@ -15,7 +15,7 @@ class AssistantBusinessAnalysisService {
   static const int _maximumGroups = 50;
   static const int _maximumFilterCharacters = 120;
 
-  static List<String> datasetsFor(AppStore store) {
+  static List<String> datasetsFor(ApplicationSession store) {
     final datasets = <String>[];
     if (store.security.canViewSales) {
       datasets
@@ -32,7 +32,7 @@ class AssistantBusinessAnalysisService {
     return List<String>.unmodifiable(datasets);
   }
 
-  static AssistantJsonMap? definitionFor(AppStore store) {
+  static AssistantJsonMap? definitionFor(ApplicationSession store) {
     final datasets = datasetsFor(store);
     if (datasets.isEmpty) return null;
     return <String, Object?>{
@@ -99,7 +99,7 @@ class AssistantBusinessAnalysisService {
   }
 
   static Future<AssistantJsonMap> execute({
-    required AppStore store,
+    required ApplicationSession store,
     required Map<String, Object?> arguments,
   }) async {
     _requireOnlyArguments(arguments);

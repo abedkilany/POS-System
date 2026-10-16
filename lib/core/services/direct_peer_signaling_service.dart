@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import 'sync_diagnostics_log.dart';
 
@@ -74,7 +74,7 @@ class DirectPeerSignalingService {
     http.Client? client,
   }) : _client = client ?? http.Client();
 
-  final AppStore store;
+  final SyncSession store;
   final http.Client _client;
 
   Map<String, String> _headers() {

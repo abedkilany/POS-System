@@ -3,7 +3,7 @@ part of 'products_page.dart';
 class ProductsPage extends StatefulWidget {
   const ProductsPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<ProductsPage> createState() => _ProductsPageState();
@@ -393,7 +393,7 @@ class _ProductRowData {
 
   factory _ProductRowData.fromStore(
     Product product,
-    AppStore store,
+    ApplicationSession store,
     StoreProfile storeProfile,
     AppLocalizations tr, {
     ProductCostSnapshot? costSnapshot,
@@ -464,7 +464,7 @@ class _ProductFormResult {
 class _ProductDialog extends StatefulWidget {
   const _ProductDialog({required this.store, this.product});
 
-  final AppStore store;
+  final ApplicationSession store;
   final Product? product;
 
   @override

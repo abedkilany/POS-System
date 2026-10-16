@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 
 class LocalAutoBackupSettings {
   const LocalAutoBackupSettings({
@@ -74,10 +74,10 @@ class LocalAutoBackupService {
 
   static Future<String> defaultLocationPath() async => 'Ventio/Backup';
 
-  static Future<void> runDueBackup(AppStore store) async {}
+  static Future<void> runDueBackup(BackupSession store) async {}
 
   static Future<Object> createBackupNow(
-    AppStore store, {
+    BackupSession store, {
     LocalAutoBackupSettings? settings,
     String reason = 'manual',
   }) async {

@@ -3,7 +3,7 @@ import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/payment_voucher_service.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/account_transaction.dart';
 import '../../models/payment_allocation.dart';
 import '../../models/payment_voucher.dart';
@@ -191,11 +191,11 @@ class AssistantReadToolService {
       _assistantReadToolServiceImplementation =
       _AssistantReadToolServiceImplementation();
 
-  static List<AssistantJsonMap> definitionsFor(AppStore store) =>
+  static List<AssistantJsonMap> definitionsFor(ApplicationSession store) =>
       _assistantReadToolServiceImplementation.definitionsFor(store);
 
   static Future<AssistantJsonMap> execute({
-    required AppStore store,
+    required ApplicationSession store,
     required String name,
     required Map<String, Object?> arguments,
     DateTime? now,

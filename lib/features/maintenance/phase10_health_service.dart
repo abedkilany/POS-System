@@ -3,7 +3,7 @@ import '../../core/services/app_logging_service.dart';
 import '../../core/services/inventory_traceability_service.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/storage/sqlite/ventio_drift_database.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 
 enum Phase10HealthLevel { healthy, warning, critical }
 
@@ -65,7 +65,7 @@ class Phase10HealthReport {
 class Phase10HealthService {
   const Phase10HealthService(this.store);
 
-  final AppStore store;
+  final ApplicationSession store;
 
   Future<Phase10HealthReport> run({bool deep = true}) async {
     final checks = <Phase10HealthCheck>[];

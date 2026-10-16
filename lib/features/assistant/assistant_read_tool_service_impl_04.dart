@@ -15,7 +15,7 @@ extension _AssistantReadToolServicePart4
     return value;
   }
 
-  void _requirePartyLedgerPermission(AppStore store, String partyType) {
+  void _requirePartyLedgerPermission(ApplicationSession store, String partyType) {
     final allowed = partyType == 'customer'
         ? _canViewCustomerLedger(store)
         : _canViewSupplierLedger(store);
@@ -89,21 +89,21 @@ extension _AssistantReadToolServicePart4
     };
   }
 
-  bool _canViewAccounting(AppStore store) => store.security.canViewAccounting;
+  bool _canViewAccounting(ApplicationSession store) => store.security.canViewAccounting;
 
-  bool _canViewCustomerLedger(AppStore store) =>
+  bool _canViewCustomerLedger(ApplicationSession store) =>
       store.security.hasAnyPermission(<String>{
         AppPermission.customersLedgerView,
         AppPermission.customersManage,
       });
 
-  bool _canViewSupplierLedger(AppStore store) =>
+  bool _canViewSupplierLedger(ApplicationSession store) =>
       store.security.hasAnyPermission(<String>{
         AppPermission.suppliersLedgerView,
         AppPermission.suppliersManage,
       });
 
-  void _requireToolPermission(AppStore store, String name) {
+  void _requireToolPermission(ApplicationSession store, String name) {
     final allowed = switch (name) {
       'income_statement' ||
       'balance_sheet' ||
@@ -206,7 +206,7 @@ extension _AssistantReadToolServicePart4
 
   String _transactionCurrency(
     AccountTransaction transaction,
-    AppStore store,
+    ApplicationSession store,
   ) {
     final currency = transaction.currency.trim().toUpperCase();
     return currency.isEmpty ? store.runtime.profile.baseCurrency : currency;
@@ -321,7 +321,7 @@ extension _AssistantReadToolServicePart4
   }
 
   AssistantJsonMap _envelope(
-    AppStore store,
+    ApplicationSession store,
     String tool,
     DateTime generatedAt, {
     required AssistantJsonMap data,

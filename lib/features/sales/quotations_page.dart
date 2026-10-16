@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/local_database_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/customer.dart';
 import '../../models/product.dart';
 import '../../models/sale_item.dart';
@@ -14,7 +14,7 @@ import '../../core/services/simple_report_pdf_service.dart';
 class QuotationsPage extends StatefulWidget {
   const QuotationsPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<QuotationsPage> createState() => _QuotationsPageState();
@@ -320,14 +320,14 @@ class _QuotationDraft {
 
 class _QuotationDialog extends StatefulWidget {
   const _QuotationDialog({required this.store});
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_QuotationDialog> createState() => _QuotationDialogState();
 }
 
 class _QuotationDialogState extends State<_QuotationDialog> {
-  String _customerId = AppStore.walkInCustomerId;
+  String _customerId = CommerceDefaults.walkInCustomerId;
   String _invoiceCurrency = 'USD';
   final TextEditingController _discountController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
@@ -367,7 +367,7 @@ class _QuotationDialogState extends State<_QuotationDialog> {
         for (final customer in _customers) customer.id: customer
       };
       if (!_customerById.containsKey(_customerId)) {
-        _customerId = AppStore.walkInCustomerId;
+        _customerId = CommerceDefaults.walkInCustomerId;
       }
       _customerItems = [
         for (final customer in _customers)
@@ -488,7 +488,7 @@ class _QuotationDialogState extends State<_QuotationDialog> {
               decoration: InputDecoration(labelText: tr.text('customer')),
               items: _customerItems,
               onChanged: (value) => setState(
-                  () => _customerId = value ?? AppStore.walkInCustomerId),
+                  () => _customerId = value ?? CommerceDefaults.walkInCustomerId),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(

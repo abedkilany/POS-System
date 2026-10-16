@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../services/app_logging_service.dart';
 import '../services/password_hashing.dart';
 
@@ -8,7 +8,7 @@ class AuthRepository {
   AuthRepository._();
 
   static Future<bool> login(
-    AppStore store,
+    AuthenticationSession store,
     String username,
     String password, {
     bool remember = false,
@@ -114,7 +114,7 @@ class AuthRepository {
     return true;
   }
 
-  static Future<void> logout(AppStore store) async {
+  static Future<void> logout(AuthenticationSession store) async {
     final user = store.security.activeUser;
     await store.security.clearSessionUser();
     unawaited(
@@ -136,12 +136,12 @@ class AuthRepository {
     );
   }
 
-  static Future<bool> hasLocalAdminUser(AppStore store) async {
+  static Future<bool> hasLocalAdminUser(AuthenticationSession store) async {
     final users = store.security.users;
     return users.any((user) => user.roleId == 'admin' && user.isActive);
   }
 
-  static Future<bool> needsInitialAdminSetup(AppStore store) async {
+  static Future<bool> needsInitialAdminSetup(AuthenticationSession store) async {
     final users = store.security.users;
     if (users.isEmpty) return true;
     if (users.length != 1) return false;

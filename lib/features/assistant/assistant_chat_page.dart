@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'assistant_attachment_service.dart';
 import 'assistant_chat_history_dialog.dart';
 import 'assistant_chat_history_store.dart';

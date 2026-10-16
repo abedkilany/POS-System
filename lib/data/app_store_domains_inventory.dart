@@ -59,7 +59,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     InventoryCostingMethod method, {
     String reason = '',
   }) =>
-      _AppStoreSplitPricingCostingPart2(_store)
+      _AppStorePricingCostingPolicy(_store)
           .setInventoryCostingMethod(method, reason: reason);
   @override
   Future<void> ensureLoaded() => _store._ensureInventoryPageDataLoadedImpl();
@@ -75,22 +75,22 @@ final class _InventoryDomain implements InventoryDomainPort {
           .resolveWarehouseForPurchase(warehouseId: warehouseId);
   @override
   double stockForWarehouse(String productId, String warehouseId) =>
-      _AppStoreSplitCoreLoadingPart2(_store)
+      _AppStoreCoreLoadingProjections(_store)
           .stockForWarehouse(productId, warehouseId);
   @override
   Future<double> warehouseStockFromSqlite(
     String productId, {
     String warehouseId = '',
   }) =>
-      _AppStoreSplitCoreLoadingPart2(_store)
+      _AppStoreCoreLoadingProjections(_store)
           .warehouseStockFromSqlite(productId, warehouseId: warehouseId);
   @override
   Future<double> totalStockFromSqlite(String productId) =>
-      _AppStoreSplitCoreLoadingPart2(_store)
+      _AppStoreCoreLoadingProjections(_store)
           .totalWarehouseStockFromSqlite(productId);
   @override
   Future<Map<String, Map<String, double>>> warehouseStockBalancesFromSqlite() =>
-      _AppStoreSplitCoreLoadingPart2(_store).warehouseStockBalancesFromSqlite();
+      _AppStoreCoreLoadingProjections(_store).warehouseStockBalancesFromSqlite();
   @override
   Future<Warehouse> createWarehouse({
     required String name,
@@ -104,18 +104,18 @@ final class _InventoryDomain implements InventoryDomainPort {
       );
   @override
   Future<void> reviewAutoCorrection(String movementId, {String note = ''}) =>
-      _AppStoreSplitInventoryPart2(_store)
+      _AppStoreInventoryCountReversalBatches(_store)
           .reviewAutoCorrection(movementId, note: note);
   @override
   Future<void> setExpiryBatchStatus(String batchId, String status) =>
-      _AppStoreSplitInventoryPart2(_store)
+      _AppStoreInventoryCountReversalBatches(_store)
           .setExpiryBatchStatus(batchId, status);
   @override
   Future<void> reverseExpiryBatchAdjustment(
     String movementId, {
     String reason = '',
   }) =>
-      _AppStoreSplitInventoryPart3(_store)
+      _AppStoreInventoryBatchReversal(_store)
           .reverseExpiryBatchAdjustment(movementId, reason: reason);
   @override
   Future<void> adjustExpiryBatchStock({
@@ -126,7 +126,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     required String reason,
     String adjustmentCategory = 'other',
   }) =>
-      _AppStoreSplitInventoryPart2(_store).adjustExpiryBatchStock(
+      _AppStoreInventoryCountReversalBatches(_store).adjustExpiryBatchStock(
         productId: productId,
         warehouseId: warehouseId,
         batchId: batchId,
@@ -136,7 +136,7 @@ final class _InventoryDomain implements InventoryDomainPort {
       );
   @override
   Future<int> manualStockAdjustmentVersion(String operationReferenceId) =>
-      _AppStoreSplitInventoryPart3(_store)
+      _AppStoreInventoryBatchReversal(_store)
           .manualStockAdjustmentVersion(operationReferenceId);
   @override
   Future<void> editStockAdjustment({
@@ -149,7 +149,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     String evidenceRef = '',
     List<BatchAllocation> batchAllocations = const <BatchAllocation>[],
   }) =>
-      _AppStoreSplitInventoryPart4(_store).editStockAdjustment(
+      _AppStoreInventoryAdjustmentEdit(_store).editStockAdjustment(
         operationReferenceId: operationReferenceId,
         expectedVersion: expectedVersion,
         quantityDelta: quantityDelta,
@@ -168,7 +168,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     String adjustmentCategory = 'other',
     String notes = '',
   }) =>
-      _AppStoreSplitInventoryPart5(_store).recordWasteLoss(
+      _AppStoreInventoryAdjustmentsWaste(_store).recordWasteLoss(
         productId: productId,
         warehouseId: warehouseId,
         quantity: quantity,
@@ -178,7 +178,7 @@ final class _InventoryDomain implements InventoryDomainPort {
       );
   @override
   Future<void> deleteWasteLoss(String movementId) =>
-      _AppStoreSplitInventoryPart6(_store).deleteWasteLoss(movementId);
+      _AppStoreInventoryPurchaseMovements(_store).deleteWasteLoss(movementId);
   @override
   Future<void> adjustStock({
     required String productId,
@@ -191,7 +191,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     List<BatchAllocation> batchAllocations = const <BatchAllocation>[],
     String operationReferenceId = '',
   }) =>
-      _AppStoreSplitInventoryPart5(_store).adjustStock(
+      _AppStoreInventoryAdjustmentsWaste(_store).adjustStock(
         productId: productId,
         warehouseId: warehouseId,
         quantityDelta: quantityDelta,
@@ -240,11 +240,11 @@ final class _InventoryDomain implements InventoryDomainPort {
       _AppStoreSplitInventory(_store).approveInventoryCount(sessionId);
   @override
   Future<void> reverseInventoryCount(String sessionId, {String reason = ''}) =>
-      _AppStoreSplitInventoryPart2(_store)
+      _AppStoreInventoryCountReversalBatches(_store)
           .reverseInventoryCount(sessionId, reason: reason);
   @override
   Future<void> cancelInventoryCount(String sessionId) =>
-      _AppStoreSplitInventoryPart2(_store).cancelInventoryCount(sessionId);
+      _AppStoreInventoryCountReversalBatches(_store).cancelInventoryCount(sessionId);
   @override
   Future<ManufacturingOrder> startManufacturingOrder({
     required String bomId,
@@ -255,7 +255,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     String finishedGoodsWarehouseName = '',
     String notes = '',
   }) =>
-      _AppStoreSplitManufacturingPart2(_store).startManufacturingOrder(
+      _AppStoreManufacturingOrderLifecycle(_store).startManufacturingOrder(
         bomId: bomId,
         quantity: quantity,
         rawMaterialsWarehouseId: rawMaterialsWarehouseId,
@@ -279,7 +279,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     Map<String, String> wasteReasons = const <String, String>{},
     String existingOrderId = '',
   }) =>
-      _AppStoreSplitManufacturingPart3(_store).completeManufacturingOrder(
+      _AppStoreManufacturingCompletion(_store).completeManufacturingOrder(
         bomId: bomId,
         quantity: quantity,
         rawMaterialsWarehouseId: rawMaterialsWarehouseId,
@@ -298,7 +298,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     required String orderId,
     required String reason,
   }) =>
-      _AppStoreSplitManufacturingPart5(_store)
+      _AppStoreManufacturingReversal(_store)
           .reverseManufacturingOrder(orderId: orderId, reason: reason);
 
   @override
@@ -370,7 +370,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     required String finishedGoodsWarehouseName,
     String notes = '',
   }) =>
-      _AppStoreSplitManufacturingPart2(_store).updateManufacturingOrder(
+      _AppStoreManufacturingOrderLifecycle(_store).updateManufacturingOrder(
         id: id,
         bomId: bomId,
         quantity: quantity,
@@ -390,7 +390,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     Map<String, double> wasteQuantities = const <String, double>{},
     Map<String, String> wasteReasons = const <String, String>{},
   }) =>
-      _AppStoreSplitManufacturingPart2(_store).finishManufacturingOrder(
+      _AppStoreManufacturingOrderLifecycle(_store).finishManufacturingOrder(
         orderId: orderId,
         actualQuantity: actualQuantity,
         outputBatchAllocations: outputBatchAllocations,
@@ -415,7 +415,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     Map<String, double> wasteQuantities = const <String, double>{},
     Map<String, String> wasteReasons = const <String, String>{},
   }) =>
-      _AppStoreSplitManufacturingPart4(_store).editCompletedManufacturingOrder(
+      _AppStoreManufacturingCompletedEdit(_store).editCompletedManufacturingOrder(
         orderId: orderId,
         expectedVersion: expectedVersion,
         bomId: bomId,
@@ -464,7 +464,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     required double quantity,
     String notes = '',
   }) =>
-      _AppStoreSplitWarehouseCashPart3(_store).transferStock(
+      _AppStoreWarehouseCashTransfersRefunds(_store).transferStock(
         productId: productId,
         fromWarehouseId: fromWarehouseId,
         toWarehouseId: toWarehouseId,
@@ -481,7 +481,7 @@ final class _InventoryDomain implements InventoryDomainPort {
     String? notes,
     DateTime? date,
   }) =>
-      _AppStoreSplitWarehouseCashPart2(_store).editWarehouseTransferOrder(
+      _AppStoreWarehouseCashTransferEdit(_store).editWarehouseTransferOrder(
         orderId: orderId,
         expectedVersion: expectedVersion,
         fromWarehouseId: fromWarehouseId,

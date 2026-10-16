@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/windows_release_catalog.dart';
 import '../../core/services/page_timing_scope.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/user_role.dart';
 import '../../core/localization/app_localizations.dart';
 import '../database/database_page.dart';

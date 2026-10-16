@@ -2,7 +2,7 @@ part of 'dashboard_snapshot_service.dart';
 
 extension DashboardSnapshotServiceMethods2 on DashboardSnapshotService {
   Future<Map<String, Object?>> _computeSnapshotFromStore(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
   ) async {
     final today = DateTime(reference.year, reference.month, reference.day);

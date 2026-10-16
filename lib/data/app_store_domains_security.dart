@@ -29,7 +29,7 @@ final class _SecurityDomain implements SecurityDomainPort {
       _store._users.any((item) => item.roleId == 'admin' && item.isActive);
   @override
   AppUser? get storeOwnerUser =>
-      _AppStoreSplitIdentityUsersPart2(_store).storeOwnerUser;
+      _AppStoreIdentityUsersAuthentication(_store).storeOwnerUser;
   @override
   bool canAccessPage(String pageId) => _store._canAccessPageReadImpl(pageId);
   @override
@@ -188,18 +188,18 @@ final class _SecurityDomain implements SecurityDomainPort {
     String password, {
     bool remember = false,
   }) =>
-      _AppStoreSplitIdentityUsersPart2(_store)
+      _AppStoreIdentityUsersAuthentication(_store)
           .login(username, password, remember: remember);
 
   @override
-  Future<void> logout() => _AppStoreSplitIdentityUsersPart2(_store).logout();
+  Future<void> logout() => _AppStoreIdentityUsersAuthentication(_store).logout();
 
   @override
   Future<bool> applySupportPasswordResetToLocalUser({
     required String username,
     required String newPassword,
   }) =>
-      _AppStoreSplitIdentityUsersPart2(_store)
+      _AppStoreIdentityUsersAuthentication(_store)
           .applySupportPasswordResetToLocalUser(
         username: username,
         newPassword: newPassword,
@@ -240,7 +240,7 @@ final class _SecurityDomain implements SecurityDomainPort {
     required Set<String> permissions,
     required bool rememberLogin,
   }) =>
-      _AppStoreSplitIdentityUsersPart2(_store).applySessionUser(
+      _AppStoreIdentityUsersAuthentication(_store).applySessionUser(
         activeUser: activeUser,
         currentRole: currentRole,
         permissions: permissions,
@@ -249,28 +249,28 @@ final class _SecurityDomain implements SecurityDomainPort {
 
   @override
   Future<void> clearSessionUser() =>
-      _AppStoreSplitIdentityUsersPart2(_store).clearSessionUser();
+      _AppStoreIdentityUsersAuthentication(_store).clearSessionUser();
 
   @override
   Future<void> addOrUpdateRole(UserRole role) =>
-      _AppStoreSplitIdentityUsersPart2(_store).addOrUpdateRole(role);
+      _AppStoreIdentityUsersAuthentication(_store).addOrUpdateRole(role);
 
   @override
   Future<void> deleteRole(String id) =>
-      _AppStoreSplitIdentityUsersPart2(_store).deleteRole(id);
+      _AppStoreIdentityUsersAuthentication(_store).deleteRole(id);
 
   @override
   Future<void> addOrUpdateUser(AppUser user, {String? password}) =>
-      _AppStoreSplitIdentityUsersPart3(_store)
+      _AppStoreIdentityUsersCredentialsPersistence(_store)
           .addOrUpdateUser(user, password: password);
 
   @override
   Future<void> deleteUser(String id) =>
-      _AppStoreSplitIdentityUsersPart3(_store).deleteUser(id);
+      _AppStoreIdentityUsersCredentialsPersistence(_store).deleteUser(id);
 
   @override
   Future<bool> verifyAdminPassword(String password) =>
-      _AppStoreSplitIdentityUsersPart2(_store).verifyAdminPassword(password);
+      _AppStoreIdentityUsersAuthentication(_store).verifyAdminPassword(password);
 
   @override
   Future<void> applyStoreOwnerCredentials({
@@ -278,7 +278,7 @@ final class _SecurityDomain implements SecurityDomainPort {
     required String password,
     String? fullName,
   }) =>
-      _AppStoreSplitIdentityUsersPart3(_store).applyStoreOwnerCredentials(
+      _AppStoreIdentityUsersCredentialsPersistence(_store).applyStoreOwnerCredentials(
         username: username,
         password: password,
         fullName: fullName,

@@ -2,7 +2,7 @@ import 'package:drift/drift.dart';
 
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../core/storage/sqlite/ventio_drift_database.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'assistant_provider.dart';
 
 part 'assistant_database_explorer_specs_01.dart';
@@ -29,11 +29,11 @@ class AssistantDatabaseExplorerService {
     ..._assistantDatabaseExplorerSpecsPart04,
   };
 
-  static List<_TableSpec> _availableSpecs(AppStore store) => _specs.values
+  static List<_TableSpec> _availableSpecs(ApplicationSession store) => _specs.values
       .where((spec) => _hasDomainPermission(store, spec.domain))
       .toList(growable: false);
 
-  static List<AssistantJsonMap> definitionsFor(AppStore store) {
+  static List<AssistantJsonMap> definitionsFor(ApplicationSession store) {
     final specs = _availableSpecs(store);
     if (specs.isEmpty) return const <AssistantJsonMap>[];
     final tableNames = specs.map((spec) => spec.baseTable).toList();
@@ -121,10 +121,10 @@ class AssistantDatabaseExplorerService {
     ];
   }
 
-  static bool canUse(AppStore store) => _availableSpecs(store).isNotEmpty;
+  static bool canUse(ApplicationSession store) => _availableSpecs(store).isNotEmpty;
 
   static Future<AssistantJsonMap> executeCatalog({
-    required AppStore store,
+    required ApplicationSession store,
     required Map<String, Object?> arguments,
   }) async {
     _requireOnlyArguments(arguments, const <String>{'table'});
@@ -217,7 +217,7 @@ class AssistantDatabaseExplorerService {
   }
 
   static Future<AssistantJsonMap> executeAnalysis({
-    required AppStore store,
+    required ApplicationSession store,
     required Map<String, Object?> arguments,
   }) async {
     _requireOnlyArguments(arguments);
@@ -450,7 +450,7 @@ class AssistantDatabaseExplorerService {
     };
   }
 
-  static bool _hasDomainPermission(AppStore store, _Domain domain) =>
+  static bool _hasDomainPermission(ApplicationSession store, _Domain domain) =>
       switch (domain) {
         _Domain.sales => store.security.canViewSales,
         _Domain.purchases => store.security.canViewPurchases,

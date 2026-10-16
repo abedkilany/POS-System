@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/product.dart';
 import '../../models/print_settings.dart';
 import '../../widgets/report_card.dart';
@@ -13,7 +13,7 @@ import '../../core/services/simple_report_pdf_service.dart';
 class ReportsPage extends StatelessWidget {
   const ReportsPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   static const ReportsSnapshotService _service = ReportsSnapshotService();
 
@@ -419,7 +419,7 @@ class _ReportsPageData {
     );
   }
 
-  factory _ReportsPageData.fromStore(AppStore store, DateTime today) {
+  factory _ReportsPageData.fromStore(ApplicationSession store, DateTime today) {
     final totalExpenses = store.commerce.totalExpensesAmount;
     const netProfit = 0.0;
     final sales = store.commerce.sales;

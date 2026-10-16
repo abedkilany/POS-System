@@ -4,7 +4,7 @@ class _AccountsTab extends StatelessWidget {
   const _AccountsTab(
       {required this.store, required this.query, required this.accountType});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
   final String accountType;
 
@@ -65,7 +65,7 @@ class _AccountsTabMemory extends StatelessWidget {
   const _AccountsTabMemory(
       {required this.store, required this.query, required this.accountType});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
   final String accountType;
   static final RevisionKeyCache<List<_AccountRowData>> _rowsCache =
@@ -214,7 +214,7 @@ class _AccountsRowsView extends StatelessWidget {
     required this.rows,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String accountType;
   final List<_AccountRowData> rows;
 
@@ -331,7 +331,7 @@ class _AccountListRow extends StatelessWidget {
       required this.row,
       required this.isWide});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String accountType;
   final _AccountRowData row;
   final bool isWide;
@@ -485,7 +485,7 @@ class _AccountListRow extends StatelessWidget {
 class _AgingReportsTab extends StatefulWidget {
   const _AgingReportsTab({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override
@@ -594,7 +594,7 @@ class _AgingReportSection extends StatelessWidget {
     required this.query,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String title;
   final String subtitle;
   final IconData icon;
@@ -749,7 +749,7 @@ class _AgingBucketChip extends StatelessWidget {
   const _AgingBucketChip(
       {required this.store, required this.label, required this.amount});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String label;
   final double amount;
 

@@ -3,7 +3,7 @@ part of 'settings_page.dart';
 class _SaleWarehouseSettingsCard extends StatefulWidget {
   const _SaleWarehouseSettingsCard({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_SaleWarehouseSettingsCard> createState() =>
@@ -101,7 +101,7 @@ class _SaleWarehouseSettingsCardState
 class _CurrentDeviceCashDrawerSettingsCard extends StatefulWidget {
   const _CurrentDeviceCashDrawerSettingsCard({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_CurrentDeviceCashDrawerSettingsCard> createState() =>

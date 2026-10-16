@@ -80,7 +80,7 @@ class _ScannerFeedbackSettingsCardState
 class _AutoLocalBackupSettingsCard extends StatefulWidget {
   const _AutoLocalBackupSettingsCard({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_AutoLocalBackupSettingsCard> createState() =>
@@ -354,7 +354,7 @@ class _AutoLocalBackupSettingsCardState
 class _GoogleDriveBackupSettingsCard extends StatefulWidget {
   const _GoogleDriveBackupSettingsCard({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_GoogleDriveBackupSettingsCard> createState() =>

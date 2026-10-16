@@ -49,14 +49,14 @@ extension _SalesPagePostedSaleEdit on _SalesPageState {
               item.conversionToBase <= 0 ? 1 : item.conversionToBase));
     }
     if (activeProducts.isEmpty) return;
-    final customerIds = <String>{AppStore.walkInCustomerId};
+    final customerIds = <String>{CommerceDefaults.walkInCustomerId};
     customerIds.addAll(widget.store.commerce.customers
         .where((customer) => !customer.isDeleted)
         .map((customer) => customer.id));
     if (sale.customerId.trim().isNotEmpty) customerIds.add(sale.customerId);
     var selectedCustomerId = customerIds.contains(sale.customerId)
         ? sale.customerId
-        : AppStore.walkInCustomerId;
+        : CommerceDefaults.walkInCustomerId;
     final warehouses = widget.store.inventory.warehouses
         .where((warehouse) => warehouse.isActive && !warehouse.isDeleted)
         .toList(growable: true);

@@ -1,5 +1,25 @@
 import 'dart:io';
 
+/// Reads independent contracts together with the adapters implementing them.
+String readDomainBoundarySource() => <String>[
+      for (final file
+          in Directory('lib/core/contracts').listSync().whereType<File>())
+        if (file.path.endsWith('_domain_port.dart')) file.readAsStringSync(),
+      for (final file in Directory('lib/data').listSync().whereType<File>())
+        if (file.path
+            .split(Platform.pathSeparator)
+            .last
+            .startsWith('app_store_domains_'))
+          file.readAsStringSync(),
+    ].join('\n');
+
+String readSessionStateSource() => <String>[
+      File('lib/data/app_store_state.dart').readAsStringSync(),
+      for (final file
+          in Directory('lib/data/state').listSync().whereType<File>())
+        if (file.path.endsWith('.dart')) file.readAsStringSync(),
+    ].join('\n');
+
 /// Returns the implementation source for the AppStore library after the
 /// domain split. Contract tests use this instead of assuming every AppStore
 /// method body lives physically in app_store.dart.

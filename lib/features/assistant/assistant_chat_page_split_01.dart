@@ -4,7 +4,7 @@ part of 'assistant_chat_page.dart';
 class AssistantChatPage extends StatefulWidget {
   const AssistantChatPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<AssistantChatPage> createState() => _AssistantChatPageState();

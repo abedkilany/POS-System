@@ -5,175 +5,15 @@ part of 'app_store.dart';
 /// SQLite remains authoritative; these objects only own AppStore's in-memory
 /// caches, revisions and short-lived orchestration state. Keeping state outside
 /// the facade prevents AppStore from becoming the owner of every concern again.
-class _CatalogState {
-  final List<Product> _products = [];
-  final List<SupplierProductPrice> _supplierProductPrices = [];
-  final List<PriceList> _priceLists = [];
-  final List<ProductPrice> _productPrices = [];
-  final List<ProductPriceOverride> _productPriceOverrides = [];
-  final List<ProductCost> _productCosts = [];
-  final List<CostingMethodHistory> _costingMethodHistory = [];
-  final List<CatalogItem> _categories = [];
-  final List<CatalogItem> _brands = [];
-  final List<CatalogItem> _units = [];
-  final Map<String, int> _productIndexById = <String, int>{};
-  final Map<String, String> _productIdByNormalizedCode = <String, String>{};
-  final Map<String, String> _productIdByNormalizedBarcode = <String, String>{};
-  final Map<String, ProductPrice> _productPriceByLookupKey =
-      <String, ProductPrice>{};
-  final Map<String, ProductCost> _productCostByProductId =
-      <String, ProductCost>{};
-  final Map<String, int> _productCostIndexByProductId = <String, int>{};
-  List<Product>? _cachedProducts;
-  int _cachedProductsGeneration = -1;
-  List<Product>? _cachedStockTrackedProducts;
-  int _cachedStockTrackedProductsGeneration = -1;
-  UnmodifiableListView<ProductPriceOverride>? _cachedProductPriceOverrides;
-  UnmodifiableListView<CostingMethodHistory>? _cachedCostingMethodHistory;
-  int _cachedProductPriceOverridesGeneration = -1;
-  int _cachedCostingMethodHistoryGeneration = -1;
-}
-
-class _CommerceState {
-  final List<Customer> _customers = [];
-  final List<Sale> _sales = [];
-  final List<CreditNote> _creditNotes = [];
-  final List<SaleQuotation> _saleQuotations = [];
-  final List<DeliveryNote> _deliveryNotes = [];
-  final List<Supplier> _suppliers = [];
-  final List<Expense> _expenses = [];
-  final List<Purchase> _purchases = [];
-  final Map<String, int> _purchaseIndexById = <String, int>{};
-  final Map<String, int> _expenseIndexById = <String, int>{};
-  final Map<String, int> _customerIndexById = <String, int>{};
-  final Map<String, String> _customerIdByNormalizedName = <String, String>{};
-  final Map<String, int> _supplierIndexById = <String, int>{};
-  final Map<String, String> _supplierIdByNormalizedName = <String, String>{};
-  final Map<String, List<SupplierPurchasePrice>>
-      _purchaseHistoryByProductCache = <String, List<SupplierPurchasePrice>>{};
-  final Map<String, _ProductPurchaseMetrics> _purchaseMetricsByProductCache =
-      <String, _ProductPurchaseMetrics>{};
-  bool _purchaseInsightsCacheDirty = true;
-  UnmodifiableListView<Sale>? _cachedSales;
-  int _cachedSalesGeneration = -1;
-  int _invoiceCounter = 0;
-  int _purchaseCounter = 0;
-  UnmodifiableListView<SaleQuotation>? _cachedSaleQuotations;
-  UnmodifiableListView<DeliveryNote>? _cachedDeliveryNotes;
-  Map<String, DeliveryNote>? _cachedDeliveryNoteBySaleId;
-  UnmodifiableListView<Supplier>? _cachedSuppliers;
-  PurchasesOverview? _cachedPurchasesOverview;
-  int _cachedPurchasesOverviewRevision = -1;
-  String _cachedPurchasesOverviewMonthKey = '';
-  ExpensesOverview? _cachedExpensesOverview;
-  int _cachedExpensesOverviewRevision = -1;
-  int _cachedSaleQuotationsGeneration = -1;
-  int _cachedDeliveryNotesGeneration = -1;
-  int _cachedDeliveryNoteBySaleIdGeneration = -1;
-  int _cachedSuppliersGeneration = -1;
-}
-
-class _InventoryState {
-  final List<BillOfMaterials> _billsOfMaterials = [];
-  final List<ManufacturingOrder> _manufacturingOrders = [];
-  final List<InventoryCostLayer> _inventoryCostLayers = [];
-  final List<StockMovement> _stockMovements = [];
-  final List<InventoryCountSession> _inventoryCounts = [];
-  final List<Warehouse> _warehouses = [];
-  final Map<String, int> _stockMovementIndexById = <String, int>{};
-  final Map<String, int> _inventoryCostLayerIndexById = <String, int>{};
-  final Map<String, Map<String, double>> _warehouseStockByProductCache =
-      <String, Map<String, double>>{};
-  bool _warehouseStockCacheDirty = true;
-  InventoryCostingMethod _inventoryCostingMethod = InventoryCostingMethod.batch;
-  UnmodifiableListView<BillOfMaterials>? _cachedBillsOfMaterials;
-  UnmodifiableListView<ManufacturingOrder>? _cachedManufacturingOrders;
-  int _cachedBillsOfMaterialsGeneration = -1;
-  int _cachedManufacturingOrdersGeneration = -1;
-}
-
-class _AccountingState {
-  final List<AccountTransaction> _accountTransactions = [];
-  final Map<String, int> _accountTransactionIndexById = <String, int>{};
-  final Map<String, double> _accountBalanceCache = <String, double>{};
-  final Map<String, List<AccountTransaction>>
-      _accountTransactionsByAccountCache = <String, List<AccountTransaction>>{};
-  bool _accountLedgerCacheDirty = true;
-  final Map<String, Future<bool>> _pendingPurchaseAccountingTasks =
-      <String, Future<bool>>{};
-  Future<void> _purchaseAccountingQueue = Future<void>.value();
-  DateTime? _phase8AccountingSyncCursor;
-  bool _phase8AccountingSyncCaptureInFlight = false;
-  bool _phase8AccountingSyncCapturePending = false;
-}
-
-class _SecurityState {
-  String _currentRole = 'admin';
-  String _deviceId = '';
-  final List<UserRole> _roles = [];
-  final List<AppUser> _users = [];
-  AppUser? _activeUser;
-  bool _rememberLogin = false;
-  DateTime? _sensitiveAuthorizationExpiresAt;
-  String _sensitiveAuthorizationUserId = '';
-  final Set<String> _sensitiveAuthorizationActions = <String>{};
-  final Map<String, List<DateTime>> _failedLoginAttempts =
-      <String, List<DateTime>>{};
-  final Map<String, DateTime> _loginBlockedUntil = <String, DateTime>{};
-  AppIdentity? _appIdentity;
-}
-
-class _SyncState {
-  final List<SyncChange> _syncChanges = [];
-  final List<SyncQueueItem> _syncQueue = [];
-  final List<SyncChange> _sqliteDirtySyncChanges = [];
-  final List<SyncQueueItem> _sqliteDirtySyncQueue = [];
-  final Map<String, Map<String, Map<String, dynamic>>>
-      _sqliteDirtyBusinessRows = <String, Map<String, Map<String, dynamic>>>{};
-  int _syncSequence = 0;
-}
-
-class _RuntimeState {
-  int _storeRevision = 0;
-  int _productsRevision = 0;
-  int _customersRevision = 0;
-  int _salesRevision = 0;
-  int _deliveryNotesRevision = 0;
-  int _suppliersRevision = 0;
-  int _supplierProductPricesRevision = 0;
-  int _purchasesRevision = 0;
-  int _expensesRevision = 0;
-  int _stockMovementsRevision = 0;
-  int _inventoryCountsRevision = 0;
-  int _warehousesRevision = 0;
-  int _accountTransactionsRevision = 0;
-  int _storeProfileRevision = 0;
-  StoreProfile _storeProfile = StoreProfile.defaults;
-  bool _productDerivedDataDirty = false;
-  Timer? _productDerivedDataFlushTimer;
-  Future<void>? _productDerivedDataFlushInFlight;
-  int _derivedListCacheGeneration = 0;
-  bool _isReady = false;
-  bool _heavyDataLoadCompleted = false;
-  bool _ledgerDataLoadCompleted = false;
-  Future<void>? _ledgerDataLoadFuture;
-  bool _syncDataLoadCompleted = false;
-  Future<void>? _syncDataLoadFuture;
-  final Map<String, Future<void>> _deferredGroupLoadFutures =
-      <String, Future<void>>{};
-  final Set<String> _deferredGroupLoadCompleted = <String>{};
-  final Map<String, Object> _deferredGroupLoadErrors = <String, Object>{};
-  bool _shutdownPrepared = false;
-}
 
 class _AppStoreState {
-  final catalog = _CatalogState();
-  final commerce = _CommerceState();
-  final inventory = _InventoryState();
-  final accounting = _AccountingState();
-  final security = _SecurityState();
-  final sync = _SyncState();
-  final runtime = _RuntimeState();
+  final catalog = CatalogState();
+  final commerce = CommerceState();
+  final inventory = InventoryState();
+  final accounting = AccountingState();
+  final security = SecurityState();
+  final sync = SyncState();
+  final runtime = RuntimeState();
 }
 
 mixin _AppStoreStateAccessors on ChangeNotifier {
@@ -181,397 +21,397 @@ mixin _AppStoreStateAccessors on ChangeNotifier {
 
   // Catalog state compatibility accessors.
   // ignore: unused_element
-  List<Product> get _products => _appStoreState.catalog._products;
+  List<Product> get _products => _appStoreState.catalog.products;
   // ignore: unused_element
   List<SupplierProductPrice> get _supplierProductPrices =>
-      _appStoreState.catalog._supplierProductPrices;
+      _appStoreState.catalog.supplierProductPrices;
   // ignore: unused_element
-  List<PriceList> get _priceLists => _appStoreState.catalog._priceLists;
+  List<PriceList> get _priceLists => _appStoreState.catalog.priceLists;
   // ignore: unused_element
   List<ProductPrice> get _productPrices =>
-      _appStoreState.catalog._productPrices;
+      _appStoreState.catalog.productPrices;
   // ignore: unused_element
   List<ProductPriceOverride> get _productPriceOverrides =>
-      _appStoreState.catalog._productPriceOverrides;
+      _appStoreState.catalog.productPriceOverrides;
   // ignore: unused_element
-  List<ProductCost> get _productCosts => _appStoreState.catalog._productCosts;
+  List<ProductCost> get _productCosts => _appStoreState.catalog.productCosts;
   // ignore: unused_element
   List<CostingMethodHistory> get _costingMethodHistory =>
-      _appStoreState.catalog._costingMethodHistory;
+      _appStoreState.catalog.costingMethodHistory;
   // ignore: unused_element
-  List<CatalogItem> get _categories => _appStoreState.catalog._categories;
+  List<CatalogItem> get _categories => _appStoreState.catalog.categories;
   // ignore: unused_element
-  List<CatalogItem> get _brands => _appStoreState.catalog._brands;
+  List<CatalogItem> get _brands => _appStoreState.catalog.brands;
   // ignore: unused_element
-  List<CatalogItem> get _units => _appStoreState.catalog._units;
+  List<CatalogItem> get _units => _appStoreState.catalog.units;
   Map<String, int> get _productIndexById =>
-      _appStoreState.catalog._productIndexById;
+      _appStoreState.catalog.productIndexById;
   Map<String, String> get _productIdByNormalizedCode =>
-      _appStoreState.catalog._productIdByNormalizedCode;
+      _appStoreState.catalog.productIdByNormalizedCode;
   Map<String, String> get _productIdByNormalizedBarcode =>
-      _appStoreState.catalog._productIdByNormalizedBarcode;
+      _appStoreState.catalog.productIdByNormalizedBarcode;
   Map<String, ProductPrice> get _productPriceByLookupKey =>
-      _appStoreState.catalog._productPriceByLookupKey;
+      _appStoreState.catalog.productPriceByLookupKey;
   Map<String, ProductCost> get _productCostByProductId =>
-      _appStoreState.catalog._productCostByProductId;
+      _appStoreState.catalog.productCostByProductId;
   Map<String, int> get _productCostIndexByProductId =>
-      _appStoreState.catalog._productCostIndexByProductId;
-  List<Product>? get _cachedProducts => _appStoreState.catalog._cachedProducts;
+      _appStoreState.catalog.productCostIndexByProductId;
+  List<Product>? get _cachedProducts => _appStoreState.catalog.cachedProducts;
   set _cachedProducts(List<Product>? value) =>
-      _appStoreState.catalog._cachedProducts = value;
+      _appStoreState.catalog.cachedProducts = value;
   int get _cachedProductsGeneration =>
-      _appStoreState.catalog._cachedProductsGeneration;
+      _appStoreState.catalog.cachedProductsGeneration;
   set _cachedProductsGeneration(int value) =>
-      _appStoreState.catalog._cachedProductsGeneration = value;
+      _appStoreState.catalog.cachedProductsGeneration = value;
   List<Product>? get _cachedStockTrackedProducts =>
-      _appStoreState.catalog._cachedStockTrackedProducts;
+      _appStoreState.catalog.cachedStockTrackedProducts;
   set _cachedStockTrackedProducts(List<Product>? value) =>
-      _appStoreState.catalog._cachedStockTrackedProducts = value;
+      _appStoreState.catalog.cachedStockTrackedProducts = value;
   int get _cachedStockTrackedProductsGeneration =>
-      _appStoreState.catalog._cachedStockTrackedProductsGeneration;
+      _appStoreState.catalog.cachedStockTrackedProductsGeneration;
   set _cachedStockTrackedProductsGeneration(int value) =>
-      _appStoreState.catalog._cachedStockTrackedProductsGeneration = value;
+      _appStoreState.catalog.cachedStockTrackedProductsGeneration = value;
   UnmodifiableListView<ProductPriceOverride>?
       get _cachedProductPriceOverrides =>
-          _appStoreState.catalog._cachedProductPriceOverrides;
+          _appStoreState.catalog.cachedProductPriceOverrides;
   set _cachedProductPriceOverrides(
           UnmodifiableListView<ProductPriceOverride>? value) =>
-      _appStoreState.catalog._cachedProductPriceOverrides = value;
+      _appStoreState.catalog.cachedProductPriceOverrides = value;
   UnmodifiableListView<CostingMethodHistory>? get _cachedCostingMethodHistory =>
-      _appStoreState.catalog._cachedCostingMethodHistory;
+      _appStoreState.catalog.cachedCostingMethodHistory;
   set _cachedCostingMethodHistory(
           UnmodifiableListView<CostingMethodHistory>? value) =>
-      _appStoreState.catalog._cachedCostingMethodHistory = value;
+      _appStoreState.catalog.cachedCostingMethodHistory = value;
   int get _cachedProductPriceOverridesGeneration =>
-      _appStoreState.catalog._cachedProductPriceOverridesGeneration;
+      _appStoreState.catalog.cachedProductPriceOverridesGeneration;
   set _cachedProductPriceOverridesGeneration(int value) =>
-      _appStoreState.catalog._cachedProductPriceOverridesGeneration = value;
+      _appStoreState.catalog.cachedProductPriceOverridesGeneration = value;
   int get _cachedCostingMethodHistoryGeneration =>
-      _appStoreState.catalog._cachedCostingMethodHistoryGeneration;
+      _appStoreState.catalog.cachedCostingMethodHistoryGeneration;
   set _cachedCostingMethodHistoryGeneration(int value) =>
-      _appStoreState.catalog._cachedCostingMethodHistoryGeneration = value;
+      _appStoreState.catalog.cachedCostingMethodHistoryGeneration = value;
 
   // Commerce state compatibility accessors.
   // ignore: unused_element
-  List<Customer> get _customers => _appStoreState.commerce._customers;
-  List<Sale> get _sales => _appStoreState.commerce._sales;
-  List<CreditNote> get _creditNotes => _appStoreState.commerce._creditNotes;
+  List<Customer> get _customers => _appStoreState.commerce.customers;
+  List<Sale> get _sales => _appStoreState.commerce.sales;
+  List<CreditNote> get _creditNotes => _appStoreState.commerce.creditNotes;
   List<SaleQuotation> get _saleQuotations =>
-      _appStoreState.commerce._saleQuotations;
+      _appStoreState.commerce.saleQuotations;
   List<DeliveryNote> get _deliveryNotes =>
-      _appStoreState.commerce._deliveryNotes;
+      _appStoreState.commerce.deliveryNotes;
   // ignore: unused_element
-  List<Supplier> get _suppliers => _appStoreState.commerce._suppliers;
-  List<Expense> get _expenses => _appStoreState.commerce._expenses;
-  List<Purchase> get _purchases => _appStoreState.commerce._purchases;
+  List<Supplier> get _suppliers => _appStoreState.commerce.suppliers;
+  List<Expense> get _expenses => _appStoreState.commerce.expenses;
+  List<Purchase> get _purchases => _appStoreState.commerce.purchases;
   Map<String, int> get _purchaseIndexById =>
-      _appStoreState.commerce._purchaseIndexById;
+      _appStoreState.commerce.purchaseIndexById;
   Map<String, int> get _expenseIndexById =>
-      _appStoreState.commerce._expenseIndexById;
+      _appStoreState.commerce.expenseIndexById;
   Map<String, int> get _customerIndexById =>
-      _appStoreState.commerce._customerIndexById;
+      _appStoreState.commerce.customerIndexById;
   Map<String, String> get _customerIdByNormalizedName =>
-      _appStoreState.commerce._customerIdByNormalizedName;
+      _appStoreState.commerce.customerIdByNormalizedName;
   Map<String, int> get _supplierIndexById =>
-      _appStoreState.commerce._supplierIndexById;
+      _appStoreState.commerce.supplierIndexById;
   Map<String, String> get _supplierIdByNormalizedName =>
-      _appStoreState.commerce._supplierIdByNormalizedName;
+      _appStoreState.commerce.supplierIdByNormalizedName;
   Map<String, List<SupplierPurchasePrice>> get _purchaseHistoryByProductCache =>
-      _appStoreState.commerce._purchaseHistoryByProductCache;
-  Map<String, _ProductPurchaseMetrics> get _purchaseMetricsByProductCache =>
-      _appStoreState.commerce._purchaseMetricsByProductCache;
+      _appStoreState.commerce.purchaseHistoryByProductCache;
+  Map<String, ProductPurchaseMetrics> get _purchaseMetricsByProductCache =>
+      _appStoreState.commerce.purchaseMetricsByProductCache;
   bool get _purchaseInsightsCacheDirty =>
-      _appStoreState.commerce._purchaseInsightsCacheDirty;
+      _appStoreState.commerce.purchaseInsightsCacheDirty;
   set _purchaseInsightsCacheDirty(bool value) =>
-      _appStoreState.commerce._purchaseInsightsCacheDirty = value;
+      _appStoreState.commerce.purchaseInsightsCacheDirty = value;
   UnmodifiableListView<Sale>? get _cachedSales =>
-      _appStoreState.commerce._cachedSales;
+      _appStoreState.commerce.cachedSales;
   set _cachedSales(UnmodifiableListView<Sale>? value) =>
-      _appStoreState.commerce._cachedSales = value;
+      _appStoreState.commerce.cachedSales = value;
   int get _cachedSalesGeneration =>
-      _appStoreState.commerce._cachedSalesGeneration;
+      _appStoreState.commerce.cachedSalesGeneration;
   set _cachedSalesGeneration(int value) =>
-      _appStoreState.commerce._cachedSalesGeneration = value;
-  int get _invoiceCounter => _appStoreState.commerce._invoiceCounter;
+      _appStoreState.commerce.cachedSalesGeneration = value;
+  int get _invoiceCounter => _appStoreState.commerce.invoiceCounter;
   set _invoiceCounter(int value) =>
-      _appStoreState.commerce._invoiceCounter = value;
-  int get _purchaseCounter => _appStoreState.commerce._purchaseCounter;
+      _appStoreState.commerce.invoiceCounter = value;
+  int get _purchaseCounter => _appStoreState.commerce.purchaseCounter;
   set _purchaseCounter(int value) =>
-      _appStoreState.commerce._purchaseCounter = value;
+      _appStoreState.commerce.purchaseCounter = value;
   UnmodifiableListView<SaleQuotation>? get _cachedSaleQuotations =>
-      _appStoreState.commerce._cachedSaleQuotations;
+      _appStoreState.commerce.cachedSaleQuotations;
   set _cachedSaleQuotations(UnmodifiableListView<SaleQuotation>? value) =>
-      _appStoreState.commerce._cachedSaleQuotations = value;
+      _appStoreState.commerce.cachedSaleQuotations = value;
   UnmodifiableListView<DeliveryNote>? get _cachedDeliveryNotes =>
-      _appStoreState.commerce._cachedDeliveryNotes;
+      _appStoreState.commerce.cachedDeliveryNotes;
   set _cachedDeliveryNotes(UnmodifiableListView<DeliveryNote>? value) =>
-      _appStoreState.commerce._cachedDeliveryNotes = value;
+      _appStoreState.commerce.cachedDeliveryNotes = value;
   Map<String, DeliveryNote>? get _cachedDeliveryNoteBySaleId =>
-      _appStoreState.commerce._cachedDeliveryNoteBySaleId;
+      _appStoreState.commerce.cachedDeliveryNoteBySaleId;
   set _cachedDeliveryNoteBySaleId(Map<String, DeliveryNote>? value) =>
-      _appStoreState.commerce._cachedDeliveryNoteBySaleId = value;
+      _appStoreState.commerce.cachedDeliveryNoteBySaleId = value;
   UnmodifiableListView<Supplier>? get _cachedSuppliers =>
-      _appStoreState.commerce._cachedSuppliers;
+      _appStoreState.commerce.cachedSuppliers;
   set _cachedSuppliers(UnmodifiableListView<Supplier>? value) =>
-      _appStoreState.commerce._cachedSuppliers = value;
+      _appStoreState.commerce.cachedSuppliers = value;
   PurchasesOverview? get _cachedPurchasesOverview =>
-      _appStoreState.commerce._cachedPurchasesOverview;
+      _appStoreState.commerce.cachedPurchasesOverview;
   set _cachedPurchasesOverview(PurchasesOverview? value) =>
-      _appStoreState.commerce._cachedPurchasesOverview = value;
+      _appStoreState.commerce.cachedPurchasesOverview = value;
   int get _cachedPurchasesOverviewRevision =>
-      _appStoreState.commerce._cachedPurchasesOverviewRevision;
+      _appStoreState.commerce.cachedPurchasesOverviewRevision;
   set _cachedPurchasesOverviewRevision(int value) =>
-      _appStoreState.commerce._cachedPurchasesOverviewRevision = value;
+      _appStoreState.commerce.cachedPurchasesOverviewRevision = value;
   String get _cachedPurchasesOverviewMonthKey =>
-      _appStoreState.commerce._cachedPurchasesOverviewMonthKey;
+      _appStoreState.commerce.cachedPurchasesOverviewMonthKey;
   set _cachedPurchasesOverviewMonthKey(String value) =>
-      _appStoreState.commerce._cachedPurchasesOverviewMonthKey = value;
+      _appStoreState.commerce.cachedPurchasesOverviewMonthKey = value;
   ExpensesOverview? get _cachedExpensesOverview =>
-      _appStoreState.commerce._cachedExpensesOverview;
+      _appStoreState.commerce.cachedExpensesOverview;
   set _cachedExpensesOverview(ExpensesOverview? value) =>
-      _appStoreState.commerce._cachedExpensesOverview = value;
+      _appStoreState.commerce.cachedExpensesOverview = value;
   int get _cachedExpensesOverviewRevision =>
-      _appStoreState.commerce._cachedExpensesOverviewRevision;
+      _appStoreState.commerce.cachedExpensesOverviewRevision;
   set _cachedExpensesOverviewRevision(int value) =>
-      _appStoreState.commerce._cachedExpensesOverviewRevision = value;
+      _appStoreState.commerce.cachedExpensesOverviewRevision = value;
   int get _cachedSaleQuotationsGeneration =>
-      _appStoreState.commerce._cachedSaleQuotationsGeneration;
+      _appStoreState.commerce.cachedSaleQuotationsGeneration;
   set _cachedSaleQuotationsGeneration(int value) =>
-      _appStoreState.commerce._cachedSaleQuotationsGeneration = value;
+      _appStoreState.commerce.cachedSaleQuotationsGeneration = value;
   int get _cachedDeliveryNotesGeneration =>
-      _appStoreState.commerce._cachedDeliveryNotesGeneration;
+      _appStoreState.commerce.cachedDeliveryNotesGeneration;
   set _cachedDeliveryNotesGeneration(int value) =>
-      _appStoreState.commerce._cachedDeliveryNotesGeneration = value;
+      _appStoreState.commerce.cachedDeliveryNotesGeneration = value;
   int get _cachedDeliveryNoteBySaleIdGeneration =>
-      _appStoreState.commerce._cachedDeliveryNoteBySaleIdGeneration;
+      _appStoreState.commerce.cachedDeliveryNoteBySaleIdGeneration;
   set _cachedDeliveryNoteBySaleIdGeneration(int value) =>
-      _appStoreState.commerce._cachedDeliveryNoteBySaleIdGeneration = value;
+      _appStoreState.commerce.cachedDeliveryNoteBySaleIdGeneration = value;
   int get _cachedSuppliersGeneration =>
-      _appStoreState.commerce._cachedSuppliersGeneration;
+      _appStoreState.commerce.cachedSuppliersGeneration;
   set _cachedSuppliersGeneration(int value) =>
-      _appStoreState.commerce._cachedSuppliersGeneration = value;
+      _appStoreState.commerce.cachedSuppliersGeneration = value;
 
   // Inventory state compatibility accessors.
   List<BillOfMaterials> get _billsOfMaterials =>
-      _appStoreState.inventory._billsOfMaterials;
+      _appStoreState.inventory.billsOfMaterials;
   List<ManufacturingOrder> get _manufacturingOrders =>
-      _appStoreState.inventory._manufacturingOrders;
+      _appStoreState.inventory.manufacturingOrders;
   // ignore: unused_element
   List<InventoryCostLayer> get _inventoryCostLayers =>
-      _appStoreState.inventory._inventoryCostLayers;
+      _appStoreState.inventory.inventoryCostLayers;
   List<StockMovement> get _stockMovements =>
-      _appStoreState.inventory._stockMovements;
+      _appStoreState.inventory.stockMovements;
   List<InventoryCountSession> get _inventoryCounts =>
-      _appStoreState.inventory._inventoryCounts;
-  List<Warehouse> get _warehouses => _appStoreState.inventory._warehouses;
+      _appStoreState.inventory.inventoryCounts;
+  List<Warehouse> get _warehouses => _appStoreState.inventory.warehouses;
   Map<String, int> get _stockMovementIndexById =>
-      _appStoreState.inventory._stockMovementIndexById;
+      _appStoreState.inventory.stockMovementIndexById;
   Map<String, int> get _inventoryCostLayerIndexById =>
-      _appStoreState.inventory._inventoryCostLayerIndexById;
+      _appStoreState.inventory.inventoryCostLayerIndexById;
   Map<String, Map<String, double>> get _warehouseStockByProductCache =>
-      _appStoreState.inventory._warehouseStockByProductCache;
+      _appStoreState.inventory.warehouseStockByProductCache;
   bool get _warehouseStockCacheDirty =>
-      _appStoreState.inventory._warehouseStockCacheDirty;
+      _appStoreState.inventory.warehouseStockCacheDirty;
   set _warehouseStockCacheDirty(bool value) =>
-      _appStoreState.inventory._warehouseStockCacheDirty = value;
+      _appStoreState.inventory.warehouseStockCacheDirty = value;
   InventoryCostingMethod get _inventoryCostingMethod =>
-      _appStoreState.inventory._inventoryCostingMethod;
+      _appStoreState.inventory.inventoryCostingMethod;
   set _inventoryCostingMethod(InventoryCostingMethod value) =>
-      _appStoreState.inventory._inventoryCostingMethod = value;
+      _appStoreState.inventory.inventoryCostingMethod = value;
   UnmodifiableListView<BillOfMaterials>? get _cachedBillsOfMaterials =>
-      _appStoreState.inventory._cachedBillsOfMaterials;
+      _appStoreState.inventory.cachedBillsOfMaterials;
   set _cachedBillsOfMaterials(UnmodifiableListView<BillOfMaterials>? value) =>
-      _appStoreState.inventory._cachedBillsOfMaterials = value;
+      _appStoreState.inventory.cachedBillsOfMaterials = value;
   UnmodifiableListView<ManufacturingOrder>? get _cachedManufacturingOrders =>
-      _appStoreState.inventory._cachedManufacturingOrders;
+      _appStoreState.inventory.cachedManufacturingOrders;
   set _cachedManufacturingOrders(
           UnmodifiableListView<ManufacturingOrder>? value) =>
-      _appStoreState.inventory._cachedManufacturingOrders = value;
+      _appStoreState.inventory.cachedManufacturingOrders = value;
   int get _cachedBillsOfMaterialsGeneration =>
-      _appStoreState.inventory._cachedBillsOfMaterialsGeneration;
+      _appStoreState.inventory.cachedBillsOfMaterialsGeneration;
   set _cachedBillsOfMaterialsGeneration(int value) =>
-      _appStoreState.inventory._cachedBillsOfMaterialsGeneration = value;
+      _appStoreState.inventory.cachedBillsOfMaterialsGeneration = value;
   int get _cachedManufacturingOrdersGeneration =>
-      _appStoreState.inventory._cachedManufacturingOrdersGeneration;
+      _appStoreState.inventory.cachedManufacturingOrdersGeneration;
   set _cachedManufacturingOrdersGeneration(int value) =>
-      _appStoreState.inventory._cachedManufacturingOrdersGeneration = value;
+      _appStoreState.inventory.cachedManufacturingOrdersGeneration = value;
 
   // Accounting state compatibility accessors.
   List<AccountTransaction> get _accountTransactions =>
-      _appStoreState.accounting._accountTransactions;
+      _appStoreState.accounting.accountTransactions;
   Map<String, int> get _accountTransactionIndexById =>
-      _appStoreState.accounting._accountTransactionIndexById;
+      _appStoreState.accounting.accountTransactionIndexById;
   Map<String, double> get _accountBalanceCache =>
-      _appStoreState.accounting._accountBalanceCache;
+      _appStoreState.accounting.accountBalanceCache;
   Map<String, List<AccountTransaction>>
       get _accountTransactionsByAccountCache =>
-          _appStoreState.accounting._accountTransactionsByAccountCache;
+          _appStoreState.accounting.accountTransactionsByAccountCache;
   bool get _accountLedgerCacheDirty =>
-      _appStoreState.accounting._accountLedgerCacheDirty;
+      _appStoreState.accounting.accountLedgerCacheDirty;
   set _accountLedgerCacheDirty(bool value) =>
-      _appStoreState.accounting._accountLedgerCacheDirty = value;
+      _appStoreState.accounting.accountLedgerCacheDirty = value;
   Map<String, Future<bool>> get _pendingPurchaseAccountingTasks =>
-      _appStoreState.accounting._pendingPurchaseAccountingTasks;
+      _appStoreState.accounting.pendingPurchaseAccountingTasks;
   Future<void> get _purchaseAccountingQueue =>
-      _appStoreState.accounting._purchaseAccountingQueue;
+      _appStoreState.accounting.purchaseAccountingQueue;
   set _purchaseAccountingQueue(Future<void> value) =>
-      _appStoreState.accounting._purchaseAccountingQueue = value;
+      _appStoreState.accounting.purchaseAccountingQueue = value;
   DateTime? get _phase8AccountingSyncCursor =>
-      _appStoreState.accounting._phase8AccountingSyncCursor;
+      _appStoreState.accounting.phase8AccountingSyncCursor;
   set _phase8AccountingSyncCursor(DateTime? value) =>
-      _appStoreState.accounting._phase8AccountingSyncCursor = value;
+      _appStoreState.accounting.phase8AccountingSyncCursor = value;
   bool get _phase8AccountingSyncCaptureInFlight =>
-      _appStoreState.accounting._phase8AccountingSyncCaptureInFlight;
+      _appStoreState.accounting.phase8AccountingSyncCaptureInFlight;
   set _phase8AccountingSyncCaptureInFlight(bool value) =>
-      _appStoreState.accounting._phase8AccountingSyncCaptureInFlight = value;
+      _appStoreState.accounting.phase8AccountingSyncCaptureInFlight = value;
   bool get _phase8AccountingSyncCapturePending =>
-      _appStoreState.accounting._phase8AccountingSyncCapturePending;
+      _appStoreState.accounting.phase8AccountingSyncCapturePending;
   set _phase8AccountingSyncCapturePending(bool value) =>
-      _appStoreState.accounting._phase8AccountingSyncCapturePending = value;
+      _appStoreState.accounting.phase8AccountingSyncCapturePending = value;
 
   // Security state compatibility accessors.
-  String get _currentRole => _appStoreState.security._currentRole;
+  String get _currentRole => _appStoreState.security.currentRole;
   set _currentRole(String value) =>
-      _appStoreState.security._currentRole = value;
-  String get _deviceId => _appStoreState.security._deviceId;
-  set _deviceId(String value) => _appStoreState.security._deviceId = value;
-  List<UserRole> get _roles => _appStoreState.security._roles;
-  List<AppUser> get _users => _appStoreState.security._users;
-  AppUser? get _activeUser => _appStoreState.security._activeUser;
+      _appStoreState.security.currentRole = value;
+  String get _deviceId => _appStoreState.security.deviceId;
+  set _deviceId(String value) => _appStoreState.security.deviceId = value;
+  List<UserRole> get _roles => _appStoreState.security.roles;
+  List<AppUser> get _users => _appStoreState.security.users;
+  AppUser? get _activeUser => _appStoreState.security.activeUser;
   set _activeUser(AppUser? value) =>
-      _appStoreState.security._activeUser = value;
-  bool get _rememberLogin => _appStoreState.security._rememberLogin;
+      _appStoreState.security.activeUser = value;
+  bool get _rememberLogin => _appStoreState.security.rememberLogin;
   set _rememberLogin(bool value) =>
-      _appStoreState.security._rememberLogin = value;
+      _appStoreState.security.rememberLogin = value;
   DateTime? get _sensitiveAuthorizationExpiresAt =>
-      _appStoreState.security._sensitiveAuthorizationExpiresAt;
+      _appStoreState.security.sensitiveAuthorizationExpiresAt;
   set _sensitiveAuthorizationExpiresAt(DateTime? value) =>
-      _appStoreState.security._sensitiveAuthorizationExpiresAt = value;
+      _appStoreState.security.sensitiveAuthorizationExpiresAt = value;
   String get _sensitiveAuthorizationUserId =>
-      _appStoreState.security._sensitiveAuthorizationUserId;
+      _appStoreState.security.sensitiveAuthorizationUserId;
   set _sensitiveAuthorizationUserId(String value) =>
-      _appStoreState.security._sensitiveAuthorizationUserId = value;
+      _appStoreState.security.sensitiveAuthorizationUserId = value;
   Set<String> get _sensitiveAuthorizationActions =>
-      _appStoreState.security._sensitiveAuthorizationActions;
+      _appStoreState.security.sensitiveAuthorizationActions;
   Map<String, List<DateTime>> get _failedLoginAttempts =>
-      _appStoreState.security._failedLoginAttempts;
+      _appStoreState.security.failedLoginAttempts;
   Map<String, DateTime> get _loginBlockedUntil =>
-      _appStoreState.security._loginBlockedUntil;
-  AppIdentity? get _appIdentity => _appStoreState.security._appIdentity;
+      _appStoreState.security.loginBlockedUntil;
+  AppIdentity? get _appIdentity => _appStoreState.security.appIdentity;
   set _appIdentity(AppIdentity? value) =>
-      _appStoreState.security._appIdentity = value;
+      _appStoreState.security.appIdentity = value;
 
   // Sync state compatibility accessors.
   // ignore: unused_element
-  List<SyncChange> get _syncChanges => _appStoreState.sync._syncChanges;
+  List<SyncChange> get _syncChanges => _appStoreState.sync.syncChanges;
   // ignore: unused_element
-  List<SyncQueueItem> get _syncQueue => _appStoreState.sync._syncQueue;
+  List<SyncQueueItem> get _syncQueue => _appStoreState.sync.syncQueue;
   List<SyncChange> get _sqliteDirtySyncChanges =>
-      _appStoreState.sync._sqliteDirtySyncChanges;
+      _appStoreState.sync.sqliteDirtySyncChanges;
   List<SyncQueueItem> get _sqliteDirtySyncQueue =>
-      _appStoreState.sync._sqliteDirtySyncQueue;
+      _appStoreState.sync.sqliteDirtySyncQueue;
   Map<String, Map<String, Map<String, dynamic>>> get _sqliteDirtyBusinessRows =>
-      _appStoreState.sync._sqliteDirtyBusinessRows;
-  int get _syncSequence => _appStoreState.sync._syncSequence;
-  set _syncSequence(int value) => _appStoreState.sync._syncSequence = value;
+      _appStoreState.sync.sqliteDirtyBusinessRows;
+  int get _syncSequence => _appStoreState.sync.syncSequence;
+  set _syncSequence(int value) => _appStoreState.sync.syncSequence = value;
 
   // Runtime state compatibility accessors.
-  int get _storeRevision => _appStoreState.runtime._storeRevision;
+  int get _storeRevision => _appStoreState.runtime.storeRevision;
   set _storeRevision(int value) =>
-      _appStoreState.runtime._storeRevision = value;
-  int get _productsRevision => _appStoreState.runtime._productsRevision;
+      _appStoreState.runtime.storeRevision = value;
+  int get _productsRevision => _appStoreState.runtime.productsRevision;
   set _productsRevision(int value) =>
-      _appStoreState.runtime._productsRevision = value;
-  int get _customersRevision => _appStoreState.runtime._customersRevision;
+      _appStoreState.runtime.productsRevision = value;
+  int get _customersRevision => _appStoreState.runtime.customersRevision;
   set _customersRevision(int value) =>
-      _appStoreState.runtime._customersRevision = value;
-  int get _salesRevision => _appStoreState.runtime._salesRevision;
+      _appStoreState.runtime.customersRevision = value;
+  int get _salesRevision => _appStoreState.runtime.salesRevision;
   set _salesRevision(int value) =>
-      _appStoreState.runtime._salesRevision = value;
+      _appStoreState.runtime.salesRevision = value;
   int get _deliveryNotesRevision =>
-      _appStoreState.runtime._deliveryNotesRevision;
+      _appStoreState.runtime.deliveryNotesRevision;
   set _deliveryNotesRevision(int value) =>
-      _appStoreState.runtime._deliveryNotesRevision = value;
-  int get _suppliersRevision => _appStoreState.runtime._suppliersRevision;
+      _appStoreState.runtime.deliveryNotesRevision = value;
+  int get _suppliersRevision => _appStoreState.runtime.suppliersRevision;
   set _suppliersRevision(int value) =>
-      _appStoreState.runtime._suppliersRevision = value;
+      _appStoreState.runtime.suppliersRevision = value;
   int get _supplierProductPricesRevision =>
-      _appStoreState.runtime._supplierProductPricesRevision;
+      _appStoreState.runtime.supplierProductPricesRevision;
   set _supplierProductPricesRevision(int value) =>
-      _appStoreState.runtime._supplierProductPricesRevision = value;
-  int get _purchasesRevision => _appStoreState.runtime._purchasesRevision;
+      _appStoreState.runtime.supplierProductPricesRevision = value;
+  int get _purchasesRevision => _appStoreState.runtime.purchasesRevision;
   set _purchasesRevision(int value) =>
-      _appStoreState.runtime._purchasesRevision = value;
-  int get _expensesRevision => _appStoreState.runtime._expensesRevision;
+      _appStoreState.runtime.purchasesRevision = value;
+  int get _expensesRevision => _appStoreState.runtime.expensesRevision;
   set _expensesRevision(int value) =>
-      _appStoreState.runtime._expensesRevision = value;
+      _appStoreState.runtime.expensesRevision = value;
   int get _stockMovementsRevision =>
-      _appStoreState.runtime._stockMovementsRevision;
+      _appStoreState.runtime.stockMovementsRevision;
   set _stockMovementsRevision(int value) =>
-      _appStoreState.runtime._stockMovementsRevision = value;
+      _appStoreState.runtime.stockMovementsRevision = value;
   int get _inventoryCountsRevision =>
-      _appStoreState.runtime._inventoryCountsRevision;
+      _appStoreState.runtime.inventoryCountsRevision;
   set _inventoryCountsRevision(int value) =>
-      _appStoreState.runtime._inventoryCountsRevision = value;
-  int get _warehousesRevision => _appStoreState.runtime._warehousesRevision;
+      _appStoreState.runtime.inventoryCountsRevision = value;
+  int get _warehousesRevision => _appStoreState.runtime.warehousesRevision;
   set _warehousesRevision(int value) =>
-      _appStoreState.runtime._warehousesRevision = value;
+      _appStoreState.runtime.warehousesRevision = value;
   int get _accountTransactionsRevision =>
-      _appStoreState.runtime._accountTransactionsRevision;
+      _appStoreState.runtime.accountTransactionsRevision;
   set _accountTransactionsRevision(int value) =>
-      _appStoreState.runtime._accountTransactionsRevision = value;
-  int get _storeProfileRevision => _appStoreState.runtime._storeProfileRevision;
+      _appStoreState.runtime.accountTransactionsRevision = value;
+  int get _storeProfileRevision => _appStoreState.runtime.storeProfileRevision;
   set _storeProfileRevision(int value) =>
-      _appStoreState.runtime._storeProfileRevision = value;
-  StoreProfile get _storeProfile => _appStoreState.runtime._storeProfile;
+      _appStoreState.runtime.storeProfileRevision = value;
+  StoreProfile get _storeProfile => _appStoreState.runtime.storeProfile;
   set _storeProfile(StoreProfile value) =>
-      _appStoreState.runtime._storeProfile = value;
+      _appStoreState.runtime.storeProfile = value;
   bool get _productDerivedDataDirty =>
-      _appStoreState.runtime._productDerivedDataDirty;
+      _appStoreState.runtime.productDerivedDataDirty;
   set _productDerivedDataDirty(bool value) =>
-      _appStoreState.runtime._productDerivedDataDirty = value;
+      _appStoreState.runtime.productDerivedDataDirty = value;
   Timer? get _productDerivedDataFlushTimer =>
-      _appStoreState.runtime._productDerivedDataFlushTimer;
+      _appStoreState.runtime.productDerivedDataFlushTimer;
   set _productDerivedDataFlushTimer(Timer? value) =>
-      _appStoreState.runtime._productDerivedDataFlushTimer = value;
+      _appStoreState.runtime.productDerivedDataFlushTimer = value;
   Future<void>? get _productDerivedDataFlushInFlight =>
-      _appStoreState.runtime._productDerivedDataFlushInFlight;
+      _appStoreState.runtime.productDerivedDataFlushInFlight;
   set _productDerivedDataFlushInFlight(Future<void>? value) =>
-      _appStoreState.runtime._productDerivedDataFlushInFlight = value;
+      _appStoreState.runtime.productDerivedDataFlushInFlight = value;
   int get _derivedListCacheGeneration =>
-      _appStoreState.runtime._derivedListCacheGeneration;
+      _appStoreState.runtime.derivedListCacheGeneration;
   set _derivedListCacheGeneration(int value) =>
-      _appStoreState.runtime._derivedListCacheGeneration = value;
-  bool get _isReady => _appStoreState.runtime._isReady;
-  set _isReady(bool value) => _appStoreState.runtime._isReady = value;
+      _appStoreState.runtime.derivedListCacheGeneration = value;
+  bool get _isReady => _appStoreState.runtime.isReady;
+  set _isReady(bool value) => _appStoreState.runtime.isReady = value;
   // ignore: unused_element
   bool get _heavyDataLoadCompleted =>
-      _appStoreState.runtime._heavyDataLoadCompleted;
+      _appStoreState.runtime.heavyDataLoadCompleted;
   set _heavyDataLoadCompleted(bool value) =>
-      _appStoreState.runtime._heavyDataLoadCompleted = value;
+      _appStoreState.runtime.heavyDataLoadCompleted = value;
   bool get _ledgerDataLoadCompleted =>
-      _appStoreState.runtime._ledgerDataLoadCompleted;
+      _appStoreState.runtime.ledgerDataLoadCompleted;
   set _ledgerDataLoadCompleted(bool value) =>
-      _appStoreState.runtime._ledgerDataLoadCompleted = value;
+      _appStoreState.runtime.ledgerDataLoadCompleted = value;
   Future<void>? get _ledgerDataLoadFuture =>
-      _appStoreState.runtime._ledgerDataLoadFuture;
+      _appStoreState.runtime.ledgerDataLoadFuture;
   set _ledgerDataLoadFuture(Future<void>? value) =>
-      _appStoreState.runtime._ledgerDataLoadFuture = value;
+      _appStoreState.runtime.ledgerDataLoadFuture = value;
   bool get _syncDataLoadCompleted =>
-      _appStoreState.runtime._syncDataLoadCompleted;
+      _appStoreState.runtime.syncDataLoadCompleted;
   set _syncDataLoadCompleted(bool value) =>
-      _appStoreState.runtime._syncDataLoadCompleted = value;
+      _appStoreState.runtime.syncDataLoadCompleted = value;
   Future<void>? get _syncDataLoadFuture =>
-      _appStoreState.runtime._syncDataLoadFuture;
+      _appStoreState.runtime.syncDataLoadFuture;
   set _syncDataLoadFuture(Future<void>? value) =>
-      _appStoreState.runtime._syncDataLoadFuture = value;
+      _appStoreState.runtime.syncDataLoadFuture = value;
   Map<String, Future<void>> get _deferredGroupLoadFutures =>
-      _appStoreState.runtime._deferredGroupLoadFutures;
+      _appStoreState.runtime.deferredGroupLoadFutures;
   Set<String> get _deferredGroupLoadCompleted =>
-      _appStoreState.runtime._deferredGroupLoadCompleted;
+      _appStoreState.runtime.deferredGroupLoadCompleted;
   Map<String, Object> get _deferredGroupLoadErrors =>
-      _appStoreState.runtime._deferredGroupLoadErrors;
-  bool get _shutdownPrepared => _appStoreState.runtime._shutdownPrepared;
+      _appStoreState.runtime.deferredGroupLoadErrors;
+  bool get _shutdownPrepared => _appStoreState.runtime.shutdownPrepared;
   set _shutdownPrepared(bool value) =>
-      _appStoreState.runtime._shutdownPrepared = value;
+      _appStoreState.runtime.shutdownPrepared = value;
 }

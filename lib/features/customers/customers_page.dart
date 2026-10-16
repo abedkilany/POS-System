@@ -11,7 +11,7 @@ import '../../core/services/customer_receivables_pdf_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/revision_cache.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/customer.dart';
 import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
@@ -23,7 +23,7 @@ import '../../widgets/page_data_load_indicator.dart';
 class CustomersPage extends StatefulWidget {
   const CustomersPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<CustomersPage> createState() => _CustomersPageState();
@@ -166,9 +166,9 @@ class _CustomersPageState extends State<CustomersPage> {
       widget.store.commerce.customersRevision,
       value,
       () => widget.store.commerce.customers.where((customer) {
-        final isWalkIn = customer.id == AppStore.walkInCustomerId ||
+        final isWalkIn = customer.id == CommerceDefaults.walkInCustomerId ||
             customer.name.trim().toLowerCase() ==
-                AppStore.walkInCustomerName.toLowerCase();
+                CommerceDefaults.walkInCustomerName.toLowerCase();
         if (isWalkIn) return false;
         return customer.name.toLowerCase().contains(value) ||
             customer.phone.toLowerCase().contains(value);
@@ -254,9 +254,9 @@ class _CustomersPageState extends State<CustomersPage> {
       }
       final customers = allCustomers
           .where((customer) =>
-              customer.id != AppStore.walkInCustomerId &&
+              customer.id != CommerceDefaults.walkInCustomerId &&
               customer.name.trim().toLowerCase() !=
-                  AppStore.walkInCustomerName.toLowerCase())
+                  CommerceDefaults.walkInCustomerName.toLowerCase())
           .map((customer) => CustomerReceivableRow(
                 name: customer.name,
                 phone: customer.phone,

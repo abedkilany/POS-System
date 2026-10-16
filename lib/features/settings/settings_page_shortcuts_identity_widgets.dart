@@ -284,7 +284,7 @@ class _KeyboardShortcutsSettingsCardState
 class _SystemIdentityCard extends StatefulWidget {
   const _SystemIdentityCard({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_SystemIdentityCard> createState() => _SystemIdentityCardState();

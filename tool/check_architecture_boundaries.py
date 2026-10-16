@@ -47,6 +47,10 @@ APP_STORE_CONTEXT_MEMBERS = {
     "requirePermission",
     "storeProfile",
 }
+APP_STORE_DOMAIN_MEMBERS = {
+    "runtime", "catalog", "commerce", "accounting", "inventory",
+    "security", "sync", "recovery",
+}
 
 
 def read_source(path: Path) -> str:
@@ -88,47 +92,53 @@ def app_library_parts() -> dict[Path, list[Path]]:
     return grouped
 
 
-def public_app_store_members() -> set[str]:
-    """Collect public forwarding methods and public extensions on AppStore."""
-    members: set[str] = set()
-    method_decl = re.compile(
-        r"^ {2}[A-Za-z_$][\w$<>?,. ]*?\s+([A-Za-z_$][\w$]*)\s*\("
-    )
-    getter_decl = re.compile(
-        r"^ {2}[^/\n]*?\bget\s+([A-Za-z_$][\w$]*)\s*(?:=>|\{)"
-    )
-    for path in APP_STORE_API_FILES:
-        for line in read_source(path).splitlines():
-            for pattern in (method_decl, getter_decl):
-                match = pattern.match(line)
-                if not match:
-                    continue
-                name = match.group(1)
-                if not name.startswith("_") and name not in CONTROL_WORDS:
-                    members.add(name)
+def _public_instance_members(source: str) -> set[str]:
+    """Read formatted class members, including wrapped return types.
 
-    extension_header = re.compile(
-        r"^extension\s+(?P<name>[A-Za-z_$][\w$]*)\s+on\s+AppStore\s*\{\s*$"
+    Two-space indentation distinguishes members from locals. This intentionally
+    complements the Dart analyzer rather than pretending to parse all Dart.
+    """
+    patterns = (
+        r"^ {2}(?!static\b)[A-Za-z_$][\w$<>,?. \t\n]*?\s+([A-Za-z_$][\w$]*)(?:<[^>]+>)?\s*\(",
+        r"^ {2}(?!static\b)[A-Za-z_$][\w$<>,?. \t\n]*?\bget\s+([A-Za-z_$][\w$]*)\s*(?:=>|\{)",
+        r"^ {2}(?!static\b)[A-Za-z_$][\w$<>,?. \t\n]*?\s+([A-Za-z_$][\w$]*)\s*(?==|;)",
     )
-    data_root = ROOT / "lib" / "data"
-    for path in sorted(data_root.glob("app_store*.dart")):
-        lines = read_source(path).splitlines()
-        for index, line in enumerate(lines):
-            header = extension_header.match(line)
-            if not header or header.group("name").startswith("_"):
-                continue
-            for body_line in lines[index + 1 :]:
-                if body_line == "}":
-                    break
-                for pattern in (method_decl, getter_decl):
-                    match = pattern.match(body_line)
-                    if not match:
-                        continue
-                    name = match.group(1)
-                    if not name.startswith("_") and name not in CONTROL_WORDS:
-                        members.add(name)
-                    break
-    return members
+    return {
+        name
+        for pattern in patterns
+        for name in re.findall(pattern, source, re.MULTILINE)
+        if not name.startswith("_") and name not in CONTROL_WORDS
+    }
+
+
+def public_app_store_members() -> set[str]:
+    """Collect forwarding, root-class, and public-extension compatibility API."""
+    members: set[str] = set()
+    for path in APP_STORE_API_FILES:
+        members.update(_public_instance_members(read_source(path)))
+
+    # The composition root has eight ports and ChangeNotifier lifecycle hooks.
+    # All other public instance members must obey the same facade policy.
+    root_path = ROOT / "lib" / "data" / "app_store.dart"
+    if root_path.exists():
+        root_class = re.search(
+            r"^class AppStore\b[^\{]*\{(?P<body>[\s\S]*?)^}",
+            read_source(root_path), re.MULTILINE,
+        )
+        if root_class:
+            members.update(_public_instance_members(root_class.group("body")) - {
+                "notifyListeners", "dispose",
+            })
+
+    extension_body = re.compile(
+        r"^extension\s+(?P<name>[A-Za-z_$][\w$]*)\s+on\s+AppStore\s*\{(?P<body>[\s\S]*?)^}",
+        re.MULTILINE,
+    )
+    for path in sorted((ROOT / "lib" / "data").glob("app_store*.dart")):
+        for extension in extension_body.finditer(read_source(path)):
+            if not extension.group("name").startswith("_"):
+                members.update(_public_instance_members(extension.group("body")))
+    return members - APP_STORE_DOMAIN_MEMBERS
 
 
 def app_store_mentions() -> Counter[str]:
@@ -136,7 +146,7 @@ def app_store_mentions() -> Counter[str]:
     for path in sorted((ROOT / "lib").rglob("*.dart")):
         if path.is_relative_to(ROOT / "lib" / "data"):
             continue
-        source = read_source(path)
+        source = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", read_source(path))
         count = len(re.findall(r"\bAppStore\b", source))
         if count:
             counts[path.relative_to(ROOT).as_posix()] = count
@@ -150,7 +160,9 @@ def app_store_selectors(members: set[str]) -> dict[str, Counter[str]]:
         return result
 
     member_pattern = "|".join(re.escape(member) for member in sorted(members))
-    type_decl = re.compile(r"\bAppStore\s*\??\s+([A-Za-z_$][\w$]*)")
+    type_decl = re.compile(
+        r"\b(?:AppStore|ApplicationSession)\s*\??\s+([A-Za-z_$][\w$]*)"
+    )
     direct_alias = re.compile(
         r"\b(?:final|var|late\s+final)\s+([A-Za-z_$][\w$]*)\s*=\s*"
         r"(?:[A-Za-z_$][\w$]*\s*\.\s*)*([A-Za-z_$][\w$]*)"
@@ -253,6 +265,74 @@ def nested_selector_json(
     }
 
 
+def layer_boundary_violations(root: Path | None = None) -> list[str]:
+    """Reject implementation imports at contract and presentation boundaries.
+
+    Check all URIs in conditional directives as well as relative/package imports.
+    Dart's analyzer remains responsible for symbol resolution and type checking.
+    """
+    root = (root or ROOT).resolve()
+    lib = root / "lib"
+    errors: list[str] = []
+    directives = re.compile(r"^\s*(?:import|export)\s+([^;]+);", re.MULTILINE)
+    for path in sorted(lib.rglob("*.dart")):
+        if path.name.endswith((".g.dart", ".freezed.dart")):
+            continue
+        source_path = path.relative_to(lib).as_posix()
+        for directive in directives.finditer(read_source(path)):
+            for uri in re.findall(r"['\"]([^'\"]+)['\"]", directive.group(1)):
+                if uri.startswith("package:ventio/"):
+                    target = lib / uri.removeprefix("package:ventio/")
+                elif ":" in uri:
+                    continue
+                else:
+                    target = path.parent / uri
+                try:
+                    target_path = target.resolve().relative_to(lib).as_posix()
+                except ValueError:
+                    continue
+                violation = None
+                if source_path.startswith(("core/", "features/", "widgets/")) and target_path.startswith("data/"):
+                    violation = "depend on a core contract instead of the data implementation"
+                if source_path.startswith("core/contracts/") and not (
+                    target_path.startswith(("core/contracts/", "models/"))
+                    or target_path == "core/repositories/business_session_context.dart"
+                ):
+                    violation = "contracts may depend only on contracts and value models"
+                if source_path.startswith("models/") and target_path.startswith(("data/", "features/", "core/services/", "core/storage/")):
+                    violation = "value models must not depend on application or storage implementations"
+                if target_path.startswith("data/state/") and not source_path.startswith("data/"):
+                    violation = "mutable session state is private to the data layer"
+                if violation:
+                    errors.append(f"{source_path} -> {target_path}: {violation}")
+    return errors
+
+
+def module_structure_violations(root: Path | None = None) -> list[str]:
+    """Keep source units reviewable and data workflow names descriptive."""
+    root = root or ROOT
+    errors: list[str] = []
+    for path in sorted((root / "lib").rglob("*.dart")):
+        if path.name.endswith((".g.dart", ".freezed.dart")):
+            continue
+        relative = path.relative_to(root).as_posix()
+        lines = len(read_source(path).splitlines())
+        if lines > 1000:
+            errors.append(f"{relative}: {lines} lines exceeds the 1000-line source limit")
+        if relative.startswith("lib/data/") and re.search(r"_(?:split|methods)_\d+\.dart$", path.name):
+            errors.append(f"{relative}: name data workflow files by responsibility, not sequence")
+    return errors
+
+
+def app_store_library_lines() -> int:
+    root = ROOT / "lib" / "data" / "app_store.dart"
+    paths = [root, *[
+        root.parent / name
+        for name in re.findall(r"^part\s+['\"]([^'\"]+)['\"];", read_source(root), re.MULTILINE)
+    ]]
+    return sum(len(read_source(path).splitlines()) for path in paths)
+
+
 def current_inventory() -> dict[str, Any]:
     members = public_app_store_members()
     return {
@@ -262,6 +342,9 @@ def current_inventory() -> dict[str, Any]:
         "appStoreMentions": dict(sorted(app_store_mentions().items())),
         "appStoreSelectors": nested_selector_json(app_store_selectors(members)),
         "crossFeatureImports": dict(sorted(cross_feature_imports().items())),
+        "layerBoundaryViolations": layer_boundary_violations(),
+        "moduleStructureViolations": module_structure_violations(),
+        "appStoreLibraryLines": app_store_library_lines(),
     }
 
 
@@ -270,7 +353,15 @@ def count_total(values: dict[str, Any]) -> int:
 
 
 def validate_against_baseline(current: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
+    errors: list[str] = list(current.get("layerBoundaryViolations", []))
+    errors.extend(current.get("moduleStructureViolations", []))
+    current_lines = current.get("appStoreLibraryLines", 0)
+    baseline_lines = baseline.get("appStoreLibraryLines", current_lines)
+    if current_lines > baseline_lines:
+        errors.append(
+            f"AppStore shared library grew to {current_lines} lines (baseline {baseline_lines}); "
+            "extract responsibility into an independent service before adding orchestration"
+        )
 
     unexpected_members = sorted(
         set(current["appStorePublicMembers"]) - APP_STORE_CONTEXT_MEMBERS
@@ -360,6 +451,9 @@ def print_summary(current: dict[str, Any], baseline: dict[str, Any], errors: lis
         domain_adapter_app_store_calls(set(current["appStorePublicMembers"])).values()
     )
     print(f"AppStore domain adapter facade calls: {adapter_call_total}")
+    print(f"Layer boundary violations: {len(current.get('layerBoundaryViolations', []))}")
+    print(f"Module structure violations: {len(current.get('moduleStructureViolations', []))}")
+    print(f"AppStore shared library: {current.get('appStoreLibraryLines', 0)} lines")
     print(
         "Cross-feature imports: "
         f"{count_total(imports)} across {area_import_edge_count(imports)} directed area edges"

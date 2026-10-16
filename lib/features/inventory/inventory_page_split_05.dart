@@ -342,7 +342,7 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
 class _StockCountTab extends StatefulWidget {
   const _StockCountTab({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_StockCountTab> createState() => _StockCountTabState();

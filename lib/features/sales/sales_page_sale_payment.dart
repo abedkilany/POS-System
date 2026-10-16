@@ -169,24 +169,9 @@ extension _SalesPageSalePayment on _SalesPageState {
     final rawSelectedUnit = saleUnit ?? product.effectiveSaleUnits.first;
     final selectedUnit = rawSelectedUnit.copyWith(
         price: _salePriceFor(product, rawSelectedUnit));
-    final existingIndex = _cart.indexWhere((item) =>
-        item.product.id == product.id &&
-        item.unitName ==
-            (selectedUnit.name.trim().isNotEmpty
-                ? selectedUnit.name
-                : product.unit));
     var result = _BarcodeAddResult.added;
     setState(() {
-      if (existingIndex == -1) {
-        _cart.insert(
-            0,
-            _DraftSaleItem(
-                product: product, quantity: 1, saleUnit: selectedUnit));
-      } else {
-        _cart[existingIndex] = _cart[existingIndex]
-            .copyWith(quantity: _cart[existingIndex].quantity + 1);
-      }
-      _selectedCartIndex = existingIndex == -1 ? 0 : existingIndex;
+      _selectedCartIndex = _saleCart.add(product, selectedUnit);
       _pendingDeleteCartIndex = null;
       final cartItem = _cart[_selectedCartIndex!];
       if (cartItem.needsAutoCorrection) {

@@ -1,4 +1,4 @@
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 
 class DisasterRecoveryVerificationResult {
   const DisasterRecoveryVerificationResult({
@@ -29,7 +29,7 @@ class DisasterRecoveryReadiness {
 class DisasterRecoveryService {
   const DisasterRecoveryService(this.store);
 
-  final AppStore store;
+  final ApplicationSession store;
 
   Future<DisasterRecoveryReadiness> assessReadiness() async =>
       const DisasterRecoveryReadiness(

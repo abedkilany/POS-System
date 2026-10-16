@@ -1,3 +1,6 @@
+import 'domain/sale_cart.dart';
+import 'domain/sale_cart_item.dart';
+import 'domain/sale_payment_preview.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -18,7 +21,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/revision_cache.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_user.dart';
 import '../../models/customer.dart';
 import '../../models/credit_note.dart';
@@ -66,7 +69,7 @@ enum _SalesExitChoice { clearCart, holdCart, cancel }
 
 class SalesPage extends StatefulWidget {
   const SalesPage({super.key, required this.store, this.onExitGuardChanged});
-  final AppStore store;
+  final ApplicationSession store;
   final ValueChanged<Future<bool> Function()?>? onExitGuardChanged;
   @override
   State<SalesPage> createState() => _SalesPageState();
@@ -117,11 +120,12 @@ class _SalesPageState extends State<SalesPage> {
 
   static const String _heldSalesStorageKey = 'sale_held_carts_v1';
 
-  final List<_DraftSaleItem> _cart = [];
+  final SaleCart _saleCart = SaleCart();
+  List<SaleCartItem> get _cart => _saleCart.items;
 
   final List<_QuickProductPage> _quickPages = [];
 
-  String _selectedCustomerId = AppStore.walkInCustomerId;
+  String _selectedCustomerId = CommerceDefaults.walkInCustomerId;
 
   String _selectedWarehouseId = Warehouse.defaultId;
 
@@ -225,12 +229,13 @@ class _SalesPageState extends State<SalesPage> {
     super.initState();
     widget.onExitGuardChanged?.call(_confirmSalesExit);
     widget.store.addListener(_handleStoreChanged);
-    _selectedCustomerId = AppStore.walkInCustomerId;
+    _selectedCustomerId = CommerceDefaults.walkInCustomerId;
     _invoiceCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
     _paymentCurrency = widget.store.runtime.profile.defaultSalePaymentCurrency;
     _discountCurrency = widget.store.runtime.profile.defaultSaleInvoiceCurrency;
     _selectedWarehouseId = widget.store.inventory
-        .resolveWarehouseForSale(warehouseId: widget.store.inventory.saleWarehouseId)
+        .resolveWarehouseForSale(
+            warehouseId: widget.store.inventory.saleWarehouseId)
         .id;
     _paymentExchangeRateController.text =
         widget.store.runtime.profile.usdToLbpRate.toStringAsFixed(0);
@@ -243,7 +248,8 @@ class _SalesPageState extends State<SalesPage> {
       if (!mounted) return;
       setState(() {
         _selectedWarehouseId = widget.store.inventory
-            .resolveWarehouseForSale(warehouseId: widget.store.inventory.saleWarehouseId)
+            .resolveWarehouseForSale(
+                warehouseId: widget.store.inventory.saleWarehouseId)
             .id;
       });
     });

@@ -7,7 +7,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/product.dart';
 import '../../models/purchase_item.dart';
 import '../../models/supplier.dart';
@@ -20,7 +20,7 @@ import '../../models/warehouse.dart';
 class PurchaseWorkstationPage extends StatefulWidget {
   const PurchaseWorkstationPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<PurchaseWorkstationPage> createState() =>
@@ -575,7 +575,7 @@ class _DraftPurchaseLine {
       unit: unit,
       quantity: quantity ?? this.quantity,
       unitCost: unitCost);
-  PurchaseItem toPurchaseItem(AppStore store) => PurchaseItem(
+  PurchaseItem toPurchaseItem(ApplicationSession store) => PurchaseItem(
       productId: product.id,
       productName: product.name,
       quantity: quantity,

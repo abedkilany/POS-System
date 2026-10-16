@@ -32,7 +32,7 @@ import '../../core/snapshot/unified_snapshot_progress.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/store_profile.dart';
 import '../../models/print_settings.dart';
 import '../../models/app_identity.dart';
@@ -87,7 +87,7 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<Locale> onLocaleChanged;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final ThemeMode themeMode;
-  final AppStore store;
+  final ApplicationSession store;
   final Future<void> Function()? onSyncSettingsChanged;
 
   bool get _supportsKeyboardShortcuts =>

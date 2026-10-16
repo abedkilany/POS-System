@@ -46,7 +46,7 @@ class _HostSyncMonitoringTable extends StatefulWidget {
     required this.onPermanentDelete,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final List<DirectDeviceStatus> peerDevices;
   final DirectDeviceLimitStatus? deviceLimit;
   final Map<String, HostPeerSyncState> peerStates;
@@ -256,7 +256,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
 
 DataRow _hostPeerRow(
   BuildContext context, {
-  required AppStore store,
+  required ApplicationSession store,
   required String deviceId,
   required HostPeerSyncState? state,
   required HostRegistryDevice? registryDevice,
@@ -330,7 +330,7 @@ class _HostStatusMonitoringCard extends StatelessWidget {
     required this.peerStates,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final LanSyncSettings lanSettings;
   final List<DirectDeviceStatus> peerDevices;
   final Map<String, HostPeerSyncState> peerStates;
@@ -412,7 +412,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
     required this.onPermanentDelete,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String deviceId;
   final HostPeerSyncState? state;
   final HostRegistryDevice? registryDevice;
@@ -551,7 +551,7 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
   });
 
   final SyncDeviceState state;
-  final AppStore store;
+  final ApplicationSession store;
   final LanSyncSettings lanSettings;
   final VpsControlPlaneSettings controlPlaneSettings;
   final Future<void> Function() onRefresh;

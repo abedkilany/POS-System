@@ -525,7 +525,7 @@ class _CatalogItemDialogState extends State<_CatalogItemDialog> {
 
 class _CatalogManagerDialog extends StatefulWidget {
   const _CatalogManagerDialog({required this.store, required this.type});
-  final AppStore store;
+  final ApplicationSession store;
   final String type;
 
   @override

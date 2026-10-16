@@ -10,6 +10,6 @@ import '../../core/services/direct_control_plane_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/sync_unified/sync_device_state.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 part 'sync_monitoring_section_split_01.dart';
 part 'sync_monitoring_section_split_02.dart';

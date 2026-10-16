@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _AccountingSettingsTab extends StatefulWidget {
   const _AccountingSettingsTab({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_AccountingSettingsTab> createState() => _AccountingSettingsTabState();

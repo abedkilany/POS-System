@@ -11,7 +11,7 @@ import '../../core/utils/revision_cache.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/sql_result_export_service.dart';
 import '../../core/services/warehouse_inventory_pdf_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/inventory_count.dart';
 import '../../models/inventory_batch.dart';
 import '../../models/product.dart';

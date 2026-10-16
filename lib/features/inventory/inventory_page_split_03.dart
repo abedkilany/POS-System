@@ -248,7 +248,7 @@ class _WarehouseProductStock {
 
 class _MovementsList extends StatefulWidget {
   const _MovementsList({required this.store});
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_MovementsList> createState() => _MovementsListState();

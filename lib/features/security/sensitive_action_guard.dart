@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 
 /// Requests a fresh password proof for one high-risk domain action.
 /// The resulting short-lived, action-scoped grant is held only in memory and enforced by the domain layer.
 Future<bool> requestSensitiveActionAuthorization(
   BuildContext context,
-  AppStore store, {
+  ApplicationSession store, {
   required String action,
 }) async {
   final tr = AppLocalizations.of(context);
@@ -105,7 +105,7 @@ Future<bool> requestSensitiveActionAuthorization(
 
 Future<bool> _authorize(
   BuildContext context,
-  AppStore store,
+  ApplicationSession store,
   String action,
   String password,
   StateSetter setState, {

@@ -454,7 +454,7 @@ extension DirectControlPlaneServiceSplitPart3 on DirectControlPlaneService {
       await store.runtime.ensureHeavyDataLoaded();
     }
     final chunks = kind == 'login_bootstrap'
-        ? await store.exportDirectLoginBootstrapSnapshotChunks()
+        ? await store.sync.exportDirectLoginBootstrapSnapshotChunks()
         : await store.sync.exportSnapshotChunks(
             maxItemsPerChunk: 300);
     if (chunks.isEmpty) return null;

@@ -96,48 +96,48 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
           ._invalidateDerivedDataCaches();
 
   void _ensureDeliveryNoteLookupCache() =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore)
+      _AppStoreCoreLoadingProjections(this as AppStore)
           ._ensureDeliveryNoteLookupCache();
 
   void _rebuildInventoryCostLayerLookupCache() =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore)
+      _AppStoreCoreLoadingProjections(this as AppStore)
           ._rebuildInventoryCostLayerLookupCache();
 
   double _stockForWarehouse(String productId, String warehouseId) =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore)
+      _AppStoreCoreLoadingProjections(this as AppStore)
           .stockForWarehouse(productId, warehouseId);
 
   Future<double> _warehouseStockFromSqlite(
     String productId, {
     String warehouseId = '',
   }) =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore)
+      _AppStoreCoreLoadingProjections(this as AppStore)
           .warehouseStockFromSqlite(productId, warehouseId: warehouseId);
 
   Future<double> _totalWarehouseStockFromSqlite(String productId) =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore)
+      _AppStoreCoreLoadingProjections(this as AppStore)
           .totalWarehouseStockFromSqlite(productId);
 
   void _invalidateAccountLedgerCache() =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore)
+      _AppStoreCoreLoadingProjections(this as AppStore)
           ._invalidateAccountLedgerCache();
 
   void _replaceAccountTransactionInLedgerCache({
     AccountTransaction? previous,
     required AccountTransaction current,
   }) =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore)
+      _AppStoreCoreLoadingProjections(this as AppStore)
           ._replaceAccountTransactionInLedgerCache(
               previous: previous, current: current);
 
   List<SyncQueueItem> get _pendingSyncQueue =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore).pendingSyncQueue;
+      _AppStoreCoreLoadingProjections(this as AppStore).pendingSyncQueue;
 
   List<SyncChange> get _pendingSyncChanges =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore).pendingSyncChanges;
+      _AppStoreCoreLoadingProjections(this as AppStore).pendingSyncChanges;
 
   String get _activeClientSyncTarget =>
-      _AppStoreSplitCoreLoadingPart2(this as AppStore).activeClientSyncTarget;
+      _AppStoreCoreLoadingProjections(this as AppStore).activeClientSyncTarget;
 
   bool get _hasOnlyLegacyDefaultAdminUser =>
       _AppStoreSplitAccessAuth(this as AppStore)._hasOnlyLegacyDefaultAdminUser;
@@ -209,16 +209,16 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
 
   // ignore: unused_element
   Future<void> _loadDeferredStartupData() =>
-      _AppStoreSplitStartupMigrationsPart2(this as AppStore)
+      _AppStoreStartupMigrationsDeferredLoading(this as AppStore)
           ._loadDeferredStartupData();
 
   // ignore: unused_element
   Future<void> _loadLedgerDeferredStartupData() =>
-      _AppStoreSplitStartupMigrationsPart2(this as AppStore)
+      _AppStoreStartupMigrationsDeferredLoading(this as AppStore)
           ._loadLedgerDeferredStartupData();
 
   Future<void> _loadSyncDeferredStartupData() =>
-      _AppStoreSplitStartupMigrationsPart2(this as AppStore)
+      _AppStoreStartupMigrationsDeferredLoading(this as AppStore)
           ._loadSyncDeferredStartupData();
 
   /// Reloads the in-memory AppStore state after a manual Database Admin change.
@@ -229,44 +229,44 @@ mixin _AppStoreForwardingApi on ChangeNotifier, _AppStoreStateAccessors {
   /// Reloads the compatibility customer/supplier ledger after a direct
   /// SQLite financial reversal performed outside AppStore.
   Future<void> _refreshAccountTransactionsFromSqlite() =>
-      _AppStoreSplitStartupMigrationsPart2(this as AppStore)
+      _AppStoreStartupMigrationsDeferredLoading(this as AppStore)
           .refreshAccountTransactionsFromSqlite();
 
   Future<void> refreshAfterDatabaseChange(String key) =>
-      _AppStoreSplitStartupMigrationsPart2(this as AppStore)
+      _AppStoreStartupMigrationsDeferredLoading(this as AppStore)
           .refreshAfterDatabaseChange(key);
 
   /// Conservative full refresh used for unknown keys or recovery after a failed
   /// targeted refresh.
   Future<void> _reloadAllAfterDatabaseChange() =>
-      _AppStoreSplitStartupMigrationsPart2(this as AppStore)
+      _AppStoreStartupMigrationsDeferredLoading(this as AppStore)
           .reloadAllAfterDatabaseChange();
 
   String _generatePrefixedId(String prefix) =>
-      _AppStoreSplitStartupMigrationsPart2(this as AppStore)
+      _AppStoreStartupMigrationsDeferredLoading(this as AppStore)
           ._generatePrefixedId(prefix);
 
   void _ensureCatalogDefaults() =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
+      _AppStoreStartupMigrationsCatalogSync(this as AppStore)
           ._ensureCatalogDefaults();
 
   int _loadSyncSequence() =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
+      _AppStoreStartupMigrationsCatalogSync(this as AppStore)
           ._loadSyncSequence();
 
   int _nextSyncSequence() =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
+      _AppStoreStartupMigrationsCatalogSync(this as AppStore)
           ._nextSyncSequence();
 
   String _newSyncEnvelopeId(DateTime now, String prefix) =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
+      _AppStoreStartupMigrationsCatalogSync(this as AppStore)
           ._newSyncEnvelopeId(now, prefix);
 
   Map<String, dynamic> _syncV2MetaOf(SyncChange change) =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
+      _AppStoreStartupMigrationsCatalogSync(this as AppStore)
           ._syncV2MetaOf(change);
 
   String _syncMetaString(SyncChange change, String key) =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
+      _AppStoreStartupMigrationsCatalogSync(this as AppStore)
           ._syncMetaString(change, key);
 }

@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _JournalEntriesTab extends StatefulWidget {
   const _JournalEntriesTab({required this.store, required this.query});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
 
   @override
@@ -628,7 +628,7 @@ Future<List<JournalEntryDetailsReport>> _loadJournalDrillDown({
 
 Future<void> _showJournalDrillDown(
   BuildContext context, {
-  required AppStore store,
+  required ApplicationSession store,
   String entryId = '',
   String entryNo = '',
   String referenceType = '',
@@ -700,7 +700,7 @@ Future<void> _showJournalDrillDown(
 class _JournalDetailsCard extends StatelessWidget {
   const _JournalDetailsCard({required this.store, required this.entry});
 
-  final AppStore store;
+  final ApplicationSession store;
   final JournalEntryDetailsReport entry;
 
   @override

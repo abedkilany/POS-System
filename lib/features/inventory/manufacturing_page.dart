@@ -6,7 +6,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/localization/localized_domain_exception.dart';
 import '../../core/services/manufacturing_pdf_service.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/manufacturing.dart';
 import '../../models/inventory_batch.dart';
 import '../../models/product.dart';
@@ -18,7 +18,7 @@ part 'manufacturing_page_methods_03.dart';
 
 class ManufacturingPage extends StatefulWidget {
   const ManufacturingPage({super.key, required this.store});
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<ManufacturingPage> createState() => _ManufacturingPageState();

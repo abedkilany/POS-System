@@ -4,7 +4,7 @@ class _TransactionsTab extends StatelessWidget {
   const _TransactionsTab(
       {required this.store, required this.query, required this.cashOnly});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String query;
   final bool cashOnly;
   static final RevisionKeyCache<List<AccountTransaction>> _rowsCache =
@@ -129,7 +129,7 @@ class _TransactionRow extends StatelessWidget {
   const _TransactionRow(
       {required this.store, required this.transaction, required this.isWide});
 
-  final AppStore store;
+  final ApplicationSession store;
   final AccountTransaction transaction;
   final bool isWide;
 

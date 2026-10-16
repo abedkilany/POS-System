@@ -98,7 +98,7 @@ extension _AppStorePurchaseInsights on AppStore {
         totalCost += row.quantity * row.unitCost;
         if (row.supplierId.trim().isNotEmpty) suppliers.add(row.supplierId);
       }
-      _purchaseMetricsByProductCache[entry.key] = _ProductPurchaseMetrics(
+      _purchaseMetricsByProductCache[entry.key] = ProductPurchaseMetrics(
         lastCost: history.isEmpty ? null : history.first.unitCost,
         averageCost: totalQty <= 0 ? 0 : totalCost / totalQty,
         supplierCount: suppliers.length,

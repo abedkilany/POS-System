@@ -6,7 +6,7 @@ import 'package:archive/archive.dart';
 import '../../core/services/app_logging_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/local_database_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/user_role.dart';
 import 'phase10_health_service.dart';
 
@@ -44,7 +44,7 @@ class DisasterRecoveryReadiness {
 class DisasterRecoveryService {
   const DisasterRecoveryService(this.store);
 
-  final AppStore store;
+  final ApplicationSession store;
 
   static const String _lastCheckpointKey =
       'phase10_last_recovery_checkpoint_v1';

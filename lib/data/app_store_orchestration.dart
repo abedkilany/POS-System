@@ -10,10 +10,10 @@ mixin _AppStoreOrchestration
         ChangeNotifier,
         _AppStoreStateAccessors,
         _AppStoreForwardingApi,
-        _AppStoreForwardingApiPart2,
-        _AppStoreForwardingApiPart3,
-        _AppStoreForwardingApiPart4,
-        _AppStoreForwardingApiPart5 {
+        _AppStoreForwardingApiStartupIdentity,
+        _AppStoreForwardingApiCatalogLedger,
+        _AppStoreForwardingApiInventoryPayments,
+        _AppStoreForwardingApiSalesRecovery {
   SecurityDomainPort get security;
 
   Customer get _walkInCustomer => Customer(

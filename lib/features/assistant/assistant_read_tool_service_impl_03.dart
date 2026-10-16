@@ -3,7 +3,7 @@ part of 'assistant_read_tool_service.dart';
 extension _AssistantReadToolServicePart3
     on _AssistantReadToolServiceImplementation {
   Future<AssistantJsonMap> _readPartyAccountStatement({
-    required AppStore store,
+    required ApplicationSession store,
     required String toolName,
     required String partyType,
     required String partyArgument,
@@ -181,7 +181,7 @@ extension _AssistantReadToolServicePart3
   }
 
   Future<AssistantJsonMap> _readInvoiceDetails({
-    required AppStore store,
+    required ApplicationSession store,
     required String toolName,
     required Map<String, Object?> arguments,
     required DateTime reference,
@@ -353,7 +353,7 @@ extension _AssistantReadToolServicePart3
   }
 
   Future<AssistantJsonMap> _readPartyPaymentHistory({
-    required AppStore store,
+    required ApplicationSession store,
     required Map<String, Object?> arguments,
     required DateTime reference,
   }) async {
@@ -537,7 +537,7 @@ extension _AssistantReadToolServicePart3
   }
 
   Future<AssistantJsonMap> _readPartyBalanceReconciliation({
-    required AppStore store,
+    required ApplicationSession store,
     required Map<String, Object?> arguments,
     required DateTime reference,
   }) async {
@@ -573,7 +573,7 @@ extension _AssistantReadToolServicePart3
                   })
               .toList(growable: false),
         },
-        source: 'AppStore and AccountingAgingService',
+        source: 'ApplicationSession and AccountingAgingService',
       );
     }
     final party = matches.single;
@@ -686,12 +686,12 @@ extension _AssistantReadToolServicePart3
             ? 'Both figures are in the base currency and have a non-credit net balance. Aging shows open documents; the subledger value is its signed net balance.'
             : 'The comparison is withheld because the subledger is empty, has multiple currencies, uses a different currency, or has a net credit/advance balance. Source values are shown separately.',
       },
-      source: 'AccountingAgingService and AppStore account transactions',
+      source: 'AccountingAgingService and ApplicationSession account transactions',
     );
   }
 
   Future<List<_AssistantParty>> _loadPartyCandidates(
-    AppStore store,
+    ApplicationSession store,
     String partyType,
   ) async {
     if (partyType == 'customer') {

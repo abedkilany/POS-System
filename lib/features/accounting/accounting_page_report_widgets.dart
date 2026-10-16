@@ -133,7 +133,7 @@ class _FinancialBreakdownSection extends StatelessWidget {
     this.accountLines = const <FinancialStatementAccountLine>[],
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String title;
   final String totalLabel;
   final double totalAmount;
@@ -222,7 +222,7 @@ class _FinancialStatementLine extends StatelessWidget {
 
   final String label;
   final double amount;
-  final AppStore store;
+  final ApplicationSession store;
   final bool highlight;
   final bool compact;
 
@@ -265,7 +265,7 @@ class _FinancialResultTile extends StatelessWidget {
     this.prominent = false,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final String label;
   final double amount;
   final bool prominent;
@@ -351,7 +351,7 @@ class _StatementCard extends StatelessWidget {
   const _StatementCard(
       {required this.store, required this.title, required this.rows});
 
-  final AppStore store;
+  final ApplicationSession store;
   final String title;
   final List<_StatementRow> rows;
 
@@ -420,7 +420,7 @@ class _ReportError extends StatelessWidget {
       );
 }
 
-String _money(AppStore store, double amount) =>
+String _money(ApplicationSession store, double amount) =>
     formatUsdReferenceAmount(amount, store.runtime.profile);
 
 String _dateText(DateTime date) =>

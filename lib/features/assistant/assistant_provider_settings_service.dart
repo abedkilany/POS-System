@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'assistant_provider.dart';
 
 /// Device-local provider credentials and explicit business-data consent.
@@ -26,7 +26,7 @@ class AssistantProviderSettingsService {
       };
 
   static Future<void> saveApiKey({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
     required String apiKey,
   }) async {
@@ -45,7 +45,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<String?> readApiKey({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
   }) async {
     _requireSupportedClient();
@@ -57,13 +57,13 @@ class AssistantProviderSettingsService {
   }
 
   static Future<bool> hasApiKey({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
   }) async =>
       (await readApiKey(store: store, provider: provider)) != null;
 
   static Future<void> deleteApiKey({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
   }) async {
     _requireSupportedClient();
@@ -71,7 +71,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<void> savePreferredProvider({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
   }) async {
     final preferences = await SharedPreferences.getInstance();
@@ -82,7 +82,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<AssistantProvider?> readPreferredProvider({
-    required AppStore store,
+    required ApplicationSession store,
   }) async {
     final preferences = await SharedPreferences.getInstance();
     final storageId = preferences.getString(_providerPreferenceKey(store));
@@ -93,7 +93,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<void> saveSelectedModel({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
     required String model,
   }) async {
@@ -112,7 +112,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<String?> readSelectedModel({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
   }) async {
     final preferences = await SharedPreferences.getInstance();
@@ -120,7 +120,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<void> saveThinkingLevel({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
     required AssistantThinkingLevel level,
   }) async {
@@ -132,7 +132,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<AssistantThinkingLevel> readThinkingLevel({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
   }) async {
     final preferences = await SharedPreferences.getInstance();
@@ -142,7 +142,7 @@ class AssistantProviderSettingsService {
   }
 
   static Future<bool> hasBusinessDataConsent({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
   }) async {
     final preferences = await SharedPreferences.getInstance();
@@ -152,7 +152,7 @@ class AssistantProviderSettingsService {
 
   /// Call with [granted] only after showing the provider's data-use disclosure.
   static Future<void> setBusinessDataConsent({
-    required AppStore store,
+    required ApplicationSession store,
     required AssistantProvider provider,
     required bool granted,
   }) async {
@@ -185,28 +185,28 @@ class AssistantProviderSettingsService {
     }
   }
 
-  static String _credentialKey(AppStore store, AssistantProvider provider) =>
+  static String _credentialKey(ApplicationSession store, AssistantProvider provider) =>
       'ventio_assistant_${provider.storageId}_${_scopeHash(store)}';
 
-  static String _consentKey(AppStore store, AssistantProvider provider) =>
+  static String _consentKey(ApplicationSession store, AssistantProvider provider) =>
       'ventio_assistant_consent_${provider.storageId}_${_scopeHash(store)}';
 
-  static String _providerPreferenceKey(AppStore store) =>
+  static String _providerPreferenceKey(ApplicationSession store) =>
       'ventio_assistant_provider_${_scopeHash(store)}';
 
   static String _modelPreferenceKey(
-    AppStore store,
+    ApplicationSession store,
     AssistantProvider provider,
   ) =>
       'ventio_assistant_model_${provider.storageId}_${_scopeHash(store)}';
 
   static String _thinkingPreferenceKey(
-    AppStore store,
+    ApplicationSession store,
     AssistantProvider provider,
   ) =>
       'ventio_assistant_thinking_${provider.storageId}_${_scopeHash(store)}';
 
-  static String _scopeHash(AppStore store) {
+  static String _scopeHash(ApplicationSession store) {
     final user = store.security.activeUser;
     final userId = user?.id.trim() ?? '';
     final storeId = store.runtime.identity.storeId.trim();

@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../app_brand.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
@@ -720,9 +720,9 @@ class DirectControlPlaneService {
   DirectControlPlaneService(this.store, {http.Client? client})
       : _client = client ?? _RetiredDirectSyncHttpClient();
 
-  final AppStore store;
+  final SyncSession store;
   final http.Client _client;
-  late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
+  late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store.sync);
   static int _relayRequestCounter = 0;
   static final Map<String, _DirectSnapshotRelayJob> _relaySnapshotJobs =
       <String, _DirectSnapshotRelayJob>{};

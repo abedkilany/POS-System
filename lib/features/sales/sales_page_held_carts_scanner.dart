@@ -86,7 +86,7 @@ extension _SalesPageHeldCartsScanner on _SalesPageState {
         case _SalesExitChoice.clearCart:
           if (!mounted) return false;
           setState(() {
-            _cart.clear();
+            _saleCart.clear();
             _selectedCartIndex = null;
             _pendingDeleteCartIndex = null;
           });
@@ -139,7 +139,7 @@ extension _SalesPageHeldCartsScanner on _SalesPageState {
         items: _cart.map(_HeldSaleItem.fromDraft).toList());
     setState(() {
       _heldCarts.insert(0, cart);
-      _cart.clear();
+      _saleCart.clear();
       _selectedCartIndex = null;
       _pendingDeleteCartIndex = null;
     });
@@ -158,7 +158,7 @@ extension _SalesPageHeldCartsScanner on _SalesPageState {
               AppLocalizations.of(context).text('hold_current_cart_first'))));
       return;
     }
-    final restored = <_DraftSaleItem>[];
+    final restored = <SaleCartItem>[];
     final missingNames = <String>[];
     for (final item in heldCart.items) {
       final product = widget.store.catalog.productById(item.productId);
@@ -174,7 +174,7 @@ extension _SalesPageHeldCartsScanner on _SalesPageState {
         }
       }
       final restoredUnit = saleUnit ?? item.saleUnit;
-      restored.add(_DraftSaleItem(
+      restored.add(SaleCartItem(
           product: product,
           quantity: item.quantity,
           saleUnit: restoredUnit.copyWith(
@@ -188,9 +188,7 @@ extension _SalesPageHeldCartsScanner on _SalesPageState {
       return;
     }
     setState(() {
-      _cart
-        ..clear()
-        ..addAll(restored);
+      _saleCart.replaceAll(restored);
       _selectedCartIndex = _cart.isEmpty ? null : 0;
       _pendingDeleteCartIndex = null;
       _heldCarts.removeWhere((cart) => cart.id == heldCart.id);

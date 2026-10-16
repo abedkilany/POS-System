@@ -16,7 +16,7 @@ import '../../core/services/expense_pdf_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/revision_cache.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/expense.dart';
 import '../../models/store_profile.dart';
 import '../../models/user_role.dart';

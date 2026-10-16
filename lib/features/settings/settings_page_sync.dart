@@ -9,7 +9,7 @@ class _UnifiedSyncSettingsCard extends StatefulWidget {
   const _UnifiedSyncSettingsCard(
       {required this.store, this.onSyncSettingsChanged});
 
-  final AppStore store;
+  final ApplicationSession store;
   final Future<void> Function()? onSyncSettingsChanged;
 
   @override

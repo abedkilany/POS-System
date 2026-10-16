@@ -51,17 +51,17 @@ final class _CatalogDomain implements CatalogDomainPort {
       _AppStoreSplitCatalogPartiesExpenses(_store).addOrUpdateProduct(product);
   @override
   Future<void> addOrUpdateCategory(CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store)
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store)
           .addOrUpdateCategory(item);
   @override
   Future<void> addOrUpdateBrand(CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store).addOrUpdateBrand(item);
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store).addOrUpdateBrand(item);
   @override
   Future<void> addOrUpdateUnit(CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store).addOrUpdateUnit(item);
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store).addOrUpdateUnit(item);
   @override
   int productsUsingCatalogItem(String type, CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store)
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store)
           .productsUsingCatalogItem(type, item);
   @override
   Future<void> replaceAndDeleteCatalogItem({
@@ -69,7 +69,7 @@ final class _CatalogDomain implements CatalogDomainPort {
     required CatalogItem item,
     CatalogItem? replacement,
   }) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store)
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store)
           .replaceAndDeleteCatalogItem(
         type: type,
         item: item,
@@ -83,14 +83,14 @@ final class _CatalogDomain implements CatalogDomainPort {
     Product product, {
     String warehouseId = '',
   }) =>
-      _AppStoreSplitPricingCostingPart2(_store)
+      _AppStorePricingCostingPolicy(_store)
           .productCostSnapshotForProduct(product, warehouseId: warehouseId);
   @override
   Future<Map<String, ProductCostSnapshot>> productCostSnapshotsForProducts(
     Iterable<Product> products, {
     String warehouseId = '',
   }) =>
-      _AppStoreSplitPricingCostingPart2(_store).productCostSnapshotsForProducts(
+      _AppStorePricingCostingPolicy(_store).productCostSnapshotsForProducts(
         products,
         warehouseId: warehouseId,
       );

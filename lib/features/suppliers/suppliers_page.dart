@@ -12,7 +12,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/revision_cache.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/supplier.dart';
 import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
@@ -24,7 +24,7 @@ import '../../widgets/page_data_load_indicator.dart';
 class SuppliersPage extends StatefulWidget {
   const SuppliersPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<SuppliersPage> createState() => _SuppliersPageState();

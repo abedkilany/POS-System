@@ -46,7 +46,7 @@ class _DirectMonitoringSnapshot {
 }
 
 DirectDeviceLimitStatus? _localClientDeviceLimitStatus(
-  AppStore store,
+  ApplicationSession store,
   LanSyncSettings settings, {
   String excludeDeviceId = '',
 }) {
@@ -247,7 +247,7 @@ String _activeTransportForHostPeer(
 
 String _pendingChangesForHostPeer(
   BuildContext context, {
-  required AppStore store,
+  required ApplicationSession store,
   required String deviceId,
   required HostPeerSyncState? state,
   required DirectDeviceStatus? directDevice,

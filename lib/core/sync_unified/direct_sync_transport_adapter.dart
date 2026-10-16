@@ -8,7 +8,7 @@ import '../services/secure_peer_session.dart';
 import '../services/direct_sync_protocol_service.dart';
 import '../services/direct_sync_settings.dart';
 import '../services/sync_diagnostics_log.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'sync_contracts.dart';
 import 'sync_device_state.dart';
 import 'sync_transport_adapter.dart';
@@ -23,7 +23,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
         _pairing = DirectPeerPairingService(store),
         _usesPersistedSettings = settings == null;
 
-  final AppStore store;
+  final SyncSession store;
   DirectSyncSettings _settings;
   final bool _usesPersistedSettings;
   DirectPeerSignalingService _coordination;
@@ -680,7 +680,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 }
 
 abstract final class DirectSyncProtocolMaintenance {
-  static Future<void> compact(AppStore store) async {
+  static Future<void> compact(SyncSession store) async {
     await store.sync.compactClientSyncedHistoryForMaintenance();
   }
 }

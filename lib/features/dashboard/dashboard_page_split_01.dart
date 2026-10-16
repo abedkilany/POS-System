@@ -3,7 +3,7 @@ part of 'dashboard_page.dart';
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();

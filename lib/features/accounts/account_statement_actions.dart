@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/services/accounting_service.dart';
 import '../../core/services/account_statement_pdf_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/accounting_account.dart';
 import '../../models/expense.dart';
 
@@ -25,7 +25,7 @@ Future<DateTimeRange?> pickAccountStatementDateRange(
 
 Future<void> printAccountStatementForAccount({
   required BuildContext context,
-  required AppStore store,
+  required ApplicationSession store,
   required String accountType,
   required String accountId,
   required String accountName,
@@ -52,7 +52,7 @@ Future<void> printAccountStatementForAccount({
 
 Future<void> printExpenseStatementForPeriod({
   required BuildContext context,
-  required AppStore store,
+  required ApplicationSession store,
 }) async {
   final range = await pickAccountStatementDateRange(context);
   if (range == null || !context.mounted) return;

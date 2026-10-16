@@ -1,7 +1,7 @@
 part of 'dashboard_snapshot_service.dart';
 
 extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
-  String _summaryFutureKey(AppStore store, DateTime reference) =>
+  String _summaryFutureKey(ApplicationSession store, DateTime reference) =>
       '${store.runtime.identity.storeId}:${store.runtime.dashboardRevision}:${reference.year}-${reference.month}-${reference.day}';
 
   Future<DashboardSnapshotCache?> loadCachedSummary({
@@ -60,7 +60,7 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
   }
 
   Future<DashboardState> buildState(
-    AppStore store, {
+    ApplicationSession store, {
     DateTime? now,
   }) async {
     final reference = (now ?? DateTime.now()).toLocal();
@@ -79,13 +79,13 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
     return _assembleState(store, reference: reference, summary: summary);
   }
 
-  Future<void> prewarmSummary(AppStore store, {DateTime? now}) async {
+  Future<void> prewarmSummary(ApplicationSession store, {DateTime? now}) async {
     final reference = (now ?? DateTime.now()).toLocal();
     _summaryFutureFor(store, reference);
   }
 
   Future<DashboardState> buildStateFromCachedSummary(
-    AppStore store,
+    ApplicationSession store,
     DashboardSnapshotCache snapshot, {
     DateTime? now,
   }) async {
@@ -95,7 +95,7 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
   }
 
   Future<DashboardState> buildQuickStateFromCachedSummary(
-    AppStore store,
+    ApplicationSession store,
     DashboardSnapshotCache snapshot, {
     DateTime? now,
   }) async {
@@ -208,7 +208,7 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
   }
 
   Future<DashboardState> _assembleState(
-    AppStore store, {
+    ApplicationSession store, {
     required DateTime reference,
     required Map<String, Object?> summary,
   }) async {
@@ -497,7 +497,7 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
   }
 
   DashboardHealthSnapshot _syncStatus(
-    AppStore store, {
+    ApplicationSession store, {
     required int pendingSyncCount,
     required DateTime reference,
   }) {
@@ -579,7 +579,7 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
   }
 
   Future<Map<String, Object?>> _summaryFutureFor(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
   ) {
     final key = _summaryFutureKey(store, reference);
@@ -596,7 +596,7 @@ extension DashboardSnapshotServiceMethods1 on DashboardSnapshotService {
   }
 
   Future<Map<String, Object?>> _computeAndCacheSummary(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
   ) async {
     if (LocalDatabaseService.canQueryBusinessSqlite) {

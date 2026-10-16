@@ -5,7 +5,7 @@ class DirectPeerConnectionService {
       {DirectPeerSignalingService? signaling})
       : _signaling = signaling ?? DirectPeerSignalingService(store);
 
-  final AppStore store;
+  final SyncSession store;
   final DirectPeerSignalingService _signaling;
 
   Future<SecurePeerSession> connectAsHost({

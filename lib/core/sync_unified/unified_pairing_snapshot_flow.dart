@@ -1,4 +1,4 @@
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import 'sync_device_state.dart';
 import 'unified_snapshot_lifecycle.dart';
@@ -23,7 +23,7 @@ class UnifiedPairingSnapshotFlow {
   const UnifiedPairingSnapshotFlow._();
 
   static Future<UnifiedPairingSnapshotSuccess> applyForDirect({
-    required AppStore store,
+    required SyncSession store,
     required Map<String, dynamic> envelope,
     required Future<void> Function() markSnapshotApplied,
     required Future<void> Function() markProvisioningComplete,
@@ -56,7 +56,7 @@ class UnifiedPairingSnapshotFlow {
   }
 
   static Future<UnifiedPairingSnapshotSuccess> applyForLan({
-    required AppStore store,
+    required SyncSession store,
     required String host,
     required int port,
     required Map<String, dynamic> envelope,

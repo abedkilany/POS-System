@@ -10,7 +10,7 @@ import 'package:printing/printing.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/barcode_label_pdf_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/product.dart';
 import '../../models/store_profile.dart';
 import '../../widgets/app_section_header.dart';
@@ -19,7 +19,7 @@ import '../../widgets/empty_state_card.dart';
 class BarcodeLabelsPage extends StatefulWidget {
   const BarcodeLabelsPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<BarcodeLabelsPage> createState() => _BarcodeLabelsPageState();

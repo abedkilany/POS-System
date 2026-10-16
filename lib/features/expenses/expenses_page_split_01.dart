@@ -4,7 +4,7 @@ part of 'expenses_page.dart';
 class ExpensesPage extends StatefulWidget {
   const ExpensesPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<ExpensesPage> createState() => _ExpensesPageState();

@@ -37,8 +37,8 @@ void main() {
   test('Phase 12 keeps AppStore as a thin facade with domain state ownership',
       () {
     final appStore = File('lib/data/app_store.dart').readAsStringSync();
-    final state = readDartLibrarySource('lib/data/app_store_state.dart');
-    final domains = readDartLibrarySource('lib/data/app_store_domains.dart');
+    final state = readSessionStateSource();
+    final domains = readDomainBoundarySource();
     final compatibility =
         readDartLibrarySource('lib/data/app_store_forwarding_api.dart');
     final orchestration =
@@ -53,13 +53,13 @@ void main() {
     expect(concreteFacade.split('\n').length, lessThan(220));
 
     for (final stateClass in <String>[
-      '_CatalogState',
-      '_CommerceState',
-      '_InventoryState',
-      '_AccountingState',
-      '_SecurityState',
-      '_SyncState',
-      '_RuntimeState',
+      'CatalogState',
+      'CommerceState',
+      'InventoryState',
+      'AccountingState',
+      'SecurityState',
+      'SyncState',
+      'RuntimeState',
     ]) {
       expect(state, contains('class $stateClass'));
     }
@@ -90,7 +90,7 @@ void main() {
     expect(compatibility, isNot(contains('Future<void> _transferStock')));
     expect(
       domains,
-      contains('_AppStoreSplitWarehouseCashPart3(_store).transferStock('),
+      contains('_AppStoreWarehouseCashTransfersRefunds(_store).transferStock('),
     );
     expect(compatibility, contains('Future<String> _exportBackupJson'));
     expect(
@@ -106,7 +106,7 @@ void main() {
 
   test('app lifecycle and preferences use the runtime domain port', () {
     final appShell = File('lib/app_split_01.dart').readAsStringSync();
-    final domains = readDartLibrarySource('lib/data/app_store_domains.dart');
+    final domains = readDomainBoundarySource();
     for (final operation in <String>[
       'initialize(',
       'prepareForShutdown(',
@@ -119,7 +119,7 @@ void main() {
       expect(appShell, isNot(contains('_store.$operation')));
     }
     expect(domains, contains('_AppStoreSplitStartupMigrations(_store)'));
-    expect(domains, contains('_AppStoreSplitSyncApplyPart4(_store)'));
+    expect(domains, contains('_AppStoreSyncApplyQueueRecovery(_store)'));
     expect(domains, contains('_AppStoreSplitAccessAuth(_store)'));
     expect(
       domains,
@@ -129,7 +129,7 @@ void main() {
   });
 
   test('Phase 12 domain ports are consumed by production UI paths', () {
-    final domains = readDartLibrarySource('lib/data/app_store_domains.dart');
+    final domains = readDomainBoundarySource();
     final settings = readDartLibrarySource(
         'lib/features/settings/settings_page_backup.dart');
     final accounting = readAccountingPageImplementationSource();
@@ -218,8 +218,8 @@ void main() {
     expect(dashboard, contains('store.inventory.stockMovements'));
     expect(dashboard, contains('store.accounting.transactions'));
     expect(dashboard, contains('store.sync.queue'));
-    expect(syncCore, contains('store.sync.applyRemoteChanges('));
-    expect(syncCore, contains('store.sync.markAcknowledged('));
+    expect(syncCore, contains('sync.applyRemoteChanges('));
+    expect(syncCore, contains('sync.markAcknowledged('));
     expect(syncCore, isNot(contains('store.applyRemoteSyncChanges(')));
     expect(syncCore, isNot(contains('store.markSyncChangesSyncedByIds(')));
     expect(sales, contains('widget.store.commerce.ensureSalesLoaded()'));

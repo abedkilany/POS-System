@@ -2,7 +2,7 @@ part of 'assistant_read_tool_service.dart';
 
 extension _AssistantReadToolServicePart1
     on _AssistantReadToolServiceImplementation {
-  List<AssistantJsonMap> definitionsFor(AppStore store) {
+  List<AssistantJsonMap> definitionsFor(ApplicationSession store) {
     if (!LocalDatabaseService.canQueryBusinessSqlite ||
         !AccountingService.isAvailable) {
       return const <AssistantJsonMap>[];

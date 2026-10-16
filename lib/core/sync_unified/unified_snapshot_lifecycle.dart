@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 
 class UnifiedSnapshotApplyResult {
   const UnifiedSnapshotApplyResult({
@@ -22,7 +22,7 @@ class UnifiedSnapshotLifecycle {
   const UnifiedSnapshotLifecycle._();
 
   static Future<UnifiedSnapshotApplyResult> applyEnvelope({
-    required AppStore store,
+    required SyncSession store,
     required Map<String, dynamic> envelope,
     Future<void> Function(String snapshotJson)? beforeImport,
     Future<void> Function(String snapshotJson)? afterImport,

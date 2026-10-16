@@ -113,7 +113,7 @@ void main() {
     });
 
     test('derived manage flags do not grant unrelated permissions', () {
-      final security = _source('lib/data/app_store_domains.dart');
+      final security = _source('lib/data/app_store_domains_security.dart');
       final normalizedSecurity = security.replaceAll(RegExp(r'\s+'), ' ');
 
       expect(

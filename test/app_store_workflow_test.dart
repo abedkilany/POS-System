@@ -38,6 +38,7 @@ part 'app_store_workflow_test_split_02.dart';
 part 'app_store_workflow_test_split_03.dart';
 part 'app_store_workflow_test_split_04.dart';
 part 'app_store_workflow_test_split_05.dart';
+part 'app_store_sale_posting_cases.dart';
 
 Product product(
     {String id = 'p1',
@@ -307,6 +308,7 @@ void main() {
   _registerAppStoreWorkflowGroup5();
   _phase3InventoryCountAccountingTests();
   _phase5ExpensePostStateTests();
+  _salePostingTransactionTests();
 }
 
 void _phase3InventoryCountAccountingTests() {

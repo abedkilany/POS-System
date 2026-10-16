@@ -15,7 +15,7 @@ import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/purchase_pdf_service.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../widgets/page_data_load_indicator.dart';
 import '../../widgets/shortcut_key_picker.dart';
 import '../../models/product.dart';
@@ -39,7 +39,7 @@ part 'purchases_page_methods_02.dart';
 class PurchasesPage extends StatefulWidget {
   const PurchasesPage({super.key, required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<PurchasesPage> createState() => _PurchasesPageState();

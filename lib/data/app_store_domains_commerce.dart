@@ -101,14 +101,14 @@ final class _CommerceDomain implements CommerceDomainPort {
           .addOrUpdateCustomer(customer);
   @override
   Future<void> deleteCustomer(String id) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store).deleteCustomer(id);
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store).deleteCustomer(id);
   @override
   Future<void> addOrUpdateSupplier(Supplier supplier) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store)
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store)
           .addOrUpdateSupplier(supplier);
   @override
   Future<void> deleteSupplier(String id) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(_store).deleteSupplier(id);
+      _AppStoreCatalogPartiesExpensesCatalogParties(_store).deleteSupplier(id);
   @override
   List<SupplierProductPrice> supplierProductPricesForProduct(
     String productId,
@@ -124,11 +124,11 @@ final class _CommerceDomain implements CommerceDomainPort {
       _AppStoreSplitSupplierInsights(_store).deleteSupplierProductPrice(id);
   @override
   Future<void> addOrUpdateExpense(Expense expense) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(_store)
+      _AppStoreCatalogPartiesExpensesExpensePosting(_store)
           .addOrUpdateExpense(expense);
   @override
   Future<void> createAndPostExpensesBulk(List<Expense> expenses) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(_store)
+      _AppStoreCatalogPartiesExpensesExpensePosting(_store)
           .createAndPostExpensesBulk(expenses);
   @override
   Future<void> postExpense(
@@ -136,7 +136,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     bool paidInCash = true,
     double? cashPaidAmount,
   }) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(_store).postExpense(
+      _AppStoreCatalogPartiesExpensesExpensePosting(_store).postExpense(
         id,
         paidInCash: paidInCash,
         cashPaidAmount: cashPaidAmount,
@@ -154,7 +154,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     DateTime? date,
     String? notes,
   }) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(_store).editPostedExpense(
+      _AppStoreCatalogPartiesExpensesExpensePosting(_store).editPostedExpense(
         expenseId: expenseId,
         expectedVersion: expectedVersion,
         title: title,
@@ -168,10 +168,10 @@ final class _CommerceDomain implements CommerceDomainPort {
       );
   @override
   Future<void> deleteDraftExpense(String id) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(_store).deleteDraftExpense(id);
+      _AppStoreCatalogPartiesExpensesExpensePosting(_store).deleteDraftExpense(id);
   @override
   Future<void> cancelExpense(String id, {String reason = ''}) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(_store)
+      _AppStoreCatalogPartiesExpensesExpensePosting(_store)
           .cancelExpense(id, reason: reason);
   @override
   Future<Sale> convertSaleQuotationToSale(
@@ -236,7 +236,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String idempotencyKey = '',
     DateTime? date,
   }) =>
-      _AppStoreSplitWarehouseCashPart4(_store).settleSalePayment(
+      _AppStoreWarehouseCashSettlement(_store).settleSalePayment(
         saleId: saleId,
         amount: amount,
         discount: discount,
@@ -256,7 +256,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String idempotencyKey = '',
     DateTime? date,
   }) =>
-      _AppStoreSplitWarehouseCashPart4(_store).settlePurchasePayment(
+      _AppStoreWarehouseCashSettlement(_store).settlePurchasePayment(
         purchaseId: purchaseId,
         amount: amount,
         discount: discount,
@@ -268,20 +268,20 @@ final class _CommerceDomain implements CommerceDomainPort {
 
   @override
   Future<void> normalizeRefundAllocations() =>
-      _AppStoreSplitWarehouseCashPart3(_store).normalizeRefundAllocations();
+      _AppStoreWarehouseCashTransfersRefunds(_store).normalizeRefundAllocations();
 
   @override
   Future<double> refundableSaleCashAmount(String saleId) =>
-      _AppStoreSplitWarehouseCashPart3(_store).refundableSaleCashAmount(saleId);
+      _AppStoreWarehouseCashTransfersRefunds(_store).refundableSaleCashAmount(saleId);
 
   @override
   Future<double> refundablePurchaseCashAmount(String purchaseId) =>
-      _AppStoreSplitWarehouseCashPart3(_store)
+      _AppStoreWarehouseCashTransfersRefunds(_store)
           .refundablePurchaseCashAmount(purchaseId);
 
   @override
   Future<double> refundablePurchaseReturnCashAmount(String purchaseReturnId) =>
-      _AppStoreSplitWarehouseCashPart3(_store)
+      _AppStoreWarehouseCashTransfersRefunds(_store)
           .refundablePurchaseReturnCashAmount(purchaseReturnId);
 
   @override
@@ -292,7 +292,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String idempotencyKey = '',
     DateTime? date,
   }) =>
-      _AppStoreSplitWarehouseCashPart3(_store).refundSaleCash(
+      _AppStoreWarehouseCashTransfersRefunds(_store).refundSaleCash(
         saleId: saleId,
         amount: amount,
         notes: notes,
@@ -308,7 +308,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String idempotencyKey = '',
     DateTime? date,
   }) =>
-      _AppStoreSplitWarehouseCashPart3(_store).refundPurchaseCash(
+      _AppStoreWarehouseCashTransfersRefunds(_store).refundPurchaseCash(
         purchaseId: purchaseId,
         amount: amount,
         notes: notes,
@@ -324,7 +324,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String idempotencyKey = '',
     DateTime? date,
   }) =>
-      _AppStoreSplitWarehouseCashPart3(_store).refundPurchaseReturnCash(
+      _AppStoreWarehouseCashTransfersRefunds(_store).refundPurchaseReturnCash(
         purchaseReturnId: purchaseReturnId,
         amount: amount,
         notes: notes,
@@ -353,7 +353,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String warehouseId = '',
     String warehouseName = '',
   }) =>
-      _AppStoreSplitSalesReturnsPart2(_store).createSale(
+      _AppStoreSalesReturnsCreateSale(_store).createSale(
         customerName: customerName,
         customerId: customerId,
         items: items,
@@ -381,7 +381,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     bool restoreStock = true,
     Map<String, double>? returnedQuantities,
   }) =>
-      _AppStoreSplitSalesReturnsPart5(_store).returnSale(
+      _AppStoreSalesReturnsCreateReturn(_store).returnSale(
         id,
         restoreStock: restoreStock,
         returnedQuantities: returnedQuantities,
@@ -393,7 +393,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String status = 'Cancelled',
     bool restoreStock = true,
   }) =>
-      _AppStoreSplitSalesReturnsPart8(_store).cancelSale(
+      _AppStoreSalesReturnsCancelSale(_store).cancelSale(
         id,
         status: status,
         restoreStock: restoreStock,
@@ -413,7 +413,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String warehouseId = '',
     String warehouseName = '',
   }) =>
-      _AppStoreSplitSalesReturnsPart3(_store).editPostedSale(
+      _AppStoreSalesReturnsEditSale(_store).editPostedSale(
         saleId: saleId,
         expectedVersion: expectedVersion,
         customerName: customerName,
@@ -433,7 +433,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     required int expectedVersion,
     required Map<String, double> returnedQuantities,
   }) =>
-      _AppStoreSplitSalesReturnsPart6(_store).editSaleReturn(
+      _AppStoreSalesReturnsEditReturn(_store).editSaleReturn(
         creditNoteId: creditNoteId,
         expectedVersion: expectedVersion,
         returnedQuantities: returnedQuantities,
@@ -468,7 +468,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     required String creditNoteId,
     required int expectedVersion,
   }) =>
-      _AppStoreSplitSalesReturnsPart7(_store).cancelSaleReturn(
+      _AppStoreSalesReturnsCancelReturn(_store).cancelSaleReturn(
         creditNoteId: creditNoteId,
         expectedVersion: expectedVersion,
       );
@@ -486,7 +486,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String warehouseId = '',
     String warehouseName = '',
   }) =>
-      _AppStoreSplitPurchasesPart2(_store).createPurchase(
+      _AppStorePurchasesCreate(_store).createPurchase(
         supplierId: supplierId,
         supplierName: supplierName,
         items: items,
@@ -505,7 +505,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     required List<PurchaseItem> items,
     String reason = '',
   }) =>
-      _AppStoreSplitPurchasesPart6(_store).createPurchaseReturn(
+      _AppStorePurchasesReturnCreate(_store).createPurchaseReturn(
         sourcePurchaseId: sourcePurchaseId,
         items: items,
         reason: reason,
@@ -524,7 +524,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String warehouseId = '',
     String warehouseName = '',
   }) =>
-      _AppStoreSplitPurchasesPart3(_store).updatePurchaseDraft(
+      _AppStorePurchasesDraftEdit(_store).updatePurchaseDraft(
         purchaseId: purchaseId,
         expectedVersion: expectedVersion,
         supplierId: supplierId,
@@ -545,7 +545,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     Map<int, List<BatchAllocation>> batchAllocationsByLine =
         const <int, List<BatchAllocation>>{},
   }) =>
-      _AppStoreSplitPurchasesPart4(_store).receivePurchase(
+      _AppStorePurchasesReceipt(_store).receivePurchase(
         id,
         settleInitialPayment: settleInitialPayment,
         postAccounting: postAccounting,
@@ -562,7 +562,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String warehouseId = '',
     String warehouseName = '',
   }) =>
-      _AppStoreSplitPurchasesPart5(_store).editPurchaseReturn(
+      _AppStorePurchasesReturnEdit(_store).editPurchaseReturn(
         purchaseId: purchaseId,
         expectedVersion: expectedVersion,
         supplierId: supplierId,
@@ -574,7 +574,7 @@ final class _CommerceDomain implements CommerceDomainPort {
 
   @override
   Future<void> deleteDraftPurchase(String id) =>
-      _AppStoreSplitPurchasesPart4(_store).deleteDraftPurchase(id);
+      _AppStorePurchasesReceipt(_store).deleteDraftPurchase(id);
 
   @override
   Future<void> returnPurchase(
@@ -583,7 +583,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     String reason = '',
     bool recordSupplierReturnLedger = true,
   }) =>
-      _AppStoreSplitPurchasesPart7(_store).returnPurchase(
+      _AppStorePurchasesReversal(_store).returnPurchase(
         id,
         reverseStock: reverseStock,
         reason: reason,
@@ -596,7 +596,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     bool reverseStock = true,
     String reason = '',
   }) =>
-      _AppStoreSplitPurchasesPart7(_store).cancelPurchase(
+      _AppStorePurchasesReversal(_store).cancelPurchase(
         id,
         reverseStock: reverseStock,
         reason: reason,
@@ -638,7 +638,7 @@ final class _CommerceDomain implements CommerceDomainPort {
 
   @override
   double estimateProfit() =>
-      _AppStoreSplitSalesReturnsPart8(_store).estimateProfit();
+      _AppStoreSalesReturnsCancelSale(_store).estimateProfit();
 
   @override
   Future<Purchase?> reloadPurchaseFromSqlite(String id) =>
@@ -646,7 +646,7 @@ final class _CommerceDomain implements CommerceDomainPort {
 
   @override
   Future<double> refundableExpenseCashAmount(String expenseId) =>
-      _AppStoreSplitWarehouseCashPart4(_store)
+      _AppStoreWarehouseCashSettlement(_store)
           .refundableExpenseCashAmount(expenseId);
 
   @override
@@ -655,7 +655,7 @@ final class _CommerceDomain implements CommerceDomainPort {
     double? amount,
     String notes = '',
   }) =>
-      _AppStoreSplitWarehouseCashPart4(_store).refundExpenseCash(
+      _AppStoreWarehouseCashSettlement(_store).refundExpenseCash(
         expenseId: expenseId,
         amount: amount,
         notes: notes,

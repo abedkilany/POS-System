@@ -1,4 +1,5 @@
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
+import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import '../sync_unified/sync_device_state.dart';
 import 'sync_diagnostics_log.dart';
@@ -10,12 +11,12 @@ import 'sync_diagnostics_log.dart';
 /// protection, echo filtering, applying authoritative changes, and ACK handling
 /// live here so a sync bug is fixed once for both transports.
 class UnifiedSyncCoreService {
-  UnifiedSyncCoreService(this.store);
+  UnifiedSyncCoreService(this.sync);
 
-  final AppStore store;
+  final SyncDomainPort sync;
 
   List<SyncChange> pendingChangesForTarget(String target) {
-    return store.sync.pendingChangesForTarget(target);
+    return sync.pendingChangesForTarget(target);
   }
 
   List<String> changeIds(Iterable<SyncChange> changes) {
@@ -23,31 +24,31 @@ class UnifiedSyncCoreService {
   }
 
   Future<void> markPushInProgress(Iterable<String> changeIds) {
-    return store.sync.markPushInProgress(changeIds);
+    return sync.markPushInProgress(changeIds);
   }
 
   Future<void> markPushSubmitted(Iterable<String> ackIds,
       {Iterable<String> fallbackIds = const <String>[]}) {
     final ids = ackIds.isEmpty ? fallbackIds : ackIds;
-    return store.sync.markSubmitted(ids);
+    return sync.markSubmitted(ids);
   }
 
   Future<void> markPushAcknowledged(Iterable<String> ackIds,
       {Iterable<String> fallbackIds = const <String>[]}) {
     final ids = ackIds.isEmpty ? fallbackIds : ackIds;
-    return store.sync.markAcknowledged(ids);
+    return sync.markAcknowledged(ids);
   }
 
   Future<void> markPushFailed(Iterable<String> changeIds, String message) {
-    return store.sync.markFailed(changeIds, message);
+    return sync.markFailed(changeIds, message);
   }
 
   List<SyncChange> submittedChangesForTarget(String target) {
-    return store.sync.submittedChangesForTarget(target);
+    return sync.submittedChangesForTarget(target);
   }
 
   Future<void> markPushRejected(Map<String, String> rejected) {
-    return store.sync.markRejected(rejected);
+    return sync.markRejected(rejected);
   }
 
   List<SyncChange> decodeRemoteChanges(List<dynamic>? raw) {
@@ -64,15 +65,14 @@ class UnifiedSyncCoreService {
   List<SyncChange> filterOutLocalEchoes(Iterable<SyncChange> changes) {
     final list = changes.toList();
     final filtered =
-        list.where((item) => item.deviceId != store.sync.deviceId).toList();
+        list.where((item) => item.deviceId != sync.deviceId).toList();
     if (list.length != filtered.length) {
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] core:echoFilter input=${list.length} output=${filtered.length} '
-        'localDevice=${store.sync.deviceId} removed=${list.length - filtered.length}',
+        'localDevice=${sync.deviceId} removed=${list.length - filtered.length}',
       );
-      for (final change in list
-          .where((item) => item.deviceId == store.sync.deviceId)
-          .take(20)) {
+      for (final change
+          in list.where((item) => item.deviceId == sync.deviceId).take(20)) {
         SyncDiagnosticsLog.add(
           '[SYNC_TRACE] core:echoRemoved ${SyncDiagnosticsLog.summarizeChange(change)}',
         );
@@ -99,7 +99,7 @@ class UnifiedSyncCoreService {
       );
     }
 
-    final latestResetAt = store.sync.latestResetAt;
+    final latestResetAt = sync.latestResetAt;
     final hostReceivedAt = DateTime.now();
     final rejected = <String, String>{};
     final applicable = <SyncChange>[];
@@ -108,7 +108,7 @@ class UnifiedSyncCoreService {
         rejected[item.id] = 'Request is older than the latest Host reset.';
         continue;
       }
-      final problem = store.sync.validateClientDraftForHostAcceptance(item);
+      final problem = sync.validateClientDraftForHostAcceptance(item);
       if (problem != null) {
         rejected[item.id] = problem;
         continue;
@@ -144,14 +144,14 @@ class UnifiedSyncCoreService {
     }
 
     if (plan.accepted.isNotEmpty) {
-      await store.sync.applyRemoteChanges(
+      await sync.applyRemoteChanges(
         plan.accepted,
         markAppliedAsSynced: true,
         mirrorToDirect: mirrorToDirect,
       );
     }
     if (verifyApplied) {
-      await store.sync.assertRemoteChangesApplied(plan.accepted);
+      await sync.assertRemoteChangesApplied(plan.accepted);
     }
 
     return HostAcceptedChanges(
@@ -169,7 +169,7 @@ class UnifiedSyncCoreService {
     final remoteList = remoteChanges.toList();
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] core:applyAuthoritative start remote=${remoteList.length} '
-      'cleanupSoftDeleted=$cleanupSoftDeleted localDevice=${store.sync.deviceId}',
+      'cleanupSoftDeleted=$cleanupSoftDeleted localDevice=${sync.deviceId}',
     );
     for (final change in remoteList.take(40)) {
       SyncDiagnosticsLog.add(
@@ -181,7 +181,7 @@ class UnifiedSyncCoreService {
     // the Host republishes them as authoritative changes. If this device is
     // the origin, the matching local queue row is confirmed here instead of
     // being confirmed by the relay ACK.
-    await store.sync.markAcknowledged(remoteList.expand((item) {
+    await sync.markAcknowledged(remoteList.expand((item) {
       final meta = Map<String, dynamic>.from(
           item.payload['_syncV2'] as Map? ?? const {});
       return <String>[
@@ -196,9 +196,9 @@ class UnifiedSyncCoreService {
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] core:applyAuthoritative afterEchoFilter=${changes.length}',
     );
-    await store.sync.applyRemoteChanges(changes, markAppliedAsSynced: true);
+    await sync.applyRemoteChanges(changes, markAppliedAsSynced: true);
     if (cleanupSoftDeleted && changes.isNotEmpty) {
-      await store.sync.cleanupSoftDeletedRecords();
+      await sync.cleanupSoftDeletedRecords();
     }
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] core:applyAuthoritative done countedApplied=${changes.length}',
@@ -207,7 +207,7 @@ class UnifiedSyncCoreService {
   }
 
   Future<void> saveCursorAndRecordTransportState(
-    AppStore store, {
+    SyncSession store, {
     required String transport,
     required DateTime cursor,
     int sequence = 0,
@@ -223,7 +223,7 @@ class UnifiedSyncCoreService {
   }
 
   Future<void> recordTransportSyncState(
-    AppStore store, {
+    SyncSession store, {
     required String transport,
     DateTime? cursor,
     int? sequence,
@@ -282,12 +282,11 @@ class UnifiedSyncCoreService {
     );
   }
 
-  Future<void> compactAfterSuccessfulSync() async {
-    final identity = store.runtime.identity;
-    if (identity.isHost) {
-      await store.sync.compactSyncedHistoryForMaintenance();
-    } else if (identity.isClient) {
-      await store.sync.compactClientSyncedHistoryForMaintenance();
+  Future<void> compactAfterSuccessfulSync(DeviceRole role) async {
+    if (role == DeviceRole.host) {
+      await sync.compactSyncedHistoryForMaintenance();
+    } else if (role == DeviceRole.client) {
+      await sync.compactClientSyncedHistoryForMaintenance();
     }
   }
 

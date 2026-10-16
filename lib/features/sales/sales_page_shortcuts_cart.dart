@@ -144,7 +144,7 @@ extension _SalesPageShortcutsCart on _SalesPageState {
     }
     if (_pendingDeleteCartIndex == index) {
       setState(() {
-        _cart.removeAt(index);
+        _saleCart.removeAt(index);
         _pendingDeleteCartIndex = null;
         if (_cart.isEmpty) {
           _selectedCartIndex = null;
@@ -163,7 +163,7 @@ extension _SalesPageShortcutsCart on _SalesPageState {
   void _removeCartItem(int index) {
     if (index < 0 || index >= _cart.length) return;
     setState(() {
-      _cart.removeAt(index);
+      _saleCart.removeAt(index);
       _pendingDeleteCartIndex = null;
       if (_cart.isEmpty) {
         _selectedCartIndex = null;
@@ -313,7 +313,7 @@ extension _SalesPageShortcutsCart on _SalesPageState {
                 ]));
     if (confirmed == true && mounted) {
       setState(() {
-        _cart.clear();
+        _saleCart.clear();
         _selectedCartIndex = null;
         _pendingDeleteCartIndex = null;
       });
@@ -325,7 +325,7 @@ extension _SalesPageShortcutsCart on _SalesPageState {
     final id = widget.store.commerce.sanitizeSelectedCustomerId(value);
     setState(() {
       _selectedCustomerId = id;
-      if (id == AppStore.walkInCustomerId && _paymentMethod == 'Credit') {
+      if (id == CommerceDefaults.walkInCustomerId && _paymentMethod == 'Credit') {
         _paymentMethod = 'Cash';
         _paidAmountController.clear();
       }

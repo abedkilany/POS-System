@@ -2,7 +2,7 @@
 part of 'sales_page.dart';
 
 extension _SalesPageProductDialogs on _SalesPageState {
-  String _cartLineTotalText(_DraftSaleItem item) => _formatSaleCurrency(
+  String _cartLineTotalText(SaleCartItem item) => _formatSaleCurrency(
       _currencyFromBase(item.lineTotal, _invoiceCurrency), _invoiceCurrency);
 
   void _showQuickProductsSheet(List<Product> products) {

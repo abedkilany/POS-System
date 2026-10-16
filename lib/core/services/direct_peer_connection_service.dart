@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import 'authenticated_peer_session.dart';
 import 'direct_peer_handshake.dart';
 import 'direct_peer_signaling_service.dart';

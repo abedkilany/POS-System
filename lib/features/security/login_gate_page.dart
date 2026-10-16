@@ -13,7 +13,7 @@ import '../../core/services/startup_timing_service.dart';
 import '../../core/services/windows_release_catalog.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 import '../../models/app_identity.dart';
 import '../settings/sync_setup_page.dart';
 import '../account/store_account_dashboard_page.dart';
@@ -29,7 +29,7 @@ class LoginGatePage extends StatefulWidget {
     required this.onLocaleChanged,
   });
 
-  final AppStore store;
+  final ApplicationSession store;
   final Widget child;
   final ValueChanged<Locale> onLocaleChanged;
 

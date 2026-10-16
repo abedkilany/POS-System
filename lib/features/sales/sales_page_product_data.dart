@@ -80,23 +80,11 @@ extension _SalesPageProductData on _SalesPageState {
     if (_discountController.text != text) _discountController.text = text;
   }
 
-  double get _subtotal => _cart.fold(0, (sum, item) => sum + item.lineTotal);
-
-  double get _invoiceProfitPercent {
-    final revenueAfterDiscount =
-        (_subtotal - _discount).clamp(0, double.infinity).toDouble();
-    if (revenueAfterDiscount <= 0) return 0;
-    return (_invoiceProfitAmount / revenueAfterDiscount) * 100;
-  }
-
-  double get _invoiceProfitAmount {
-    final fallbackCost = _cart.fold<double>(
-        0, (sum, item) => sum + item.baseQuantity * item.product.usdCost);
-    final cost = _invoicePreviewBatchCostTotal ?? fallbackCost;
-    final revenueAfterDiscount =
-        (_subtotal - _discount).clamp(0, double.infinity).toDouble();
-    return revenueAfterDiscount - cost;
-  }
+  double get _subtotal => _saleCart.subtotal;
+  SaleCartTotals get _cartTotals => _saleCart.totals(
+      discount: _discount, batchCost: _invoicePreviewBatchCostTotal);
+  double get _invoiceProfitPercent => _cartTotals.profitPercent;
+  double get _invoiceProfitAmount => _cartTotals.profit;
 
   Future<void> _refreshInvoiceBatchCostPreview() async {
     var totalCost = 0.0;
@@ -104,10 +92,10 @@ extension _SalesPageProductData on _SalesPageState {
       var unitCost = item.product.usdCost;
       if (item.product.trackStock && item.baseQuantity > 0.000001) {
         try {
-          unitCost = await widget.store.inventory.estimatedUnifiedBatchUnitCostForProduct(
-              item.product,
-              warehouseId: _selectedWarehouseId,
-              requiredQuantity: item.baseQuantity);
+          unitCost = await widget.store.inventory
+              .estimatedUnifiedBatchUnitCostForProduct(item.product,
+                  warehouseId: _selectedWarehouseId,
+                  requiredQuantity: item.baseQuantity);
         } catch (_) {}
       }
       totalCost += item.baseQuantity * unitCost;
@@ -127,15 +115,13 @@ extension _SalesPageProductData on _SalesPageState {
         : '${tr.text('stock')}: $quantity';
   }
 
-  double get _total =>
-      (_subtotal - _discount).clamp(0, double.infinity).toDouble();
+  double get _total => _cartTotals.revenue;
 
-  double get _itemsCount =>
-      _cart.fold<double>(0, (sum, item) => sum + item.quantity);
+  double get _itemsCount => _saleCart.itemCount;
 
   bool get _isWalkInCustomer =>
       widget.store.commerce.sanitizeSelectedCustomerId(_selectedCustomerId) ==
-      AppStore.walkInCustomerId;
+      CommerceDefaults.walkInCustomerId;
 
   bool get _isCashPayment => _paymentMethod == 'Cash';
 
@@ -151,39 +137,27 @@ extension _SalesPageProductData on _SalesPageState {
         effectiveAt: DateTime.now());
   }
 
-  double get _rawInvoiceTotal => _currencyFromBase(_total, _invoiceCurrency);
-
-  double get _invoiceTotal {
-    final rawTotal = _rawInvoiceTotal;
-    if (!_isCashPayment) return rawTotal;
-    final amountInPaymentCurrency =
-        _convertCurrencyAmount(rawTotal, _invoiceCurrency, _paymentCurrency);
-    final roundedPaymentAmount = normalizeCashAmount(
-        amountInPaymentCurrency, _paymentCurrency, widget.store.runtime.profile);
-    return _convertCurrencyAmount(
-        roundedPaymentAmount, _paymentCurrency, _invoiceCurrency);
-  }
-
+  SalePaymentPreview get _paymentPreview => SalePaymentPreview(
+      profile: widget.store.runtime.profile,
+      baseTotal: _total,
+      invoiceCurrency: _invoiceCurrency,
+      paymentCurrency: _paymentCurrency,
+      paymentMethod: _paymentMethod,
+      receivedInPaymentCurrency: _cashReceivedInPaymentCurrency,
+      effectiveAt: DateTime.now());
+  double get _rawInvoiceTotal => _paymentPreview.rawInvoiceTotal;
+  double get _invoiceTotal => _paymentPreview.invoiceTotal;
   double get _cashRoundingDifferenceInInvoiceCurrency =>
-      (_invoiceTotal - _rawInvoiceTotal);
+      _paymentPreview.roundingDifference;
 
   double get _cashReceivedInPaymentCurrency =>
       (double.tryParse(_paidAmountController.text.trim()) ?? 0)
           .clamp(0, double.infinity)
           .toDouble();
 
-  double get _cashReceivedAmount => _convertCurrencyAmount(
-          _cashReceivedInPaymentCurrency, _paymentCurrency, _invoiceCurrency)
-      .clamp(0, _invoiceTotal)
-      .toDouble();
-
-  String get _derivedPaymentStatus {
-    if (_isCreditPayment) return _cashReceivedAmount > 0 ? 'partial' : 'credit';
-    return 'paid';
-  }
-
-  double get _derivedPaidAmount =>
-      _isCreditPayment ? _cashReceivedAmount : _invoiceTotal;
+  double get _cashReceivedAmount => _paymentPreview.cashReceived;
+  String get _derivedPaymentStatus => _paymentPreview.paymentStatus;
+  double get _derivedPaidAmount => _paymentPreview.paidAmount;
 
   double _currencyFromBase(double amount, String currency) => convertCurrency(
       amount,
@@ -246,7 +220,8 @@ extension _SalesPageProductData on _SalesPageState {
   }
 
   Map<String, _BarcodeProductMatch> _barcodeLookup() {
-    return _barcodeLookupCache.getOrCompute(widget.store.catalog.productsRevision, () {
+    return _barcodeLookupCache
+        .getOrCompute(widget.store.catalog.productsRevision, () {
       final lookup = <String, _BarcodeProductMatch>{};
       for (final product in widget.store.catalog.products) {
         if (!product.isActive || product.isDeleted) continue;
@@ -304,8 +279,8 @@ extension _SalesPageProductData on _SalesPageState {
 
   List<Product> _visibleProducts() {
     final q = _search.trim().toLowerCase();
-    return _visibleProductsCache.getOrCompute(widget.store.catalog.productsRevision, q,
-        () {
+    return _visibleProductsCache
+        .getOrCompute(widget.store.catalog.productsRevision, q, () {
       final activeProducts = _activeProductsCache.getOrCompute(
           widget.store.catalog.productsRevision,
           'active_products',

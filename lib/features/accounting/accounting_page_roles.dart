@@ -3,7 +3,7 @@ part of 'accounting_page.dart';
 class _AccountingRolesTab extends StatefulWidget {
   const _AccountingRolesTab({required this.store});
 
-  final AppStore store;
+  final ApplicationSession store;
 
   @override
   State<_AccountingRolesTab> createState() => _AccountingRolesTabState();

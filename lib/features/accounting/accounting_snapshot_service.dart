@@ -5,7 +5,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/cash_ledger_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/startup_timing_service.dart';
-import '../../data/app_store.dart';
+import 'package:ventio/core/contracts/application_session.dart';
 
 class AccountingSnapshotService {
   const AccountingSnapshotService();
@@ -16,13 +16,13 @@ class AccountingSnapshotService {
   static final Map<String, Map<String, Object?>> _summaryCache =
       <String, Map<String, Object?>>{};
 
-  String _cacheKey(AppStore store, DateTime reference) =>
+  String _cacheKey(ApplicationSession store, DateTime reference) =>
       '$_cacheKeyPrefix:${store.runtime.identity.storeId}:${store.accounting.revision}:${reference.year}-${reference.month}-${reference.day}';
 
-  String _sqliteCacheKey(AppStore store, DateTime reference) =>
+  String _sqliteCacheKey(ApplicationSession store, DateTime reference) =>
       '$_cacheKeyPrefix:${store.runtime.identity.storeId}:${store.accounting.revision}:${reference.year}-${reference.month}-${reference.day}';
 
-  Map<String, Object?>? peekMetrics(AppStore store, {DateTime? now}) {
+  Map<String, Object?>? peekMetrics(ApplicationSession store, {DateTime? now}) {
     final reference = (now ?? DateTime.now()).toLocal();
     final memoryCached = _summaryCache[_cacheKey(store, reference)];
     if (memoryCached != null) return memoryCached;
@@ -34,7 +34,7 @@ class AccountingSnapshotService {
   }
 
   Future<Map<String, Object?>> metricsFor(
-    AppStore store, {
+    ApplicationSession store, {
     DateTime? now,
   }) {
     final reference = (now ?? DateTime.now()).toLocal();
@@ -53,12 +53,12 @@ class AccountingSnapshotService {
     return future;
   }
 
-  Future<void> prewarm(AppStore store, {DateTime? now}) async {
+  Future<void> prewarm(ApplicationSession store, {DateTime? now}) async {
     await metricsFor(store, now: now);
   }
 
   Future<Map<String, Object?>> _computeAndCacheMetrics(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
   ) async {
     final memoryCached = _summaryCache[_cacheKey(store, reference)];
@@ -163,7 +163,7 @@ class AccountingSnapshotService {
     return result;
   }
 
-  Map<String, Object?>? _loadCachedMetrics(AppStore store, DateTime reference) {
+  Map<String, Object?>? _loadCachedMetrics(ApplicationSession store, DateTime reference) {
     final cached =
         LocalDatabaseService.getString(_sqliteCacheKey(store, reference));
     if (cached == null || cached.trim().isEmpty) return null;
@@ -181,7 +181,7 @@ class AccountingSnapshotService {
   }
 
   Future<void> _saveCachedMetrics(
-    AppStore store,
+    ApplicationSession store,
     DateTime reference,
     Map<String, Object?> metrics,
   ) async {
@@ -197,7 +197,7 @@ class AccountingSnapshotService {
 }
 
 Map<String, Object?> _computeSnapshotFromStore(
-  AppStore store,
+  ApplicationSession store,
   DateTime reference,
 ) {
   final transactions = store.accounting.transactions;
