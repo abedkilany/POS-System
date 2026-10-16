@@ -1,5 +1,10 @@
 import 'dart:io';
 
+/// Reads one implementation file when responsibility has moved out of its
+/// original `part` library into an independently testable service/model.
+String readDartFileSource(String path) =>
+    File(path).readAsStringSync().replaceAll('\r\n', '\n');
+
 /// Reads a Dart library and the source files that contain its implementation.
 ///
 /// When [path] names a library root, all declared parts are included. When it

@@ -453,10 +453,12 @@ void main() {
 
   test('phase 2 audit hardens legacy, service-item and edit guards', () {
     final source = readAppStoreImplementationSource();
+    final inventoryPosting =
+        readDartFileSource('lib/core/services/inventory_posting_service.dart');
     final purchasesUi =
         readDartLibrarySource('lib/features/purchases/purchases_page.dart');
-    expect(source, contains('_unifiedOpeningCostForProductInTransaction'));
-    expect(source, contains('SUM(sm.quantity * sm.unit_cost)'));
+    expect(inventoryPosting, contains('openingUnitCost('));
+    expect(inventoryPosting, contains('SUM(sm.quantity * sm.unit_cost)'));
     expect(
         source,
         contains(

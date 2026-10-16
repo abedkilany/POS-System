@@ -85,6 +85,8 @@ void main() {
       final securityDomain =
           _source('lib/data/app_store_domains_security.dart');
       final access = _source('lib/data/app_store_access_auth.dart');
+      final actionConstants =
+          readDartFileSource('lib/models/sensitive_action.dart');
 
       expect(
           securityDomain, contains('Future<bool> authorizeSensitiveAction({'));
@@ -92,16 +94,16 @@ void main() {
       expect(access, contains('Future<bool> _authorizeSensitiveAction({'));
       expect(access,
           contains('void requireSensitiveActionAuthorization(String action)'));
-      expect(access,
+      expect(actionConstants,
           contains("static const String backupRestore = 'backup.restore';"));
-      expect(access,
+      expect(actionConstants,
           contains("static const String saleReverse = 'sales.reverse';"));
       expect(
-          access,
+          actionConstants,
           contains(
               "static const String purchaseReverse = 'purchases.reverse';"));
       expect(
-          access,
+          actionConstants,
           contains(
               "static const String databaseDestructive = 'database.destructive';"));
       expect(
@@ -150,14 +152,16 @@ void main() {
 
     test('login throttling and stronger local password floor are present', () {
       final identity = _source('lib/data/app_store_identity_users.dart');
-      final appStore = readAppStoreImplementationSource();
+      final sessionState = readSessionStateSource();
 
       expect(identity, contains('void _registerLoginFailure('));
       expect(identity, contains('const Duration(minutes: 5)'));
       expect(identity, contains('const Duration(seconds: 30)'));
       expect(identity, contains('password.trim().length < 6'));
+      expect(sessionState,
+          contains('Map<String, DateTime> get _loginBlockedUntil'));
       expect(
-          appStore, contains("final Map<String, DateTime> _loginBlockedUntil"));
+          sessionState, contains('Map<String, DateTime> loginBlockedUntil ='));
     });
 
     test(
