@@ -3,32 +3,16 @@ part of 'app_store.dart';
 extension _AppStorePartyRead on AppStore {
   static const CommerceReadService _commerceReadService = CommerceReadService();
 
-  List<Customer> get _allCustomersForDiagnosticsReadImpl =>
-      List.unmodifiable(_customers);
-
-  List<Supplier> get _allSuppliersForDiagnosticsReadImpl =>
-      List.unmodifiable(_suppliers);
-
   List<Customer> get _customersReadImpl {
-    unawaited(ensureCustomersLoaded());
+    unawaited(_ensureCustomersLoaded());
     return _commerceReadService.activeCustomers(_customers);
   }
 
   List<Supplier> get _suppliersReadImpl {
-    unawaited(ensureSuppliersLoaded());
+    unawaited(_ensureSuppliersLoaded());
     _ensureSuppliersCacheReadImpl();
     return _cachedSuppliers!;
   }
-
-  List<SupplierProductPrice> get _supplierProductPricesReadImpl {
-    unawaited(ensureSupplierProductPricesLoaded());
-    _ensureSupplierProductPricesCacheReadImpl();
-    return _cachedSupplierProductPrices!;
-  }
-
-  List<SupplierProductPrice>
-      get _allSupplierProductPricesForDiagnosticsReadImpl =>
-          List.unmodifiable(_supplierProductPrices);
 
   String _resolveCustomerNameReadImpl(String? customerId) {
     if (customerId == null ||
@@ -67,19 +51,5 @@ extension _AppStorePartyRead on AppStore {
       _commerceReadService.activeSuppliers(_suppliers),
     );
     _cachedSuppliersGeneration = _suppliersRevision;
-  }
-
-  void _ensureSupplierProductPricesCacheReadImpl() {
-    if (_cachedSupplierProductPricesGeneration ==
-            _supplierProductPricesRevision &&
-        _cachedSupplierProductPrices != null) {
-      return;
-    }
-    _cachedSupplierProductPrices = UnmodifiableListView(
-      _supplierProductPrices
-          .where((item) => !item.isDeleted)
-          .toList(growable: false),
-    );
-    _cachedSupplierProductPricesGeneration = _supplierProductPricesRevision;
   }
 }

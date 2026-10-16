@@ -8,8 +8,8 @@ extension _AppStoreSplitSalesReturnsPart6 on AppStore {
   }) async {
     requirePermission(AppPermission.salesEdit);
     requirePermission(AppPermission.salesCancel);
-    requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
-    await ensureCreditNotesLoaded();
+    _requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
+    await _ensureCreditNotesLoaded();
     final db = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || db == null) {
       throw StateError(
@@ -679,7 +679,7 @@ extension _AppStoreSplitSalesReturnsPart6 on AppStore {
               profile: _storeProfile,
               customer: snapshotCustomer,
               user: _activeUser,
-              role: currentUserRole,
+              role: _currentUserRole,
               originalLineIndexes: selectedOriginalLineIndexes,
               taxProfileIdByProductId: taxProfileIdByProductId,
               legacyDefaultVatRatePercent: defaultVat,
@@ -950,7 +950,7 @@ extension _AppStoreSplitSalesReturnsPart6 on AppStore {
     await _refreshProductStockCompatibilityCache(
       selectedItems.map((item) => item.productId),
     );
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await _saveDirty(sync: true);
     AccountingService.notifyCommittedMutation();
     notifyListeners();

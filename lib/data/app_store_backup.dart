@@ -72,25 +72,25 @@ class BackupValidationResult {
   final String? errorMessage;
 }
 
-extension AppStoreBackupExtensions on AppStore {
+extension _AppStoreBackupExtensions on AppStore {
   BackupSummary get currentBackupSummary => BackupSummary(
         version: 11,
         generatedAt: DateTime.now(),
-        productsCount: products.length,
-        customersCount: customers.length,
-        salesCount: sales.length,
-        suppliersCount: suppliers.length,
-        expensesCount: expenses.length,
+        productsCount: _products.length,
+        customersCount: _customers.length,
+        salesCount: _sales.length,
+        suppliersCount: _suppliers.length,
+        expensesCount: _expenses.length,
         storeName: _storeProfile.name,
       );
 
-  Future<String> exportEncryptedBackupJson(String password) async {
+  Future<String> _exportEncryptedBackupJson(String password) async {
     requirePermission(AppPermission.backupExport);
     final cleaned = password.trim();
     if (cleaned.length < 8) {
       throw ArgumentError('Backup password must be at least 8 characters.');
     }
-    final plainJson = await exportBackupJson();
+    final plainJson = await _exportBackupJson();
     final salt = _generateSalt();
     final nonce = _generateNonce();
     final encryptedPayload = await compute(

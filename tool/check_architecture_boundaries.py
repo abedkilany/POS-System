@@ -36,6 +36,17 @@ CONTROL_WORDS = {
     "try",
     "while",
 }
+APP_STORE_CONTEXT_MEMBERS = {
+    "activeUser",
+    "appIdentity",
+    "currentRole",
+    "deviceId",
+    "hasPermission",
+    "inventoryCostingMethod",
+    "refreshAfterDatabaseChange",
+    "requirePermission",
+    "storeProfile",
+}
 
 
 def read_source(path: Path) -> str:
@@ -78,7 +89,7 @@ def app_library_parts() -> dict[Path, list[Path]]:
 
 
 def public_app_store_members() -> set[str]:
-    """Collect public methods/getters exposed by the forwarding facade."""
+    """Collect public forwarding methods and public extensions on AppStore."""
     members: set[str] = set()
     method_decl = re.compile(
         r"^ {2}[A-Za-z_$][\w$<>?,. ]*?\s+([A-Za-z_$][\w$]*)\s*\("
@@ -95,6 +106,28 @@ def public_app_store_members() -> set[str]:
                 name = match.group(1)
                 if not name.startswith("_") and name not in CONTROL_WORDS:
                     members.add(name)
+
+    extension_header = re.compile(
+        r"^extension\s+(?P<name>[A-Za-z_$][\w$]*)\s+on\s+AppStore\s*\{\s*$"
+    )
+    data_root = ROOT / "lib" / "data"
+    for path in sorted(data_root.glob("app_store*.dart")):
+        lines = read_source(path).splitlines()
+        for index, line in enumerate(lines):
+            header = extension_header.match(line)
+            if not header or header.group("name").startswith("_"):
+                continue
+            for body_line in lines[index + 1 :]:
+                if body_line == "}":
+                    break
+                for pattern in (method_decl, getter_decl):
+                    match = pattern.match(body_line)
+                    if not match:
+                        continue
+                    name = match.group(1)
+                    if not name.startswith("_") and name not in CONTROL_WORDS:
+                        members.add(name)
+                    break
     return members
 
 
@@ -158,7 +191,10 @@ def app_store_selectors(members: set[str]) -> dict[str, Counter[str]]:
 
 def domain_adapter_app_store_calls(members: set[str]) -> Counter[str]:
     """Find domain adapters that call back into the public AppStore surface."""
-    source = read_source(ROOT / "lib" / "data" / "app_store_domains.dart")
+    source = "\n".join(
+        read_source(path)
+        for path in sorted((ROOT / "lib" / "data").glob("app_store_domains*.dart"))
+    )
     if not members:
         return Counter()
     member_pattern = "|".join(re.escape(member) for member in sorted(members))
@@ -235,6 +271,14 @@ def count_total(values: dict[str, Any]) -> int:
 
 def validate_against_baseline(current: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+
+    unexpected_members = sorted(
+        set(current["appStorePublicMembers"]) - APP_STORE_CONTEXT_MEMBERS
+    )
+    for member in unexpected_members:
+        errors.append(
+            f"AppStore public member is outside BusinessSessionContext: {member}"
+        )
 
     new_members = sorted(
         set(current["appStorePublicMembers"])

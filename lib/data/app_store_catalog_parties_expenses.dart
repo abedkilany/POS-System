@@ -79,14 +79,14 @@ extension _AppStoreSplitCatalogPartiesExpenses on AppStore {
     final section = 'product.addOrUpdate';
     final index = _productIndexById[product.id];
     final exists = index != null;
-    requireAnyPermission(<String>{
+    _requireAnyPermission(<String>{
       AppPermission.productsManage,
       exists ? AppPermission.productsEdit : AppPermission.productsCreate,
     });
     // Product saves also flush product-derived data. Load costing history from
     // its authoritative source first so an unloaded cache can never be
     // mistaken for an empty history and seeded with a bogus Initial row.
-    await ensureCostingMethodHistoryLoaded();
+    await _ensureCostingMethodHistoryLoaded();
     final now = DateTime.now();
     final isCreate = index == null;
     final existingIndex = index ?? -1;
@@ -97,7 +97,7 @@ extension _AppStoreSplitCatalogPartiesExpenses on AppStore {
       throw ArgumentError('Opening stock cannot be negative.');
     }
     final authoritativeStock =
-        isCreate ? 0.0 : await totalWarehouseStockFromSqlite(product.id);
+        isCreate ? 0.0 : await _totalWarehouseStockFromSqlite(product.id);
     final sourceNeutralProduct = product.copyWith(stock: authoritativeStock);
     final normalizedProduct = sourceNeutralProduct.code.trim().isEmpty
         ? sourceNeutralProduct.copyWith(
@@ -218,89 +218,6 @@ extension _AppStoreSplitCatalogPartiesExpenses on AppStore {
         sourceModule: 'products',
         isImportant: true,
       ),
-    );
-    notifyListeners();
-  }
-
-  Future<void> addOrUpdateProductsBulk(List<Product> products) async {
-    if (products.isEmpty) return;
-    final hasCreates =
-        products.any((item) => _productIndexById[item.id] == null);
-    final hasUpdates =
-        products.any((item) => _productIndexById[item.id] != null);
-    if (hasCreates) {
-      requireAnyPermission(<String>{
-        AppPermission.productsManage,
-        AppPermission.productsCreate,
-      });
-    }
-    if (hasUpdates) {
-      requireAnyPermission(<String>{
-        AppPermission.productsManage,
-        AppPermission.productsEdit,
-      });
-    }
-    // See addOrUpdateProduct: bulk saves flush the same derived-data group.
-    await ensureCostingMethodHistoryLoaded();
-    final section = 'product.addOrUpdateBulk';
-    final now = DateTime.now();
-    final seenCodes = <String>{};
-    final seenBarcodes = <String>{};
-    var changedCount = 0;
-    for (final product in products) {
-      final index = _productIndexById[product.id];
-      final isCreate = index == null;
-      final normalizedProduct = product.code.trim().isEmpty
-          ? product.copyWith(
-              code: _generateUniqueProductCode(
-                exceptProductId: product.id,
-                reservedCodes: seenCodes,
-              ),
-            )
-          : product;
-      final normalizedCode = normalizedProduct.code.trim().toLowerCase();
-      final normalizedBarcode = normalizedProduct.barcode.trim().toLowerCase();
-      if (normalizedCode.isNotEmpty && !seenCodes.add(normalizedCode)) {
-        throw ArgumentError('Duplicate product code in batch.');
-      }
-      if (normalizedBarcode.isNotEmpty &&
-          !seenBarcodes.add(normalizedBarcode)) {
-        throw ArgumentError('Duplicate product barcode in batch.');
-      }
-      final previousProduct = isCreate ? null : _products[index];
-      _validateProduct(normalizedProduct, previousProduct: previousProduct);
-      final syncedProduct = _markProductForSync(
-        normalizedProduct,
-        now,
-        isCreate: isCreate,
-      );
-      if (isCreate) {
-        _products.add(syncedProduct);
-        _indexProductAt(_products.length - 1, syncedProduct);
-      } else {
-        _products[index] = syncedProduct;
-        _indexProductAt(
-          index,
-          syncedProduct,
-          previousProduct: previousProduct,
-        );
-      }
-      _ensureDefaultProductPriceEntries(product: syncedProduct);
-      _ensureProductCostEntries(product: syncedProduct);
-      _recordSyncChange(
-        entityType: 'product',
-        entityId: syncedProduct.id,
-        operation: isCreate ? 'create' : 'update',
-        payload: syncedProduct.toJson(),
-      );
-      changedCount += 1;
-    }
-    _ensureCostingMethodHistory();
-    await _traceAsync(
-      section,
-      'save_dirty',
-      () => _saveDirty(products: true, sync: true),
-      metadata: <String, Object?>{'count': changedCount},
     );
     notifyListeners();
   }
@@ -464,7 +381,7 @@ extension _AppStoreSplitCatalogPartiesExpenses on AppStore {
   }
 
   Future<void> deleteProduct(String id) async {
-    requireAnyPermission(<String>{
+    _requireAnyPermission(<String>{
       AppPermission.productsManage,
       AppPermission.productsDelete,
     });
@@ -601,7 +518,7 @@ extension _AppStoreSplitCatalogPartiesExpenses on AppStore {
     final incoming = (customer.id == AppStore.walkInCustomerId ||
             normalizedName.toLowerCase() ==
                 AppStore.walkInCustomerName.toLowerCase())
-        ? _withSyncMeta<Customer>(walkInCustomer, now, isCreate: false)
+        ? _withSyncMeta<Customer>(_walkInCustomer, now, isCreate: false)
         : _withSyncMeta<Customer>(
             customer.copyWith(name: normalizedName),
             now,

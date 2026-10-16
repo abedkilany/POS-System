@@ -7,7 +7,7 @@ extension _AppStoreSplitSalesReturnsPart5 on AppStore {
     Map<String, double>? returnedQuantities,
   }) async {
     requirePermission(AppPermission.salesCancel);
-    requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
+    _requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
     final index = _sales.indexWhere((sale) => sale.id == id);
     final sale = index == -1 ? await _saleByIdFromSqlite(id) : _sales[index];
     if (sale == null) {
@@ -16,7 +16,7 @@ extension _AppStoreSplitSalesReturnsPart5 on AppStore {
     if (sale.isCancelled) {
       throw StateError('Sale is already cancelled or fully returned.');
     }
-    await ensureCreditNotesLoaded();
+    await _ensureCreditNotesLoaded();
 
     const epsilon = 0.000001;
     final previouslyReturned = await _returnedSaleQuantitiesByProduct(sale.id);
@@ -281,7 +281,7 @@ extension _AppStoreSplitSalesReturnsPart5 on AppStore {
         profile: _storeProfile,
         customer: snapshotCustomer,
         user: _activeUser,
-        role: currentUserRole,
+        role: _currentUserRole,
         originalLineIndexes: selectedOriginalLineIndexes,
         taxProfileIdByProductId: returnTaxProfileIdByProductId,
         legacyDefaultVatRatePercent: returnLegacyDefaultVatRatePercent,
@@ -849,7 +849,7 @@ extension _AppStoreSplitSalesReturnsPart5 on AppStore {
       _creditNotes.add(creditNote);
       // Sale-return ledger was committed inside the authoritative SQLite transaction.
     } else {
-      creditNote = await issueCreditNote(
+      creditNote = await _issueCreditNote(
         originalSale: sale,
         items: selectedItems,
         amount: creditAmount,
@@ -886,7 +886,7 @@ extension _AppStoreSplitSalesReturnsPart5 on AppStore {
     );
     if (authoritativeSqlite) {
       await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
-      await refreshAccountTransactionsFromSqlite();
+      await _refreshAccountTransactionsFromSqlite();
     }
     if (historicalProductsToReactivate.isNotEmpty) {
       if (authoritativeSqlite) {

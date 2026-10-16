@@ -2,26 +2,34 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def read_many(pattern: str) -> str:
+    return '\n'.join(
+        path.read_text(encoding='utf-8-sig')
+        for path in sorted(ROOT.glob(pattern))
+    )
+
+
 SERVICE = (ROOT / 'lib/core/services/inventory_traceability_service.dart').read_text(encoding='utf-8')
 APP_STORE = '\n'.join(
-    (ROOT / path).read_text(encoding='utf-8')
-    for path in (
-        'lib/data/app_store.dart',
-        'lib/data/app_store_forwarding_api.dart',
-        'lib/data/app_store_orchestration.dart',
-        'lib/data/app_store_domains.dart',
-    )
+    [
+        (ROOT / 'lib/data/app_store.dart').read_text(encoding='utf-8-sig'),
+        read_many('lib/data/app_store_forwarding_api*.dart'),
+        read_many('lib/data/app_store_orchestration*.dart'),
+        read_many('lib/data/app_store_domains*.dart'),
+    ]
 )
-TRANSFERS = (ROOT / 'lib/data/app_store_warehouse_cash.dart').read_text(encoding='utf-8')
-MANUFACTURING = (ROOT / 'lib/data/app_store_manufacturing.dart').read_text(encoding='utf-8')
-BATCH_SERVICE = (ROOT / 'lib/core/services/batch_inventory_service.dart').read_text(encoding='utf-8')
+TRANSFERS = read_many('lib/data/app_store_warehouse_cash*.dart')
+MANUFACTURING = read_many('lib/data/app_store_manufacturing*.dart')
+BATCH_SERVICE = read_many('lib/core/services/batch_inventory_service*.dart')
 PRODUCTS = (ROOT / 'lib/data/app_store_catalog_parties_expenses.dart').read_text(encoding='utf-8')
-DATABASE = (ROOT / 'lib/core/storage/sqlite/ventio_drift_database.dart').read_text(encoding='utf-8')
+DATABASE = read_many('lib/core/storage/sqlite/ventio_drift_database*.dart')
 TEST = (ROOT / 'test/production_phase9_multi_warehouse_manufacturing_traceability_test.dart').read_text(encoding='utf-8')
-BACKUP = (ROOT / 'lib/data/app_store_backup_recovery.dart').read_text(encoding='utf-8')
-RECOVERY = (ROOT / 'lib/data/app_store_recovery.dart').read_text(encoding='utf-8')
+BACKUP = read_many('lib/data/app_store_backup_recovery*.dart')
+RECOVERY = read_many('lib/data/app_store_recovery*.dart')
 SNAPSHOT = (ROOT / 'lib/core/snapshot/unified_snapshot.dart').read_text(encoding='utf-8')
-SYNC = (ROOT / 'lib/core/services/sqlite_sync_state_service.dart').read_text(encoding='utf-8')
+SYNC = read_many('lib/core/services/sqlite_sync_state_service*.dart')
 
 checks: list[tuple[str, bool]] = []
 
@@ -53,15 +61,15 @@ check('expiry contract audit exists', 'expiry_contract_violation' in SERVICE)
 check('expiry policy toggle is guarded while stock exists', 'disablesExpiryTracking' in PRODUCTS and 'authoritativeStock > 0.000001' in PRODUCTS)
 check('post-cutover missing batch audit exists', 'warehouse_transfer_missing_batch_identity' in SERVICE and 'unified_batch_cutovers' in SERVICE)
 check('manufacturing integrity audit exists', 'manufacturing_traceability_mismatch' in SERVICE)
-check('public trace entry point exists', 'traceInventoryBatch' in APP_STORE)
-check('public integrity entry point exists', 'verifyInventoryTraceabilityIntegrity' in APP_STORE)
+check('typed trace entry point exists', 'Future<Map<String, dynamic>> traceBatch' in APP_STORE and '_traceInventoryBatchDomainImpl' in APP_STORE)
+check('typed integrity entry point exists', 'verifyTraceabilityIntegrity' in APP_STORE and '_verifyInventoryTraceabilityIntegrityDomainImpl' in APP_STORE)
 check('single transfer enforces traceability before commit', TRANSFERS.count('assertTransferTraceabilityInTransaction') >= 2)
 check('manufacturing enforces traceability before commit', 'assertManufacturingTraceabilityInTransaction' in MANUFACTURING)
 check('schema supports phase9+ traceability', any(f'schemaVersion => {version}' in DATABASE for version in range(31, 100)))
 check('trace indexes exist', 'idx_stock_movements_reference_type_batch' in DATABASE and 'idx_inventory_batches_source_trace' in DATABASE)
 check('deferred executable scenario covers FEFO raw batch', "'p9-raw-early'" in TEST and 'productionRawBatches.single' in TEST)
-check('deferred executable scenario traces finished to raw', "traceInventoryBatch('p9-finished-batch')" in TEST and "edge['fromBatchId'] == 'p9-raw-early'" in TEST)
-check('deferred executable scenario requires healthy audit', 'verifyInventoryTraceabilityIntegrity()' in TEST and "integrity['healthy']" in TEST)
+check('deferred executable scenario traces finished to raw', "inventory.traceBatch('p9-finished-batch')" in TEST and "edge['fromBatchId'] == 'p9-raw-early'" in TEST)
+check('deferred executable scenario requires healthy audit', 'inventory.verifyTraceabilityIntegrity()' in TEST and "integrity['healthy']" in TEST)
 check('backup carries stock movement trace history', "'stockMovements'" in BACKUP and "'stockMovements'" in SNAPSHOT)
 check('backup carries batch identity and warehouse balances', "'inventoryBatches'" in BACKUP and "'inventoryBatchBalances'" in BACKUP and "'inventoryBatches'" in SNAPSHOT and "'inventoryBatchBalances'" in SNAPSHOT)
 check('backup carries manufacturing lineage source', "'manufacturingOrders'" in BACKUP and "'manufacturingOrders'" in SNAPSHOT)

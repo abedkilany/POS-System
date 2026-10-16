@@ -7,7 +7,7 @@ extension _AppStoreSplitSalesReturnsPart8 on AppStore {
     bool restoreStock = true,
   }) async {
     requirePermission(AppPermission.salesCancel);
-    requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
+    _requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
     final index = _sales.indexWhere((sale) => sale.id == id);
     final sale = index == -1 ? await _saleByIdFromSqlite(id) : _sales[index];
     if (sale == null) {
@@ -455,16 +455,12 @@ extension _AppStoreSplitSalesReturnsPart8 on AppStore {
     notifyListeners();
   }
 
-  Future<void> deleteSale(String id, {bool restoreStock = true}) async {
-    // Compatibility wrapper for older call sites. Business flow cancels invoices instead of deleting them.
-    await cancelSale(id, status: 'Cancelled', restoreStock: restoreStock);
-  }
 
   double estimateProfit() {
-    final grossProfit = sales.fold<double>(
+    final grossProfit = _sales.fold<double>(
       0,
       (sum, sale) => sum + sale.grossProfit,
     );
-    return grossProfit - totalExpensesAmount;
+    return grossProfit - _totalExpensesAmount;
   }
 }

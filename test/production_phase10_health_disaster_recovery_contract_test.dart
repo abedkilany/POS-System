@@ -37,8 +37,8 @@ void main() {
     expect(recovery, contains('decodeBytes(bytes, verify: true)'));
     expect(recovery, contains("entry.name == 'manifest.json'"));
     expect(recovery, contains("entry.name == 'backup.json'"));
-    expect(recovery, contains('store.decryptBackupJson'));
-    expect(recovery, contains('store.validateBackupJson(plain)'));
+    expect(recovery, contains('store.recovery.decryptBackupJson'));
+    expect(recovery, contains('store.recovery.validateBackupJson(plain)'));
     expect(recovery, contains("entityType: 'disaster_recovery'"));
     expect(backup, contains('Recovery checkpoints'));
     expect(backup, contains('ventio_recovery_checkpoint'));

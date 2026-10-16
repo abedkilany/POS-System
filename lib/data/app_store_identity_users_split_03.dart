@@ -6,8 +6,8 @@ extension _AppStoreSplitIdentityUsersPart3 on AppStore {
     required String password,
     String? fullName,
   }) async {
-    requireSensitiveActionAuthorization(SensitiveAction.storeOwnerCredentials);
-    final owner = storeOwnerUser;
+    _requireSensitiveActionAuthorization(SensitiveAction.storeOwnerCredentials);
+    final owner = _storeOwnerUser;
     if (owner == null) return;
     final cleanPassword = password.trim();
     if (cleanPassword.length < 6) {
@@ -61,11 +61,11 @@ extension _AppStoreSplitIdentityUsersPart3 on AppStore {
 
   Future<void> addOrUpdateUser(AppUser user, {String? password}) async {
     requirePermission(AppPermission.usersManage);
-    requireSensitiveActionAuthorization(SensitiveAction.usersManage);
+    _requireSensitiveActionAuthorization(SensitiveAction.usersManage);
     if (user.fullName.trim().isEmpty || user.username.trim().isEmpty) {
       throw ArgumentError('Name and username are required.');
     }
-    if (roleById(user.roleId) == null) throw ArgumentError('Role not found.');
+    if (_roleById(user.roleId) == null) throw ArgumentError('Role not found.');
     final normalizedUsername = user.username.trim().toLowerCase();
     final duplicate = _users.any(
       (item) =>
@@ -192,7 +192,7 @@ extension _AppStoreSplitIdentityUsersPart3 on AppStore {
 
   Future<void> deleteUser(String id) async {
     requirePermission(AppPermission.usersManage);
-    requireSensitiveActionAuthorization(SensitiveAction.usersManage);
+    _requireSensitiveActionAuthorization(SensitiveAction.usersManage);
     final user = _users.firstWhere((item) => item.id == id);
     final adminCount =
         _users.where((item) => item.roleId == 'admin' && item.isActive).length;
@@ -300,7 +300,7 @@ extension _AppStoreSplitIdentityUsersPart3 on AppStore {
 
       if (isWalkIn) {
         if (!hasWalkIn) {
-          normalized.add(walkInCustomer);
+          normalized.add(_walkInCustomer);
           hasWalkIn = true;
           seenIds.add(AppStore.walkInCustomerId);
         }
@@ -316,11 +316,11 @@ extension _AppStoreSplitIdentityUsersPart3 on AppStore {
     }
 
     if (!hasWalkIn) {
-      normalized.insert(0, walkInCustomer);
+      normalized.insert(0, _walkInCustomer);
     } else {
       normalized
         ..removeWhere((c) => c.id == AppStore.walkInCustomerId)
-        ..insert(0, walkInCustomer);
+        ..insert(0, _walkInCustomer);
     }
 
     _customers
@@ -493,30 +493,6 @@ extension _AppStoreSplitIdentityUsersPart3 on AppStore {
     }
   }
 
-  Future<void> waitForPendingAccounting({
-    Duration timeout = const Duration(seconds: 45),
-  }) async {
-    if (!AccountingService.isAvailable) return;
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      final pending = <Future<void>>[
-        ..._pendingPurchaseAccountingTasks.values,
-      ];
-      if (pending.isEmpty) return;
-      final remaining = deadline.difference(DateTime.now());
-      if (remaining <= Duration.zero) break;
-      try {
-        await Future.wait<void>(
-          pending.map(
-            (future) => future.catchError((_) {}),
-          ),
-        ).timeout(remaining);
-      } on TimeoutException {
-        break;
-      }
-      await Future<void>.delayed(Duration.zero);
-    }
-  }
 
   void _rebuildProductIndexes() {
     _productIndexById.clear();

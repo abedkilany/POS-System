@@ -22,7 +22,7 @@ void _registerAppStoreWorkflowGroup1() {
       expect(store.catalog.categories, isNotEmpty);
       expect(store.catalog.brands, isNotEmpty);
       expect(store.catalog.units, isNotEmpty);
-      expect(store.currentBackupSummary.storeName, isNotEmpty);
+      expect(store.recovery.currentBackupSummary.storeName, isNotEmpty);
       expect(store.security.activeUser, store.security.activeUser);
       expect(store.security.currentRole, store.security.currentRole);
       expect(
@@ -46,25 +46,25 @@ void _registerAppStoreWorkflowGroup1() {
         're-hydrates products, customers, sales counters, roles, and profile from local db',
         () async {
       final seeded = await readySqliteStore(storeId: 'ST-REHYDRATE01');
-      await seeded.addOrUpdateProduct(product());
-      await seeded.addOrUpdateCustomer(
+      await seeded.catalog.addOrUpdateProduct(product());
+      await seeded.commerce.addOrUpdateCustomer(
           Customer(id: 'c1', name: 'Alice', phone: '1', address: 'A'));
-      await seeded.updateStoreProfile(
+      await seeded.runtime.updateStoreProfile(
           StoreProfile.defaults.copyWith(name: 'Seeded Store'));
       final seedStockService = StockTransactionService(
         SqliteMigrationManager.database!,
-        defaultStoreId: seeded.appIdentity.storeId,
-        defaultBranchId: seeded.appIdentity.branchId,
+        defaultStoreId: seeded.runtime.identity.storeId,
+        defaultBranchId: seeded.runtime.identity.branchId,
       );
       await seedStockService.applyDelta(
-        storeId: seeded.appIdentity.storeId,
+        storeId: seeded.runtime.identity.storeId,
         warehouseId: Warehouse.defaultId,
         productId: 'p1',
         delta: 2,
-        branchId: seeded.appIdentity.branchId,
+        branchId: seeded.runtime.identity.branchId,
       );
-      expect(await seeded.login('owner', 'OwnerPass123'), isTrue);
-      await seeded.createSale(
+      expect(await seeded.security.login('owner', 'OwnerPass123'), isTrue);
+      await seeded.commerce.createSale(
           customerName: 'Alice',
           customerId: 'c1',
           items: const [
@@ -75,13 +75,13 @@ void _registerAppStoreWorkflowGroup1() {
                 quantity: 2)
           ],
           paymentMethod: 'Credit');
-      final raw = await seeded.exportBackupJson();
+      final raw = await seeded.recovery.exportBackupJson();
 
       final restored = await readySqliteStore(storeId: 'ST-REHYDRATE01');
-      await restored.importBackupJson(raw);
-      await restored.reloadAllAfterDatabaseChange();
+      await restored.recovery.importBackupJson(raw);
+      await restored.runtime.reloadAllAfterDatabaseChange();
 
-      expect(restored.storeProfile.name, 'Seeded Store');
+      expect(restored.runtime.profile.name, 'Seeded Store');
     });
 
     test('imports legacy sales without warehouse fields as main warehouse',
@@ -156,17 +156,17 @@ void _registerAppStoreWorkflowGroup1() {
     test('online recovery keeps server identity when importing a backup',
         () async {
       final seeded = await readyStore();
-      await seeded.updateStoreProfile(
+      await seeded.runtime.updateStoreProfile(
           StoreProfile.defaults.copyWith(name: 'Backup Store'));
-      await seeded.addOrUpdateProduct(product());
-      expect(await seeded.login('admin', 'AdminPass123'), isTrue);
-      final raw = await seeded.exportBackupJson();
+      await seeded.catalog.addOrUpdateProduct(product());
+      expect(await seeded.security.login('admin', 'AdminPass123'), isTrue);
+      final raw = await seeded.recovery.exportBackupJson();
 
       SharedPreferences.setMockInitialValues(const <String, Object>{});
       LocalDatabaseService.useInMemoryStoreForTesting();
       final recovered = AppStore();
-      await recovered.initialize();
-      await recovered.recoverOnlineStoreOwnerIdentity(
+      await recovered.runtime.initialize();
+      await recovered.security.recoverOnlineStoreOwnerIdentity(
         storeId: 'ST-DIRECT1',
         branchId: 'BR-DIRECT1',
         storeName: 'Server Store',
@@ -174,21 +174,21 @@ void _registerAppStoreWorkflowGroup1() {
         password: 'OwnerPass123',
       );
 
-      expect(recovered.appIdentity.storeId, 'ST-DIRECT1');
-      expect(recovered.appIdentity.branchId, 'BR-DIRECT1');
-      expect(recovered.appIdentity.deviceRole, DeviceRole.host);
-      expect(recovered.appIdentity.syncMode, SyncMode.localOnly);
-      expect(recovered.appIdentity.activeSyncTransport, isEmpty);
-      expect(recovered.activeUser?.username, 'owner');
-      expect(await recovered.login('owner', 'OwnerPass123'), isTrue);
+      expect(recovered.runtime.identity.storeId, 'ST-DIRECT1');
+      expect(recovered.runtime.identity.branchId, 'BR-DIRECT1');
+      expect(recovered.runtime.identity.deviceRole, DeviceRole.host);
+      expect(recovered.runtime.identity.syncMode, SyncMode.localOnly);
+      expect(recovered.runtime.identity.activeSyncTransport, isEmpty);
+      expect(recovered.security.activeUser?.username, 'owner');
+      expect(await recovered.security.login('owner', 'OwnerPass123'), isTrue);
 
-      await recovered.importBackupJson(raw);
+      await recovered.recovery.importBackupJson(raw);
 
-      expect(recovered.products.single.code, 'P001');
-      expect(recovered.storeProfile.name, 'Backup Store');
-      expect(recovered.appIdentity.storeId, 'ST-DIRECT1');
-      expect(recovered.appIdentity.branchId, 'BR-DIRECT1');
-      expect(recovered.appIdentity.deviceRole, DeviceRole.host);
+      expect(recovered.catalog.products.single.code, 'P001');
+      expect(recovered.runtime.profile.name, 'Backup Store');
+      expect(recovered.runtime.identity.storeId, 'ST-DIRECT1');
+      expect(recovered.runtime.identity.branchId, 'BR-DIRECT1');
+      expect(recovered.runtime.identity.deviceRole, DeviceRole.host);
     });
 
     test('registration provisions owner without activating a session',
@@ -230,8 +230,8 @@ void _registerAppStoreWorkflowGroup2() {
       expect(notificationCount, greaterThan(0));
 
       final saved = store.catalog.products.single;
-      await store
-          .catalog.addOrUpdateProduct(saved.copyWith(price: 15, lowStockThreshold: 5));
+      await store.catalog
+          .addOrUpdateProduct(saved.copyWith(price: 15, lowStockThreshold: 5));
       await store.inventory.adjustStock(
         productId: saved.id,
         warehouseId: Warehouse.defaultId,
@@ -244,20 +244,22 @@ void _registerAppStoreWorkflowGroup2() {
       expect(store.inventory.inventoryCostValue, 28);
 
       expect(
-          store.catalog.addOrUpdateProduct(saved.copyWith(id: 'bad', code: saved.code)),
+          store.catalog
+              .addOrUpdateProduct(saved.copyWith(id: 'bad', code: saved.code)),
           throwsArgumentError);
       expect(
           store.catalog.addOrUpdateProduct(
               saved.copyWith(id: 'neg', code: 'NEG', price: -1)),
           throwsArgumentError);
 
-      await expectLater(store.catalog.deleteProduct(saved.id), throwsStateError);
+      await expectLater(
+          store.catalog.deleteProduct(saved.id), throwsStateError);
       await store.catalog.addOrUpdateProduct(
         product(id: 'delete-me', code: 'DELETE-ME', stock: 0),
       );
       await store.catalog.deleteProduct('delete-me');
-      expect(
-          store.catalog.products.map((item) => item.id), isNot(contains('delete-me')));
+      expect(store.catalog.products.map((item) => item.id),
+          isNot(contains('delete-me')));
       expect(
           store.sync.changes.where(
               (c) => c.entityType == 'product' && c.operation == 'delete'),
@@ -303,15 +305,19 @@ void _registerAppStoreWorkflowGroup2() {
     test('reuses cached stock-tracked products and refreshes after edits',
         () async {
       final store = await readyStore();
-      await store.catalog.addOrUpdateProduct(product(id: 'p-track', code: 'P-TRACK'));
+      await store.catalog
+          .addOrUpdateProduct(product(id: 'p-track', code: 'P-TRACK'));
       await store.catalog.addOrUpdateProduct(
         product(id: 'p-skip', code: 'P-SKIP').copyWith(trackStock: false),
       );
 
-      expect(store.catalog.stockTrackedProducts.map((p) => p.id), contains('p-track'));
+      expect(store.catalog.stockTrackedProducts.map((p) => p.id),
+          contains('p-track'));
       expect(store.catalog.stockTrackedProducts.map((p) => p.id),
           isNot(contains('p-skip')));
-      expect(identical(store.catalog.stockTrackedProducts, store.catalog.stockTrackedProducts),
+      expect(
+          identical(store.catalog.stockTrackedProducts,
+              store.catalog.stockTrackedProducts),
           isTrue);
 
       await store.catalog.addOrUpdateProduct(
@@ -324,8 +330,8 @@ void _registerAppStoreWorkflowGroup2() {
     test('sale saves through typed SQLite without legacy derived payloads',
         () async {
       final store = await readySqliteStore(storeId: 'ST-FAST001');
-      await store
-          .catalog.addOrUpdateProduct(product(id: 'p-fast', code: 'P-FAST', stock: 0));
+      await store.catalog
+          .addOrUpdateProduct(product(id: 'p-fast', code: 'P-FAST', stock: 0));
       await store.inventory.adjustStock(
           productId: 'p-fast',
           warehouseId: Warehouse.defaultId,
@@ -370,8 +376,10 @@ void _registerAppStoreWorkflowGroup2() {
       await store.commerce.deleteCustomer('c1');
       expect(store.commerce.customers.map((c) => c.id), isNot(contains('c1')));
       expect(store.commerce.customers, store.commerce.customers);
-      expect(store.commerce.resolveCustomerName('c1'), AppStore.walkInCustomerName);
-      expect(store.commerce.sanitizeSelectedCustomerId('c1'), AppStore.walkInCustomerId);
+      expect(store.commerce.resolveCustomerName('c1'),
+          AppStore.walkInCustomerName);
+      expect(store.commerce.sanitizeSelectedCustomerId('c1'),
+          AppStore.walkInCustomerId);
       await store.commerce.addOrUpdateCustomer(
           Customer(id: 'c3', name: ' alice ', phone: '', address: ''));
       expect(store.commerce.customers.map((c) => c.id), contains('c3'));
@@ -411,7 +419,8 @@ void _registerAppStoreWorkflowGroup2() {
       await store.catalog.addOrUpdateCategory(
         CatalogItem(id: 'cat_restore', nameEn: 'Reusable Category', nameAr: ''),
       );
-      expect(store.catalog.categories.map((e) => e.id), contains('cat_restore'));
+      expect(
+          store.catalog.categories.map((e) => e.id), contains('cat_restore'));
 
       await store.commerce.addOrUpdateExpense(Expense(
           id: 'e1',

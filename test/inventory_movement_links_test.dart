@@ -47,9 +47,9 @@ Future<AppStore> _readyStore() async {
   );
   await LocalDatabaseService.initialize();
   final store = AppStore();
-  await store.initialize();
-  await store.factoryResetLocalDevice(enforcePermission: false);
-  await store.recoverOnlineStoreOwnerIdentity(
+  await store.runtime.initialize();
+  await store.recovery.factoryResetLocalDevice(enforcePermission: false);
+  await store.security.recoverOnlineStoreOwnerIdentity(
     storeId: 'ST-INV-TEST',
     branchId: 'BR-INV-TEST',
     storeName: 'Inventory Test Store',
@@ -65,7 +65,7 @@ void main() {
   test('inventory movement references link purchases and sales', () async {
     final store = await _readyStore();
 
-    await store.addOrUpdateProduct(
+    await store.catalog.addOrUpdateProduct(
       Product(
         id: 'inventory_product_1',
         code: 'INV-1',
@@ -77,7 +77,7 @@ void main() {
         trackStock: true,
       ),
     );
-    await store.addOrUpdateCustomer(
+    await store.commerce.addOrUpdateCustomer(
       Customer(
         id: 'inventory_customer_1',
         name: 'Inventory Test Customer',
@@ -85,7 +85,7 @@ void main() {
         address: 'Main St',
       ),
     );
-    await store.addOrUpdateSupplier(
+    await store.commerce.addOrUpdateSupplier(
       Supplier(
         id: 'inventory_supplier_1',
         name: 'Inventory Test Supplier',
@@ -95,7 +95,7 @@ void main() {
       ),
     );
 
-    final purchase = await store.createPurchase(
+    final purchase = await store.commerce.createPurchase(
       supplierId: 'inventory_supplier_1',
       supplierName: 'Inventory Test Supplier',
       receiveNow: true,
@@ -112,7 +112,7 @@ void main() {
       ],
     );
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: 'inventory_customer_1',
       customerName: 'Inventory Test Customer',
       paymentMethod: 'Card',
@@ -130,19 +130,19 @@ void main() {
       ],
     );
 
-    final purchaseMovement = store.stockMovements.firstWhere(
+    final purchaseMovement = store.inventory.stockMovements.firstWhere(
       (m) => m.referenceId == purchase.id && m.type == 'purchase_receive',
     );
-    final saleMovement = store.stockMovements.firstWhere(
+    final saleMovement = store.inventory.stockMovements.firstWhere(
       (m) => m.referenceId == sale.id && m.type == 'sale',
     );
 
     expect(purchaseMovement.referenceNo, purchase.purchaseNo);
     expect(saleMovement.referenceNo, sale.invoiceNo);
-    expect(
-        store.stockForWarehouse('inventory_product_1', 'main'), greaterThan(0));
+    expect(store.inventory.stockForWarehouse('inventory_product_1', 'main'),
+        greaterThan(0));
 
-    final missingRefs = store.stockMovements.where((movement) {
+    final missingRefs = store.inventory.stockMovements.where((movement) {
       final type = movement.type.toLowerCase();
       if (movement.referenceId.isEmpty) return false;
       if (type.contains('sale')) return movement.referenceId != sale.id;

@@ -237,7 +237,7 @@ extension _AppStoreSplitWarehouseCashPart3 on AppStore {
       notifyListeners();
       return;
     }
-    final available = stockForWarehouse(productId, fromWarehouseId);
+    final available = _stockForWarehouse(productId, fromWarehouseId);
     if (!_storeProfile.allowNegativeStock && available < quantity) {
       throw StateError('Not enough stock in ${fromWarehouse.name}.');
     }
@@ -554,7 +554,7 @@ extension _AppStoreSplitWarehouseCashPart3 on AppStore {
 
     // PaymentVoucherService persists the customer refund compatibility row
     // inside the same SQLite transaction as journal + Cash Ledger + drawer.
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await refreshAfterDatabaseChange(AppStore._salesKey);
     return refunded;
   }
@@ -624,7 +624,7 @@ extension _AppStoreSplitWarehouseCashPart3 on AppStore {
     // PaymentVoucherService inside the same SQLite transaction as the refund.
     // Refresh the in-memory compatibility view only; do not persist a second
     // copy from AppStore.
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await refreshAfterDatabaseChange(AppStore._purchasesKey);
     return refunded;
   }
@@ -697,7 +697,7 @@ extension _AppStoreSplitWarehouseCashPart3 on AppStore {
       date: date,
     );
     if (refunded <= 0.000001) return 0;
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await refreshAfterDatabaseChange(AppStore._purchasesKey);
     return refunded;
   }

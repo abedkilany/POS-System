@@ -11,7 +11,7 @@ class SettingsBackupActions {
       if (password == null) return;
       final filename =
           'ventio_backup_${DateTime.now().millisecondsSinceEpoch}.json';
-      final content = await store.exportEncryptedBackupJson(password);
+      final content = await store.recovery.exportEncryptedBackupJson(password);
       await downloadTextFile(
         filename: filename,
         content: content,
@@ -56,7 +56,7 @@ class SettingsBackupActions {
       final isLocalBackupArchive =
           (file?.extension?.toLowerCase() == 'vtb') || _looksLikeZip(bytes);
       var rawJson = isLocalBackupArchive
-          ? store.extractBackupJsonFromLocalBackupArchiveBytes(bytes)
+          ? store.recovery.extractBackupJsonFromLocalBackupArchiveBytes(bytes)
           : utf8.decode(bytes, allowMalformed: true).trim();
       if (rawJson.startsWith('RESET_PROTECTION_TOKEN:')) {
         final jsonStart = rawJson.indexOf('{');
@@ -65,7 +65,7 @@ class SettingsBackupActions {
         }
       }
 
-      if (store.isEncryptedBackupJson(rawJson)) {
+      if (store.recovery.isEncryptedBackupJson(rawJson)) {
         // Automatic .vtb backups are encrypted with the Store Recovery Key.
         // On the originating store, restore transparently with the current key;
         // after a disaster/fresh install, fall back to asking for the original
@@ -75,7 +75,7 @@ class SettingsBackupActions {
           final recoveryKey = store.runtime.identity.recoveryKey.trim();
           if (recoveryKey.length >= 8) {
             try {
-              rawJson = store.decryptBackupJson(rawJson, recoveryKey);
+              rawJson = store.recovery.decryptBackupJson(rawJson, recoveryKey);
               decrypted = true;
             } catch (_) {
               // The archive may originate from another/freshly restored device.
@@ -86,11 +86,11 @@ class SettingsBackupActions {
           if (!context.mounted) return;
           final password = await _requestBackupPassword(context);
           if (password == null) return;
-          rawJson = store.decryptBackupJson(rawJson, password);
+          rawJson = store.recovery.decryptBackupJson(rawJson, password);
         }
       }
 
-      final plan = store.inspectBackupJson(rawJson);
+      final plan = store.recovery.inspectBackupJson(rawJson);
       if (!context.mounted) return;
       final selectedSections = await confirmBackupImport(context, plan);
       if (selectedSections == null || selectedSections.isEmpty) return;
@@ -696,7 +696,7 @@ class SettingsBackupActions {
       final backupPassword = await _requestBackupPassword(context);
       if (backupPassword == null) return;
       final backup =
-          'RESET_PROTECTION_TOKEN:$token\n${await store.exportEncryptedBackupJson(backupPassword)}';
+          'RESET_PROTECTION_TOKEN:$token\n${await store.recovery.exportEncryptedBackupJson(backupPassword)}';
       await downloadTextFile(
           filename:
               'reset_protection_backup_${DateTime.now().millisecondsSinceEpoch}.json',

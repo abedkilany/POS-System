@@ -244,7 +244,7 @@ extension _AppStoreSplitManufacturingPart5 on AppStore {
         final costRows = await BusinessSqliteStore.readProductCosts(db);
         final currentCost = costRows.firstWhere(
           (item) => item.productId == order.outputProductId,
-          orElse: () => productCostFor(order.outputProductId),
+          orElse: () => _productCostFor(order.outputProductId),
         );
         final stockRow = await db.customSelect(
           '''

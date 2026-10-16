@@ -12,13 +12,13 @@ void main() {
   test('received purchase commits stock, Unified Batch, and journal together',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'raw-purchase-atomic',
       code: 'RAW-PA',
       stock: 0,
       cost: 0,
     ));
-    await store.addOrUpdateSupplier(Supplier(
+    await store.commerce.addOrUpdateSupplier(Supplier(
       id: 'supplier-purchase-atomic',
       name: 'Atomic Supplier',
       phone: '',
@@ -26,8 +26,8 @@ void main() {
       notes: '',
     ));
     final warehouse =
-        await store.createWarehouse(name: 'Atomic raw', code: 'AR');
-    final purchase = await store.createPurchase(
+        await store.inventory.createWarehouse(name: 'Atomic raw', code: 'AR');
+    final purchase = await store.commerce.createPurchase(
       supplierId: 'supplier-purchase-atomic',
       supplierName: 'Atomic Supplier',
       receiveNow: true,
@@ -50,7 +50,7 @@ void main() {
       await support.sqliteWarehouseQuantity(
         productId: 'raw-purchase-atomic',
         warehouseId: warehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(5, 0.0001),
     );
@@ -75,7 +75,8 @@ void main() {
     ]).getSingle();
     expect(persisted.read<int>('journals'), 1);
     expect((persisted.data['batch_qty'] as num).toDouble(), closeTo(5, 0.0001));
-    expect((persisted.data['batch_cost'] as num).toDouble(), closeTo(3, 0.0001));
+    expect(
+        (persisted.data['batch_cost'] as num).toDouble(), closeTo(3, 0.0001));
     expect(
       (persisted.data['average_cost'] as num).toDouble(),
       closeTo(3, 0.0001),
@@ -85,20 +86,21 @@ void main() {
   test('failed manufacturing journal rolls back stock, order, and movements',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
         id: 'raw-rollback', code: 'RAW-X', stock: 0, cost: 4));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
         id: 'fg-rollback', code: 'FG-X', stock: 0, cost: 0));
-    final raw = await store.createWarehouse(name: 'Raw rollback', code: 'RX');
-    final finished =
-        await store.createWarehouse(name: 'Finished rollback', code: 'FX');
-    await store.adjustStock(
+    final raw =
+        await store.inventory.createWarehouse(name: 'Raw rollback', code: 'RX');
+    final finished = await store.inventory
+        .createWarehouse(name: 'Finished rollback', code: 'FX');
+    await store.inventory.adjustStock(
       productId: 'raw-rollback',
       warehouseId: raw.id,
       quantityDelta: 5,
       reason: 'Opening',
     );
-    final bom = await store.createBillOfMaterials(
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Rollback BOM',
       outputProductId: 'fg-rollback',
       outputQuantity: 1,
@@ -120,7 +122,7 @@ void main() {
     ''');
 
     await expectLater(
-      store.completeManufacturingOrder(
+      store.inventory.completeManufacturingOrder(
         bomId: bom.id,
         quantity: 1,
         rawMaterialsWarehouseId: raw.id,
@@ -134,7 +136,7 @@ void main() {
       await support.sqliteWarehouseQuantity(
         productId: 'raw-rollback',
         warehouseId: raw.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(5, 0.0001),
     );
@@ -142,7 +144,7 @@ void main() {
       await support.sqliteWarehouseQuantity(
         productId: 'fg-rollback',
         warehouseId: finished.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(0, 0.0001),
     );
@@ -162,7 +164,8 @@ void main() {
     expect(orphanMovements.read<int>('count'), 0);
   });
 
-  test('schema 33+ preserves manufacturing and reversal audit indexes', () async {
+  test('schema 33+ preserves manufacturing and reversal audit indexes',
+      () async {
     await support.readyPhase5SqliteStore();
     final db = SqliteMigrationManager.database!;
     expect(db.schemaVersion, greaterThanOrEqualTo(33));

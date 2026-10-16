@@ -5,19 +5,20 @@ void _registerAppStoreWorkflowSalesPart1() {
       'creates sales, rejects insufficient stock without auto correction, restores stock on cancel, and tracks profit',
       () async {
     final correctionStore = await readySqliteStore(storeId: 'ST-SALECORR');
-    await correctionStore.addOrUpdateProduct(
+    await correctionStore.catalog.addOrUpdateProduct(
         product(id: 'p-sale-correction', stock: 0, price: 10, cost: 4));
-    await correctionStore.adjustStock(
+    await correctionStore.inventory.adjustStock(
         productId: 'p-sale-correction',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 5,
         reason: 'test seed');
 
     await expectLater(
-        correctionStore.createSale(customerName: 'Bob', items: const []),
+        correctionStore.commerce
+            .createSale(customerName: 'Bob', items: const []),
         throwsArgumentError);
     await expectLater(
-      correctionStore.createSale(
+      correctionStore.commerce.createSale(
         customerId: 'customer-bob-correction',
         customerName: 'Bob',
         paymentMethod: 'Credit',
@@ -33,7 +34,7 @@ void _registerAppStoreWorkflowSalesPart1() {
       throwsA(isA<LocalizedDomainException>()),
     );
     expect(
-        correctionStore.stockMovements
+        correctionStore.inventory.stockMovements
             .where((m) => m.type == 'auto_correction'),
         isEmpty);
 
@@ -104,7 +105,8 @@ void _registerAppStoreWorkflowSalesPart1() {
       branchId: 'BR-P6-CANCEL',
     );
     final drawerId = await seedOpenCashDrawerForStore(store);
-    await store.catalog.addOrUpdateProduct(product(id: 'p-p6-cancel', stock: 0));
+    await store.catalog
+        .addOrUpdateProduct(product(id: 'p-p6-cancel', stock: 0));
     final warehouse = store.inventory.resolveWarehouseForSale();
     await StockTransactionService(
       SqliteMigrationManager.database!,
@@ -221,7 +223,8 @@ void _registerAppStoreWorkflowSalesPart1() {
   test('returns a sale, restores stock, and records a sale return movement',
       () async {
     final store = await readySqliteStore(storeId: 'ST-SALERET1');
-    await store.catalog.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
+    await store.catalog
+        .addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
     await store.inventory.adjustStock(
         productId: 'p1',
         warehouseId: Warehouse.defaultId,
@@ -253,7 +256,8 @@ void _registerAppStoreWorkflowSalesPart1() {
   test('edits a sale return after rebuilding stock and accounting effects',
       () async {
     final store = await readySqliteStore(storeId: 'ST-SALERET-EDIT');
-    await store.catalog.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
+    await store.catalog
+        .addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
     await store.inventory.adjustStock(
         productId: 'p1',
         warehouseId: Warehouse.defaultId,
@@ -275,8 +279,8 @@ void _registerAppStoreWorkflowSalesPart1() {
       ],
     );
     await store.commerce.returnSale(sale.id);
-    final note =
-        store.commerce.creditNotes.singleWhere((item) => item.originalSaleId == sale.id);
+    final note = store.commerce.creditNotes
+        .singleWhere((item) => item.originalSaleId == sale.id);
 
     final edited = await store.commerce.editSaleReturn(
       creditNoteId: note.id,
@@ -294,7 +298,8 @@ void _registerAppStoreWorkflowSalesPart1() {
       'partial sale returns are cumulative and cannot return the same units twice',
       () async {
     final store = await readySqliteStore(storeId: 'ST-SALERET2');
-    await store.catalog.addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
+    await store.catalog
+        .addOrUpdateProduct(product(stock: 0, price: 10, cost: 4));
     await store.inventory.adjustStock(
         productId: 'p1',
         warehouseId: Warehouse.defaultId,

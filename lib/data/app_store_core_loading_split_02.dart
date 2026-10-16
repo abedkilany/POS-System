@@ -179,7 +179,7 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
     }
 
     final balances = <String, Map<String, double>>{};
-    for (final product in stockTrackedProducts) {
+    for (final product in _stockTrackedProducts) {
       for (final entry in warehouseStockForProduct(product.id).entries) {
         if (entry.value.abs() <= 0.0000001) continue;
         (balances[entry.key] ??= <String, double>{})[product.id] = entry.value;
@@ -219,12 +219,8 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
     );
   }
 
-  List<AccountTransaction> get accountTransactions {
-    return _accountTransactionsReadImpl;
-  }
-
   List<AccountTransaction> get _accountTransactionsReadImpl {
-    unawaited(ensureAccountTransactionsLoaded());
+    unawaited(_ensureAccountTransactionsLoaded());
     return _accountLedgerReadService
         .activeTransactionsNewestFirst(_accountTransactions);
   }
@@ -296,13 +292,6 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
     _accountLedgerCacheDirty = false;
   }
 
-  List<AccountTransaction> accountTransactionsForAccount(
-    String accountType,
-    String accountId,
-  ) {
-    return _accountTransactionsForAccountReadImpl(accountType, accountId);
-  }
-
   List<AccountTransaction> _accountTransactionsForAccountReadImpl(
     String accountType,
     String accountId,
@@ -316,10 +305,6 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
     );
   }
 
-  double accountBalance(String accountType, String accountId) {
-    return _accountBalanceReadImpl(accountType, accountId);
-  }
-
   double _accountBalanceReadImpl(String accountType, String accountId) {
     _requestLedgerDataLoad();
     _ensureAccountLedgerCache();
@@ -330,164 +315,9 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
     );
   }
 
-  List<Map<String, dynamic>> databaseRows(String entity) {
-    requirePermission(AppPermission.databaseManage);
-    switch (entity) {
-      case 'products':
-        return List.unmodifiable(
-          _products
-              .where((item) => !item.isDeleted)
-              .map((item) => item.toJson()),
-        );
-      case 'customers':
-        return List.unmodifiable(
-          _customers
-              .where((item) => !item.isDeleted)
-              .map((item) => item.toJson()),
-        );
-      case 'suppliers':
-        return List.unmodifiable(
-          _suppliers
-              .where((item) => !item.isDeleted)
-              .map((item) => item.toJson()),
-        );
-      case 'supplierProductPrices':
-        return List.unmodifiable(
-          _supplierProductPrices
-              .where((item) => !item.isDeleted)
-              .map((item) => item.toJson()),
-        );
-      case 'expenses':
-        return List.unmodifiable(
-          _expenses
-              .where((item) => !item.isDeleted)
-              .map((item) => item.toJson()),
-        );
-      case 'categories':
-        return List.unmodifiable(
-          _categories
-              .where((item) => !item.isDeleted)
-              .map((item) => item.toJson()),
-        );
-      case 'brands':
-        return List.unmodifiable(
-          _brands.where((item) => !item.isDeleted).map((item) => item.toJson()),
-        );
-      case 'units':
-        return List.unmodifiable(
-          _units.where((item) => !item.isDeleted).map((item) => item.toJson()),
-        );
-    }
-    throw ArgumentError('Unsupported database entity: $entity');
-  }
-
-  Future<void> saveDatabaseRow(String entity, Map<String, dynamic> json) async {
-    requirePermission(AppPermission.databaseManage);
-    switch (entity) {
-      case 'products':
-        await addOrUpdateProduct(Product.fromJson(json));
-        return;
-      case 'customers':
-        await addOrUpdateCustomer(Customer.fromJson(json));
-        return;
-      case 'suppliers':
-        await addOrUpdateSupplier(Supplier.fromJson(json));
-        return;
-      case 'supplierProductPrices':
-        await addOrUpdateSupplierProductPrice(
-          SupplierProductPrice.fromJson(json),
-        );
-        return;
-      case 'expenses':
-        await addOrUpdateExpense(Expense.fromJson(json));
-        return;
-      case 'categories':
-        await addOrUpdateCategory(CatalogItem.fromJson(json));
-        return;
-      case 'brands':
-        await addOrUpdateBrand(CatalogItem.fromJson(json));
-        return;
-      case 'units':
-        await addOrUpdateUnit(CatalogItem.fromJson(json));
-        return;
-    }
-    throw ArgumentError('Unsupported database entity: $entity');
-  }
-
-  Future<void> deleteDatabaseRow(String entity, String id) async {
-    requirePermission(AppPermission.databaseManage);
-    switch (entity) {
-      case 'products':
-        await deleteProduct(id);
-        return;
-      case 'customers':
-        await deleteCustomer(id);
-        return;
-      case 'suppliers':
-        await deleteSupplier(id);
-        return;
-      case 'supplierProductPrices':
-        await deleteSupplierProductPrice(id);
-        return;
-      case 'expenses':
-        await deleteExpense(id);
-        return;
-      case 'categories':
-        await _deleteCatalogItem(_categories, 'category', id, categories: true);
-        return;
-      case 'brands':
-        await _deleteCatalogItem(_brands, 'brand', id, brands: true);
-        return;
-      case 'units':
-        await _deleteCatalogItem(_units, 'unit', id, units: true);
-        return;
-    }
-    throw ArgumentError('Unsupported database entity: $entity');
-  }
-
-  Future<void> _deleteCatalogItem(
-    List<CatalogItem> list,
-    String entityType,
-    String id, {
-    bool categories = false,
-    bool brands = false,
-    bool units = false,
-  }) async {
-    requirePermission(AppPermission.catalogManage);
-    final index = list.indexWhere((item) => item.id == id);
-    if (index == -1) return;
-    final now = DateTime.now();
-    list[index] = _withSyncMeta<CatalogItem>(
-      list[index].copyWith(deletedAt: now),
-      now,
-      clearDeletedAt: false,
-    );
-    _recordSyncChange(
-      entityType: entityType,
-      entityId: id,
-      operation: 'delete',
-      payload: list[index].toJson(),
-    );
-    await _saveDirty(
-      categories: categories,
-      brands: brands,
-      units: units,
-      sync: true,
-    );
-    notifyListeners();
-  }
-
-  List<SyncChange> get syncChanges {
-    return _syncChangesReadImpl;
-  }
-
   List<SyncChange> get _syncChangesReadImpl {
     _requestSyncDataLoad();
     return List.unmodifiable(_syncChanges);
-  }
-
-  List<SyncQueueItem> get syncQueue {
-    return _syncQueueReadImpl;
   }
 
   List<SyncQueueItem> get _syncQueueReadImpl {
@@ -562,7 +392,7 @@ extension _AppStoreSplitCoreLoadingPart2 on AppStore {
   int get activeClientPendingSyncCount {
     _requestSyncDataLoad();
     final target = activeClientSyncTarget;
-    if (target.isEmpty) return pendingSyncCount;
+    if (target.isEmpty) return _pendingSyncCount;
     return pendingSyncQueueForTarget(target, readyOnly: false).length;
   }
 

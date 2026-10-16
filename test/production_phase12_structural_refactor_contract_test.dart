@@ -43,6 +43,8 @@ void main() {
         readDartLibrarySource('lib/data/app_store_forwarding_api.dart');
     final orchestration =
         readDartLibrarySource('lib/data/app_store_orchestration.dart');
+    final accessAuth =
+        readDartLibrarySource('lib/data/app_store_access_auth.dart');
 
     final classStart =
         appStore.indexOf('class AppStore extends ChangeNotifier');
@@ -85,12 +87,21 @@ void main() {
     );
 
     expect(compatibility, contains('mixin _AppStoreForwardingApi'));
-    expect(compatibility, contains('Future<void> transferStock'));
-    expect(compatibility, contains('Future<String> exportBackupJson'));
-    expect(compatibility, contains('Future<bool> authorizeSensitiveAction'));
+    expect(compatibility, isNot(contains('Future<void> _transferStock')));
+    expect(
+      domains,
+      contains('_AppStoreSplitWarehouseCashPart3(_store).transferStock('),
+    );
+    expect(compatibility, contains('Future<String> _exportBackupJson'));
+    expect(
+      compatibility,
+      isNot(contains('Future<bool> _authorizeSensitiveAction')),
+    );
+    expect(domains, contains('_store._authorizeSensitiveAction('));
+    expect(accessAuth, contains('Future<bool> _authorizeSensitiveAction({'));
     expect(orchestration, contains('mixin _AppStoreOrchestration'));
-    expect(orchestration, contains('Future<void> ensureProductsLoaded()'));
-    expect(orchestration, contains('int get accountingRevision'));
+    expect(orchestration, contains('Future<void> _ensureProductsLoaded()'));
+    expect(orchestration, contains('int get _accountingRevision'));
   });
 
   test('app lifecycle and preferences use the runtime domain port', () {
@@ -281,12 +292,10 @@ void main() {
       'cancelSale(',
       'createWarehouse(',
       'transferStock(',
-      'traceInventoryBatch(',
-      'verifyInventoryTraceabilityIntegrity()',
       'authorizeSensitiveAction(',
       'exportBackupJson()',
       'importBackupJson(',
-      'applyRemoteSyncChanges(',
+      '_applyRemoteSyncChanges(',
     ]) {
       expect(source, contains(api), reason: api);
     }

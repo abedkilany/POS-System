@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'helpers/app_store_source.dart';
 import 'helpers/schema_version_contract.dart';
 import 'helpers/dart_library_source.dart';
 
@@ -15,7 +14,6 @@ void main() {
         readDartLibrarySource('lib/data/app_store_manufacturing.dart');
     final transfers =
         readDartLibrarySource('lib/data/app_store_warehouse_cash.dart');
-    final appStore = readAppStoreImplementationSource();
     final database = readDartLibrarySource(
         'lib/core/storage/sqlite/ventio_drift_database.dart');
 
@@ -30,8 +28,13 @@ void main() {
     expect(manufacturing,
         contains('assertManufacturingTraceabilityInTransaction'));
     expect(transfers, contains('assertTransferTraceabilityInTransaction'));
-    expect(appStore, contains('traceInventoryBatch'));
-    expect(appStore, contains('verifyInventoryTraceabilityIntegrity'));
+    final inventoryPort =
+        readDartLibrarySource('lib/data/app_store_domains_inventory.dart');
+    expect(inventoryPort, contains('Future<Map<String, dynamic>> traceBatch'));
+    expect(inventoryPort, contains('verifyTraceabilityIntegrity'));
+    expect(inventoryPort, contains('_traceInventoryBatchDomainImpl'));
+    expect(inventoryPort,
+        contains('_verifyInventoryTraceabilityIntegrityDomainImpl'));
     expectSchemaVersionAtLeast(database, 33);
     expect(database, contains('idx_stock_movements_reference_type_batch'));
     expect(database, contains('idx_inventory_batches_source_trace'));

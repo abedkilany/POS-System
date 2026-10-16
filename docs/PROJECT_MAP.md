@@ -128,7 +128,8 @@ Names such as `_widgets`, `_layout`, `_actions`, `_reports`, and `_persistence` 
 
 - `lib/core/storage/sqlite/` owns the client SQLite schema and local persistence implementation.
 - `lib/core/services/local_database_service.dart` is the app-facing database access boundary; business workflows should use typed service/repository APIs rather than write raw storage from UI code.
-- `lib/data/app_store.dart` is the session coordinator and typed-port composition root. App-shell lifecycle and presentation preferences use `store.runtime`; feature workflows use the narrowest available domain port. The legacy forwarding API remains for phase-three compatibility cleanup.
+- `lib/data/app_store.dart` is the session coordinator and typed-port composition root. App-shell lifecycle and presentation preferences use `store.runtime`; feature workflows use the narrowest available domain port. Forwarding methods used by split data modules and backup helpers are library-private; `BusinessSessionContext` remains the small session bridge for core workflows.
+- `lib/data/app_store_domains.dart` declares the eight typed domain contracts; matching `app_store_domains_<domain>.dart` parts implement each adapter. Keep contracts and adapters grouped by domain and below the 1,000-line file limit.
 - `server_api/` and `database/` serve the VPS control plane. Do not treat them as the client's operational business database.
 - `test/` includes executable behavior checks as well as source-structure contract checks. Use the exact relevant test file from the index when changing one workflow.
 

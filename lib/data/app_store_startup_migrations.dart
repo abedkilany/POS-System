@@ -1,7 +1,7 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitStartupMigrations on AppStore {
-Future<void> initialize({bool hydrateHeavyData = true}) async {
+  Future<void> initialize({bool hydrateHeavyData = true}) async {
     var unifiedBatchPhase4Blocked = false;
     StartupTimingService.event('app_store.initialize.begin',
         category: 'app_store');
@@ -46,7 +46,8 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
           ..addAll(await usersFuture);
         await _ensureDefaultAdminUser();
         _rememberLogin =
-            LocalDatabaseService.getString(AppStore._rememberLoginKey) == 'true';
+            LocalDatabaseService.getString(AppStore._rememberLoginKey) ==
+                'true';
         _restoreActiveUser();
         _appIdentity = _loadOrCreateAppIdentity();
         final initializedIdentity = appIdentity;
@@ -97,7 +98,8 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
               // closure can be completed successfully.
               unifiedBatchPhase4Blocked = true;
               await phase4Service.markBlocked(error: error);
-              debugPrint('Unified Batch Phase 4 closure requires attention: $error');
+              debugPrint(
+                  'Unified Batch Phase 4 closure requires attention: $error');
               debugPrint('$stackTrace');
             }
           }
@@ -112,8 +114,8 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
         !unifiedBatchPhase4Blocked) {
       try {
         await AccountingService.ensureInventoryAccountClassificationMigration();
-        final reconciled = await AccountingService
-            .reconcileInventoryAccountClassification(
+        final reconciled =
+            await AccountingService.reconcileInventoryAccountClassification(
           referenceContext: 'startup',
         );
         if (!reconciled) {
@@ -136,7 +138,7 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
     // initialize(). Production keeps the DB-first boot lean and hydrates heavy
     // collections lazily, while tests need an explicit deterministic boundary.
     if (hydrateHeavyData && LocalDatabaseService.isInMemoryStoreForTesting) {
-      await ensureHeavyDataLoaded(failOnError: true);
+      await _ensureHeavyDataLoaded(failOnError: true);
     }
 
     _isReady = true;
@@ -144,7 +146,7 @@ Future<void> initialize({bool hydrateHeavyData = true}) async {
     StartupTimingService.event('app_store.ready', category: 'app_store');
   }
 
-Future<String?> _loadEntityListJsonForStartup(String key) {
+  Future<String?> _loadEntityListJsonForStartup(String key) {
     if (LocalDatabaseService.isInMemoryStoreForTesting) {
       return Future<String?>.value(LocalDatabaseService.testingRawValue(key));
     }
@@ -162,7 +164,7 @@ Future<String?> _loadEntityListJsonForStartup(String key) {
     return Future.value(null);
   }
 
-Future<List<String>> _loadEntityListJsonBatchesForStartup(
+  Future<List<String>> _loadEntityListJsonBatchesForStartup(
     String key, {
     int batchSize = 100,
   }) {
@@ -200,7 +202,7 @@ Future<List<String>> _loadEntityListJsonBatchesForStartup(
     return Future.value(const <String>[]);
   }
 
-Future<List<T>> _decodeDeferredList<T>(
+  Future<List<T>> _decodeDeferredList<T>(
       String key, T Function(Map<String, dynamic>) fromJson,
       {int? batchSize}) async {
     return StartupTimingService.measure(
@@ -248,7 +250,7 @@ Future<List<T>> _decodeDeferredList<T>(
     );
   }
 
-Future<List<T>> _loadTypedEntityList<T>(
+  Future<List<T>> _loadTypedEntityList<T>(
     String key,
     Future<List<T>?> Function() typedLoader,
     T Function(Map<String, dynamic>) fromJson, {
@@ -264,7 +266,7 @@ Future<List<T>> _loadTypedEntityList<T>(
     );
   }
 
-Future<List<StockMovement>> _loadStockMovementsForStartup() async {
+  Future<List<StockMovement>> _loadStockMovementsForStartup() async {
     final typed = await LocalDatabaseService.getStockMovementsFromSqlite();
     if (typed != null) return typed;
     if (LocalDatabaseService.isSqliteAuthoritative) {
@@ -277,7 +279,7 @@ Future<List<StockMovement>> _loadStockMovementsForStartup() async {
     );
   }
 
-Future<List<AccountTransaction>> _loadAccountTransactionsForStartup() async {
+  Future<List<AccountTransaction>> _loadAccountTransactionsForStartup() async {
     final typed = await LocalDatabaseService.getAccountTransactionsFromSqlite();
     if (typed != null) return typed;
     return _decodeDeferredList<AccountTransaction>(
@@ -287,8 +289,7 @@ Future<List<AccountTransaction>> _loadAccountTransactionsForStartup() async {
     );
   }
 
-
-Future<void> _compactPostedSnapshotLogosIfNeeded() async {
+  Future<void> _compactPostedSnapshotLogosIfNeeded() async {
     if (kIsWeb || !LocalDatabaseService.isSqliteAuthoritative) return;
     final db = SqliteMigrationManager.database;
     if (db == null) return;
@@ -404,11 +405,13 @@ Future<void> _compactPostedSnapshotLogosIfNeeded() async {
     try {
       await db.transaction(() async {
         for (final table in const <String>['sales', 'purchases']) {
-          final rows = await db.customSelect(
-            "SELECT id, posted_snapshot_json FROM $table "
-            "WHERE posted_snapshot_json <> '' "
-            "AND instr(posted_snapshot_json, 'logoDataBase64') > 0",
-          ).get();
+          final rows = await db
+              .customSelect(
+                "SELECT id, posted_snapshot_json FROM $table "
+                "WHERE posted_snapshot_json <> '' "
+                "AND instr(posted_snapshot_json, 'logoDataBase64') > 0",
+              )
+              .get();
           for (final row in rows) {
             final id = row.data['id']?.toString() ?? '';
             final before = row.data['posted_snapshot_json']?.toString() ?? '';
@@ -426,9 +429,11 @@ Future<void> _compactPostedSnapshotLogosIfNeeded() async {
           }
         }
 
-        final creditRows = await db.customSelect(
-          "SELECT value FROM settings WHERE key = 'credit_notes_v1' LIMIT 1",
-        ).get();
+        final creditRows = await db
+            .customSelect(
+              "SELECT value FROM settings WHERE key = 'credit_notes_v1' LIMIT 1",
+            )
+            .get();
         if (creditRows.isNotEmpty) {
           final before = creditRows.first.data['value']?.toString() ?? '';
           final after = compactCreditNotesJson(before);
@@ -510,7 +515,7 @@ Future<void> _compactPostedSnapshotLogosIfNeeded() async {
     }
   }
 
-Future<void> _backfillPostedDocumentSnapshotsIfNeeded() async {
+  Future<void> _backfillPostedDocumentSnapshotsIfNeeded() async {
     if (!LocalDatabaseService.isSqliteAuthoritative) return;
     final db = SqliteMigrationManager.database;
     if (db == null) return;
@@ -547,7 +552,9 @@ Future<void> _backfillPostedDocumentSnapshotsIfNeeded() async {
 
       for (var index = 0; index < _purchases.length; index += 1) {
         final purchase = _purchases[index];
-        if (purchase.isDeleted || purchase.isDraft || purchase.postedSnapshot != null) {
+        if (purchase.isDeleted ||
+            purchase.isDraft ||
+            purchase.postedSnapshot != null) {
           continue;
         }
         Supplier? supplier;
@@ -563,8 +570,7 @@ Future<void> _backfillPostedDocumentSnapshotsIfNeeded() async {
           supplier: supplier,
           legacyBackfill: true,
         );
-        final backfilledPurchase =
-            purchase.copyWith(postedSnapshot: snapshot);
+        final backfilledPurchase = purchase.copyWith(postedSnapshot: snapshot);
         final updated = await db.customUpdate(
           "UPDATE purchases SET posted_snapshot_json = ? WHERE id = ? AND posted_snapshot_json = ''",
           variables: <Variable<Object>>[
@@ -577,5 +583,5 @@ Future<void> _backfillPostedDocumentSnapshotsIfNeeded() async {
         }
       }
     });
-}
+  }
 }

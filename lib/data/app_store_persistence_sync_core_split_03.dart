@@ -7,7 +7,7 @@ extension _AppStoreSplitPersistenceSyncCorePart3 on AppStore {
   }) async {
     if (enforcePermission) {
       requirePermission(AppPermission.settingsManage);
-      requireSensitiveActionAuthorization(SensitiveAction.databaseDestructive);
+      _requireSensitiveActionAuthorization(SensitiveAction.databaseDestructive);
     }
     await AuditLogger.record(
       entityType: 'database',
@@ -28,7 +28,7 @@ extension _AppStoreSplitPersistenceSyncCorePart3 on AppStore {
     _products.clear();
     _customers
       ..clear()
-      ..add(walkInCustomer);
+      ..add(_walkInCustomer);
     _sales.clear();
     _suppliers.clear();
     _supplierProductPrices.clear();
@@ -70,9 +70,9 @@ extension _AppStoreSplitPersistenceSyncCorePart3 on AppStore {
     );
     await LocalDatabaseService.setString(AppStore._activeUserKey, '');
     await LocalDatabaseService.setString(AppStore._rememberLoginKey, 'false');
-    if (wants('syncChanges') ||
-        wants('syncQueue') ||
-        wants('localDatabaseEntries')) {
+    if (_wants('syncChanges') ||
+        _wants('syncQueue') ||
+        _wants('localDatabaseEntries')) {
       await LocalDatabaseService.deleteString('direct_last_pull_cursor');
     }
     await LocalDatabaseService.deleteString('lan_sync_settings_v2');
@@ -138,7 +138,7 @@ extension _AppStoreSplitPersistenceSyncCorePart3 on AppStore {
       (item) =>
           expired(item.deletedAt) &&
           !_hasPendingSyncFor('product', item.id) &&
-          !isProductReferenced(item.id),
+          !_isProductReferenced(item.id),
     );
     removed += beforeProducts - _products.length;
     productsChanged = productsChanged || beforeProducts != _products.length;
@@ -339,121 +339,11 @@ extension _AppStoreSplitPersistenceSyncCorePart3 on AppStore {
     );
   }
 
-  Future<BusinessDataIntegrityRepairResult> repairMissingProductReferences({
-    bool createArchivedProducts = false,
-  }) async {
-    requirePermission(AppPermission.productsEdit);
-    // This repair can persist products without going through addOrUpdateProduct.
-    // Hydrate costing history first for the same lazy-loading safety invariant.
-    await ensureCostingMethodHistoryLoaded();
-
-    final activeIds = _products
-        .where((product) => !product.isDeleted)
-        .map((product) => product.id)
-        .toSet();
-    final references = <String, ({String name, double price, double cost})>{};
-
-    void remember(String id, String name, double price, double cost) {
-      final cleanId = id.trim();
-      if (cleanId.isEmpty || activeIds.contains(cleanId)) return;
-      references.putIfAbsent(
-        cleanId,
-        () => (
-          name: name.trim().isEmpty ? 'Archived product $cleanId' : name.trim(),
-          price: price,
-          cost: cost,
-        ),
-      );
-    }
-
-    for (final sale in _sales.where((item) => !item.isDeleted)) {
-      for (final item in sale.items) {
-        remember(
-            item.productId, item.productName, item.unitPrice, item.unitCost);
-      }
-    }
-    for (final purchase in _purchases.where((item) => !item.isDeleted)) {
-      for (final item in purchase.items) {
-        remember(
-            item.productId, item.productName, item.unitCost, item.unitCost);
-      }
-    }
-    for (final movement in _stockMovements) {
-      remember(
-        movement.productId,
-        movement.productName,
-        movement.unitCost,
-        movement.unitCost,
-      );
-    }
-
-    final now = DateTime.now();
-    var reactivated = 0;
-    for (var index = 0; index < _products.length; index++) {
-      final product = _products[index];
-      if (!product.isDeleted || !references.containsKey(product.id)) continue;
-      _products[index] = _withSyncMeta<Product>(
-        product.copyWith(updatedAt: now, clearDeletedAt: true),
-        now,
-      );
-      _recordSyncChange(
-        entityType: 'product',
-        entityId: product.id,
-        operation: 'restore',
-        payload: _products[index].toJson(),
-      );
-      activeIds.add(product.id);
-      reactivated++;
-    }
-
-    final unresolved = references.keys
-        .where((id) => !activeIds.contains(id))
-        .toList(growable: false);
-    var archivedCreated = 0;
-    if (createArchivedProducts && unresolved.isNotEmpty) {
-      final archived = unresolved.map((id) {
-        final reference = references[id]!;
-        return Product(
-          id: id,
-          name: '[Archived] ${reference.name}',
-          code: 'ARCH-${id.hashCode.abs()}',
-          price: reference.price,
-          cost: reference.cost,
-          stock: 0,
-          category: 'Archived references',
-          unit: 'pcs',
-          trackStock: false,
-          isActive: false,
-          createdAt: now,
-          updatedAt: now,
-          deviceId: _deviceId,
-          syncStatus: 'pending',
-          storeId: appIdentity.storeId,
-          branchId: appIdentity.branchId,
-          lastModifiedByDeviceId: _deviceId,
-        );
-      }).toList(growable: false);
-      await addOrUpdateProductsBulk(archived);
-      archivedCreated = archived.length;
-    }
-
-    if (reactivated > 0) {
-      await _saveDirty(products: true, sync: true);
-      _rebuildProductIndexes();
-      notifyListeners();
-    }
-    return BusinessDataIntegrityRepairResult(
-      reactivatedProducts: reactivated,
-      archivedProductsCreated: archivedCreated,
-      unresolvedProductIds:
-          createArchivedProducts ? const <String>[] : unresolved,
-    );
-  }
 
   Future<void> updateStoreProfile(StoreProfile profile) async {
     requirePermission(AppPermission.settingsManage);
     final normalizedProfile = profile.withMergedLogoAssetsFrom(_storeProfile);
-    if (wants('storeProfile')) {
+    if (_wants('storeProfile')) {
       _storeProfile = normalizedProfile;
       AccountingService.configureMoneyPolicy(_storeProfile);
     }

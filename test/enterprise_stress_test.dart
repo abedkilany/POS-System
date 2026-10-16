@@ -21,7 +21,7 @@ Product _product(int index) {
 
 Future<AppStore> _readyStore() async {
   final store = await support.readyPhase5SqliteStore();
-  await store.ensureHeavyDataLoaded(failOnError: true);
+  await store.runtime.ensureHeavyDataLoaded(failOnError: true);
   return store;
 }
 
@@ -34,8 +34,8 @@ void main() {
       final store = await _readyStore();
 
       for (var i = 0; i < 75; i++) {
-        await store.addOrUpdateProduct(_product(i).copyWith(stock: 0));
-        await store.adjustStock(
+        await store.catalog.addOrUpdateProduct(_product(i).copyWith(stock: 0));
+        await store.inventory.adjustStock(
           productId: 'stress_product_$i',
           warehouseId: Warehouse.defaultId,
           quantityDelta: 100,
@@ -43,13 +43,14 @@ void main() {
         );
       }
 
-      expect(store.products, hasLength(75));
-      expect(store.inventoryRetailValue, greaterThan(0));
-      expect(store.inventoryCostValue, greaterThan(0));
+      expect(store.catalog.products, hasLength(75));
+      expect(store.inventory.inventoryRetailValue, greaterThan(0));
+      expect(store.inventory.inventoryCostValue, greaterThan(0));
 
       for (var i = 0; i < 30; i++) {
-        final product = store.products[i % store.products.length];
-        await store.createSale(
+        final product =
+            store.catalog.products[i % store.catalog.products.length];
+        await store.commerce.createSale(
           customerId: 'stress-customer-$i',
           customerName: 'Stress Customer $i',
           paymentMethod: 'Credit',
@@ -65,28 +66,28 @@ void main() {
         );
       }
 
-      expect(store.sales, hasLength(30));
-      expect(store.products.where((p) => p.stock < 0), isEmpty);
-      expect(store.totalSalesAmount, greaterThan(0));
-      expect(store.syncChanges, isNotEmpty);
-      expect(store.pendingSyncQueueCount, 0);
+      expect(store.commerce.sales, hasLength(30));
+      expect(store.catalog.products.where((p) => p.stock < 0), isEmpty);
+      expect(store.commerce.totalSalesAmount, greaterThan(0));
+      expect(store.sync.changes, isNotEmpty);
+      expect(store.sync.pendingCount, 0);
     });
 
     test('backup restore survives a populated store round trip', () async {
       final store = await _readyStore();
       for (var i = 0; i < 20; i++) {
-        await store.addOrUpdateProduct(_product(i));
+        await store.catalog.addOrUpdateProduct(_product(i));
       }
 
-      final backup = await store.exportBackupJson();
-      expect(store.validateBackupJson(backup).isValid, isTrue);
+      final backup = await store.recovery.exportBackupJson();
+      expect(store.recovery.validateBackupJson(backup).isValid, isTrue);
 
-      await store.resetBusinessData();
-      expect(store.products, isEmpty);
+      await store.recovery.resetBusinessData();
+      expect(store.catalog.products, isEmpty);
 
-      await store.importBackupJson(backup);
-      expect(store.products, hasLength(20));
-      expect(store.products.map((p) => p.code), contains('STRESS-0'));
+      await store.recovery.importBackupJson(backup);
+      expect(store.catalog.products, hasLength(20));
+      expect(store.catalog.products.map((p) => p.code), contains('STRESS-0'));
     });
   });
 }

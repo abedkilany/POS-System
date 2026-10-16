@@ -234,10 +234,6 @@ Future<void> _storeHostTransferNotification(
     );
   }
 
-Future<void> clearLocalHostTransferRequest() async {
-    await LocalDatabaseService.setString(AppStore._hostTransferRequestKey, '');
-    notifyListeners();
-  }
 
 Future<void> _forceApplyRoleFromTransfer(AppIdentity next) async {
     final normalized = _normalizedLocalIdentity(next);
@@ -595,9 +591,6 @@ Future<void> activateApprovedHostTransfer() async {
     notifyListeners();
   }
 
-Future<void> setCurrentRole(String role) async {
-    throw StateError('Roles must be assigned through Users & Permissions.');
-  }
 
 Future<List<UserRole>> _loadRoles() async {
     final db = SqliteMigrationManager.database;

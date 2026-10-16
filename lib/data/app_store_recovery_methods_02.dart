@@ -1,14 +1,13 @@
 part of 'app_store.dart';
 
 extension AppStoreRecoveryServiceSplitPart2 on AppStoreRecoveryService {
-
   Future<void> replaceFromSnapshotPayloadDirectToSqlite(
     Map<String, dynamic> decoded, {
     bool preserveLocalIdentityForLanClient = false,
   }) async {
     final unifiedChunks = decoded['snapshotChunks'];
     if (unifiedChunks is List) {
-      decoded = store.unifiedSnapshotPayloadFromChunks(
+      decoded = store._unifiedSnapshotPayloadFromChunks(
         unifiedChunks
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
@@ -20,8 +19,7 @@ extension AppStoreRecoveryServiceSplitPart2 on AppStoreRecoveryService {
       decoded,
       allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
     );
-    final importedStockMovements =
-        _snapshotListMaps(decoded, 'stockMovements');
+    final importedStockMovements = _snapshotListMaps(decoded, 'stockMovements');
     final AppIdentity? importedIdentity = preserveLocalIdentityForLanClient
         ? _identityForLanSnapshotImport(decoded)
         : decoded['appIdentity'] is Map
@@ -36,216 +34,219 @@ extension AppStoreRecoveryServiceSplitPart2 on AppStoreRecoveryService {
       await StartupTimingService.measure(
         'snapshot_import.direct_payload_to_sqlite',
         () async {
-        await LocalDatabaseService.runSqliteAuthoritativeTransaction(() async {
-          Future<void> replaceRows(
-            String storageKey,
-            List<Map<String, dynamic>> rows,
-          ) async {
-            await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
-              storageKey,
-              rows,
-              sortIndices: List<int?>.generate(rows.length, (index) => index),
+          await LocalDatabaseService.runSqliteAuthoritativeTransaction(
+              () async {
+            Future<void> replaceRows(
+              String storageKey,
+              List<Map<String, dynamic>> rows,
+            ) async {
+              await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
+                storageKey,
+                rows,
+                sortIndices: List<int?>.generate(rows.length, (index) => index),
+              );
+            }
+
+            final now = DateTime.now();
+            final rawSyncChanges = _snapshotListMaps(decoded, 'syncChanges');
+            final syncChangesForClient = preserveLocalIdentityForLanClient
+                ? rawSyncChanges.map((item) {
+                    final copy = Map<String, dynamic>.from(item);
+                    copy['isSynced'] = true;
+                    copy['syncedAt'] = now.toIso8601String();
+                    return copy;
+                  }).toList(growable: false)
+                : rawSyncChanges;
+            final rawSyncQueue = preserveLocalIdentityForLanClient
+                ? const <Map<String, dynamic>>[]
+                : _snapshotListMaps(decoded, 'syncQueue');
+
+            await replaceRows(
+                AppStore._productsKey, _snapshotListMaps(decoded, 'products'));
+            await LocalDatabaseService.replaceInventoryBatchRowsImmediate(
+              batches: _snapshotListMaps(decoded, 'inventoryBatches'),
+              balances: _snapshotListMaps(decoded, 'inventoryBatchBalances'),
             );
-          }
-
-          final now = DateTime.now();
-          final rawSyncChanges = _snapshotListMaps(decoded, 'syncChanges');
-          final syncChangesForClient = preserveLocalIdentityForLanClient
-              ? rawSyncChanges.map((item) {
-                  final copy = Map<String, dynamic>.from(item);
-                  copy['isSynced'] = true;
-                  copy['syncedAt'] = now.toIso8601String();
-                  return copy;
-                }).toList(growable: false)
-              : rawSyncChanges;
-          final rawSyncQueue = preserveLocalIdentityForLanClient
-              ? const <Map<String, dynamic>>[]
-              : _snapshotListMaps(decoded, 'syncQueue');
-
-          await replaceRows(
-              AppStore._productsKey, _snapshotListMaps(decoded, 'products'));
-          await LocalDatabaseService.replaceInventoryBatchRowsImmediate(
-            batches: _snapshotListMaps(decoded, 'inventoryBatches'),
-            balances: _snapshotListMaps(decoded, 'inventoryBatchBalances'),
-          );
-          final writes = <Future<void>>[
-            replaceRows(
-                AppStore._productsKey, _snapshotListMaps(decoded, 'products')),
-            replaceRows(AppStore._customersKey,
-                _snapshotListMaps(decoded, 'customers')),
-            replaceRows(
-                AppStore._salesKey, _snapshotListMaps(decoded, 'sales')),
-            replaceRows(
-              AppStore._saleQuotationsKey,
-              _snapshotListMaps(decoded, 'saleQuotations',
-                  aliases: <String>['quotations']),
-            ),
-            replaceRows(AppStore._deliveryNotesKey,
-                _snapshotListMaps(decoded, 'deliveryNotes')),
-            replaceRows(AppStore._billsOfMaterialsKey,
-                _snapshotListMaps(decoded, 'billsOfMaterials')),
-            replaceRows(AppStore._manufacturingOrdersKey,
-                _snapshotListMaps(decoded, 'manufacturingOrders')),
-            replaceRows(AppStore._suppliersKey,
-                _snapshotListMaps(decoded, 'suppliers')),
-            replaceRows(
-              AppStore._supplierProductPricesKey,
-              _snapshotListMaps(decoded, 'supplierProductPrices'),
-            ),
-            replaceRows(AppStore._priceListsKey,
-                _snapshotListMaps(decoded, 'priceLists')),
-            replaceRows(AppStore._productPricesKey,
-                _snapshotListMaps(decoded, 'productPrices')),
-            replaceRows(
-              AppStore._productPriceHistoryKey,
-              _snapshotListMaps(decoded, 'productPriceHistory'),
-            ),
-            replaceRows(
-              AppStore._productPriceOverridesKey,
-              _snapshotListMaps(decoded, 'productPriceOverrides'),
-            ),
-            replaceRows(AppStore._productCostsKey,
-                _snapshotListMaps(decoded, 'productCosts')),
-            replaceRows(
-              AppStore._costingMethodHistoryKey,
-              _snapshotListMaps(decoded, 'costingMethodHistory'),
-            ),
-            replaceRows(
-              AppStore._inventoryCostLayersKey,
-              _snapshotListMaps(decoded, 'inventoryCostLayers'),
-            ),
-            replaceRows(AppStore._categoriesKey,
-                _snapshotListMaps(decoded, 'categories')),
-            replaceRows(
-                AppStore._brandsKey, _snapshotListMaps(decoded, 'brands')),
-            replaceRows(
-                AppStore._unitsKey, _snapshotListMaps(decoded, 'units')),
-            replaceRows(
-                AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses')),
-            replaceRows(AppStore._purchasesKey,
-                _snapshotListMaps(decoded, 'purchases')),
-            replaceRows(AppStore._stockMovementsKey, importedStockMovements),
-            LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
-              _snapshotListMaps(
-                decoded,
-                'warehouseInventory',
-                aliases: <String>['warehouse_inventory'],
+            final writes = <Future<void>>[
+              replaceRows(AppStore._productsKey,
+                  _snapshotListMaps(decoded, 'products')),
+              replaceRows(AppStore._customersKey,
+                  _snapshotListMaps(decoded, 'customers')),
+              replaceRows(
+                  AppStore._salesKey, _snapshotListMaps(decoded, 'sales')),
+              replaceRows(
+                AppStore._saleQuotationsKey,
+                _snapshotListMaps(decoded, 'saleQuotations',
+                    aliases: <String>['quotations']),
               ),
-              allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
-            ),
-            LocalDatabaseService.replaceStockOperationsRowsImmediate(
-              _snapshotListMaps(
-                decoded,
-                'stockOperations',
-                aliases: <String>['stock_operations'],
+              replaceRows(AppStore._deliveryNotesKey,
+                  _snapshotListMaps(decoded, 'deliveryNotes')),
+              replaceRows(AppStore._billsOfMaterialsKey,
+                  _snapshotListMaps(decoded, 'billsOfMaterials')),
+              replaceRows(AppStore._manufacturingOrdersKey,
+                  _snapshotListMaps(decoded, 'manufacturingOrders')),
+              replaceRows(AppStore._suppliersKey,
+                  _snapshotListMaps(decoded, 'suppliers')),
+              replaceRows(
+                AppStore._supplierProductPricesKey,
+                _snapshotListMaps(decoded, 'supplierProductPrices'),
               ),
-            ),
-            LocalDatabaseService.replaceInventoryReconciliationsRowsImmediate(
-              _snapshotListMaps(
-                decoded,
-                'inventoryReconciliations',
-                aliases: <String>['inventory_reconciliations'],
+              replaceRows(AppStore._priceListsKey,
+                  _snapshotListMaps(decoded, 'priceLists')),
+              replaceRows(AppStore._productPricesKey,
+                  _snapshotListMaps(decoded, 'productPrices')),
+              replaceRows(
+                AppStore._productPriceHistoryKey,
+                _snapshotListMaps(decoded, 'productPriceHistory'),
               ),
-            ),
-            LocalDatabaseService
-                .replaceInventoryMigrationAdjustmentsRowsImmediate(
-              _snapshotListMaps(
-                decoded,
-                'inventoryMigrationAdjustments',
-                aliases: <String>['inventory_migration_adjustments'],
+              replaceRows(
+                AppStore._productPriceOverridesKey,
+                _snapshotListMaps(decoded, 'productPriceOverrides'),
               ),
-            ),
-            if (LocalDatabaseService.phase8AccountingSnapshotTables.keys
-                .any(decoded.containsKey))
-              LocalDatabaseService.replacePhase8AccountingSnapshotRowsImmediate(
-                <String, List<Map<String, dynamic>>>{
-                  for (final key in LocalDatabaseService
-                      .phase8AccountingSnapshotTables.keys)
-                    if (decoded.containsKey(key))
-                      key: _snapshotListMaps(decoded, key),
-                },
+              replaceRows(AppStore._productCostsKey,
+                  _snapshotListMaps(decoded, 'productCosts')),
+              replaceRows(
+                AppStore._costingMethodHistoryKey,
+                _snapshotListMaps(decoded, 'costingMethodHistory'),
               ),
-            replaceRows(AppStore._inventoryCountsKey,
-                _snapshotListMaps(decoded, 'inventoryCounts')),
-            replaceRows(AppStore._warehousesKey,
-                _snapshotListMaps(decoded, 'warehouses')),
-            replaceRows(
-              AppStore._accountTransactionsKey,
-              _snapshotListMaps(decoded, 'accountTransactions'),
-            ),
-            replaceRows(
-                AppStore._rolesKey, _snapshotListMaps(decoded, 'roles')),
-            replaceRows(
-                AppStore._usersKey, _snapshotListMaps(decoded, 'users')),
-            LocalDatabaseService.setString(
-              AppStore._inventoryCostingMethodKey,
-              _snapshotScalarString(
-                decoded,
-                'inventoryCostingMethod',
-                fallback: store._inventoryCostingMethod.code,
+              replaceRows(
+                AppStore._inventoryCostLayersKey,
+                _snapshotListMaps(decoded, 'inventoryCostLayers'),
               ),
-            ),
-            LocalDatabaseService.setString(
-              AppStore._storeProfileKey,
-              jsonEncode(
-                decoded['storeProfile'] is Map
-                    ? Map<String, dynamic>.from(decoded['storeProfile'] as Map)
-                    : store._storeProfile.toJson(),
-              ),
-            ),
-            LocalDatabaseService.setString(
-              AppStore._invoiceCounterKey,
-              ((decoded['invoiceCounter'] as num?)?.toInt() ??
-                      store._invoiceCounter)
-                  .toString(),
-            ),
-            LocalDatabaseService.setString(
-              AppStore._purchaseCounterKey,
-              ((decoded['purchaseCounter'] as num?)?.toInt() ??
-                      store._purchaseCounter)
-                  .toString(),
-            ),
-            LocalDatabaseService.setString(
-              AppStore._syncChangesKey,
-              jsonEncode(syncChangesForClient),
-            ),
-            LocalDatabaseService.setString(
-              AppStore._syncQueueKey,
-              jsonEncode(rawSyncQueue),
-            ),
-            LocalDatabaseService.setString(
-              AppStore._syncSequenceKey,
-              _snapshotScalarString(
-                decoded,
-                'syncSequence',
-                fallback: _snapshotScalarString(
+              replaceRows(AppStore._categoriesKey,
+                  _snapshotListMaps(decoded, 'categories')),
+              replaceRows(
+                  AppStore._brandsKey, _snapshotListMaps(decoded, 'brands')),
+              replaceRows(
+                  AppStore._unitsKey, _snapshotListMaps(decoded, 'units')),
+              replaceRows(AppStore._expensesKey,
+                  _snapshotListMaps(decoded, 'expenses')),
+              replaceRows(AppStore._purchasesKey,
+                  _snapshotListMaps(decoded, 'purchases')),
+              replaceRows(AppStore._stockMovementsKey, importedStockMovements),
+              LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
+                _snapshotListMaps(
                   decoded,
-                  'generatedSequence',
-                  fallback: store._syncSequence.toString(),
+                  'warehouseInventory',
+                  aliases: <String>['warehouse_inventory'],
+                ),
+                allowNegativeStock: effectiveStoreProfile.allowNegativeStock,
+              ),
+              LocalDatabaseService.replaceStockOperationsRowsImmediate(
+                _snapshotListMaps(
+                  decoded,
+                  'stockOperations',
+                  aliases: <String>['stock_operations'],
                 ),
               ),
-            ),
-            LocalDatabaseService.setString(AppStore._schemaVersionKey, '17'),
-          ];
-
-          if (importedIdentity != null) {
-            writes.add(
-              LocalDatabaseService.setString(
-                AppStore._appIdentityKey,
-                jsonEncode(importedIdentity.toJson()),
+              LocalDatabaseService.replaceInventoryReconciliationsRowsImmediate(
+                _snapshotListMaps(
+                  decoded,
+                  'inventoryReconciliations',
+                  aliases: <String>['inventory_reconciliations'],
+                ),
               ),
-            );
-          }
+              LocalDatabaseService
+                  .replaceInventoryMigrationAdjustmentsRowsImmediate(
+                _snapshotListMaps(
+                  decoded,
+                  'inventoryMigrationAdjustments',
+                  aliases: <String>['inventory_migration_adjustments'],
+                ),
+              ),
+              if (LocalDatabaseService.phase8AccountingSnapshotTables.keys
+                  .any(decoded.containsKey))
+                LocalDatabaseService
+                    .replacePhase8AccountingSnapshotRowsImmediate(
+                  <String, List<Map<String, dynamic>>>{
+                    for (final key in LocalDatabaseService
+                        .phase8AccountingSnapshotTables.keys)
+                      if (decoded.containsKey(key))
+                        key: _snapshotListMaps(decoded, key),
+                  },
+                ),
+              replaceRows(AppStore._inventoryCountsKey,
+                  _snapshotListMaps(decoded, 'inventoryCounts')),
+              replaceRows(AppStore._warehousesKey,
+                  _snapshotListMaps(decoded, 'warehouses')),
+              replaceRows(
+                AppStore._accountTransactionsKey,
+                _snapshotListMaps(decoded, 'accountTransactions'),
+              ),
+              replaceRows(
+                  AppStore._rolesKey, _snapshotListMaps(decoded, 'roles')),
+              replaceRows(
+                  AppStore._usersKey, _snapshotListMaps(decoded, 'users')),
+              LocalDatabaseService.setString(
+                AppStore._inventoryCostingMethodKey,
+                _snapshotScalarString(
+                  decoded,
+                  'inventoryCostingMethod',
+                  fallback: store._inventoryCostingMethod.code,
+                ),
+              ),
+              LocalDatabaseService.setString(
+                AppStore._storeProfileKey,
+                jsonEncode(
+                  decoded['storeProfile'] is Map
+                      ? Map<String, dynamic>.from(
+                          decoded['storeProfile'] as Map)
+                      : store._storeProfile.toJson(),
+                ),
+              ),
+              LocalDatabaseService.setString(
+                AppStore._invoiceCounterKey,
+                ((decoded['invoiceCounter'] as num?)?.toInt() ??
+                        store._invoiceCounter)
+                    .toString(),
+              ),
+              LocalDatabaseService.setString(
+                AppStore._purchaseCounterKey,
+                ((decoded['purchaseCounter'] as num?)?.toInt() ??
+                        store._purchaseCounter)
+                    .toString(),
+              ),
+              LocalDatabaseService.setString(
+                AppStore._syncChangesKey,
+                jsonEncode(syncChangesForClient),
+              ),
+              LocalDatabaseService.setString(
+                AppStore._syncQueueKey,
+                jsonEncode(rawSyncQueue),
+              ),
+              LocalDatabaseService.setString(
+                AppStore._syncSequenceKey,
+                _snapshotScalarString(
+                  decoded,
+                  'syncSequence',
+                  fallback: _snapshotScalarString(
+                    decoded,
+                    'generatedSequence',
+                    fallback: store._syncSequence.toString(),
+                  ),
+                ),
+              ),
+              LocalDatabaseService.setString(AppStore._schemaVersionKey, '17'),
+            ];
 
-          await Future.wait(writes);
-          // Re-run document materialization after batch rows exist so the
-          // allocation child tables can satisfy their foreign keys.
-          await replaceRows(
-              AppStore._salesKey, _snapshotListMaps(decoded, 'sales'));
-          await replaceRows(
-              AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases'));
-        });
-        await LocalDatabaseService.flushPendingWrites();
+            if (importedIdentity != null) {
+              writes.add(
+                LocalDatabaseService.setString(
+                  AppStore._appIdentityKey,
+                  jsonEncode(importedIdentity.toJson()),
+                ),
+              );
+            }
+
+            await Future.wait(writes);
+            // Re-run document materialization after batch rows exist so the
+            // allocation child tables can satisfy their foreign keys.
+            await replaceRows(
+                AppStore._salesKey, _snapshotListMaps(decoded, 'sales'));
+            await replaceRows(AppStore._purchasesKey,
+                _snapshotListMaps(decoded, 'purchases'));
+          });
+          await LocalDatabaseService.flushPendingWrites();
         },
         category: 'snapshot',
       );
@@ -270,7 +271,7 @@ extension AppStoreRecoveryServiceSplitPart2 on AppStoreRecoveryService {
       runUnifiedBatchClosure: false,
     );
     await _refreshSummaryTables();
-    store.refreshUi();
+    store._refreshUi();
   }
 
   Future<void> replaceFromBackupMap(

@@ -7,12 +7,15 @@ import 'package:ventio/core/storage/sqlite/sqlite_migration_manager.dart';
 import 'phase5_manufacturing_transfer_test.dart' as support;
 
 void main() {
-  test('production integrity gate detects an unbalanced posted journal', () async {
+  test('production integrity gate detects an unbalanced posted journal',
+      () async {
     await support.readyPhase5SqliteStore();
     final db = SqliteMigrationManager.database!;
-    final account = await db.customSelect(
-      "SELECT id FROM accounts WHERE deleted_at = '' AND is_active = 1 AND is_postable = 1 ORDER BY id LIMIT 1",
-    ).getSingle();
+    final account = await db
+        .customSelect(
+          "SELECT id FROM accounts WHERE deleted_at = '' AND is_active = 1 AND is_postable = 1 ORDER BY id LIMIT 1",
+        )
+        .getSingle();
     final accountId = account.read<String>('id');
     final now = DateTime.now().toUtc().toIso8601String();
 
@@ -54,20 +57,21 @@ void main() {
     );
   });
 
-  test('production integrity detects semantic inventory account misclassification',
+  test(
+      'production integrity detects semantic inventory account misclassification',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'semantic-mismatch-product',
       code: 'SEM-MISMATCH',
       stock: 0,
       cost: 2,
     ));
-    final warehouse = await store.createWarehouse(
+    final warehouse = await store.inventory.createWarehouse(
       name: 'Semantic mismatch',
       code: 'SEM',
     );
-    await store.adjustStock(
+    await store.inventory.adjustStock(
       productId: 'semantic-mismatch-product',
       warehouseId: warehouse.id,
       quantityDelta: 5,
@@ -117,29 +121,32 @@ void main() {
 
     final report = await AccountingProductionIntegrityService(db).audit();
     expect(
-      report.issues.any((issue) => issue.code == 'inventory_gl_valuation_mismatch'),
+      report.issues
+          .any((issue) => issue.code == 'inventory_gl_valuation_mismatch'),
       isFalse,
     );
     expect(
-      report.issues.any((issue) =>
-          issue.code == 'inventory_semantic_account_mismatch'),
+      report.issues
+          .any((issue) => issue.code == 'inventory_semantic_account_mismatch'),
       isTrue,
     );
   });
 
-  test('Unified Batch gate detects warehouse quantity that no longer matches batches', () async {
+  test(
+      'Unified Batch gate detects warehouse quantity that no longer matches batches',
+      () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'closure-batch-product',
       code: 'CLOSE-BATCH',
       stock: 0,
       cost: 2,
     ));
-    final warehouse = await store.createWarehouse(
+    final warehouse = await store.inventory.createWarehouse(
       name: 'Closure Batch',
       code: 'CBATCH',
     );
-    await store.adjustStock(
+    await store.inventory.adjustStock(
       productId: 'closure-batch-product',
       warehouseId: warehouse.id,
       quantityDelta: 5,

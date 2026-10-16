@@ -83,7 +83,8 @@ class DisasterRecoveryService {
     store.security.requirePermission(AppPermission.maintenanceManage);
     store.security.requirePermission(AppPermission.backupExport);
     if (!store.runtime.identity.isHost) {
-      throw StateError('Disaster recovery checkpoints are created on the Host device.');
+      throw StateError(
+          'Disaster recovery checkpoints are created on the Host device.');
     }
     final recoveryKey = store.runtime.identity.recoveryKey.trim();
     if (recoveryKey.length < 8) {
@@ -99,10 +100,12 @@ class DisasterRecoveryService {
     }
     final verified = await _verifyFile(created);
     if (!verified.ok) {
-      throw StateError('Recovery checkpoint verification failed: ${verified.message}');
+      throw StateError(
+          'Recovery checkpoint verification failed: ${verified.message}');
     }
     final now = DateTime.now().toUtc();
-    await LocalDatabaseService.setString(_lastCheckpointKey, now.toIso8601String());
+    await LocalDatabaseService.setString(
+        _lastCheckpointKey, now.toIso8601String());
     await _markVerified(created.path, now);
     await _audit(
       action: 'recovery_checkpoint_created',
@@ -116,7 +119,8 @@ class DisasterRecoveryService {
     store.security.requirePermission(AppPermission.maintenanceManage);
     store.security.requirePermission(AppPermission.backupExport);
     if (!store.runtime.identity.isHost) {
-      throw StateError('Local backup verification is managed by the Host device.');
+      throw StateError(
+          'Local backup verification is managed by the Host device.');
     }
     final file = await _latestBackupFile();
     if (file == null) {
@@ -203,27 +207,30 @@ class DisasterRecoveryService {
           manifest['cipher']?.toString().toLowerCase() != 'aes-256-gcm') {
         return DisasterRecoveryVerificationResult(
           ok: false,
-          message: 'Backup manifest does not declare the required encrypted format.',
+          message:
+              'Backup manifest does not declare the required encrypted format.',
           path: file.path,
         );
       }
       final encryptedJson = utf8.decode(_archiveBytes(backupEntry)).trim();
-      if (!store.isEncryptedBackupJson(encryptedJson)) {
+      if (!store.recovery.isEncryptedBackupJson(encryptedJson)) {
         return DisasterRecoveryVerificationResult(
           ok: false,
-          message: 'Backup payload is not a recognized encrypted Ventio backup.',
+          message:
+              'Backup payload is not a recognized encrypted Ventio backup.',
           path: file.path,
         );
       }
-      final plain = store.decryptBackupJson(
+      final plain = store.recovery.decryptBackupJson(
         encryptedJson,
         store.runtime.identity.recoveryKey.trim(),
       );
-      final validation = store.validateBackupJson(plain);
+      final validation = store.recovery.validateBackupJson(plain);
       if (!validation.isValid || validation.summary == null) {
         return DisasterRecoveryVerificationResult(
           ok: false,
-          message: validation.errorMessage ?? 'Backup payload validation failed.',
+          message:
+              validation.errorMessage ?? 'Backup payload validation failed.',
           path: file.path,
         );
       }

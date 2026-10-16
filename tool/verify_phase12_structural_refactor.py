@@ -23,7 +23,7 @@ def read_library_source(relative_path: str) -> str:
 APP = (ROOT / 'lib/data/app_store.dart').read_text(encoding='utf-8-sig')
 APP_LIBRARY = read_library_source('lib/data/app_store.dart')
 STATE = read_library_source('lib/data/app_store_state.dart')
-DOMAINS = read_library_source('lib/data/app_store_domains.dart')
+DOMAINS = '\n'.join(path.read_text(encoding='utf-8-sig') for path in sorted((ROOT / 'lib/data').glob('app_store_domains*.dart')))
 COMPAT = '\n'.join(
     path.read_text(encoding='utf-8-sig')
     for path in sorted((ROOT / 'lib/data').glob('app_store_forwarding_api*.dart'))
@@ -71,7 +71,13 @@ check('state partition has seven domain states', all(
         '_AccountingState', '_SecurityState', '_SyncState', '_RuntimeState')))
 accessors = re.findall(r'^\s{2}.+\sget\s+(_[A-Za-z][A-Za-z0-9_]*)\s*=>', STATE, re.M)
 check('state compatibility accessors are unique', len(accessors) == len(set(accessors)))
-check('all 140 P11 state fields are represented', len(accessors) == 140)
+check('all 130 active state fields are represented', len(accessors) == 130)
+retired_read_caches = (
+    '_cachedSupplierProductPrices', '_cachedPriceLists', '_cachedProductPrices',
+    '_cachedProductCosts', '_cachedInventoryCostLayers',
+)
+check('unused catalog and inventory read caches are removed',
+      not any(name in STATE for name in retired_read_caches))
 check('AppStore no longer owns product list', 'final List<Product> _products' not in concrete)
 check('AppStore no longer owns sale list', 'final List<Sale> _sales' not in concrete)
 check('AppStore no longer owns purchase list', 'final List<Purchase> _purchases' not in concrete)
@@ -125,10 +131,11 @@ check('Manufacturing recipes and order lifecycle use inventory commands', all(re
 check('warehouse stock reads use inventory port', all(token in INVENTORY_UI + TRANSFER_UI + MANUFACTURING_UI + SALES_UI + PURCHASES_UI for token in ('inventory.stockForWarehouse(', 'inventory.warehouseStockFromSqlite(', 'inventory.warehouseStockBalancesFromSqlite(', 'inventory.resolveWarehouseForSale(', 'inventory.resolveWarehouseForPurchase(')))
 check('remaining inventory screen actions use inventory port', all(re.search(pattern, INVENTORY_UI) for pattern in (r'widget\.store\s*\.inventory\s*\.createWarehouse\(', r'widget\.store\s*\.inventory\s*\.reviewAutoCorrection\(', r'widget\.store\s*\.inventory\s*\.setExpiryBatchStatus\(', r'widget\.store\s*\.inventory\s*\.adjustExpiryBatchStock\(', r'widget\.store\s*\.inventory\s*\.manualStockAdjustmentVersion\(', r'widget\.store\s*\.inventory\s*\.editStockAdjustment\(', r'store\s*\.inventory\s*\.recordWasteLoss\(', r'store\s*\.inventory\s*\.deleteWasteLoss\(')))
 check('Inventory reads and permission checks use typed domains', all(token in INVENTORY_UI + MANUFACTURING_UI + TRANSFER_UI for token in ('catalog.stockTrackedProducts', 'inventory.autoCorrectionMovements', 'inventory.pendingAutoCorrectionMovements', 'inventory.inventoryCountSessions', 'security.hasPermission(', 'security.hasAnyPermission(')) and 'widget.store.inventory.recentTransferOrders(' in TRANSFER_UI and not any(token in INVENTORY_UI + MANUFACTURING_UI + TRANSFER_UI for token in ('store.stockTrackedProducts', 'store.stockMovementsRevision', 'store.hasPermission(', 'store.hasAnyPermission(', 'store.recentWarehouseTransferOrders(')))
-check('P9 trace API remains compatible', 'traceInventoryBatch(' in COMPAT and 'verifyInventoryTraceabilityIntegrity()' in COMPAT)
-check('sensitive action compatibility remains present', 'Future<bool> authorizeSensitiveAction' in COMPAT)
-check('backup compatibility remains present', 'Future<String> exportBackupJson()' in COMPAT and 'Future<void> importBackupJson' in COMPAT)
-check('sync compatibility remains present', 'applyRemoteSyncChanges(' in COMPAT)
+check('P9 trace API is exposed through the inventory port', 'Future<Map<String, dynamic>> traceBatch' in DOMAINS and 'verifyTraceabilityIntegrity' in DOMAINS)
+check('sensitive action implementation remains internal', 'Future<bool> _authorizeSensitiveAction(' in APP_LIBRARY)
+check('backup implementations remain internal', 'Future<String> _exportBackupJson()' in APP_LIBRARY and 'AppStoreRecoveryService(_store).importBackupJson(' in DOMAINS)
+check('sync implementation remains internal', 'Future<void> _applyRemoteSyncChanges(' in APP_LIBRARY)
+check('orchestration operations remain internal', 'Future<void> _ensureProductsLoaded()' in ORCH and 'int get _accountingRevision' in ORCH)
 check('production schema supports phase12+', any(f'schemaVersion => {version}' in DATABASE for version in range(31, 100)))
 check('P9 indexes remain in schema', 'idx_stock_movements_reference_type_batch' in DATABASE and 'idx_inventory_batches_source_trace' in DATABASE)
 check('README documents eight typed domains', '### AppStore domain boundary' in README and '`store.runtime`' in README and '`store.accounting`' in README)

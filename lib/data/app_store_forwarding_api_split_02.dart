@@ -21,14 +21,6 @@ mixin _AppStoreForwardingApiPart2
               acceptedSourceCommandIds: acceptedSourceCommandIds,
               lastAppliedSequence: lastAppliedSequence);
 
-  String? validateClientDraftForHostAcceptance(SyncChange change) =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
-          .validateClientDraftForHostAcceptance(change);
-
-  Future<void> clearPendingSyncQueue({bool notify = true}) =>
-      _AppStoreSplitStartupMigrationsPart3(this as AppStore)
-          .clearPendingSyncQueue(notify: notify);
-
   int _loadInvoiceCounter() =>
       _AppStoreSplitStartupMigrationsPart3(this as AppStore)
           ._loadInvoiceCounter();
@@ -49,31 +41,6 @@ mixin _AppStoreForwardingApiPart2
   AppIdentity _loadOrCreateAppIdentity() =>
       _AppStoreSplitIdentityUsers(this as AppStore)._loadOrCreateAppIdentity();
 
-  Future<void> updateDeviceName(String deviceName) =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .updateDeviceName(deviceName);
-
-  Future<void> recoverExistingStoreIdentity({
-    required String storeId,
-    String recoveryKey = '',
-    String? branchId,
-    String? hostDeviceId,
-    String? deviceToken,
-    String? controlPlaneTenantId,
-    DeviceRole? deviceRole,
-    SyncMode? syncMode,
-  }) =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .recoverExistingStoreIdentity(
-              storeId: storeId,
-              recoveryKey: recoveryKey,
-              branchId: branchId,
-              hostDeviceId: hostDeviceId,
-              deviceToken: deviceToken,
-              controlPlaneTenantId: controlPlaneTenantId,
-              deviceRole: deviceRole,
-              syncMode: syncMode);
-
   AppIdentity _identityForLanSnapshotImport(Map<String, dynamic> decoded) =>
       _AppStoreSplitIdentityUsers(this as AppStore)
           ._identityForLanSnapshotImport(decoded);
@@ -82,26 +49,11 @@ mixin _AppStoreForwardingApiPart2
       _AppStoreSplitIdentityUsers(this as AppStore)
           ._normalizedLocalIdentity(identity);
 
-  Map<String, dynamic>? get pendingHostTransferRequest =>
-      _AppStoreSplitIdentityUsers(this as AppStore).pendingHostTransferRequest;
-
-  Map<String, dynamic>? get latestHostTransferNotification =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .latestHostTransferNotification;
-
-  Future<void> clearHostTransferNotification() =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .clearHostTransferNotification();
-
   Future<void> _storeHostTransferNotification(
     Map<String, dynamic> payload,
   ) =>
       _AppStoreSplitIdentityUsers(this as AppStore)
           ._storeHostTransferNotification(payload);
-
-  Future<void> clearLocalHostTransferRequest() =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .clearLocalHostTransferRequest();
 
   Future<void> _forceApplyRoleFromTransfer(AppIdentity next) =>
       _AppStoreSplitIdentityUsers(this as AppStore)
@@ -123,40 +75,6 @@ mixin _AppStoreForwardingApiPart2
       _AppStoreSplitIdentityUsers(this as AppStore)
           ._assertLanDirectRoleRules(next, source: source);
 
-  Future<void> updateAppIdentityDuringSetup(AppIdentity identity) =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .updateAppIdentityDuringSetup(identity);
-
-  Future<void> updateAppIdentity(AppIdentity identity) =>
-      _AppStoreSplitIdentityUsers(this as AppStore).updateAppIdentity(identity);
-
-  Future<void> updateAppIdentityLocalOnly(
-    AppIdentity identity, {
-    String source = 'local sync settings',
-  }) =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .updateAppIdentityLocalOnly(identity, source: source);
-
-  Future<void> setActiveSyncTransport(String transport) =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .setActiveSyncTransport(transport);
-
-  Future<void> requestHostTransfer({String reason = ''}) =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .requestHostTransfer(reason: reason);
-
-  Future<void> approveHostTransfer(String requestingDeviceId) =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .approveHostTransfer(requestingDeviceId);
-
-  Future<void> activateApprovedHostTransfer() =>
-      _AppStoreSplitIdentityUsers(this as AppStore)
-          .activateApprovedHostTransfer();
-
-  @Deprecated('Use users and roles instead. Kept for old code compatibility.')
-  Future<void> setCurrentRole(String role) =>
-      _AppStoreSplitIdentityUsers(this as AppStore).setCurrentRole(role);
-
   Future<List<UserRole>> _loadRoles() =>
       _AppStoreSplitIdentityUsers(this as AppStore)._loadRoles();
 
@@ -172,32 +90,6 @@ mixin _AppStoreForwardingApiPart2
   void _restoreActiveUser() =>
       _AppStoreSplitIdentityUsersPart2(this as AppStore)._restoreActiveUser();
 
-  Future<bool> login(
-    String username,
-    String password, {
-    bool remember = false,
-  }) =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore)
-          .login(username, password, remember: remember);
-
-  Future<void> logout() =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore).logout();
-
-  Future<void> applySessionUser({
-    required AppUser activeUser,
-    required String currentRole,
-    required Set<String> permissions,
-    required bool rememberLogin,
-  }) =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore).applySessionUser(
-          activeUser: activeUser,
-          currentRole: currentRole,
-          permissions: permissions,
-          rememberLogin: rememberLogin);
-
-  Future<void> clearSessionUser() =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore).clearSessionUser();
-
   Future<void> _loadSessionPermissionsFromStorage() =>
       _AppStoreSplitIdentityUsersPart2(this as AppStore)
           ._loadSessionPermissionsFromStorage();
@@ -209,52 +101,15 @@ mixin _AppStoreForwardingApiPart2
   Future<void> _refreshAuthFlags() =>
       _AppStoreSplitIdentityUsersPart2(this as AppStore)._refreshAuthFlags();
 
-  void refreshUi() =>
+  void _refreshUi() =>
       _AppStoreSplitIdentityUsersPart2(this as AppStore).refreshUi();
-
-  /// Applies a server-approved password reset to the matching local owner.
-  /// The server reset is the authority; this only keeps Offline Login in sync
-  /// after the support-issued one-time reset has been consumed successfully.
-  Future<bool> applySupportPasswordResetToLocalUser({
-    required String username,
-    required String newPassword,
-  }) =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore)
-          .applySupportPasswordResetToLocalUser(
-              username: username, newPassword: newPassword);
-
-  Future<bool> verifyAdminPassword(String password) =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore)
-          .verifyAdminPassword(password);
 
   bool _verifyPassword(String password, String storedHash) =>
       _AppStoreSplitIdentityUsersPart2(this as AppStore)
           ._verifyPassword(password, storedHash);
 
-  Future<void> addOrUpdateRole(UserRole role) =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore).addOrUpdateRole(role);
-
-  Future<void> deleteRole(String id) =>
-      _AppStoreSplitIdentityUsersPart2(this as AppStore).deleteRole(id);
-
-  AppUser? get storeOwnerUser =>
+  AppUser? get _storeOwnerUser =>
       _AppStoreSplitIdentityUsersPart2(this as AppStore).storeOwnerUser;
-
-  Future<void> applyStoreOwnerCredentials({
-    required String username,
-    required String password,
-    String? fullName,
-  }) =>
-      _AppStoreSplitIdentityUsersPart3(this as AppStore)
-          .applyStoreOwnerCredentials(
-              username: username, password: password, fullName: fullName);
-
-  Future<void> addOrUpdateUser(AppUser user, {String? password}) =>
-      _AppStoreSplitIdentityUsersPart3(this as AppStore)
-          .addOrUpdateUser(user, password: password);
-
-  Future<void> deleteUser(String id) =>
-      _AppStoreSplitIdentityUsersPart3(this as AppStore).deleteUser(id);
 
   Future<String> _hashPasswordAsync(String password) =>
       _AppStoreSplitIdentityUsersPart3(this as AppStore)
@@ -292,12 +147,6 @@ mixin _AppStoreForwardingApiPart2
       _AppStoreSplitIdentityUsersPart3(this as AppStore)
           ._waitForPendingPurchaseAccounting(purchaseId);
 
-  Future<void> waitForPendingAccounting({
-    Duration timeout = const Duration(seconds: 45),
-  }) =>
-      _AppStoreSplitIdentityUsersPart3(this as AppStore)
-          .waitForPendingAccounting(timeout: timeout);
-
   void _rebuildProductIndexes() =>
       _AppStoreSplitIdentityUsersPart3(this as AppStore)
           ._rebuildProductIndexes();
@@ -333,14 +182,6 @@ mixin _AppStoreForwardingApiPart2
   Future<Purchase?> _purchaseByIdFromSqlite(String id) =>
       _AppStoreSplitPersistenceSyncCore(this as AppStore)
           ._purchaseByIdFromSqlite(id);
-
-  /// Reads the latest purchase snapshot before opening an edit form. The
-  /// creator of a purchase is not relevant to edit access; the caller's
-  /// permissions are checked by the mutation method. This refresh only avoids
-  /// opening a form from a stale list/details snapshot.
-  Future<Purchase?> reloadPurchaseFromSqlite(String id) =>
-      _AppStoreSplitPersistenceSyncCore(this as AppStore)
-          .reloadPurchaseFromSqlite(id);
 
   Future<Expense?> _expenseByIdFromSqlite(String id) =>
       _AppStoreSplitPersistenceSyncCore(this as AppStore)
@@ -496,68 +337,6 @@ mixin _AppStoreForwardingApiPart2
       _AppStoreSplitPersistenceSyncCorePart2(this as AppStore)
           ._resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile);
 
-  Future<void> resetBusinessData({bool keepStoreProfile = true}) =>
-      _AppStoreSplitPersistenceSyncCorePart2(this as AppStore)
-          .resetBusinessData(keepStoreProfile: keepStoreProfile);
-
-  Future<void> clearLocalDeviceBusinessData({
-    bool keepStoreProfile = true,
-  }) =>
-      _AppStoreSplitPersistenceSyncCorePart2(this as AppStore)
-          .clearLocalDeviceBusinessData(keepStoreProfile: keepStoreProfile);
-
-  Future<int> clearLocalOnlyPendingSyncChanges() =>
-      _AppStoreSplitPersistenceSyncCorePart2(this as AppStore)
-          .clearLocalOnlyPendingSyncChanges();
-
-  Future<void> factoryResetLocalDevice({
-    bool enforcePermission = true,
-    bool preserveAdminUsers = false,
-  }) =>
-      _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
-          .factoryResetLocalDevice(
-              enforcePermission: enforcePermission,
-              preserveAdminUsers: preserveAdminUsers);
-
-  Future<int> cleanupSoftDeletedRecords({
-    Duration retention = const Duration(days: 30),
-  }) =>
-      _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
-          .cleanupSoftDeletedRecords(retention: retention);
-
-  Future<BusinessDataIntegrityResult> verifyLocalBusinessDataIntegrity() =>
-      _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
-          .verifyLocalBusinessDataIntegrity();
-
-  /// Repairs only product references that already exist in historical sales,
-  /// purchases, or stock movements. Soft-deleted products are restored first.
-  /// Creating archival catalog entries is opt-in because it changes the active
-  /// data set; the new records are inactive and never track stock.
-  Future<BusinessDataIntegrityRepairResult> repairMissingProductReferences({
-    bool createArchivedProducts = false,
-  }) =>
-      _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
-          .repairMissingProductReferences(
-              createArchivedProducts: createArchivedProducts);
-
-  Future<void> updateStoreProfile(StoreProfile profile) =>
-      _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
-          .updateStoreProfile(profile);
-
-  Future<void> updateTaxConfiguration({
-    required List<TaxProfile> profiles,
-    required String defaultTaxProfileId,
-  }) =>
-      _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
-          .updateTaxConfiguration(
-        profiles: profiles,
-        defaultTaxProfileId: defaultTaxProfileId,
-      );
-
-  Future<void> updateDefaultTaxRatePercent(double ratePercent) =>
-      _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
-          .updateDefaultTaxRatePercent(ratePercent);
-
   void _validateProduct(Product product, {Product? previousProduct}) =>
       _AppStoreSplitPersistenceSyncCorePart3(this as AppStore)
           ._validateProduct(product, previousProduct: previousProduct);
@@ -605,22 +384,6 @@ mixin _AppStoreForwardingApiPart2
               entityId: entityId,
               operation: operation,
               payload: payload);
-
-  /// Runs after login before the automatic sync transports start.
-  ///
-  /// The cursor is persisted through LocalDatabaseService, which means SQLite
-  /// owns it on native platforms. On the first Phase 8 launch we establish a
-  /// baseline without replaying the entire historical accounting database. On
-  /// later launches we capture everything committed after the last durable
-  /// cursor, including a transaction that committed immediately before a
-  /// process crash.
-  Future<void> recoverPhase8AccountingSyncAfterStartup() =>
-      _AppStoreSplitPersistenceSyncCorePart4(this as AppStore)
-          .recoverPhase8AccountingSyncAfterStartup();
-
-  Future<void> recordPhase8AccountingMutationForSync() =>
-      _AppStoreSplitPersistenceSyncCorePart4(this as AppStore)
-          .recordPhase8AccountingMutationForSync();
 
   bool get _isLanClientConfigured =>
       _AppStoreSplitPersistenceSyncCorePart4(this as AppStore)

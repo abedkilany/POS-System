@@ -38,24 +38,25 @@ void main() {
     }
 
     test('accepts a structurally complete backup and reports counts', () {
-      final result = AppStore().validateBackupJson(jsonEncode(validBackup(
-        products: const [
-          <String, Object?>{'id': 'p1'}
-        ],
-        customers: const [
-          <String, Object?>{'id': 'c1'},
-          <String, Object?>{'id': 'c2'}
-        ],
-        sales: const [
-          <String, Object?>{'id': 's1'}
-        ],
-        suppliers: const [
-          <String, Object?>{'id': 'sup1'}
-        ],
-        expenses: const [
-          <String, Object?>{'id': 'e1'}
-        ],
-      )));
+      final result =
+          AppStore().recovery.validateBackupJson(jsonEncode(validBackup(
+                products: const [
+                  <String, Object?>{'id': 'p1'}
+                ],
+                customers: const [
+                  <String, Object?>{'id': 'c1'},
+                  <String, Object?>{'id': 'c2'}
+                ],
+                sales: const [
+                  <String, Object?>{'id': 's1'}
+                ],
+                suppliers: const [
+                  <String, Object?>{'id': 'sup1'}
+                ],
+                expenses: const [
+                  <String, Object?>{'id': 'e1'}
+                ],
+              )));
 
       expect(result.isValid, isTrue);
       expect(result.errorMessage, isNull);
@@ -72,10 +73,10 @@ void main() {
     test('rejects non-object, malformed, and incomplete backups safely', () {
       final store = AppStore();
 
-      expect(store.validateBackupJson('[]').isValid, isFalse);
-      expect(store.validateBackupJson('{not-json').isValid, isFalse);
+      expect(store.recovery.validateBackupJson('[]').isValid, isFalse);
+      expect(store.recovery.validateBackupJson('{not-json').isValid, isFalse);
 
-      final incomplete = store.validateBackupJson(
+      final incomplete = store.recovery.validateBackupJson(
           jsonEncode(<String, dynamic>{'products': const []}));
       expect(incomplete.isValid, isFalse);
       expect(incomplete.errorMessage,
@@ -85,7 +86,7 @@ void main() {
     test('uses a safe default store name when profile name is absent', () {
       final backup = validBackup(storeName: '')
         ..['storeProfile'] = <String, Object?>{};
-      final result = AppStore().validateBackupJson(jsonEncode(backup));
+      final result = AppStore().recovery.validateBackupJson(jsonEncode(backup));
 
       expect(result.isValid, isTrue);
       expect(result.summary?.storeName, 'My Store');
@@ -95,7 +96,7 @@ void main() {
       final backup = validBackup()
         ..['storeProfile'] =
             StoreProfile.defaults.copyWith(allowNegativeStock: true).toJson();
-      final result = AppStore().validateBackupJson(jsonEncode(backup));
+      final result = AppStore().recovery.validateBackupJson(jsonEncode(backup));
 
       expect(result.isValid, isTrue);
       final profile = StoreProfile.fromJson(
@@ -114,8 +115,9 @@ void main() {
       final bytes = ZipEncoder().encode(archive);
 
       expect(bytes, isNotNull);
-      final rawJson = store.extractBackupJsonFromLocalBackupArchiveBytes(bytes);
-      final result = store.validateBackupJson(rawJson);
+      final rawJson =
+          store.recovery.extractBackupJsonFromLocalBackupArchiveBytes(bytes);
+      final result = store.recovery.validateBackupJson(rawJson);
 
       expect(result.isValid, isTrue);
       expect(result.errorMessage, isNull);

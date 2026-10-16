@@ -20,10 +20,12 @@ String readAppStoreImplementationSource() {
     if (!partFile.existsSync()) continue;
     final section = '// ---- $relativePath ----\n'
         '${partFile.readAsStringSync().replaceAll('\r\n', '\n')}\n';
-    if (relativePath == 'app_store_domains.dart') {
-      // Domain contracts contain method signatures but are not workflow
+    if (relativePath == 'app_store_domains.dart' ||
+        relativePath.startsWith('app_store_domains_')) {
+      // Domain ports and adapters are routing surfaces, not workflow
       // implementations. Keep source-contract method extraction pointed at
-      // executable data/workflow parts.
+      // the executable data/workflow parts instead of matching an adapter
+      // method with the same name first.
       continue;
     }
     if (relativePath.startsWith('app_store_forwarding_api')) {

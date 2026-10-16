@@ -11,7 +11,8 @@ import 'package:ventio/data/app_store.dart';
 
 void main() {
   final path = Platform.environment['VENTIO_RECOVERY_REHEARSAL'];
-  test('recovered copy completes real database and AppStore startup twice', () async {
+  test('recovered copy completes real database and AppStore startup twice',
+      () async {
     if (path == null || !path.endsWith('.rehearsal.sqlite')) {
       throw StateError('An isolated rehearsal file is required.');
     }
@@ -27,10 +28,10 @@ void main() {
       SqliteMigrationManager.attachDatabaseOverride(db);
       final store = AppStore();
       try {
-        await store.initialize(hydrateHeavyData: false);
-        expect(store.isReady, isTrue);
+        await store.runtime.initialize(hydrateHeavyData: false);
+        expect(store.runtime.isReady, isTrue);
         expect((await AuditLogger.verifyIntegrity()).ok, isTrue);
-        await store.prepareForShutdown();
+        await store.runtime.prepareForShutdown();
       } finally {
         store.dispose();
         await LocalDatabaseService.resetForTesting();

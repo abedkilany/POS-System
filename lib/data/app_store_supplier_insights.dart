@@ -191,15 +191,6 @@ List<SupplierProductPrice> supplierProductPricesForProduct(String productId) {
     return List.unmodifiable(rows);
   }
 
-List<SupplierProductPrice> supplierProductPricesForSupplier(
-    String supplierId,
-  ) {
-    final rows = _supplierProductPrices
-        .where((item) => !item.isDeleted && item.supplierId == supplierId)
-        .toList()
-      ..sort((a, b) => a.productId.compareTo(b.productId));
-    return List.unmodifiable(rows);
-  }
 
 SupplierProductPrice? supplierProductPriceFor({
     required String productId,
@@ -215,35 +206,8 @@ SupplierProductPrice? supplierProductPriceFor({
     return null;
   }
 
-SupplierProductPrice? preferredSupplierProductPriceForProduct(
-    String productId,
-  ) {
-    final rows = supplierProductPricesForProduct(productId);
-    for (final item in rows) {
-      if (item.isPreferred) return item;
-    }
-    return rows.isEmpty ? null : rows.first;
-  }
 
-SupplierProductPrice? bestPriceSupplierProductPriceForProduct(
-    String productId,
-  ) {
-    final rows = supplierProductPricesForProduct(productId);
-    if (rows.isEmpty) return null;
-    final sorted = rows.toList()..sort((a, b) => a.cost.compareTo(b.cost));
-    return sorted.first;
-  }
 
-SupplierProductPrice? fastestSupplierProductPriceForProduct(
-    String productId,
-  ) {
-    final rows = supplierProductPricesForProduct(
-      productId,
-    ).where((item) => item.leadTimeDays != null).toList();
-    if (rows.isEmpty) return null;
-    rows.sort((a, b) => a.leadTimeDays!.compareTo(b.leadTimeDays!));
-    return rows.first;
-  }
 
 Future<void> addOrUpdateSupplierProductPrice(
     SupplierProductPrice price,

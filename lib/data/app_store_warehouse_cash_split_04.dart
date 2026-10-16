@@ -61,7 +61,7 @@ extension _AppStoreSplitWarehouseCashPart4 on AppStore {
       storeId: appIdentity.storeId,
       refundKey: 'manual:${DateTime.now().microsecondsSinceEpoch}',
     );
-    if (refunded > 0.000001) await refreshAccountTransactionsFromSqlite();
+    if (refunded > 0.000001) await _refreshAccountTransactionsFromSqlite();
     return refunded;
   }
 
@@ -158,130 +158,12 @@ extension _AppStoreSplitWarehouseCashPart4 on AppStore {
       );
     }
 
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await _saveDirty(accountTransactions: true, sync: true);
     notifyListeners();
   }
 
-  Future<ReceiptVoucher> editReceiptVoucher({
-    required String voucherId,
-    required int expectedVersion,
-    String? customerId,
-    String? customerName,
-    double? amount,
-    String? currency,
-    String? paymentMethod,
-    String? cashLocationId,
-    String? cashDrawerSessionId,
-    List<PaymentAllocationDraft>? allocations,
-    String? notes,
-    DateTime? date,
-  }) async {
-    requirePermission(AppPermission.customersPaymentManage);
-    final sqliteDb = SqliteMigrationManager.database;
-    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
-      throw StateError(
-          'Receipt editing requires the SQLite authoritative store.');
-    }
-    final service = PaymentVoucherService(sqliteDb);
-    final current = await service.findReceiptById(voucherId);
-    if (current == null) throw ArgumentError('Receipt voucher not found.');
-    final method = paymentMethod?.trim().isNotEmpty == true
-        ? paymentMethod!.trim()
-        : current.paymentMethod;
-    var resolvedLocationId = cashLocationId ?? current.cashLocationId;
-    var resolvedSessionId = cashDrawerSessionId ?? current.cashDrawerSessionId;
-    if (method.toLowerCase() == 'cash') {
-      requirePermission(AppPermission.cashBoxManage);
-      if ((cashLocationId ?? '').trim().isEmpty ||
-          (cashDrawerSessionId ?? '').trim().isEmpty) {
-        final context = await _openCashVoucherContext();
-        resolvedLocationId = context['cashLocationId'] ?? '';
-        resolvedSessionId = context['sessionId'] ?? '';
-      }
-    }
-    final edited = await service.editReceipt(
-      voucherId: voucherId,
-      expectedVersion: expectedVersion,
-      customerId: customerId,
-      customerName: customerName,
-      amount: amount,
-      currency: currency,
-      paymentMethod: paymentMethod,
-      cashLocationId: resolvedLocationId,
-      cashDrawerSessionId: resolvedSessionId,
-      allocations: allocations,
-      notes: notes,
-      date: date,
-      editedBy: _actorName(),
-      editedByUserId: _activeUser?.id ?? '',
-      deviceId: _deviceId,
-    );
-    await refreshAccountTransactionsFromSqlite();
-    await _saveDirty(accountTransactions: true, sync: true);
-    notifyListeners();
-    return edited;
-  }
 
-  Future<PaymentVoucher> editPaymentVoucher({
-    required String voucherId,
-    required int expectedVersion,
-    String? supplierId,
-    String? supplierName,
-    double? amount,
-    String? currency,
-    String? paymentMethod,
-    String? cashLocationId,
-    String? cashDrawerSessionId,
-    List<PaymentAllocationDraft>? allocations,
-    String? notes,
-    DateTime? date,
-  }) async {
-    requirePermission(AppPermission.suppliersPaymentManage);
-    final sqliteDb = SqliteMigrationManager.database;
-    if (!LocalDatabaseService.isSqliteAuthoritative || sqliteDb == null) {
-      throw StateError(
-          'Payment editing requires the SQLite authoritative store.');
-    }
-    final service = PaymentVoucherService(sqliteDb);
-    final current = await service.findPaymentById(voucherId);
-    if (current == null) throw ArgumentError('Payment voucher not found.');
-    final method = paymentMethod?.trim().isNotEmpty == true
-        ? paymentMethod!.trim()
-        : current.paymentMethod;
-    var resolvedLocationId = cashLocationId ?? current.cashLocationId;
-    var resolvedSessionId = cashDrawerSessionId ?? current.cashDrawerSessionId;
-    if (method.toLowerCase() == 'cash') {
-      requirePermission(AppPermission.cashBoxManage);
-      if ((cashLocationId ?? '').trim().isEmpty ||
-          (cashDrawerSessionId ?? '').trim().isEmpty) {
-        final context = await _openCashVoucherContext();
-        resolvedLocationId = context['cashLocationId'] ?? '';
-        resolvedSessionId = context['sessionId'] ?? '';
-      }
-    }
-    final edited = await service.editPayment(
-      voucherId: voucherId,
-      expectedVersion: expectedVersion,
-      supplierId: supplierId,
-      supplierName: supplierName,
-      amount: amount,
-      currency: currency,
-      paymentMethod: paymentMethod,
-      cashLocationId: resolvedLocationId,
-      cashDrawerSessionId: resolvedSessionId,
-      allocations: allocations,
-      notes: notes,
-      date: date,
-      editedBy: _actorName(),
-      editedByUserId: _activeUser?.id ?? '',
-      deviceId: _deviceId,
-    );
-    await refreshAccountTransactionsFromSqlite();
-    await _saveDirty(accountTransactions: true, sync: true);
-    notifyListeners();
-    return edited;
-  }
 
   Future<Sale> settleSalePayment({
     required String saleId,
@@ -372,7 +254,7 @@ extension _AppStoreSplitWarehouseCashPart4 on AppStore {
       idempotencyKey: key,
       date: when,
     );
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     final updated = await _saleByIdFromSqlite(current.id);
     if (updated == null) throw StateError('Sale payment cache refresh failed.');
     final index = _sales.indexWhere((item) => item.id == updated.id);
@@ -461,7 +343,7 @@ extension _AppStoreSplitWarehouseCashPart4 on AppStore {
       idempotencyKey: key,
       date: when,
     );
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     final updated = await _purchaseByIdFromSqlite(current.id);
     if (updated == null) {
       throw StateError('Purchase payment cache refresh failed.');

@@ -66,7 +66,7 @@ extension _AppStoreSplitPurchases on AppStore {
     );
     if (batchReferenceCost > tolerance) return batchReferenceCost;
 
-    final cost = productCostFor(product.id);
+    final cost = _productCostFor(product.id);
     if (cost.averageCost > 0) return cost.averageCost;
     if (product.usdCost > 0) return product.usdCost;
     if (product.cost > 0) return product.cost;
@@ -259,7 +259,7 @@ extension _AppStoreSplitPurchases on AppStore {
           'Invalid rebuilt inventory cost for ${product.name}; purchase edit rolled back.',
         );
       }
-      final currentCost = productCostFor(normalizedProductId);
+      final currentCost = _productCostFor(normalizedProductId);
       final rebuiltCost = currentCost.copyWith(
         averageCost: max(0.0, averageCost),
         lastCost: max(0.0, lastCost),

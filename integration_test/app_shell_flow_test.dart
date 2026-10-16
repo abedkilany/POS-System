@@ -36,7 +36,7 @@ Widget _testApp({required AppStore store, Locale locale = const Locale('en')}) {
 Future<AppStore> _readyStore() async {
   LocalDatabaseService.useInMemoryStoreForTesting();
   final store = AppStore();
-  await store.initialize();
+  await store.runtime.initialize();
   final role = UserRole(
     id: 'shell_admin',
     name: 'Shell Admin',
@@ -60,8 +60,8 @@ Future<AppStore> _readyStore() async {
     [user.toJson()],
     sortIndices: const [0],
   );
-  await store.refreshAfterDatabaseChange('roles_v1');
-  await store.refreshAfterDatabaseChange('users_v1');
+  await store.runtime.refreshAfterDatabaseChange('roles_v1');
+  await store.runtime.refreshAfterDatabaseChange('users_v1');
   final loggedIn = await AuthRepository.login(
     store,
     'shell_admin',

@@ -56,7 +56,7 @@ void main() {
       });
 
       final store = AppStore();
-      await store.initialize();
+      await store.runtime.initialize();
       await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
         'sync_queue_v1',
         <Map<String, dynamic>>[
@@ -71,19 +71,19 @@ void main() {
           ).toJson(),
         ],
       );
-      await store.refreshAfterDatabaseChange('sync_queue_v1');
-      expect(store.syncQueue.single.status, 'submitted');
-      expect(store.hasOutstandingSyncWorkForTarget('host'), isTrue);
+      await store.runtime.refreshAfterDatabaseChange('sync_queue_v1');
+      expect(store.sync.queue.single.status, 'submitted');
+      expect(store.sync.hasOutstandingWorkForTarget('host'), isTrue);
 
-      await store.recoverSubmittedSyncQueue(target: 'host');
-      expect(store.syncQueue.single.status, 'pending');
-      expect(store.hasOutstandingSyncWorkForTarget('host'), isTrue);
-      expect(store.pendingSyncQueueForTarget('host', readyOnly: false),
+      await store.sync.recoverSubmitted(target: 'host');
+      expect(store.sync.queue.single.status, 'pending');
+      expect(store.sync.hasOutstandingWorkForTarget('host'), isTrue);
+      expect(store.sync.pendingSyncQueueForTarget('host', readyOnly: false),
           hasLength(1));
 
-      await store.recoverSubmittedSyncQueue(target: 'host');
-      expect(store.syncQueue, hasLength(1));
-      expect(store.syncQueue.single.status, 'pending');
+      await store.sync.recoverSubmitted(target: 'host');
+      expect(store.sync.queue, hasLength(1));
+      expect(store.sync.queue.single.status, 'pending');
     });
   });
 

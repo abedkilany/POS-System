@@ -6,8 +6,8 @@ extension _AppStoreSplitSalesReturnsPart7 on AppStore {
     required int expectedVersion,
   }) async {
     requirePermission(AppPermission.salesCancel);
-    requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
-    await ensureCreditNotesLoaded();
+    _requireSensitiveActionAuthorization(SensitiveAction.saleReverse);
+    await _ensureCreditNotesLoaded();
     final db = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || db == null) {
       throw StateError(
@@ -429,7 +429,7 @@ extension _AppStoreSplitSalesReturnsPart7 on AppStore {
     await _refreshProductStockCompatibilityCache(
       currentNote.items.map((item) => item.productId),
     );
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await _saveDirty(sync: true);
     AccountingService.notifyCommittedMutation();
     notifyListeners();

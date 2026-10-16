@@ -26,13 +26,14 @@ void main() {
       final google =
           _source('lib/core/services/google_drive_backup_service.dart');
 
-      expect(settings, contains('store.exportEncryptedBackupJson(password)'));
-      expect(
-          settings, contains('store.decryptBackupJson(rawJson, recoveryKey)'));
+      expect(settings,
+          contains('store.recovery.exportEncryptedBackupJson(password)'));
+      expect(settings,
+          contains('store.recovery.decryptBackupJson(rawJson, recoveryKey)'));
       expect(localAuto,
-          contains('store.exportEncryptedBackupJson(recoverySecret)'));
-      expect(
-          google, contains('store.exportEncryptedBackupJson(recoverySecret)'));
+          contains('store.recovery.exportEncryptedBackupJson(recoverySecret)'));
+      expect(google,
+          contains('store.recovery.exportEncryptedBackupJson(recoverySecret)'));
       expect(localAuto, contains("'cipher': 'aes-256-gcm'"));
       expect(google, contains("'cipher': 'aes-256-gcm'"));
     });

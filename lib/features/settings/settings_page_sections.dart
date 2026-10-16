@@ -412,10 +412,10 @@ extension _Sections on SettingsPage {
                       trailing: IconButton(
                         tooltip: tr.text('edit'),
                         icon: const Icon(Icons.edit_outlined),
-                        onPressed:
-                            store.security.hasPermission(AppPermission.settingsManage)
-                                ? () => _editBranch(context, profile, branch)
-                                : null,
+                        onPressed: store.security
+                                .hasPermission(AppPermission.settingsManage)
+                            ? () => _editBranch(context, profile, branch)
+                            : null,
                       ),
                     ),
                 ],
@@ -508,7 +508,8 @@ extension _Sections on SettingsPage {
             const SizedBox(height: 12),
             Text(tr.text('history'),
                 style: Theme.of(context).textTheme.titleSmall),
-            for (final row in store.catalog.costingMethodHistory.reversed.take(5))
+            for (final row
+                in store.catalog.costingMethodHistory.reversed.take(5))
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
@@ -608,11 +609,11 @@ extension _Sections on SettingsPage {
                     IconButton(
                       tooltip: tr.text('edit'),
                       icon: const Icon(Icons.edit_outlined),
-                      onPressed:
-                          store.security.hasPermission(AppPermission.settingsManage)
-                              ? () => _editCurrency(context, profile,
-                                  currency: currency)
-                              : null,
+                      onPressed: store.security
+                              .hasPermission(AppPermission.settingsManage)
+                          ? () => _editCurrency(context, profile,
+                              currency: currency)
+                          : null,
                     ),
                   ],
                 ),
@@ -654,7 +655,8 @@ extension _Sections on SettingsPage {
                 trailing: IconButton(
                   tooltip: tr.text('edit'),
                   icon: const Icon(Icons.edit_outlined),
-                  onPressed: store.security.hasPermission(AppPermission.settingsManage)
+                  onPressed: store.security
+                          .hasPermission(AppPermission.settingsManage)
                       ? () => _editExchangeRate(context, profile, rate: rate)
                       : null,
                 ),
@@ -697,7 +699,7 @@ extension _Sections on SettingsPage {
                       child: Chip(
                           avatar: const Icon(Icons.storage_outlined, size: 18),
                           label: Text(tr.text('local_db_sqlite'))))),
-              _BackupSummaryCard(summary: store.currentBackupSummary),
+              _BackupSummaryCard(summary: store.recovery.currentBackupSummary),
               if (!isClient) ...[
                 const SizedBox(height: 16),
                 _AutoLocalBackupSettingsCard(store: store),
@@ -835,9 +837,10 @@ extension _Sections on SettingsPage {
             child: FilledButton.icon(
               style: FilledButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error),
-              onPressed: store.security.hasPermission(AppPermission.databaseManage)
-                  ? () => _resetBusinessData(context)
-                  : null,
+              onPressed:
+                  store.security.hasPermission(AppPermission.databaseManage)
+                      ? () => _resetBusinessData(context)
+                      : null,
               icon: const Icon(Icons.delete_forever_outlined),
               label: Text(tr.text('reset_all_data')),
             ),
@@ -888,7 +891,8 @@ extension _Sections on SettingsPage {
           leading: const Icon(Icons.people),
           title: Text(tr.text('users_permissions')),
           subtitle: Text(tr.format('signed_in_as_role', {
-            'user': store.security.activeUser?.fullName ?? tr.text('unknown_user'),
+            'user':
+                store.security.activeUser?.fullName ?? tr.text('unknown_user'),
             'role': store.security.currentRole
           })),
           trailing: FilledButton.icon(

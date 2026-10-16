@@ -14,6 +14,10 @@ extension _LocalDatabaseServiceImplPart2
       return;
     }
     await db.transaction(() async {
+      // Allocations reference inventory_batches without ON DELETE CASCADE.
+      // Backup import rematerializes them after the replacement batches exist.
+      await db.customStatement('DELETE FROM purchase_item_batch_allocations');
+      await db.customStatement('DELETE FROM sale_item_batch_allocations');
       await db.customStatement('DELETE FROM inventory_batch_balances');
       await db.customStatement('DELETE FROM inventory_batches');
       for (final row in batches) {

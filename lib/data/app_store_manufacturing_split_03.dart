@@ -66,10 +66,10 @@ extension _AppStoreSplitManufacturingPart3 on AppStore {
     }
     final factor = quantity / bom.outputQuantity;
     final now = DateTime.now();
-    final rawWarehouse = resolveWarehouseForPurchase(
+    final rawWarehouse = _resolveWarehouseForPurchase(
       warehouseId: rawMaterialsWarehouseId,
     );
-    final finishedWarehouse = resolveWarehouseForSale(
+    final finishedWarehouse = _resolveWarehouseForSale(
       warehouseId: finishedGoodsWarehouseId,
     );
     final orderPreview = ManufacturingOrder(
@@ -616,7 +616,7 @@ extension _AppStoreSplitManufacturingPart3 on AppStore {
       final usedQty = component.quantity * factor;
       if (usedQty <= 0) continue;
       if (!_storeProfile.allowNegativeStock &&
-          stockForWarehouse(component.productId, rawWarehouse.id) < usedQty) {
+          _stockForWarehouse(component.productId, rawWarehouse.id) < usedQty) {
         throw ArgumentError(
           'Insufficient stock for ${product.name} in ${rawWarehouse.name}.',
         );

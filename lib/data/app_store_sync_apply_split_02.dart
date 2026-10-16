@@ -1,7 +1,7 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitSyncApplyPart2 on AppStore {
-  Future<void> applyRemoteSyncChanges(
+  Future<void> _applyRemoteSyncChanges(
     List<SyncChange> incoming, {
     bool markAppliedAsSynced = false,
     bool mirrorToDirect = false,
@@ -302,14 +302,14 @@ extension _AppStoreSplitSyncApplyPart2 on AppStore {
       );
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] applyRemote:notify changed=true customers=${_customers.length} '
-        'visibleCustomers=${customers.length} '
-        'customerNames=${customers.map((item) => item.name).join(',')}',
+        'visibleCustomers=${_customers.length} '
+        'customerNames=${_customers.map((item) => item.name).join(',')}',
       );
       notifyListeners();
     } else {
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] applyRemote:done changed=false customers=${_customers.length} '
-        'visibleCustomers=${customers.length}',
+        'visibleCustomers=${_customers.length}',
       );
     }
   }

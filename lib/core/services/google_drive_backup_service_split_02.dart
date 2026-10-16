@@ -422,7 +422,7 @@ class GoogleDriveBackupService {
         );
       }
       final encryptedBackup =
-          await store.exportEncryptedBackupJson(recoverySecret);
+          await store.recovery.exportEncryptedBackupJson(recoverySecret);
       final bytes = await compute(
         _buildZipBytesInIsolate,
         <String, String>{

@@ -28,7 +28,7 @@ extension _AppStoreSplitAccessAuth on AppStore {
 
   AppUser? get _activeUserReadImpl => _activeUser;
 
-  String get _currentRoleReadImpl => currentUserRole?.name ?? _currentRole;
+  String get _currentRoleReadImpl => _currentUserRole?.name ?? _currentRole;
 
   bool _hasPermissionReadImpl(String permission) =>
       _permissionService.hasPermission(
@@ -53,7 +53,7 @@ extension _AppStoreSplitAccessAuth on AppStore {
         permission: permission,
       );
 
-  Future<bool> authorizeSensitiveAction({
+  Future<bool> _authorizeSensitiveAction({
     required String action,
     required String password,
     Duration validity = const Duration(minutes: 3),
@@ -146,9 +146,6 @@ extension _AppStoreSplitAccessAuth on AppStore {
     }
   }
 
-  bool canAccessPage(String pageId) {
-    return _canAccessPageReadImpl(pageId);
-  }
 
   bool get hasLocalStoreData {
     final hasRealUser = _users.isNotEmpty && !_hasOnlyLegacyDefaultAdminUser;
@@ -451,7 +448,7 @@ extension _AppStoreSplitAccessAuth on AppStore {
 
   void requireAnyPermission(Iterable<String> permissions) {
     final required = permissions.toList(growable: false);
-    if (required.isEmpty || !hasAnyPermission(required)) {
+    if (required.isEmpty || !_hasAnyPermission(required)) {
       throw StateError(
         'You do not have any required permission: ${required.join(', ')}',
       );

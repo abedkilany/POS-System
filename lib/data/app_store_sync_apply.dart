@@ -1,7 +1,7 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitSyncApply on AppStore {
-Future<void> markAllSyncChangesSynced() async {
+  Future<void> markAllSyncChangesSynced() async {
     final now = DateTime.now();
     for (var i = 0; i < _syncChanges.length; i++) {
       _syncChanges[i] = _syncChanges[i].copyWith(isSynced: true, syncedAt: now);
@@ -10,17 +10,17 @@ Future<void> markAllSyncChangesSynced() async {
     notifyListeners();
   }
 
-Future<void> importSyncSnapshotJson(String rawJson) async {
+  Future<void> importSyncSnapshotJson(String rawJson) async {
     await AppStoreRecoveryService(this).importSyncSnapshotJson(rawJson);
   }
 
-Future<void> _replaceFromBackupMap(
+  Future<void> _replaceFromBackupMap(
     Map<String, dynamic> decoded, {
     bool preserveLocalIdentityForLanClient = false,
   }) async {
     final unifiedChunks = decoded['snapshotChunks'];
     if (unifiedChunks is List) {
-      decoded = unifiedSnapshotPayloadFromChunks(
+      decoded = _unifiedSnapshotPayloadFromChunks(
         unifiedChunks
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
@@ -186,32 +186,32 @@ Future<void> _replaceFromBackupMap(
             Map<String, dynamic>.from(decoded['storeProfile'] as Map),
           );
 
-    if (wants('products')) {
+    if (_wants('products')) {
       _products
         ..clear()
         ..addAll(products);
     }
-    if (wants('customers')) {
+    if (_wants('customers')) {
       _customers
         ..clear()
         ..addAll(customers);
     }
-    if (wants('sales')) {
+    if (_wants('sales')) {
       _sales
         ..clear()
         ..addAll(sales);
     }
-    if (wants('saleQuotations')) {
+    if (_wants('saleQuotations')) {
       _saleQuotations
         ..clear()
         ..addAll(saleQuotations);
     }
-    if (wants('deliveryNotes')) {
+    if (_wants('deliveryNotes')) {
       _deliveryNotes
         ..clear()
         ..addAll(deliveryNotes);
     }
-    if (wants('manufacturing')) {
+    if (_wants('manufacturing')) {
       _billsOfMaterials
         ..clear()
         ..addAll(billsOfMaterials);
@@ -219,92 +219,92 @@ Future<void> _replaceFromBackupMap(
         ..clear()
         ..addAll(manufacturingOrders);
     }
-    if (wants('suppliers')) {
+    if (_wants('suppliers')) {
       _suppliers
         ..clear()
         ..addAll(suppliers);
     }
-    if (wants('supplierProductPrices')) {
+    if (_wants('supplierProductPrices')) {
       _supplierProductPrices
         ..clear()
         ..addAll(supplierProductPrices);
     }
-    if (wants('priceLists')) {
+    if (_wants('priceLists')) {
       _priceLists
         ..clear()
         ..addAll(priceLists);
     }
-    if (wants('productPrices')) {
+    if (_wants('productPrices')) {
       _productPrices
         ..clear()
         ..addAll(productPrices);
     }
-    if (wants('productPriceOverrides')) {
+    if (_wants('productPriceOverrides')) {
       _productPriceOverrides
         ..clear()
         ..addAll(productPriceOverrides);
     }
-    if (wants('productCosts')) {
+    if (_wants('productCosts')) {
       _productCosts
         ..clear()
         ..addAll(productCosts);
     }
-    if (wants('costingMethodHistory')) {
+    if (_wants('costingMethodHistory')) {
       _costingMethodHistory
         ..clear()
         ..addAll(costingMethodHistory);
     }
-    if (wants('inventoryCostingMethod')) {
+    if (_wants('inventoryCostingMethod')) {
       _inventoryCostingMethod =
-        _runtimeInventoryCostingMethod(inventoryCostingMethod);
+          _runtimeInventoryCostingMethod(inventoryCostingMethod);
     }
-    if (wants('inventoryCostLayers')) {
+    if (_wants('inventoryCostLayers')) {
       _inventoryCostLayers
         ..clear()
         ..addAll(inventoryCostLayers);
     }
-    if (wants('categories')) {
+    if (_wants('categories')) {
       _categories
         ..clear()
         ..addAll(categories);
     }
-    if (wants('brands')) {
+    if (_wants('brands')) {
       _brands
         ..clear()
         ..addAll(brands);
     }
-    if (wants('units')) {
+    if (_wants('units')) {
       _units
         ..clear()
         ..addAll(units);
     }
-    if (wants('expenses')) {
+    if (_wants('expenses')) {
       _expenses
         ..clear()
         ..addAll(expenses);
     }
-    if (wants('purchases')) {
+    if (_wants('purchases')) {
       _purchases
         ..clear()
         ..addAll(purchases);
     }
-    if (wants('stockMovements')) {
+    if (_wants('stockMovements')) {
       _stockMovements
         ..clear()
         ..addAll(stockMovements);
     }
-    if (wants('inventoryCounts')) {
+    if (_wants('inventoryCounts')) {
       _inventoryCounts
         ..clear()
         ..addAll(inventoryCounts);
     }
-    if (wants('warehouses')) {
+    if (_wants('warehouses')) {
       _warehouses
         ..clear()
         ..addAll(warehouses);
     }
     _ensureDefaultWarehouse();
-    if (wants('accountTransactions')) {
+    if (_wants('accountTransactions')) {
       _accountTransactions
         ..clear()
         ..addAll(accountTransactions);
@@ -315,15 +315,15 @@ Future<void> _replaceFromBackupMap(
       ..clear()
       ..addAll(
         preserveLocalIdentityForLanClient
-            ? syncChanges.map(
+            ? _syncChanges.map(
                 (item) =>
                     item.copyWith(isSynced: true, syncedAt: DateTime.now()),
               )
-            : syncChanges,
+            : _syncChanges,
       );
     _syncQueue.clear();
-    if (!preserveLocalIdentityForLanClient) _syncQueue.addAll(syncQueue);
-    if (wants('storeProfile')) {
+    if (!preserveLocalIdentityForLanClient) _syncQueue.addAll(_syncQueue);
+    if (_wants('storeProfile')) {
       _storeProfile = profile.withMergedLogoAssetsFrom(_storeProfile);
       AccountingService.configureMoneyPolicy(_storeProfile);
     }
@@ -372,7 +372,7 @@ Future<void> _replaceFromBackupMap(
     notifyListeners();
   }
 
-Map<String, int> _syncHistoryCompactionResult({
+  Map<String, int> _syncHistoryCompactionResult({
     required int beforeChanges,
     required int beforeQueue,
     required int safeFloorSequence,
@@ -383,8 +383,8 @@ Map<String, int> _syncHistoryCompactionResult({
       'removedQueue': beforeQueue - _syncQueue.length,
       'remainingChanges': _syncChanges.length,
       'remainingQueue': _syncQueue.length,
-      'pendingChanges': pendingSyncChanges.length,
-      'pendingQueue': pendingSyncQueue.length,
+      'pendingChanges': _pendingSyncChanges.length,
+      'pendingQueue': _pendingSyncQueue.length,
       'safeFloorSequence': safeFloorSequence,
       'earliestSequence': _earliestStoredAuthoritativeSequence(),
       'latestSequence': _latestStoredAuthoritativeSequence(),
@@ -392,10 +392,10 @@ Map<String, int> _syncHistoryCompactionResult({
     };
   }
 
-String _syncHistoryCompactionLogLine(String label, Map<String, int> result) {
-    final pendingQueue = result['pendingQueue'] ?? pendingSyncQueue.length;
+  String _syncHistoryCompactionLogLine(String label, Map<String, int> result) {
+    final pendingQueue = result['pendingQueue'] ?? _pendingSyncQueue.length;
     final pendingChanges =
-        result['pendingChanges'] ?? pendingSyncChanges.length;
+        result['pendingChanges'] ?? _pendingSyncChanges.length;
     final remainingQueue = result['remainingQueue'] ?? _syncQueue.length;
     final remainingChanges = result['remainingChanges'] ?? _syncChanges.length;
     final safeFloorSequence = result['safeFloorSequence'] ?? 0;
@@ -413,18 +413,11 @@ String _syncHistoryCompactionLogLine(String label, Map<String, int> result) {
         'safeFloorSequence=$safeFloorSequence earliestSequence=$earliestSequence latestSequence=$latestSequence';
   }
 
-Future<Map<String, int>> compactSyncedSyncHistoryForDiagnostics({
-    int keepRecentSyncedChanges = AppStore._syncMaintenanceKeepRecentChanges,
-  }) async {
-    return _compactSyncedSyncHistory(
-      keepRecentSyncedChanges: keepRecentSyncedChanges,
-      requireSafeFloorSequence: true,
-    );
-  }
 
-Future<Map<String, int>> compactSyncedSyncHistoryForMaintenance({
+  Future<Map<String, int>> compactSyncedSyncHistoryForMaintenance({
     int keepRecentSyncedChanges = AppStore._syncMaintenanceKeepRecentChanges,
-    int minChangesBeforeCompact = AppStore._syncMaintenanceMinChangesBeforeCompact,
+    int minChangesBeforeCompact =
+        AppStore._syncMaintenanceMinChangesBeforeCompact,
   }) async {
     final safeFloorSequence = _minimumActivePeerAckSequence();
     final before = _syncHistoryCompactionResult(
@@ -460,7 +453,7 @@ Future<Map<String, int>> compactSyncedSyncHistoryForMaintenance({
     return result;
   }
 
-Future<Map<String, int>> compactClientSyncedSyncHistoryForMaintenance({
+  Future<Map<String, int>> compactClientSyncedSyncHistoryForMaintenance({
     int keepRecentSyncedChanges = AppStore._syncMaintenanceKeepRecentChanges,
   }) async {
     final latestAppliedSequence = _latestStoredAuthoritativeSequence();
@@ -477,10 +470,10 @@ Future<Map<String, int>> compactClientSyncedSyncHistoryForMaintenance({
     if (removedStaleQueue > 0) {
       debugPrint(
         'CLIENT_SYNC_STALE_QUEUE_CLEANUP removedQueue=$removedStaleQueue '
-        'remainingQueue=${_syncQueue.length} pendingQueue=${pendingSyncQueue.length}',
+        'remainingQueue=${_syncQueue.length} pendingQueue=${_pendingSyncQueue.length}',
       );
     }
-    if (pendingSyncQueue.isNotEmpty || pendingSyncChanges.isNotEmpty) {
+    if (_pendingSyncQueue.isNotEmpty || _pendingSyncChanges.isNotEmpty) {
       if (removedStaleQueue > 0) {
         await _saveSyncStateOnly();
         notifyListeners();
@@ -560,8 +553,8 @@ Future<Map<String, int>> compactClientSyncedSyncHistoryForMaintenance({
       result['removedQueue'] =
           (result['removedQueue'] ?? 0) + removedStaleQueue;
       result['remainingQueue'] = _syncQueue.length;
-      result['pendingQueue'] = pendingSyncQueue.length;
-      result['pendingChanges'] = pendingSyncChanges.length;
+      result['pendingQueue'] = _pendingSyncQueue.length;
+      result['pendingChanges'] = _pendingSyncChanges.length;
     }
     debugPrint(
       _syncHistoryCompactionLogLine(
@@ -572,7 +565,7 @@ Future<Map<String, int>> compactClientSyncedSyncHistoryForMaintenance({
     return result;
   }
 
-int _removeStaleClientSyncedQueueRows() {
+  int _removeStaleClientSyncedQueueRows() {
     if (!appIdentity.isClient || _syncQueue.isEmpty || _syncChanges.isEmpty) {
       return 0;
     }
@@ -591,7 +584,7 @@ int _removeStaleClientSyncedQueueRows() {
     return beforeQueue - _syncQueue.length;
   }
 
-Future<Map<String, int>> _compactSyncedSyncHistory({
+  Future<Map<String, int>> _compactSyncedSyncHistory({
     required int keepRecentSyncedChanges,
     required bool requireSafeFloorSequence,
     int? knownSafeFloorSequence,

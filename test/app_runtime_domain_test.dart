@@ -8,19 +8,16 @@ void main() {
     final store = AppStore();
     addTearDown(store.dispose);
 
-    expect(store.runtime.identity.platform, store.appIdentity.platform);
-    expect(store.runtime.identity.deviceRole, store.appIdentity.deviceRole);
-    expect(store.runtime.identity.syncMode, store.appIdentity.syncMode);
-    expect(store.runtime.profile.toJson(), store.storeProfile.toJson());
-    expect(store.runtime.isReady, store.isReady);
-    expect(store.runtime.isCoreDataLoaded, store.isCoreDataLoaded);
-    expect(store.runtime.isLedgerDataLoaded, store.isLedgerDataLoaded);
-    expect(store.runtime.isSyncDataLoaded, store.isSyncDataLoaded);
-    expect(store.runtime.isSuspendedByHost, store.isSuspendedByHost);
-    expect(
-      store.runtime.suspendedByHostReason,
-      store.suspendedByHostReason,
-    );
+    final runtime = store.runtime;
+    expect(runtime.identity.deviceId, isNotEmpty);
+    expect(runtime.profile, isNotNull);
+    expect(runtime.isReady, isFalse);
+    expect(runtime.isCoreDataLoaded, isFalse);
+    expect(runtime.isLedgerDataLoaded, isFalse);
+    expect(runtime.isSyncDataLoaded, isFalse);
+    expect(runtime.isSuspendedByHost, isFalse);
+    expect(runtime.dashboardRevision, isNonNegative);
+    expect(runtime.reportsRevision, isNonNegative);
   });
 
   test('runtime port preserves locale and theme preference behavior', () async {
@@ -35,8 +32,8 @@ void main() {
       await store.runtime.saveLocale(const Locale('ar'));
       await store.runtime.saveThemeMode(ThemeMode.dark);
 
-      expect(await store.loadLocale(), const Locale('ar'));
-      expect(await store.loadThemeMode(), ThemeMode.dark);
+      expect(await store.runtime.loadLocale(), const Locale('ar'));
+      expect(await store.runtime.loadThemeMode(), ThemeMode.dark);
     } finally {
       store.dispose();
       await LocalDatabaseService.resetForTesting();

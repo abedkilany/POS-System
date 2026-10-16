@@ -36,7 +36,7 @@ extension _AppStoreSplitManufacturing on AppStore {
     double requiredQuantity = 0,
   }) async {
     double fallback() {
-      final cost = productCostFor(product.id);
+      final cost = _productCostFor(product.id);
       if (cost.averageCost > 0) return cost.averageCost;
       if (cost.lastCost > 0) return cost.lastCost;
       if (product.usdCost > 0) return product.usdCost;

@@ -52,14 +52,20 @@ join Dart `part` files to their library declarations. The corrected scan found
 all 795 selectors out of production features and services; the current
 part-aware scan finds **0 selectors across 0 files** and no adapter calls back
 through the AppStore facade. The active baseline now records zero and blocks
-regressions. The 433 compatibility members remain on `AppStore` for its
-split in-library implementation and source compatibility; they are not the
-supported access path for production features. Removing that internal surface
-requires separately untangling calls among the `lib/data` parts. The original
-phase-one inventory is retained in
+regressions. The original phase-one inventory is retained in
 [`architecture_boundary_phase1_baseline.json`](../tool/architecture_boundary_phase1_baseline.json).
 
-### Phase-three quality verification (2026-10-16)
+The final interface reduction removed 300 analyzer-confirmed unused forwarding
+wrappers and made the remaining forwarding methods and orchestration operations
+library-private while preserving calls between `lib/data` parts. Backup
+parsing, validation, encryption, and summary operations now enter through
+`store.recovery`; the old AppStore backup extension is private. The
+public-member inventory is reduced from 431 forwarding members to the nine
+properties/methods required by `BusinessSessionContext`. The boundary checker
+rejects additional public AppStore members and records zero external
+compatibility selectors.
+
+### Phase-three quality verification before final API reduction (2026-10-16)
 
 The complete local quality gate passed: architecture checker and its two
 regression tests, `flutter analyze --no-pub`, **596 tests passed and 2 were
@@ -71,12 +77,42 @@ successful gate. The pull-request workflow runs the architecture checks,
 analysis, full test suite, and coverage threshold on Linux; Windows integration
 remains in the local Windows gate.
 
-The quality and production-boundary parts of phase three are in place. The
-compatibility member bodies are still present because AppStore's own split
-`lib/data` implementation calls across them; deleting them now would require
-a separate internal refactor. The CI job must also be selected as a required
-status check in GitHub branch protection, which cannot be configured from this
-workspace.
+That verification predates the final interface reduction described above. The
+GitHub `main` branch now requires the quality workflow's
+`Flutter analysis, tests, and coverage` status check; final focused verification
+after the reduction is recorded below.
+
+### Phase-three final verification after API reduction (2026-10-16)
+
+The AppStore reduction removed the unused forwarding read getters and ten
+catalog/inventory cache fields that had no remaining consumers. The state
+contract now verifies all 130 active state fields and rejects those retired
+caches. The documentation indexes were regenerated after the source and test
+updates.
+
+Final local checks passed:
+
+- `flutter analyze --no-pub`: no issues.
+- `python tool/test_architecture_boundary_checker.py`: 3 tests passed.
+- `python tool/check_architecture_boundaries.py`: pass; 9 public AppStore
+  facade members (baseline 9), zero compatibility selectors, zero adapter
+  calls through the facade, and 31 reviewed cross-feature imports.
+- `python tool/verify_phase12_structural_refactor.py`: 50/50 checks passed.
+- 16 focused Flutter tests passed across the AppStore backup/identity,
+  accounting atomicity, accounting audit guards, Phase 12 structure, runtime
+  domain, and manufacturing flows.
+
+The full Flutter test suite, full coverage run, Windows integration suite, and
+application build were not run locally. The GitHub quality workflow runs
+analysis, the full suite, and the 40% coverage threshold on pull requests and
+pushes to `main`; its `Flutter analysis, tests, and coverage` status is required
+on `main`. Admin enforcement is enabled, while branch-up-to-date and PR review
+requirements are disabled. See the [quality workflow](../.github/workflows/quality.yml).
+
+The traceability report and full-snapshot test use `store.inventory` for batch
+tracing and integrity audits. Their unused AppStore forwarding methods were
+removed; other forwarding implementations are now private to the split data
+library.
 
 The AppStore migration guard also continues to preserve the 31 reviewed
 cross-feature import statements across 27 directed area pairs. Those imports
@@ -85,20 +121,20 @@ integration; the phase-two port migration introduced no new feature edges.
 This count is a boundary guard, not a target to force to zero.
 
 The recovery slice moves recovery-file encoding and validation into
-`lib/core/services/recovery_file_service.dart`. Both `store.recovery` and the
-compatibility methods use that service, and recovery-file export retains the
-`backupExport` permission check. Backup JSON export and import now enter
-through `AppStoreRecoveryService`, while the existing internal snapshot
-serializer continues to read application state. Restore authorization and
+`lib/core/services/recovery_file_service.dart`. The `store.recovery` port uses
+that service, and recovery-file export retains the `backupExport` permission
+check. Backup JSON export and import now enter through
+`AppStoreRecoveryService`, while the existing internal snapshot serializer
+continues to read application state. Restore authorization and
 audit recording remain enforced at the service boundary. SQLite-authoritative
 restore transactions run in the recovery service; storage backends without
-transactional SQLite support retain the existing restore adapter. The legacy
-`AppStore.importBackupJson` forwarder remains available for phase three while
-production settings use the typed recovery port.
+transactional SQLite support retain the existing restore adapter. The backup
+forwarding implementation is now private to the data library; production
+settings use the typed recovery port.
 
 The catalog read slice moves active-item filtering, product sorting, and
 product-by-id lookup into `lib/core/services/catalog_read_service.dart`. The
-typed catalog port and legacy getters share the same cache/query helpers. The
+typed catalog port and internal getters share the same cache/query helpers. The
 products, sales, purchases, and dashboard read paths now use `store.catalog`
 for product and catalog-item reads. AppStore still coordinates deferred
 hydration and owns catalog cache state.
@@ -106,7 +142,7 @@ hydration and owns catalog cache state.
 The commerce read slice moves active-row filtering and list ordering for
 customers, suppliers, sales, purchases, and expenses into
 `lib/core/services/commerce_read_service.dart`. The typed port calls the
-focused data-adapter reads directly, while legacy getters keep their existing
+focused data-adapter reads directly, while internal getters keep their existing
 load triggers and cache behavior. Dashboard, report snapshots, and maintenance
 read paths now use `store.commerce` for these lists. Commerce writes and their
 sale/purchase transaction flows remain in their existing workflows.
@@ -115,11 +151,10 @@ The commerce command boundary now exposes sale creation, returns and
 cancellation, sale quotation create/delete, return cancellation, purchase
 creation, purchase returns, purchase return posting, sale/purchase payment
 settlement, and cash refunds for sales and purchases. Sales, purchases, and
-cash screens use `store.commerce` for these actions. The typed adapter invokes the existing transactional action
-implementations directly, so compatibility forwarders are bypassed while
-SQLite transaction ownership, accounting posting, and stock behavior stay
-unchanged. The remaining compatibility forwarders preserve old entry points
-while production workflows use the typed commerce commands.
+cash screens use `store.commerce` for these actions. The typed adapter invokes
+the existing transactional action implementations directly. AppStore's private
+forwarding methods remain internal implementation details while SQLite
+transaction ownership, accounting posting, and stock behavior stay unchanged.
 
 Purchase draft create/edit/delete rules are implemented in
 `PurchaseDraftService`; it validates lines, maintains stable line identities,
@@ -171,8 +206,7 @@ stock, batch, and reversal implementations remain in their current owners.
 Manufacturing screens now also use that port for recipe reads, cost estimates,
 recipe create/edit/delete, and manufacturing-order update, finish, completed
 edit, and deletion. Production inventory consumers use the typed inventory
-and catalog ports; compatibility methods preserve existing integrations for
-phase three.
+and catalog ports; internal forwarding methods are private to the data library.
 
 The sync recovery slice moves failed-item retry and stale in-progress recovery
 transitions into `lib/core/services/sync_queue_recovery_service.dart`. The data

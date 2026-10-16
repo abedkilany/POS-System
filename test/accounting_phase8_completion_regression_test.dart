@@ -17,23 +17,23 @@ void main() {
   test('purchase and sale route inventory through semantic product classes',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'raw-routing',
       code: 'RAW-ROUTE',
       stock: 0,
       cost: 3,
     ));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'fg-routing',
       code: 'FG-ROUTE',
       stock: 0,
       cost: 0,
     ));
     final rawWarehouse =
-        await store.createWarehouse(name: 'Raw routing', code: 'RR');
-    final finishedWarehouse =
-        await store.createWarehouse(name: 'Finished routing', code: 'FR');
-    final bom = await store.createBillOfMaterials(
+        await store.inventory.createWarehouse(name: 'Raw routing', code: 'RR');
+    final finishedWarehouse = await store.inventory
+        .createWarehouse(name: 'Finished routing', code: 'FR');
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Routing BOM',
       outputProductId: 'fg-routing',
       outputQuantity: 1,
@@ -45,20 +45,20 @@ void main() {
         ),
       ],
     );
-    await store.addOrUpdateSupplier(Supplier(
+    await store.commerce.addOrUpdateSupplier(Supplier(
       id: 'supplier-routing',
       name: 'Routing Supplier',
       phone: '',
       address: '',
       notes: '',
     ));
-    await store.addOrUpdateCustomer(Customer(
+    await store.commerce.addOrUpdateCustomer(Customer(
       id: 'customer-routing',
       name: 'Routing Customer',
       phone: '',
       address: '',
     ));
-    final purchase = await store.createPurchase(
+    final purchase = await store.commerce.createPurchase(
       supplierId: 'supplier-routing',
       supplierName: 'Routing Supplier',
       receiveNow: true,
@@ -96,7 +96,7 @@ void main() {
     expect(debitFor(rawAccount), closeTo(12, 0.0001));
     expect(debitFor(generalAccount), closeTo(0, 0.0001));
 
-    final order = await store.completeManufacturingOrder(
+    final order = await store.inventory.completeManufacturingOrder(
       bomId: bom.id,
       quantity: 1,
       rawMaterialsWarehouseId: rawWarehouse.id,
@@ -107,7 +107,7 @@ void main() {
         costs.firstWhere((item) => item.productId == 'fg-routing');
     expect(outputCost.averageCost, closeTo(order.actualUnitCost, 0.0001));
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerName: 'Routing Customer',
       customerId: 'customer-routing',
       warehouseId: finishedWarehouse.id,
@@ -146,28 +146,28 @@ void main() {
       'inventory valuation uses Unified Batch carrying value instead of product cost cache',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'batch-valuation-source',
       code: 'BATCH-VAL',
       stock: 0,
       cost: 2,
     ));
-    final warehouse =
-        await store.createWarehouse(name: 'Batch valuation', code: 'BV');
-    await store.addOrUpdateSupplier(Supplier(
+    final warehouse = await store.inventory
+        .createWarehouse(name: 'Batch valuation', code: 'BV');
+    await store.commerce.addOrUpdateSupplier(Supplier(
       id: 'supplier-batch-valuation',
       name: 'Batch Valuation Supplier',
       phone: '',
       address: '',
       notes: '',
     ));
-    await store.addOrUpdateCustomer(Customer(
+    await store.commerce.addOrUpdateCustomer(Customer(
       id: 'customer-batch-valuation',
       name: 'Batch Valuation Customer',
       phone: '',
       address: '',
     ));
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-batch-valuation',
       supplierName: 'Batch Valuation Supplier',
       receiveNow: true,
@@ -184,7 +184,7 @@ void main() {
         ),
       ],
     );
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-batch-valuation',
       supplierName: 'Batch Valuation Supplier',
       receiveNow: true,
@@ -201,7 +201,7 @@ void main() {
         ),
       ],
     );
-    await store.createSale(
+    await store.commerce.createSale(
       customerName: 'Batch Valuation Customer',
       customerId: 'customer-batch-valuation',
       warehouseId: warehouse.id,
@@ -248,34 +248,34 @@ void main() {
       'BOM create update and delete reclassify existing Unified Batch inventory',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'bom-reclass-a',
       code: 'BOM-RA',
       stock: 0,
       cost: 3,
     ));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'bom-reclass-b',
       code: 'BOM-RB',
       stock: 0,
       cost: 5,
     ));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'bom-reclass-output',
       code: 'BOM-RO',
       stock: 0,
       cost: 0,
     ));
     final warehouse =
-        await store.createWarehouse(name: 'BOM reclass', code: 'BR');
-    await store.addOrUpdateSupplier(Supplier(
+        await store.inventory.createWarehouse(name: 'BOM reclass', code: 'BR');
+    await store.commerce.addOrUpdateSupplier(Supplier(
       id: 'supplier-bom-reclass',
       name: 'BOM Reclass Supplier',
       phone: '',
       address: '',
       notes: '',
     ));
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-bom-reclass',
       supplierName: 'BOM Reclass Supplier',
       receiveNow: true,
@@ -321,7 +321,7 @@ void main() {
     expect(await accountBalance(rawAccount), closeTo(0, 0.0001));
     expect(await accountBalance(merchandiseAccount), closeTo(22, 0.0001));
 
-    final bom = await store.createBillOfMaterials(
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Dynamic classification BOM',
       outputProductId: 'bom-reclass-output',
       outputQuantity: 1,
@@ -336,7 +336,7 @@ void main() {
     expect(await accountBalance(rawAccount), closeTo(12, 0.0001));
     expect(await accountBalance(merchandiseAccount), closeTo(10, 0.0001));
 
-    await store.updateBillOfMaterials(
+    await store.inventory.updateBillOfMaterials(
       id: bom.id,
       name: bom.name,
       outputProductId: 'bom-reclass-output',
@@ -352,7 +352,7 @@ void main() {
     expect(await accountBalance(rawAccount), closeTo(10, 0.0001));
     expect(await accountBalance(merchandiseAccount), closeTo(12, 0.0001));
 
-    await store.deleteBillOfMaterials(bom.id);
+    await store.inventory.deleteBillOfMaterials(bom.id);
     expect(await accountBalance(rawAccount), closeTo(0, 0.0001));
     expect(await accountBalance(merchandiseAccount), closeTo(22, 0.0001));
 
@@ -368,28 +368,28 @@ void main() {
   test('BOM classification re-post is atomic with SQLite BOM persistence',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'bom-atomic-component',
       code: 'BOM-AT-C',
       stock: 0,
       cost: 3,
     ));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'bom-atomic-output',
       code: 'BOM-AT-O',
       stock: 0,
       cost: 0,
     ));
     final warehouse =
-        await store.createWarehouse(name: 'BOM atomic', code: 'BAT');
-    await store.addOrUpdateSupplier(Supplier(
+        await store.inventory.createWarehouse(name: 'BOM atomic', code: 'BAT');
+    await store.commerce.addOrUpdateSupplier(Supplier(
       id: 'supplier-bom-atomic',
       name: 'BOM Atomic Supplier',
       phone: '',
       address: '',
       notes: '',
     ));
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-bom-atomic',
       supplierName: 'BOM Atomic Supplier',
       receiveNow: true,
@@ -429,7 +429,7 @@ void main() {
     await setRawPostable(false);
     try {
       await expectLater(
-        () => store.createBillOfMaterials(
+        () => store.inventory.createBillOfMaterials(
           name: 'Atomic failure BOM',
           outputProductId: 'bom-atomic-output',
           outputQuantity: 1,
@@ -465,28 +465,28 @@ void main() {
       'BOM save defers inventory reclassification when valuation is mismatched',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'bom-deferred-component',
       code: 'BOM-DF-C',
       stock: 0,
       cost: 3,
     ));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'bom-deferred-output',
       code: 'BOM-DF-O',
       stock: 0,
       cost: 0,
     ));
-    final warehouse =
-        await store.createWarehouse(name: 'BOM deferred', code: 'BDF');
-    await store.addOrUpdateSupplier(Supplier(
+    final warehouse = await store.inventory
+        .createWarehouse(name: 'BOM deferred', code: 'BDF');
+    await store.commerce.addOrUpdateSupplier(Supplier(
       id: 'supplier-bom-deferred',
       name: 'BOM Deferred Supplier',
       phone: '',
       address: '',
       notes: '',
     ));
-    await store.createPurchase(
+    await store.commerce.createPurchase(
       supplierId: 'supplier-bom-deferred',
       supplierName: 'BOM Deferred Supplier',
       receiveNow: true,
@@ -513,7 +513,7 @@ void main() {
       ],
     );
 
-    final bom = await store.createBillOfMaterials(
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Deferred classification BOM',
       outputProductId: 'bom-deferred-output',
       outputQuantity: 1,
@@ -547,37 +547,37 @@ void main() {
   test('manufacturing reversal ignores downstream movements already reversed',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'raw-reverse-chain',
       code: 'RAW-RC',
       stock: 0,
       cost: 2,
     ));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'fg-reverse-chain',
       code: 'FG-RC',
       stock: 0,
       cost: 0,
     ));
-    final rawWarehouse =
-        await store.createWarehouse(name: 'Raw reverse chain', code: 'RRC');
-    final finishedWarehouse = await store.createWarehouse(
+    final rawWarehouse = await store.inventory
+        .createWarehouse(name: 'Raw reverse chain', code: 'RRC');
+    final finishedWarehouse = await store.inventory.createWarehouse(
       name: 'Finished reverse chain',
       code: 'FRC',
     );
-    await store.addOrUpdateCustomer(Customer(
+    await store.commerce.addOrUpdateCustomer(Customer(
       id: 'customer-reverse-chain',
       name: 'Reverse Customer',
       phone: '',
       address: '',
     ));
-    await store.adjustStock(
+    await store.inventory.adjustStock(
       productId: 'raw-reverse-chain',
       warehouseId: rawWarehouse.id,
       quantityDelta: 10,
       reason: 'Opening raw chain',
     );
-    final bom = await store.createBillOfMaterials(
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Reverse chain BOM',
       outputProductId: 'fg-reverse-chain',
       outputQuantity: 1,
@@ -589,13 +589,13 @@ void main() {
         ),
       ],
     );
-    final order = await store.completeManufacturingOrder(
+    final order = await store.inventory.completeManufacturingOrder(
       bomId: bom.id,
       quantity: 1,
       rawMaterialsWarehouseId: rawWarehouse.id,
       finishedGoodsWarehouseId: finishedWarehouse.id,
     );
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerName: 'Reverse Customer',
       customerId: 'customer-reverse-chain',
       warehouseId: finishedWarehouse.id,
@@ -611,8 +611,8 @@ void main() {
         ),
       ],
     );
-    await store.returnSale(sale.id);
-    final reversed = await store.reverseManufacturingOrder(
+    await store.commerce.returnSale(sale.id);
+    final reversed = await store.inventory.reverseManufacturingOrder(
       orderId: order.id,
       reason: 'Test full chain reversal',
     );
@@ -621,7 +621,7 @@ void main() {
       await support.sqliteWarehouseQuantity(
         productId: 'fg-reverse-chain',
         warehouseId: finishedWarehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(0, 0.0001),
     );
@@ -629,13 +629,13 @@ void main() {
       await support.sqliteWarehouseQuantity(
         productId: 'raw-reverse-chain',
         warehouseId: rawWarehouse.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(10, 0.0001),
     );
   });
 
-  test('posted document mutation paths are audit guarded', () {
+  test('purchase edits and expense deletes preserve audit guards', () {
     final source = readAppStoreImplementationSource();
     final updateStart =
         source.indexOf('Future<Purchase> updatePurchaseDraft({');
@@ -652,14 +652,16 @@ void main() {
           'await _requirePurchaseBatchesUnusedInTransaction(sqliteDb, current);'),
     );
     expect(updateBody, contains(r'Purchase edit reverse v${current.version}'));
-    expect(
-      source,
-      contains('Posted/cancelled purchase invoices are retained for audit'),
-    );
-    expect(
-      source,
-      contains('Posted/cancelled expenses are retained for audit'),
-    );
+    final expenseDeleteStart =
+        source.indexOf('Future<void> deleteDraftExpense(String id) async {');
+    final expenseDeleteEnd =
+        source.indexOf('Future<void> cancelExpense(', expenseDeleteStart);
+    expect(expenseDeleteStart, isNonNegative);
+    expect(expenseDeleteEnd, greaterThan(expenseDeleteStart));
+    final expenseDeleteBody =
+        source.substring(expenseDeleteStart, expenseDeleteEnd);
+    expect(expenseDeleteBody, contains('if (expense.isPosted)'));
+    expect(expenseDeleteBody, contains('if (expense.isCancelled)'));
     expect(
       source,
       contains("<String>{'completed', 'complete', 'reversed'}"),

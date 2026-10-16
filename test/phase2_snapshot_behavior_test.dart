@@ -49,9 +49,9 @@ Future<AppStore> _readySqliteStore() async {
   );
   await LocalDatabaseService.initialize();
   final store = AppStore();
-  await store.initialize();
-  await store.factoryResetLocalDevice(enforcePermission: false);
-  await store.recoverOnlineStoreOwnerIdentity(
+  await store.runtime.initialize();
+  await store.recovery.factoryResetLocalDevice(enforcePermission: false);
+  await store.security.recoverOnlineStoreOwnerIdentity(
     storeId: 'ST-SNAP01',
     branchId: 'BR-SNAP01',
     storeName: 'Snapshot Store',
@@ -93,7 +93,7 @@ void main() {
         addTearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
         await _clearAuthoritativeTables();
 
-        await store.addOrUpdateProduct(
+        await store.catalog.addOrUpdateProduct(
           Product(
             id: 'p-snap-1',
             code: 'PSNAP-1',
@@ -108,9 +108,9 @@ void main() {
         final db = SqliteMigrationManager.database!;
         final service = StockTransactionService(
           db,
-          defaultStoreId: store.appIdentity.storeId,
-          defaultBranchId: store.appIdentity.branchId,
-          deviceId: store.appIdentity.deviceId,
+          defaultStoreId: store.runtime.identity.storeId,
+          defaultBranchId: store.runtime.identity.branchId,
+          deviceId: store.runtime.identity.deviceId,
         );
         await service.recordMovementsAtomically(
           operationType: 'purchase_receive',
@@ -133,14 +133,14 @@ void main() {
               sourceMovementId: '',
               reversalOfMovementId: '',
               idempotencyKey: 'mov-snap-1',
-              storeId: store.appIdentity.storeId,
-              branchId: store.appIdentity.branchId,
+              storeId: store.runtime.identity.storeId,
+              branchId: store.runtime.identity.branchId,
               syncStatus: 'pending',
             ),
           ],
         );
 
-        final sourceChunks = await store.exportUnifiedSnapshotChunks(
+        final sourceChunks = await store.sync.exportSnapshotChunks(
           sectionIds: {
             UnifiedSnapshotCatalog.productsCustomersSuppliers.id,
             UnifiedSnapshotCatalog.inventoryMovements.id,
@@ -149,8 +149,8 @@ void main() {
         final sourceJson = jsonEncode(<String, dynamic>{
           'snapshotChunks': sourceChunks,
         });
-        final sourceBackup =
-            jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+        final sourceBackup = jsonDecode(await store.recovery.exportBackupJson())
+            as Map<String, dynamic>;
 
         expect(sourceBackup['warehouseInventory'], isNotEmpty);
         expect(sourceBackup['stockOperations'], isNotEmpty);
@@ -167,10 +167,11 @@ void main() {
         );
 
         await _clearAuthoritativeTables();
-        await store.importSyncSnapshotJson(sourceJson);
+        await store.sync.importSnapshotJson(sourceJson);
 
         final afterFirstImport =
-            jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+            jsonDecode(await store.recovery.exportBackupJson())
+                as Map<String, dynamic>;
         expect(afterFirstImport['warehouseInventory'],
             equals(sourceBackup['warehouseInventory']));
         expect(afterFirstImport['stockOperations'],
@@ -178,9 +179,10 @@ void main() {
         expect(afterFirstImport['stockMovements'],
             equals(sourceBackup['stockMovements']));
 
-        await store.importSyncSnapshotJson(sourceJson);
+        await store.sync.importSnapshotJson(sourceJson);
         final afterSecondImport =
-            jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+            jsonDecode(await store.recovery.exportBackupJson())
+                as Map<String, dynamic>;
         expect(afterSecondImport['warehouseInventory'],
             equals(afterFirstImport['warehouseInventory']));
         expect(afterSecondImport['stockOperations'],
@@ -198,7 +200,7 @@ void main() {
         addTearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
         await _clearAuthoritativeTables();
 
-        await store.addOrUpdateProduct(
+        await store.catalog.addOrUpdateProduct(
           Product(
             id: 'p-negative-snapshot',
             code: 'PNEG-SNAPSHOT',
@@ -210,9 +212,9 @@ void main() {
           ),
         );
 
-        expect(store.storeProfile.allowNegativeStock, isFalse);
-        final payload =
-            jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+        expect(store.runtime.profile.allowNegativeStock, isFalse);
+        final payload = jsonDecode(await store.recovery.exportBackupJson())
+            as Map<String, dynamic>;
         final incomingProfile =
             Map<String, dynamic>.from(payload['storeProfile'] as Map)
               ..['allowNegativeStock'] = true;
@@ -220,27 +222,29 @@ void main() {
         payload['warehouseInventory'] = <Map<String, dynamic>>[
           <String, dynamic>{
             'id': 'wi-negative-snapshot',
-            'storeId': store.appIdentity.storeId,
-            'branchId': store.appIdentity.branchId,
+            'storeId': store.runtime.identity.storeId,
+            'branchId': store.runtime.identity.branchId,
             'warehouseId': 'main',
             'productId': 'p-negative-snapshot',
             'quantity': -3.0,
             'version': 1,
             'createdAt': DateTime.utc(2026, 9, 4).toIso8601String(),
             'updatedAt': DateTime.utc(2026, 9, 4).toIso8601String(),
-            'deviceId': store.deviceId,
+            'deviceId': store.sync.deviceId,
             'syncStatus': 'synced',
-            'lastModifiedByDeviceId': store.deviceId,
+            'lastModifiedByDeviceId': store.sync.deviceId,
           },
         ];
         payload['inventoryBatchBalances'] = const <Map<String, dynamic>>[];
 
-        await store.importSyncSnapshotJson(jsonEncode(payload));
+        await store.sync.importSnapshotJson(jsonEncode(payload));
 
-        expect(store.storeProfile.allowNegativeStock, isTrue);
-        final imported = await SqliteMigrationManager.database!.customSelect(
-          "SELECT quantity FROM warehouse_inventory WHERE id = 'wi-negative-snapshot'",
-        ).getSingle();
+        expect(store.runtime.profile.allowNegativeStock, isTrue);
+        final imported = await SqliteMigrationManager.database!
+            .customSelect(
+              "SELECT quantity FROM warehouse_inventory WHERE id = 'wi-negative-snapshot'",
+            )
+            .getSingle();
         expect(imported.read<double>('quantity'), -3.0);
 
         final rejectingPayload = Map<String, dynamic>.from(payload);
@@ -249,7 +253,7 @@ void main() {
               ..['allowNegativeStock'] = false;
 
         await expectLater(
-          store.importSyncSnapshotJson(jsonEncode(rejectingPayload)),
+          store.sync.importSnapshotJson(jsonEncode(rejectingPayload)),
           throwsA(
             isA<StateError>().having(
               (error) => error.message,
@@ -269,7 +273,7 @@ void main() {
         addTearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
         await _clearAuthoritativeTables();
 
-        await store.addOrUpdateProduct(
+        await store.catalog.addOrUpdateProduct(
           Product(
             id: 'p-legacy-1',
             code: 'PLEG-1',
@@ -301,7 +305,7 @@ void main() {
               const Variable<String>('legacy-sm-1'),
               const Variable<String>('2026-01-01T10:00:00.000Z'),
               const Variable<String>('2026-01-01T10:00:00.000Z'),
-              Variable<String>(store.appIdentity.storeId),
+              Variable<String>(store.runtime.identity.storeId),
               const Variable<String>('p-legacy-1'),
               const Variable<String>('Legacy Product'),
               const Variable<String>('2026-01-01T10:00:00.000Z'),
@@ -309,14 +313,14 @@ void main() {
           );
         });
 
-        final sourceChunks = await store.exportUnifiedSnapshotChunks(
+        final sourceChunks = await store.sync.exportSnapshotChunks(
           sectionIds: {
             UnifiedSnapshotCatalog.productsCustomersSuppliers.id,
             UnifiedSnapshotCatalog.inventoryMovements.id,
           },
         );
         final legacyPayload = Map<String, dynamic>.from(
-          store.unifiedSnapshotPayloadFromChunks(
+          store.sync.snapshotPayloadFromChunks(
             sourceChunks
                 .whereType<Map>()
                 .map((item) => Map<String, dynamic>.from(item))
@@ -337,10 +341,11 @@ void main() {
         legacyPayload.remove('inventory_migration_adjustments');
 
         await _clearAuthoritativeTables();
-        await store.importSyncSnapshotJson(jsonEncode(legacyPayload));
+        await store.sync.importSnapshotJson(jsonEncode(legacyPayload));
 
         final afterLegacyImport =
-            jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+            jsonDecode(await store.recovery.exportBackupJson())
+                as Map<String, dynamic>;
         expect(afterLegacyImport['warehouseInventory'], isEmpty);
         expect(afterLegacyImport['stockOperations'], isEmpty);
         expect(afterLegacyImport.containsKey('stockMovements'), isTrue);

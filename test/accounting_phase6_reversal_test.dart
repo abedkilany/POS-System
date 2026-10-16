@@ -11,20 +11,21 @@ void main() {
       'manufacturing reversal restores stock, reverses journal, and is idempotent',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
         id: 'raw-reverse', code: 'RAW-R', stock: 0, cost: 3));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
         id: 'fg-reverse', code: 'FG-R', stock: 0, cost: 0));
-    final raw = await store.createWarehouse(name: 'Raw reverse', code: 'RR');
-    final finished =
-        await store.createWarehouse(name: 'Finished reverse', code: 'FR');
-    await store.adjustStock(
+    final raw =
+        await store.inventory.createWarehouse(name: 'Raw reverse', code: 'RR');
+    final finished = await store.inventory
+        .createWarehouse(name: 'Finished reverse', code: 'FR');
+    await store.inventory.adjustStock(
       productId: 'raw-reverse',
       warehouseId: raw.id,
       quantityDelta: 10,
       reason: 'Opening',
     );
-    final bom = await store.createBillOfMaterials(
+    final bom = await store.inventory.createBillOfMaterials(
       name: 'Reverse BOM',
       outputProductId: 'fg-reverse',
       outputQuantity: 1,
@@ -38,7 +39,7 @@ void main() {
       for (final account in openingLedger)
         account.accountId: account.closingBalance,
     };
-    final completed = await store.completeManufacturingOrder(
+    final completed = await store.inventory.completeManufacturingOrder(
       bomId: bom.id,
       quantity: 1,
       rawMaterialsWarehouseId: raw.id,
@@ -56,7 +57,7 @@ void main() {
       await support.sqliteWarehouseQuantity(
         productId: 'raw-reverse',
         warehouseId: raw.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(10, 0.0001),
     );
@@ -64,7 +65,7 @@ void main() {
       await support.sqliteWarehouseQuantity(
         productId: 'fg-reverse',
         warehouseId: finished.id,
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
       ),
       closeTo(0, 0.0001),
     );

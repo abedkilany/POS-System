@@ -34,9 +34,9 @@ extension _AppStoreSplitManufacturingPart2 on AppStore {
     final output = _findProductById(bom.outputProductId);
     if (output == null) throw ArgumentError('Output product was not found.');
     final rawWarehouse =
-        resolveWarehouseForPurchase(warehouseId: rawMaterialsWarehouseId);
+        _resolveWarehouseForPurchase(warehouseId: rawMaterialsWarehouseId);
     final finishedWarehouse =
-        resolveWarehouseForSale(warehouseId: finishedGoodsWarehouseId);
+        _resolveWarehouseForSale(warehouseId: finishedGoodsWarehouseId);
     final now = DateTime.now();
     final updated = _withSyncMeta<ManufacturingOrder>(
       existing.copyWith(
@@ -108,10 +108,10 @@ extension _AppStoreSplitManufacturingPart2 on AppStore {
     final output = _findProductById(bom.outputProductId);
     if (output == null) throw ArgumentError('Output product was not found.');
     final now = DateTime.now();
-    final rawWarehouse = resolveWarehouseForPurchase(
+    final rawWarehouse = _resolveWarehouseForPurchase(
       warehouseId: rawMaterialsWarehouseId,
     );
-    final finishedWarehouse = resolveWarehouseForSale(
+    final finishedWarehouse = _resolveWarehouseForSale(
       warehouseId: finishedGoodsWarehouseId,
     );
     final order = _withSyncMeta<ManufacturingOrder>(
@@ -195,7 +195,7 @@ extension _AppStoreSplitManufacturingPart2 on AppStore {
       // result and never consumes or produces stock a second time.
       return existing;
     }
-    return completeManufacturingOrder(
+    return _completeManufacturingOrder(
       bomId: existing.bomId,
       quantity: actualQuantity,
       rawMaterialsWarehouseId: existing.rawMaterialsWarehouseId,

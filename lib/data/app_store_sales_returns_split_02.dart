@@ -157,7 +157,7 @@ extension _AppStoreSplitSalesReturnsPart2 on AppStore {
                 'لا توجد وردية نقدية مفتوحة لهذا الجهاز. افتح وردية قبل قبول الدفع النقدي.');
           }
         }
-        resolvedWarehouse = resolveWarehouseForSale(
+        resolvedWarehouse = _resolveWarehouseForSale(
           warehouseId: warehouseId,
         );
         normalizedWarehouseName = warehouseName.trim().isEmpty
@@ -346,7 +346,7 @@ extension _AppStoreSplitSalesReturnsPart2 on AppStore {
               profile: _storeProfile,
               customer: snapshotCustomer,
               user: _activeUser,
-              role: currentUserRole,
+              role: _currentUserRole,
               displayedPaidAmount: requestedInitialPaidAmount,
               taxProfileIdByProductId: taxProfileIdByProductId,
               legacyDefaultVatRatePercent: legacyDefaultVatRatePercent,

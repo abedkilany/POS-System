@@ -140,7 +140,8 @@ void main() {
 
     var mutations = 0;
     AccountingService.setMutationListener(() => mutations++);
-    final result = await CashOperationService(db, authorization: _authorization).deposit(
+    final result =
+        await CashOperationService(db, authorization: _authorization).deposit(
       cashLocationId: 'drawer-p8',
       cashDrawerSessionId: 'shift-p8',
       counterpartAccountId: 'acc_owner_capital',
@@ -277,10 +278,10 @@ void main() {
     );
 
     final store = AppStore();
-    await store.initialize(hydrateHeavyData: false);
-    await store.recoverPhase8AccountingSyncAfterStartup();
+    await store.runtime.initialize(hydrateHeavyData: false);
+    await store.sync.recoverPhase8AccountingSyncAfterStartup();
 
-    final deltas = store.syncChanges
+    final deltas = store.sync.changes
         .where((change) => change.entityType == 'cash_accounting_delta')
         .toList(growable: false);
     expect(deltas, hasLength(1));
@@ -294,7 +295,7 @@ void main() {
       cashLocations.any((row) => row['id'] == 'drawer-recovery'),
       isTrue,
     );
-    expect(store.syncQueue.any((item) => item.status == 'pending'), isTrue);
+    expect(store.sync.queue.any((item) => item.status == 'pending'), isTrue);
 
     final persistedCursor = DateTime.parse(
       LocalDatabaseService.getString('phase8_accounting_sync_cursor_v1')!,
@@ -332,7 +333,7 @@ void main() {
 
     await expectLater(
       AccountingService.closeCashDrawer(
-      authorization: _authorization,
+        authorization: _authorization,
         sessionId: 'shift-p8',
         countedCash: 100,
         closedBy: 'tester',

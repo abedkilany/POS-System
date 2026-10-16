@@ -76,8 +76,8 @@ Future<AppStore> _readyGoldenStore(VentioDriftDatabase db) async {
   await LocalDatabaseService.initialize();
 
   final store = AppStore();
-  await store.initialize();
-  await store.recoverOnlineStoreOwnerIdentity(
+  await store.runtime.initialize();
+  await store.security.recoverOnlineStoreOwnerIdentity(
     storeId: _storeId,
     branchId: _branchId,
     storeName: 'Golden Financial Store',
@@ -86,14 +86,14 @@ Future<AppStore> _readyGoldenStore(VentioDriftDatabase db) async {
     deviceRole: DeviceRole.host,
     syncMode: SyncMode.localOnly,
   );
-  expect(await store.login('owner', 'OwnerPass123'), isTrue);
-  await store.applySessionUser(
-    activeUser: store.activeUser!,
+  expect(await store.security.login('owner', 'OwnerPass123'), isTrue);
+  await store.security.applySessionUser(
+    activeUser: store.security.activeUser!,
     currentRole: 'Admin',
     permissions: Set<String>.from(AppPermission.all),
     rememberLogin: true,
   );
-  await store.ensureHeavyDataLoaded(failOnError: true);
+  await store.runtime.ensureHeavyDataLoaded(failOnError: true);
   return store;
 }
 
@@ -181,7 +181,7 @@ void main() {
     await db.initializeFoundation();
     final store = await _readyGoldenStore(db);
     addTearDown(() async {
-      await store.prepareForShutdown();
+      await store.runtime.prepareForShutdown();
       store.dispose();
       await LocalDatabaseService.resetForTesting();
       await SqliteMigrationManager.resetForTesting();
@@ -200,7 +200,7 @@ void main() {
       defaultTaxProfileId: TaxProfile.standardId,
     );
 
-    await store.addOrUpdateCustomer(
+    await store.commerce.addOrUpdateCustomer(
       Customer(
         id: _customerId,
         name: 'Golden Customer',
@@ -208,7 +208,7 @@ void main() {
         address: 'Beirut',
       ),
     );
-    await store.addOrUpdateSupplier(
+    await store.commerce.addOrUpdateSupplier(
       Supplier(
         id: _supplierId,
         name: 'Golden Supplier',
@@ -217,7 +217,7 @@ void main() {
         notes: 'Production Phase 8 fixture',
       ),
     );
-    await store.addOrUpdateProduct(
+    await store.catalog.addOrUpdateProduct(
       Product(
         id: _standardProductId,
         name: 'Golden Standard VAT Item',
@@ -229,7 +229,7 @@ void main() {
         taxProfileId: TaxProfile.standardId,
       ),
     );
-    await store.addOrUpdateProduct(
+    await store.catalog.addOrUpdateProduct(
       Product(
         id: _exemptProductId,
         name: 'Golden Exempt Item',
@@ -249,7 +249,7 @@ void main() {
       isDefault: true,
       storeId: _storeId,
       branchId: _branchId,
-      deviceId: store.deviceId,
+      deviceId: store.sync.deviceId,
       createdBy: 'owner',
     );
     final drawerRow = await db.customSelect(
@@ -271,10 +271,10 @@ void main() {
       openingBalance: _n(expected, 'openingCash'),
       cashLocationId: drawerId,
       openedBy: 'owner',
-      openedByUserId: store.activeUser!.id,
+      openedByUserId: store.security.activeUser!.id,
       storeId: _storeId,
       branchId: _branchId,
-      deviceId: store.deviceId,
+      deviceId: store.sync.deviceId,
     );
     final sessionRow = await db.customSelect(
       "SELECT id FROM cash_drawer_sessions WHERE cash_location_id = ? AND status = 'open' LIMIT 1",
@@ -282,7 +282,7 @@ void main() {
     ).getSingle();
     final sessionId = sessionRow.data['id']!.toString();
 
-    final mainPurchase = await store.createPurchase(
+    final mainPurchase = await store.commerce.createPurchase(
       supplierId: _supplierId,
       supplierName: 'Golden Supplier',
       paymentMethod: 'Credit',
@@ -308,7 +308,7 @@ void main() {
 
     // Exercise a complete purchase return before any downstream batch usage.
     // Its purchase + reversal must net to zero in the final golden balances.
-    final returnPurchase = await store.createPurchase(
+    final returnPurchase = await store.commerce.createPurchase(
       supplierId: _supplierId,
       supplierName: 'Golden Supplier',
       paymentMethod: 'Credit',
@@ -322,12 +322,12 @@ void main() {
         ),
       ],
     );
-    await store.returnPurchase(
+    await store.commerce.returnPurchase(
       returnPurchase.id,
       reason: 'Production Phase 8 golden purchase return',
     );
 
-    await store.settlePurchasePayment(
+    await store.commerce.settlePurchasePayment(
       purchaseId: mainPurchase.id,
       amount: _n(expected, 'supplierPayment'),
       paymentMethod: 'Cash',
@@ -335,7 +335,7 @@ void main() {
       idempotencyKey: 'golden-p8-supplier-payment',
     );
 
-    final sale = await store.createSale(
+    final sale = await store.commerce.createSale(
       customerId: _customerId,
       customerName: 'Golden Customer',
       paymentMethod: 'Credit',
@@ -361,7 +361,7 @@ void main() {
     expect(sale.postedSnapshot!.totals.tax,
         _n(expected, 'saleOutputVatAfterDiscount'));
 
-    await store.settleSalePayment(
+    await store.commerce.settleSalePayment(
       saleId: sale.id,
       amount: _n(expected, 'customerReceipt'),
       paymentMethod: 'Cash',
@@ -369,7 +369,7 @@ void main() {
       idempotencyKey: 'golden-p8-customer-receipt',
     );
 
-    final creditNote = await store.returnSale(
+    final creditNote = await store.commerce.returnSale(
       sale.id,
       returnedQuantities: const <String, double>{_standardProductId: 1},
     );
@@ -377,7 +377,7 @@ void main() {
     expect(
         creditNote.postedSnapshot!.totals.tax, _n(expected, 'saleReturnVat'));
 
-    await store.addOrUpdateExpense(
+    await store.commerce.addOrUpdateExpense(
       Expense(
         id: 'expense-golden-rent-p8',
         title: 'Rent',
@@ -387,7 +387,8 @@ void main() {
         notes: 'Production Phase 8 golden expense',
       ),
     );
-    await store.postExpense('expense-golden-rent-p8', paidInCash: true);
+    await store.commerce
+        .postExpense('expense-golden-rent-p8', paidInCash: true);
 
     final cashRow = await db.customSelect(
       'SELECT current_balance FROM cash_locations WHERE id = ?',
@@ -524,14 +525,14 @@ void main() {
     expect(scenarioEnd, greaterThan(scenarioStart));
     final scenarioSource = source.substring(scenarioStart, scenarioEnd);
     for (final required in <String>[
-      'store.createPurchase(',
-      'store.returnPurchase(',
-      'store.settlePurchasePayment(',
-      'store.createSale(',
-      'store.settleSalePayment(',
-      'store.returnSale(',
-      'store.addOrUpdateExpense(',
-      'store.postExpense(',
+      'store.commerce.createPurchase(',
+      'store.commerce.returnPurchase(',
+      'store.commerce.settlePurchasePayment(',
+      'store.commerce.createSale(',
+      'store.commerce.settleSalePayment(',
+      'store.commerce.returnSale(',
+      'store.commerce.addOrUpdateExpense(',
+      'store.commerce.postExpense(',
       'AccountingService.createCashLocation(',
       'AccountingService.recordOpeningCashLocationBalance(',
       'AccountingService.openCashDrawer(',

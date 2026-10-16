@@ -91,6 +91,42 @@ class ArchitectureBoundaryCheckerTest(unittest.TestCase):
 
             self.assertEqual(selectors, {})
 
+    def test_counts_only_public_appstore_extensions_as_facade_members(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            api = root / "lib" / "data" / "app_store_forwarding_api.dart"
+            backup = root / "lib" / "data" / "app_store_backup.dart"
+            api.parent.mkdir(parents=True)
+            api.write_text(
+                "part of 'app_store.dart';\n"
+                "mixin _ForwardingApi {\n"
+                "  Future<void> _initialize() async {}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            backup.write_text(
+                "part of 'app_store.dart';\n"
+                "extension _InternalBackup on AppStore {\n"
+                "  String internalMethod() => '';\n"
+                "}\n"
+                "extension PublicBackup on AppStore {\n"
+                "  String validateBackupJson() => '';\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            original_root = CHECKER.ROOT
+            original_api_files = CHECKER.APP_STORE_API_FILES
+            try:
+                CHECKER.ROOT = root
+                CHECKER.APP_STORE_API_FILES = [api]
+                members = CHECKER.public_app_store_members()
+            finally:
+                CHECKER.ROOT = original_root
+                CHECKER.APP_STORE_API_FILES = original_api_files
+
+            self.assertEqual(members, {"validateBackupJson"})
+
 
 if __name__ == "__main__":
     unittest.main()

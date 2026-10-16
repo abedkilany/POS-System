@@ -26,7 +26,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       UnifiedSyncTransportHelpers.classifyError(ok, message);
 
   DateTime? get _unifiedCursor => SyncDeviceStateStore.cursorForTransport(
-        _service.store.appIdentity,
+        _service.store.runtime.identity,
         'lan',
         _settings.lastPullCursor,
       );
@@ -75,7 +75,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     final allowed = AccountAuthCache.load()?.devicesLimit;
     if (allowed == null) return false;
     final normalizedAllowed = allowed < 0 ? 0 : allowed;
-    final hostDeviceId = _service.store.deviceId.trim();
+    final hostDeviceId = _service.store.sync.deviceId.trim();
     final linked = settings.hostRegistry.values.where((device) {
       final id = device.clientDeviceId.trim();
       if (id.isEmpty || id == hostDeviceId) return false;
@@ -91,10 +91,10 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   String get label => 'LAN';
 
   @override
-  String get deviceId => _service.store.deviceId;
+  String get deviceId => _service.store.sync.deviceId;
 
   @override
-  String get deviceToken => _service.store.appIdentity.deviceToken;
+  String get deviceToken => _service.store.runtime.identity.deviceToken;
 
   @override
   Future<void> stopHostIfSupported() => _service.stopHost();
@@ -190,7 +190,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       {int ttlMinutes = 5}) async {
     final savedSettings = LanSyncSettings.load();
     final lanEnabled = UnifiedSyncPolicy.canCreateLanPairingCode(
-      _service.store.appIdentity,
+      _service.store.runtime.identity,
       setupComplete: savedSettings.setupComplete,
       isHostModeEnabled: savedSettings.isHost,
     );
@@ -226,7 +226,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     try {
       await _service.startHost(port: _settings.port);
       final migratedSettings =
-          savedSettings.withMigratedHostRegistry(_service.store.deviceId);
+          savedSettings.withMigratedHostRegistry(_service.store.sync.deviceId);
       await migratedSettings
           .copyWith(secret: code, pairingCodeExpiresAt: expiresAt)
           .save();
@@ -239,9 +239,9 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
           code: code,
           expiresAt: expiresAt,
           transport: 'lan',
-          storeId: _service.store.appIdentity.storeId,
-          branchId: _service.store.appIdentity.branchId,
-          hostDeviceId: _service.store.deviceId,
+          storeId: _service.store.runtime.identity.storeId,
+          branchId: _service.store.runtime.identity.branchId,
+          hostDeviceId: _service.store.sync.deviceId,
           host: _settings.host,
           port: _settings.port,
         ),
@@ -303,7 +303,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       'lan',
       cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
       sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
-        _service.store.appIdentity,
+        _service.store.runtime.identity,
         'lan',
       ),
     );
@@ -330,7 +330,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       'lan',
       cursor: after ?? effectiveSettings.lastPullCursor ?? _unifiedCursor,
       sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
-        _service.store.appIdentity,
+        _service.store.runtime.identity,
         'lan',
       ),
     );
@@ -361,7 +361,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       'lan',
       cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
       sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
-        _service.store.appIdentity,
+        _service.store.runtime.identity,
         'lan',
       ),
     );

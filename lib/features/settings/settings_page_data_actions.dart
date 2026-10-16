@@ -195,7 +195,7 @@ extension _DataActions on SettingsPage {
       final backupPassword = await _requestBackupPassword(context);
       if (backupPassword == null) return;
       final backup =
-          'RESET_PROTECTION_TOKEN:$token\n${await store.exportEncryptedBackupJson(backupPassword)}';
+          'RESET_PROTECTION_TOKEN:$token\n${await store.recovery.exportEncryptedBackupJson(backupPassword)}';
       await downloadTextFile(
           filename:
               'reset_protection_backup_${DateTime.now().millisecondsSinceEpoch}.json',

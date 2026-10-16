@@ -311,8 +311,8 @@ extension _AppStoreSplitBackupRecoveryPart4 on AppStore {
     final nowForMergedRemoteChanges = DateTime.now();
     _mergeSyncChanges(
       markSynced
-          ? syncChanges
-          : syncChanges.map((change) {
+          ? _syncChanges
+          : _syncChanges.map((change) {
               if (change.deviceId == _deviceId || change.isSynced) {
                 return change;
               }

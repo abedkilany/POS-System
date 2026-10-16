@@ -3,7 +3,7 @@ part of 'app_store.dart';
 extension _AppStoreSplitPricingCostingPart3 on AppStore {
   InventoryCostResult _resolveCostForSaleItem(SaleItem item, DateTime now) {
     final product = _findProductById(item.productId);
-    final cost = productCostFor(item.productId);
+    final cost = _productCostFor(item.productId);
     if (_inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost) {
       return InventoryCostResult(
         method: _inventoryCostingMethod,
@@ -82,7 +82,7 @@ extension _AppStoreSplitPricingCostingPart3 on AppStore {
     DateTime now,
   ) async {
     final product = _findProductById(item.productId);
-    final cost = productCostFor(item.productId);
+    final cost = _productCostFor(item.productId);
     final providedUnitCost = item.unitCost > 0 ? item.unitCost : 0.0;
 
     double fallbackCost() {
@@ -427,7 +427,7 @@ extension _AppStoreSplitPricingCostingPart3 on AppStore {
     if (quantity <= 0) {
       throw ArgumentError('Actual manufacturing consumption must be positive.');
     }
-    final productCost = productCostFor(product.id);
+    final productCost = _productCostFor(product.id);
     double fallbackCost() {
       if (_inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost &&
           productCost.lastCost > 0) {

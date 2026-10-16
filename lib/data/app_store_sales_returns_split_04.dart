@@ -63,7 +63,7 @@ extension _AppStoreSplitSalesReturnsPart4 on AppStore {
   Future<Map<String, double>> _returnedSaleQuantitiesByProduct(
     String saleId,
   ) async {
-    await ensureCreditNotesLoaded();
+    await _ensureCreditNotesLoaded();
     final totals = <String, double>{};
     for (final note in _creditNotes) {
       if (note.originalSaleId != saleId) continue;

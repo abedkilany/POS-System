@@ -12,7 +12,7 @@ extension _AppStoreSplitPurchasesPart5 on AppStore {
   }) async {
     requirePermission(AppPermission.purchasesManage);
     requirePermission(AppPermission.purchasesCancel);
-    requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
+    _requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
     if (items.isEmpty) {
       throw ArgumentError('Purchase return must contain at least one item.');
     }
@@ -221,7 +221,7 @@ extension _AppStoreSplitPurchasesPart5 on AppStore {
         },
         applyChanges: (current) async {
           final resolvedWarehouse =
-              resolveWarehouseForPurchase(warehouseId: warehouseId);
+              _resolveWarehouseForPurchase(warehouseId: warehouseId);
           final total = normalizedItems.fold<double>(
             0,
             (sum, item) => sum + item.lineTotal,
@@ -354,7 +354,7 @@ extension _AppStoreSplitPurchasesPart5 on AppStore {
               profile: _storeProfile,
               supplier: snapshotSupplier,
               user: _activeUser,
-              role: currentUserRole,
+              role: _currentUserRole,
               displayedPaidAmount: updated.paidAmount,
               displayedPaymentStatus: updated.paymentStatus,
               taxProfileIdByProductId: taxProfileIdByProductId,
@@ -582,7 +582,7 @@ extension _AppStoreSplitPurchasesPart5 on AppStore {
     await refreshAfterDatabaseChange(AppStore._productsKey);
     await refreshAfterDatabaseChange(AppStore._productCostsKey);
     await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await _saveDirty(sync: true);
     AccountingService.notifyCommittedMutation();
     _touchPurchasesData();

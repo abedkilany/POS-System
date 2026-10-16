@@ -1,67 +1,6 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitCatalogPartiesExpensesPart2 on AppStore {
-  Future<void> addOrUpdateCustomersBulk(List<Customer> customers) async {
-    if (customers.isEmpty) return;
-    requirePermission(AppPermission.customersManage);
-    final section = 'customer.addOrUpdateBulk';
-    final now = DateTime.now();
-    final seenNames = <String>{};
-    var changedCount = 0;
-    for (final customer in customers) {
-      final normalizedName = customer.name.trim();
-      if (normalizedName.isEmpty) {
-        throw ArgumentError('Customer name is required.');
-      }
-      final normalizedKey = normalizedName.toLowerCase();
-      if (!seenNames.add(normalizedKey)) {
-        throw ArgumentError('Duplicate customer name in batch.');
-      }
-      final activeDuplicateId = _customerIdByNormalizedName[normalizedKey];
-      final activeDuplicate = activeDuplicateId != null &&
-          activeDuplicateId != customer.id &&
-          activeDuplicateId != AppStore.walkInCustomerId;
-      if (activeDuplicate) {
-        throw ArgumentError(
-          'Customer name already exists on this device. Sync duplicates will be reported as conflicts.',
-        );
-      }
-      final index = _customerIndexById[customer.id];
-      final isCreate = index == null;
-      final syncedCustomer = _withSyncMeta<Customer>(
-        customer.copyWith(name: normalizedName),
-        now,
-        isCreate: isCreate,
-        clearDeletedAt: true,
-      );
-      if (isCreate) {
-        _customers.add(syncedCustomer);
-        _indexCustomerAt(_customers.length - 1, syncedCustomer);
-      } else {
-        final previousCustomer = _customers[index];
-        _customers[index] = syncedCustomer;
-        _indexCustomerAt(
-          index,
-          syncedCustomer,
-          previousCustomer: previousCustomer,
-        );
-      }
-      _recordSyncChange(
-        entityType: 'customer',
-        entityId: syncedCustomer.id,
-        operation: isCreate ? 'create' : 'update',
-        payload: syncedCustomer.toJson(),
-      );
-      changedCount += 1;
-    }
-    await _traceAsync(
-      section,
-      'save_dirty',
-      () => _saveDirty(customers: true, sync: true),
-      metadata: <String, Object?>{'count': changedCount},
-    );
-    notifyListeners();
-  }
 
   Future<void> deleteCustomer(String id) async {
     requirePermission(AppPermission.customersManage);
@@ -225,64 +164,6 @@ extension _AppStoreSplitCatalogPartiesExpensesPart2 on AppStore {
     notifyListeners();
   }
 
-  Future<void> addOrUpdateSuppliersBulk(List<Supplier> suppliers) async {
-    if (suppliers.isEmpty) return;
-    requirePermission(AppPermission.suppliersManage);
-    final section = 'supplier.addOrUpdateBulk';
-    final now = DateTime.now();
-    final seenNames = <String>{};
-    var changedCount = 0;
-    for (final supplier in suppliers) {
-      if (supplier.name.trim().isEmpty) {
-        throw ArgumentError('Supplier name is required.');
-      }
-      final normalizedName = supplier.name.trim().toLowerCase();
-      if (!seenNames.add(normalizedName)) {
-        throw ArgumentError('Duplicate supplier name in batch.');
-      }
-      final duplicateId = _supplierIdByNormalizedName[normalizedName];
-      final duplicate = duplicateId != null && duplicateId != supplier.id;
-      if (duplicate) {
-        throw ArgumentError(
-          'Supplier name already exists on this device. Sync duplicates will be reported as conflicts.',
-        );
-      }
-      final cleanedSupplier = supplier.copyWith(name: supplier.name.trim());
-      final index = _supplierIndexById[cleanedSupplier.id];
-      final isCreate = index == null;
-      final syncedSupplier = _withSyncMeta<Supplier>(
-        cleanedSupplier,
-        now,
-        isCreate: isCreate,
-      );
-      if (isCreate) {
-        _suppliers.add(syncedSupplier);
-        _indexSupplierAt(_suppliers.length - 1, syncedSupplier);
-      } else {
-        final previousSupplier = _suppliers[index];
-        _suppliers[index] = syncedSupplier;
-        _indexSupplierAt(
-          index,
-          syncedSupplier,
-          previousSupplier: previousSupplier,
-        );
-      }
-      _recordSyncChange(
-        entityType: 'supplier',
-        entityId: syncedSupplier.id,
-        operation: isCreate ? 'create' : 'update',
-        payload: syncedSupplier.toJson(),
-      );
-      changedCount += 1;
-    }
-    await _traceAsync(
-      section,
-      'save_dirty',
-      () => _saveDirty(suppliers: true, sync: true),
-      metadata: <String, Object?>{'count': changedCount},
-    );
-    notifyListeners();
-  }
 
   Future<void> deleteSupplier(String id) async {
     requirePermission(AppPermission.suppliersManage);

@@ -32,7 +32,7 @@ extension _AppStoreSplitSalesReturns on AppStore {
     final quotation = SaleQuotation(
       id: now.microsecondsSinceEpoch.toString(),
       quotationNo:
-          'QTN-$_invoiceDevicePrefix-${(saleQuotations.length + 1).toString().padLeft(6, '0')}',
+          'QTN-$_invoiceDevicePrefix-${(_saleQuotations.length + 1).toString().padLeft(6, '0')}',
       customerName: customerName.trim().isEmpty
           ? AppStore.walkInCustomerName
           : customerName.trim(),
@@ -72,7 +72,7 @@ extension _AppStoreSplitSalesReturns on AppStore {
     String paymentMethod = 'Cash',
     String paymentStatus = 'paid',
   }) async {
-    requireAllPermissions(<String>{
+    _requireAllPermissions(<String>{
       AppPermission.quotationsManage,
       AppPermission.salesCreate,
     });
@@ -83,7 +83,7 @@ extension _AppStoreSplitSalesReturns on AppStore {
     if (quotation.isConverted) {
       throw StateError('Quotation is already converted.');
     }
-    final sale = await createSale(
+    final sale = await _createSale(
       customerName: quotation.customerName,
       customerId: quotation.customerId,
       items: quotation.items,

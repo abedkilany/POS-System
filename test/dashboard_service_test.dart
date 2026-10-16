@@ -50,9 +50,9 @@ Future<AppStore> _readyStore() async {
   );
   await LocalDatabaseService.initialize();
   final store = AppStore();
-  await store.initialize();
-  await store.factoryResetLocalDevice(enforcePermission: false);
-  await store.recoverOnlineStoreOwnerIdentity(
+  await store.runtime.initialize();
+  await store.recovery.factoryResetLocalDevice(enforcePermission: false);
+  await store.security.recoverOnlineStoreOwnerIdentity(
     storeId: 'ST-DASH01',
     branchId: 'BR-DASH01',
     storeName: 'Dashboard Store',
@@ -61,7 +61,7 @@ Future<AppStore> _readyStore() async {
     deviceRole: DeviceRole.host,
     syncMode: SyncMode.localOnly,
   );
-  await store.addOrUpdateProduct(
+  await store.catalog.addOrUpdateProduct(
     Product(
       id: 'p1',
       name: 'Coffee',
@@ -75,16 +75,16 @@ Future<AppStore> _readyStore() async {
       category: 'Drinks',
     ),
   );
-  await store.adjustStock(
+  await store.inventory.adjustStock(
     productId: 'p1',
     warehouseId: 'main',
     quantityDelta: 3,
     reason: 'dashboard test opening stock',
   );
-  await store.addOrUpdateCustomer(
+  await store.commerce.addOrUpdateCustomer(
     Customer(id: 'c1', name: 'Alice', phone: '111', address: 'Main St'),
   );
-  await store.addOrUpdateSupplier(
+  await store.commerce.addOrUpdateSupplier(
     Supplier(
       id: 's1',
       name: 'Supplier',
@@ -93,7 +93,7 @@ Future<AppStore> _readyStore() async {
       notes: '',
     ),
   );
-  await store.addOrUpdateExpense(
+  await store.commerce.addOrUpdateExpense(
     Expense(
       id: 'e1',
       title: 'Rent',
@@ -103,8 +103,8 @@ Future<AppStore> _readyStore() async {
       notes: '',
     ),
   );
-  await store.postExpense('e1', paidInCash: false);
-  await store.createSale(
+  await store.commerce.postExpense('e1', paidInCash: false);
+  await store.commerce.createSale(
     customerId: 'c1',
     customerName: 'Alice',
     paymentStatus: 'credit',
@@ -118,7 +118,7 @@ Future<AppStore> _readyStore() async {
       ),
     ],
   );
-  await store.createPurchase(
+  await store.commerce.createPurchase(
     supplierId: 's1',
     supplierName: 'Supplier',
     receiveNow: false,
@@ -169,7 +169,7 @@ void main() {
         state.financialSummary
             .firstWhere((item) => item.key == 'purchases')
             .amount,
-        store.totalPurchasesAmount,
+        store.commerce.totalPurchasesAmount,
       );
       expect(state.charts, isNotEmpty);
       expect(state.recentOperations, isNotEmpty);
@@ -178,7 +178,7 @@ void main() {
           contains(DashboardOperationType.sale));
       expect(state.recentOperations.map((item) => item.type),
           contains(DashboardOperationType.purchase));
-      expect(state.syncStatus.pendingCount, store.pendingSyncCount);
+      expect(state.syncStatus.pendingCount, store.sync.pendingCount);
       expect(state.backupStatus.isRunning, isFalse);
       expect(state.generatedAt, isNotNull);
     });

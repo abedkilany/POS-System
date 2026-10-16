@@ -128,8 +128,8 @@ Future<AppStore> readyPhase5SqliteStore() async {
   });
 
   final store = AppStore();
-  await store.initialize();
-  await store.recoverOnlineStoreOwnerIdentity(
+  await store.runtime.initialize();
+  await store.security.recoverOnlineStoreOwnerIdentity(
     storeId: 'ST-PHASE5',
     branchId: 'BR-PHASE5',
     storeName: 'Phase 5 Store',
@@ -138,14 +138,14 @@ Future<AppStore> readyPhase5SqliteStore() async {
     deviceRole: DeviceRole.host,
     syncMode: SyncMode.localOnly,
   );
-  expect(await store.login('owner', 'OwnerPass123'), isTrue);
-  await store.applySessionUser(
-    activeUser: store.activeUser!,
+  expect(await store.security.login('owner', 'OwnerPass123'), isTrue);
+  await store.security.applySessionUser(
+    activeUser: store.security.activeUser!,
     currentRole: 'Admin',
     permissions: Set<String>.from(AppPermission.all),
     rememberLogin: true,
   );
-  await store.ensureHeavyDataLoaded(failOnError: true);
+  await store.runtime.ensureHeavyDataLoaded(failOnError: true);
   _activePhase5SqliteStoreForTesting = store;
   return store;
 }
@@ -177,10 +177,10 @@ void main() {
     test('manufacturing consumes raw stock and produces into target warehouse',
         () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'raw-1', code: 'RAW-1', stock: 0, cost: 2),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'fg-1', code: 'FG-1', stock: 0, cost: 0),
       );
       final rawWarehouse =
@@ -188,7 +188,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1));
       final finishedWarehouse =
           await store.inventory.createWarehouse(name: 'Finished', code: 'FIN');
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'raw-1',
         warehouseId: rawWarehouse.id,
         quantityDelta: 10,
@@ -198,7 +198,7 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'raw-1',
           warehouseId: rawWarehouse.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         10,
       );
@@ -216,7 +216,7 @@ void main() {
         ],
       );
 
-      final order = await store.completeManufacturingOrder(
+      final order = await store.inventory.completeManufacturingOrder(
         bomId: bom.id,
         quantity: 1,
         rawMaterialsWarehouseId: rawWarehouse.id,
@@ -231,7 +231,7 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'raw-1',
           warehouseId: rawWarehouse.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         6,
       );
@@ -239,7 +239,7 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'fg-1',
           warehouseId: finishedWarehouse.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         1,
       );
@@ -247,7 +247,9 @@ void main() {
       expect(
           store.inventory.stockForWarehouse('fg-1', finishedWarehouse.id), 1);
       expect(
-        store.stockMovements.where((m) => m.movementGroupId == order.id).length,
+        store.inventory.stockMovements
+            .where((m) => m.movementGroupId == order.id)
+            .length,
         2,
       );
     });
@@ -256,13 +258,13 @@ void main() {
         'manufacturing uses physical batches then a costed deficit when negative stock is allowed',
         () async {
       final store = await readyPhase5SqliteStore();
-      await store.updateStoreProfile(
-        store.storeProfile.copyWith(allowNegativeStock: true),
+      await store.runtime.updateStoreProfile(
+        store.runtime.profile.copyWith(allowNegativeStock: true),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'raw-neg', code: 'RAW-NEG', stock: 0, cost: 2),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'fg-neg', code: 'FG-NEG', stock: 0, cost: 0),
       );
       final rawWarehouse = await store.inventory
@@ -284,14 +286,14 @@ void main() {
         ],
       );
 
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'raw-neg',
         warehouseId: rawWarehouse.id,
         quantityDelta: 5,
         reason: 'seed partial raw stock',
       );
 
-      final order = await store.completeManufacturingOrder(
+      final order = await store.inventory.completeManufacturingOrder(
         bomId: bom.id,
         quantity: 1,
         rawMaterialsWarehouseId: rawWarehouse.id,
@@ -306,7 +308,7 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'raw-neg',
           warehouseId: rawWarehouse.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         closeTo(-0.1, 0.000001),
       );
@@ -314,7 +316,7 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'fg-neg',
           warehouseId: finishedWarehouse.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         closeTo(1, 0.000001),
       );
@@ -328,7 +330,7 @@ void main() {
         LIMIT 1
         ''',
         variables: <Variable<Object>>[
-          Variable<String>(store.appIdentity.storeId),
+          Variable<String>(store.runtime.identity.storeId),
           Variable<String>(rawWarehouse.id),
           const Variable<String>('raw-neg'),
         ],
@@ -341,7 +343,7 @@ void main() {
         (deficit.data['provisional_unit_cost'] as num).toDouble(),
         closeTo(2, 0.000001),
       );
-      final deficitMovement = store.stockMovements.firstWhere(
+      final deficitMovement = store.inventory.stockMovements.firstWhere(
         (movement) =>
             movement.movementGroupId == order.id &&
             movement.type == 'manufacturing_consume' &&
@@ -354,10 +356,10 @@ void main() {
         'manufacturing repairs an untouched zero-cost inventory-count batch before consumption',
         () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'raw-zero-count', code: 'RAW-ZC', stock: 0, cost: 2),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'fg-zero-count', code: 'FG-ZC', stock: 0, cost: 0),
       );
       final rawWarehouse = await store.inventory
@@ -385,8 +387,8 @@ void main() {
       final db = SqliteMigrationManager.database!;
       final now = DateTime.utc(2026, 9, 16, 8);
       final nowText = now.toIso8601String();
-      final storeId = store.appIdentity.storeId;
-      final branchId = store.appIdentity.branchId;
+      final storeId = store.runtime.identity.storeId;
+      final branchId = store.runtime.identity.branchId;
       const batchId = 'count-zero-batch';
       await db.transaction(() async {
         await db.customStatement(
@@ -483,7 +485,7 @@ void main() {
         );
       });
 
-      final order = await store.completeManufacturingOrder(
+      final order = await store.inventory.completeManufacturingOrder(
         bomId: bom.id,
         quantity: 1,
         rawMaterialsWarehouseId: rawWarehouse.id,
@@ -525,7 +527,7 @@ void main() {
 
     test('transfer moves stock once and keeps total quantity stable', () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'move-1', code: 'MV-1', stock: 0, cost: 3),
       );
       final source =
@@ -533,14 +535,14 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1));
       final destination = await store.inventory
           .createWarehouse(name: 'Destination', code: 'DST');
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'move-1',
         warehouseId: source.id,
         quantityDelta: 8,
         reason: 'seed transfer stock',
       );
 
-      await store.transferStock(
+      await store.inventory.transferStock(
         productId: 'move-1',
         fromWarehouseId: source.id,
         toWarehouseId: destination.id,
@@ -551,7 +553,7 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'move-1',
           warehouseId: source.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         3,
       );
@@ -559,21 +561,21 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'move-1',
           warehouseId: destination.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         5,
       );
-      expect(await store.totalWarehouseStockFromSqlite('move-1'), 8);
+      expect(await store.inventory.totalStockFromSqlite('move-1'), 8);
     });
 
     test(
         'multi-product transfer order moves all lines atomically and persists order',
         () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'bulk-1', code: 'BLK-1', stock: 0, cost: 2),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'bulk-2', code: 'BLK-2', stock: 0, cost: 4),
       );
       final source = await store.inventory
@@ -581,13 +583,13 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1));
       final destination = await store.inventory
           .createWarehouse(name: 'Bulk Destination', code: 'BD');
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'bulk-1',
         warehouseId: source.id,
         quantityDelta: 10,
         reason: 'seed bulk 1',
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'bulk-2',
         warehouseId: source.id,
         quantityDelta: 20,
@@ -618,33 +620,33 @@ void main() {
           await sqliteWarehouseQuantity(
             productId: 'bulk-1',
             warehouseId: source.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           7);
       expect(
           await sqliteWarehouseQuantity(
             productId: 'bulk-1',
             warehouseId: destination.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           3);
       expect(
           await sqliteWarehouseQuantity(
             productId: 'bulk-2',
             warehouseId: source.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           13);
       expect(
           await sqliteWarehouseQuantity(
             productId: 'bulk-2',
             warehouseId: destination.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           7);
-      final persisted = await store.recentWarehouseTransferOrders();
+      final persisted = await store.inventory.recentTransferOrders();
       expect(persisted.any((item) => item.id == order.id), isTrue);
-      final movements = store.stockMovements
+      final movements = store.inventory.stockMovements
           .where((movement) => movement.movementGroupId == order.id)
           .toList();
       expect(movements.length, 4);
@@ -654,10 +656,10 @@ void main() {
         'multi-product transfer order rolls back every line when one item is insufficient',
         () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'rollback-1', code: 'RB-1', stock: 0, cost: 2),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'rollback-2', code: 'RB-2', stock: 0, cost: 4),
       );
       final source = await store.inventory
@@ -665,13 +667,13 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1));
       final destination = await store.inventory
           .createWarehouse(name: 'Rollback Destination', code: 'RD');
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'rollback-1',
         warehouseId: source.id,
         quantityDelta: 10,
         reason: 'seed rollback 1',
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'rollback-2',
         warehouseId: source.id,
         quantityDelta: 2,
@@ -679,7 +681,7 @@ void main() {
       );
 
       await expectLater(
-        store.createWarehouseTransferOrder(
+        store.inventory.createWarehouseTransferOrder(
           fromWarehouseId: source.id,
           toWarehouseId: destination.id,
           items: const <WarehouseTransferOrderItem>[
@@ -702,35 +704,35 @@ void main() {
           await sqliteWarehouseQuantity(
             productId: 'rollback-1',
             warehouseId: source.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           10);
       expect(
           await sqliteWarehouseQuantity(
             productId: 'rollback-1',
             warehouseId: destination.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           0);
       expect(
           await sqliteWarehouseQuantity(
             productId: 'rollback-2',
             warehouseId: source.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           2);
       expect(
           await sqliteWarehouseQuantity(
             productId: 'rollback-2',
             warehouseId: destination.id,
-            storeId: store.appIdentity.storeId,
+            storeId: store.runtime.identity.storeId,
           ),
           0);
     });
 
     test('duplicate transfer replay does not double apply', () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'dup-1', code: 'DP-1', stock: 0, cost: 3),
       );
       final source =
@@ -741,21 +743,21 @@ void main() {
       final db = SqliteMigrationManager.database!;
       final service = StockTransactionService(
         db,
-        deviceId: store.appIdentity.deviceId,
-        defaultStoreId: store.appIdentity.storeId,
-        defaultBranchId: store.appIdentity.branchId,
+        deviceId: store.runtime.identity.deviceId,
+        defaultStoreId: store.runtime.identity.storeId,
+        defaultBranchId: store.runtime.identity.branchId,
       );
       // This is a StockTransactionService idempotency contract. Seed the same
       // low-level warehouse ledger that the service owns instead of using
       // AppStore.adjustStock(), which also creates Unified Batch balances.
       await service.applyDelta(
-        storeId: store.appIdentity.storeId,
+        storeId: store.runtime.identity.storeId,
         warehouseId: source.id,
         productId: 'dup-1',
         delta: 6,
-        branchId: store.appIdentity.branchId,
-        deviceId: store.appIdentity.deviceId,
-        lastModifiedByDeviceId: store.appIdentity.deviceId,
+        branchId: store.runtime.identity.branchId,
+        deviceId: store.runtime.identity.deviceId,
+        lastModifiedByDeviceId: store.runtime.identity.deviceId,
       );
       final now = DateTime.now();
       final transferId = 'transfer-phase5-${now.microsecondsSinceEpoch}';
@@ -778,10 +780,10 @@ void main() {
           unitCost: 3,
           createdAt: now,
           updatedAt: now,
-          deviceId: store.appIdentity.deviceId,
-          storeId: store.appIdentity.storeId,
-          branchId: store.appIdentity.branchId,
-          lastModifiedByDeviceId: store.appIdentity.deviceId,
+          deviceId: store.runtime.identity.deviceId,
+          storeId: store.runtime.identity.storeId,
+          branchId: store.runtime.identity.branchId,
+          lastModifiedByDeviceId: store.runtime.identity.deviceId,
         ),
         StockMovement(
           id: '$transferId-dup-1-transfer-in',
@@ -801,10 +803,10 @@ void main() {
           unitCost: 3,
           createdAt: now,
           updatedAt: now,
-          deviceId: store.appIdentity.deviceId,
-          storeId: store.appIdentity.storeId,
-          branchId: store.appIdentity.branchId,
-          lastModifiedByDeviceId: store.appIdentity.deviceId,
+          deviceId: store.runtime.identity.deviceId,
+          storeId: store.runtime.identity.storeId,
+          branchId: store.runtime.identity.branchId,
+          lastModifiedByDeviceId: store.runtime.identity.deviceId,
         ),
       ];
 
@@ -815,9 +817,9 @@ void main() {
         movementGroupId: transferId,
         idempotencyKey: '$transferId:warehouse_transfer',
         movements: movements,
-        storeId: store.appIdentity.storeId,
-        branchId: store.appIdentity.branchId,
-        deviceId: store.appIdentity.deviceId,
+        storeId: store.runtime.identity.storeId,
+        branchId: store.runtime.identity.branchId,
+        deviceId: store.runtime.identity.deviceId,
       );
       await service.recordMovementsAtomically(
         operationType: 'warehouse_transfer',
@@ -826,16 +828,16 @@ void main() {
         movementGroupId: transferId,
         idempotencyKey: '$transferId:warehouse_transfer',
         movements: movements,
-        storeId: store.appIdentity.storeId,
-        branchId: store.appIdentity.branchId,
-        deviceId: store.appIdentity.deviceId,
+        storeId: store.runtime.identity.storeId,
+        branchId: store.runtime.identity.branchId,
+        deviceId: store.runtime.identity.deviceId,
       );
 
       expect(
         await sqliteWarehouseQuantity(
           productId: 'dup-1',
           warehouseId: source.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         2,
       );
@@ -843,7 +845,7 @@ void main() {
         await sqliteWarehouseQuantity(
           productId: 'dup-1',
           warehouseId: destination.id,
-          storeId: store.appIdentity.storeId,
+          storeId: store.runtime.identity.storeId,
         ),
         4,
       );
@@ -851,13 +853,13 @@ void main() {
 
     test('legacy manufacturing defaults to main warehouse', () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'legacy-raw-1', code: 'LRAW-1', stock: 0, cost: 2),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'legacy-mfg-1', code: 'LMFG-1', stock: 0, cost: 2),
       );
-      await store.adjustStock(
+      await store.inventory.adjustStock(
         productId: 'legacy-raw-1',
         warehouseId: Warehouse.defaultId,
         quantityDelta: 1,
@@ -876,7 +878,7 @@ void main() {
           ),
         ],
       );
-      final order = await store.completeManufacturingOrder(
+      final order = await store.inventory.completeManufacturingOrder(
         bomId: bom.id,
         quantity: 1,
       );
@@ -888,10 +890,10 @@ void main() {
     test('deleting an in-progress manufacturing order persists the delete',
         () async {
       final store = await readyPhase5SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'delete-mfg-1', code: 'DMFG-1', stock: 0, cost: 2),
       );
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
         phase5Product(id: 'delete-raw-1', code: 'DRAW-1', stock: 0, cost: 1),
       );
       final bom = await store.inventory.createBillOfMaterials(
@@ -914,7 +916,9 @@ void main() {
 
       await store.inventory.deleteManufacturingOrder(order.id);
 
-      expect(store.manufacturingOrders.any((item) => item.id == order.id),
+      expect(
+          store.inventory.manufacturingOrders
+              .any((item) => item.id == order.id),
           isFalse);
       final db = SqliteMigrationManager.database;
       expect(db, isNotNull);

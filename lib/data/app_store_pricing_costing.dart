@@ -79,7 +79,7 @@ extension _AppStoreSplitPricingCosting on AppStore {
   void _ensureDefaultProductPriceEntries({Product? product}) {
     _ensureDefaultPriceLists();
     _ensureProductPricingLookupCaches();
-    final retailId = defaultPriceList.id;
+    final retailId = _defaultPriceList.id;
     final now = DateTime.now();
     final productsToCheck = product == null
         ? _products.where((item) => !item.isDeleted)
@@ -199,7 +199,7 @@ extension _AppStoreSplitPricingCosting on AppStore {
     if (normalizedCurrency.isEmpty || amount < 0 || !amount.isFinite) {
       throw ArgumentError('A valid non-negative product price is required.');
     }
-    final previous = productPriceFor(productId, priceListId, unitId: unitId);
+    final previous = _productPriceFor(productId, priceListId, unitId: unitId);
     final roundedAmount = _roundProductPriceAmount(amount, normalizedCurrency);
     if (previous != null &&
         previous.baseCurrencyCode.toUpperCase() == normalizedCurrency &&
@@ -281,7 +281,7 @@ extension _AppStoreSplitPricingCosting on AppStore {
     _ensureDefaultPriceLists();
     await _setProductBasePriceWithHistory(
       productId: productId,
-      priceListId: defaultPriceList.id,
+      priceListId: _defaultPriceList.id,
       unitId: unitId,
       amount: amount,
       currencyCode: currencyCode,
@@ -312,11 +312,11 @@ extension _AppStoreSplitPricingCosting on AppStore {
     required bool increase,
     String unitId = 'base',
   }) async {
-    requireAnyPermission(<String>{
+    _requireAnyPermission(<String>{
       AppPermission.productsManage,
       AppPermission.productsEdit,
     });
-    await ensureProductsLoaded();
+    await _ensureProductsLoaded();
     await _ensureProductPricesLoadedImpl();
     final normalizedList = priceListId.trim();
     if (!const {'retail', 'wholesale', 'wholesale_bulk'}
@@ -363,7 +363,7 @@ extension _AppStoreSplitPricingCosting on AppStore {
         continue;
       }
       final previous =
-          productPriceFor(productId, normalizedList, unitId: unitId);
+          _productPriceFor(productId, normalizedList, unitId: unitId);
       if (previous == null) {
         missing += 1;
         continue;

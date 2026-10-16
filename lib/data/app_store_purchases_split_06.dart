@@ -7,7 +7,7 @@ extension _AppStoreSplitPurchasesPart6 on AppStore {
     String reason = '',
   }) async {
     requirePermission(AppPermission.purchasesManage);
-    requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
+    _requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
     if (items.isEmpty) {
       throw ArgumentError('Purchase return must contain at least one item.');
     }
@@ -392,7 +392,7 @@ extension _AppStoreSplitPurchasesPart6 on AppStore {
     );
     await _refreshProductStockCompatibilityCache(affectedProductIds);
     await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await _saveDirty(purchaseCounter: true, sync: true);
     _touchPurchasesData();
     notifyListeners();

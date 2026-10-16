@@ -12,18 +12,6 @@ extension _AppStoreSplitInventory on AppStore {
     return stock;
   }
 
-  int movementCountAfterInventoryLine(InventoryCountLine line) {
-    final countedAt = line.countedAt;
-    if (countedAt == null) return 0;
-    return _stockMovements
-        .where(
-          (movement) =>
-              movement.productId == line.productId &&
-              movement.date.isAfter(countedAt) &&
-              movement.type != 'count_adjustment',
-        )
-        .length;
-  }
 
   Future<InventoryCountSession> createInventoryCountSession({
     String notes = '',
@@ -31,11 +19,11 @@ extension _AppStoreSplitInventory on AppStore {
     String warehouseName = '',
   }) async {
     requirePermission(AppPermission.inventoryCountsManage);
-    if (activeInventoryCountSession != null) {
+    if (_activeInventoryCountSession != null) {
       throw StateError('There is already an open inventory count session.');
     }
     final now = DateTime.now();
-    final warehouse = resolveWarehouseForPurchase(warehouseId: warehouseId);
+    final warehouse = _resolveWarehouseForPurchase(warehouseId: warehouseId);
     final normalizedWarehouseName =
         warehouseName.trim().isEmpty ? warehouse.name : warehouseName.trim();
     final snapshotWarehouseId = warehouse.id;
@@ -44,7 +32,7 @@ extension _AppStoreSplitInventory on AppStore {
         in _products.where((item) => item.trackStock && !item.isDeleted)) {
       final snapshotStock = LocalDatabaseService.isSqliteAuthoritative &&
               SqliteMigrationManager.database != null
-          ? await warehouseStockFromSqlite(
+          ? await _warehouseStockFromSqlite(
               product.id,
               warehouseId: snapshotWarehouseId,
             )
@@ -265,7 +253,7 @@ extension _AppStoreSplitInventory on AppStore {
             (item) => item.productId == line.productId,
           );
           if (lineIndex == -1) continue;
-          final theoreticalAtApproval = await warehouseStockFromSqlite(
+          final theoreticalAtApproval = await _warehouseStockFromSqlite(
             line.productId,
             warehouseId: warehouseId,
           );
@@ -571,7 +559,7 @@ extension _AppStoreSplitInventory on AppStore {
               now,
             ).unitCost
           : (() {
-              final cost = productCostFor(product.id);
+              final cost = _productCostFor(product.id);
               return _inventoryCostingMethod ==
                       InventoryCostingMethod.lastPurchaseCost
                   ? (cost.lastCost > 0 ? cost.lastCost : _safeUsdCost(product))
@@ -611,7 +599,7 @@ extension _AppStoreSplitInventory on AppStore {
         now,
       );
       if (delta > 0) {
-        final cost = productCostFor(product.id);
+        final cost = _productCostFor(product.id);
         _addInventoryCostLayerFromStockIncrease(
           id: '${session.id}-${line.productId}-count-layer',
           product: product,

@@ -66,27 +66,11 @@ extension _AppStoreSplitCoreLoading on AppStore {
     }
   }
 
-  Future<void> warmDeferredPageCaches() async {
-    await StartupTimingService.measure(
-      'app_store.post_startup_cache_warm',
-      () async {
-        await Future.wait(<Future<void>>[
-          ensurePriceListsLoaded(),
-          _ensureProductPricesLoadedImpl(),
-          ensureProductPriceOverridesLoaded(),
-          ensureProductCostsLoaded(),
-          _requestSyncDataLoad(),
-        ]);
-      },
-      category: 'app_store',
-    );
-  }
-
   Future<void> _requestLedgerDataLoad() {
     if (_ledgerDataLoadCompleted) return Future.value();
     final existing = _ledgerDataLoadFuture;
     if (existing != null) return existing;
-    final future = ensureAccountTransactionsLoaded();
+    final future = _ensureAccountTransactionsLoaded();
     _ledgerDataLoadFuture = future.whenComplete(() {
       _ledgerDataLoadFuture = null;
       _ledgerDataLoadCompleted = true;
@@ -154,95 +138,74 @@ extension _AppStoreSplitCoreLoading on AppStore {
   }
 
   Future<void> ensureProductPricingLoaded() async {
-    await ensureProductsLoaded();
-    await ensurePriceListsLoaded();
+    await _ensureProductsLoaded();
+    await _ensurePriceListsLoaded();
     await _ensureProductPricesLoadedImpl();
-    await ensureProductPriceOverridesLoaded();
-  }
-
-  Future<void> ensureProductCostingDataLoaded() async {
-    await ensureProductsLoaded();
-    await ensureProductCostsLoaded();
-    await ensureCostingMethodHistoryLoaded();
-    await ensureInventoryCostLayersLoaded();
-    await ensureSupplierProductPricesLoaded();
+    await _ensureProductPriceOverridesLoaded();
   }
 
   Future<void> ensureSalesPageDataLoaded() async {
-    await ensureProductsLoaded();
+    await _ensureProductsLoaded();
     await Future.wait([
-      ensureCustomersLoaded(),
-      ensureSalesLoaded(),
-      ensureDeliveryNotesLoaded(),
+      _ensureCustomersLoaded(),
+      _ensureSalesLoaded(),
+      _ensureDeliveryNotesLoaded(),
       ensureProductPricingLoaded(),
-      ensureWarehousesLoaded(),
+      _ensureWarehousesLoaded(),
     ]);
     await _AppStoreSplitStartupMigrations(this)
         ._backfillPostedDocumentSnapshotsIfNeeded();
   }
 
   Future<void> ensurePurchasesPageDataLoaded() async {
-    await ensureProductsLoaded();
-    await ensureSuppliersLoaded();
-    await ensurePurchasesLoaded();
-    await ensureSupplierProductPricesLoaded();
+    await _ensureProductsLoaded();
+    await _ensureSuppliersLoaded();
+    await _ensurePurchasesLoaded();
+    await _ensureSupplierProductPricesLoaded();
     await _AppStoreSplitStartupMigrations(this)
         ._backfillPostedDocumentSnapshotsIfNeeded();
-  }
-
-  Future<void> ensureAccountingPageDataLoaded() async {
-    await ensureCustomersLoaded();
-    await ensureSuppliersLoaded();
-    await ensureSalesLoaded();
-    await ensurePurchasesLoaded();
-    await _AppStoreSplitStartupMigrations(this)
-        ._backfillPostedDocumentSnapshotsIfNeeded();
-    await ensureAccountTransactionsLoaded();
   }
 
   Future<void> ensureQuotationsPageDataLoaded() async {
-    await ensureSaleQuotationsLoaded();
+    await _ensureSaleQuotationsLoaded();
   }
 
   Future<void> ensureDeliveryNotesPageDataLoaded() async {
-    await ensureSalesLoaded();
-    await ensureDeliveryNotesLoaded();
+    await _ensureSalesLoaded();
+    await _ensureDeliveryNotesLoaded();
   }
 
-  Future<void> ensureInventoryPageDataLoaded() =>
-      _ensureInventoryPageDataLoadedImpl();
-
   Future<void> _ensureInventoryPageDataLoadedImpl() async {
-    await ensureProductsLoaded();
-    await ensureStockMovementsLoaded();
-    await ensureInventoryCountsLoaded();
-    await ensureWarehousesLoaded();
+    await _ensureProductsLoaded();
+    await _ensureStockMovementsLoaded();
+    await _ensureInventoryCountsLoaded();
+    await _ensureWarehousesLoaded();
   }
 
   Future<void> ensureHeavyDataLoaded({bool failOnError = false}) async {
-    await ensureProductsLoaded();
-    await ensureCustomersLoaded();
-    await ensureSalesLoaded();
-    await ensureSaleQuotationsLoaded();
-    await ensureDeliveryNotesLoaded();
-    await ensureBillsOfMaterialsLoaded();
-    await ensureManufacturingOrdersLoaded();
-    await ensureSuppliersLoaded();
-    await ensureSupplierProductPricesLoaded();
-    await ensurePriceListsLoaded();
+    await _ensureProductsLoaded();
+    await _ensureCustomersLoaded();
+    await _ensureSalesLoaded();
+    await _ensureSaleQuotationsLoaded();
+    await _ensureDeliveryNotesLoaded();
+    await _ensureBillsOfMaterialsLoaded();
+    await _ensureManufacturingOrdersLoaded();
+    await _ensureSuppliersLoaded();
+    await _ensureSupplierProductPricesLoaded();
+    await _ensurePriceListsLoaded();
     await _ensureProductPricesLoadedImpl();
-    await ensureProductPriceOverridesLoaded();
-    await ensureProductCostsLoaded();
-    await ensureCostingMethodHistoryLoaded();
-    await ensureInventoryCostLayersLoaded();
-    await ensureExpensesLoaded();
-    await ensurePurchasesLoaded();
+    await _ensureProductPriceOverridesLoaded();
+    await _ensureProductCostsLoaded();
+    await _ensureCostingMethodHistoryLoaded();
+    await _ensureInventoryCostLayersLoaded();
+    await _ensureExpensesLoaded();
+    await _ensurePurchasesLoaded();
     await _AppStoreSplitStartupMigrations(this)
         ._backfillPostedDocumentSnapshotsIfNeeded();
-    await ensureStockMovementsLoaded();
-    await ensureInventoryCountsLoaded();
-    await ensureWarehousesLoaded();
-    await ensureAccountTransactionsLoaded();
+    await _ensureStockMovementsLoaded();
+    await _ensureInventoryCountsLoaded();
+    await _ensureWarehousesLoaded();
+    await _ensureAccountTransactionsLoaded();
     await _requestSyncDataLoad();
     _heavyDataLoadCompleted = true;
     _ledgerDataLoadCompleted = true;
@@ -265,12 +228,8 @@ extension _AppStoreSplitCoreLoading on AppStore {
     _cachedSalesGeneration = _salesRevision;
   }
 
-  List<Sale> get sales {
-    return _salesReadImpl;
-  }
-
   List<Sale> get _salesReadImpl {
-    unawaited(ensureSalesLoaded());
+    unawaited(_ensureSalesLoaded());
     _ensureSalesCache();
     return _cachedSales!;
   }
@@ -412,7 +371,7 @@ extension _AppStoreSplitCoreLoading on AppStore {
         profile: _storeProfile,
         customer: snapshotCustomer,
         user: _activeUser,
-        role: currentUserRole,
+        role: _currentUserRole,
         originalLineIndexes: originalLineIndexes,
         taxProfileIdByProductId: taxProfileIdByProductId,
         legacyDefaultVatRatePercent: legacyDefaultVatRatePercent,
@@ -428,25 +387,25 @@ extension _AppStoreSplitCoreLoading on AppStore {
   }
 
   List<SaleQuotation> get saleQuotations {
-    unawaited(ensureSaleQuotationsLoaded());
+    unawaited(_ensureSaleQuotationsLoaded());
     _ensureSaleQuotationsCache();
     return _cachedSaleQuotations!;
   }
 
   List<DeliveryNote> get deliveryNotes {
-    unawaited(ensureDeliveryNotesLoaded());
+    unawaited(_ensureDeliveryNotesLoaded());
     _ensureDeliveryNotesCache();
     return _cachedDeliveryNotes!;
   }
 
   List<BillOfMaterials> get billsOfMaterials {
-    unawaited(ensureBillsOfMaterialsLoaded());
+    unawaited(_ensureBillsOfMaterialsLoaded());
     _ensureBillsOfMaterialsCache();
     return _cachedBillsOfMaterials!;
   }
 
   List<ManufacturingOrder> get manufacturingOrders {
-    unawaited(ensureManufacturingOrdersLoaded());
+    unawaited(_ensureManufacturingOrdersLoaded());
     _ensureManufacturingOrdersCache();
     return _cachedManufacturingOrders!;
   }
@@ -493,25 +452,6 @@ extension _AppStoreSplitCoreLoading on AppStore {
     return null;
   }
 
-  double productPriceAmountForCurrency(Product product, String currencyCode,
-      {String unitId = 'base'}) {
-    final price = defaultProductPriceFor(product.id, unitId: unitId);
-    if (price == null) {
-      final fallbackUsd = unitId == 'base' ? product.usdPrice : product.price;
-      return fromUsdReferencePrice(fallbackUsd, currencyCode, storeProfile);
-    }
-    final override = productPriceOverrideFor(price, currencyCode);
-    if (override != null) {
-      return override.amount;
-    }
-    return convertCurrency(
-      price.baseAmount,
-      price.baseCurrencyCode,
-      currencyCode.trim().toUpperCase(),
-      storeProfile,
-    );
-  }
-
   double defaultProductUsdPrice(Product product, {String unitId = 'base'}) {
     final price = defaultProductPriceFor(product.id, unitId: unitId);
     if (price == null) {
@@ -536,35 +476,23 @@ extension _AppStoreSplitCoreLoading on AppStore {
     return dataConflicts;
   }
 
-  List<Expense> get expenses {
-    return _expensesReadImpl;
-  }
-
   List<Expense> get _expensesReadImpl {
-    unawaited(ensureExpensesLoaded());
+    unawaited(_ensureExpensesLoaded());
     return _commerceReadService.activeExpensesNewestFirst(_expenses);
   }
 
-  List<Purchase> get purchases {
-    return _purchasesReadImpl;
-  }
-
   List<Purchase> get _purchasesReadImpl {
-    unawaited(ensurePurchasesLoaded());
+    unawaited(_ensurePurchasesLoaded());
     return _commerceReadService.activePurchasesNewestFirst(_purchases);
   }
 
-  List<StockMovement> get stockMovements {
-    return _stockMovementsReadImpl;
-  }
-
   List<StockMovement> get _stockMovementsReadImpl {
-    unawaited(ensureStockMovementsLoaded());
+    unawaited(_ensureStockMovementsLoaded());
     return _inventoryReadService.newestFirstMovements(_stockMovements);
   }
 
   List<InventoryCountSession> get inventoryCountSessions {
-    unawaited(ensureInventoryCountsLoaded());
+    unawaited(_ensureInventoryCountsLoaded());
     return List.unmodifiable(
       _inventoryCounts.toList(growable: false).reversed.toList(growable: false),
     );
@@ -577,12 +505,8 @@ extension _AppStoreSplitCoreLoading on AppStore {
     return null;
   }
 
-  List<Warehouse> get warehouses {
-    return _warehousesReadImpl;
-  }
-
   List<Warehouse> get _warehousesReadImpl {
-    unawaited(ensureWarehousesLoaded());
+    unawaited(_ensureWarehousesLoaded());
     return _inventoryReadService.activeWarehouses(_warehouses);
   }
 

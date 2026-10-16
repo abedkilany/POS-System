@@ -100,7 +100,7 @@ extension _AppStoreSplitInventoryPart4 on AppStore {
               ? Warehouse.defaultId
               : first.warehouseId.trim();
           warehouseName = first.warehouseName.trim().isEmpty
-              ? resolveWarehouseForPurchase(warehouseId: warehouseId).name
+              ? _resolveWarehouseForPurchase(warehouseId: warehouseId).name
               : first.warehouseName.trim();
           return active;
         },

@@ -2,7 +2,7 @@ part of 'app_store.dart';
 
 extension _AppStoreSplitIdentityUsersPart2 on AppStore {
   void _restoreActiveUser() {
-    if (isSuspendedByHost) {
+    if (_isSuspendedByHost) {
       _activeUser = null;
       _rememberLogin = false;
       return;
@@ -72,7 +72,7 @@ extension _AppStoreSplitIdentityUsersPart2 on AppStore {
     String password, {
     bool remember = false,
   }) async {
-    if (isSuspendedByHost) return false;
+    if (_isSuspendedByHost) return false;
     final normalized = username.trim().toLowerCase();
     if (_isLoginTemporarilyBlocked(normalized)) {
       unawaited(AppLogger.warning(
@@ -144,7 +144,7 @@ extension _AppStoreSplitIdentityUsersPart2 on AppStore {
       _loginBlockedUntil.remove(normalized);
       final updated = user.copyWith(lastLoginAt: DateTime.now());
       _users[index] = updated;
-      clearSensitiveActionAuthorization();
+      _clearSensitiveActionAuthorization();
       _activeUser = updated;
       _rememberLogin = remember;
       notifyListeners();
@@ -218,7 +218,7 @@ extension _AppStoreSplitIdentityUsersPart2 on AppStore {
 
   Future<void> logout() async {
     final user = _activeUser;
-    clearSensitiveActionAuthorization();
+    _clearSensitiveActionAuthorization();
     final authCache = AccountAuthCache.load();
     if (authCache != null) {
       try {
@@ -297,7 +297,7 @@ extension _AppStoreSplitIdentityUsersPart2 on AppStore {
   }
 
   Future<void> clearSessionUser() async {
-    clearSensitiveActionAuthorization();
+    _clearSensitiveActionAuthorization();
     _activeUser = null;
     _rememberLogin = false;
     await LocalDatabaseService.setString(AppStore._activeUserKey, '');
@@ -353,7 +353,7 @@ extension _AppStoreSplitIdentityUsersPart2 on AppStore {
 
   Future<bool> verifyAdminPassword(String password) async {
     final user = _activeUser;
-    if (user == null || !isAdmin) return false;
+    if (user == null || !_isAdmin) return false;
     return _verifyPasswordAsync(password, user.passwordHash);
   }
 
@@ -391,7 +391,7 @@ extension _AppStoreSplitIdentityUsersPart2 on AppStore {
 
   Future<void> addOrUpdateRole(UserRole role) async {
     requirePermission(AppPermission.rolesManage);
-    requireSensitiveActionAuthorization(SensitiveAction.rolesManage);
+    _requireSensitiveActionAuthorization(SensitiveAction.rolesManage);
     if (role.name.trim().isEmpty) throw ArgumentError('Role name is required.');
     if (role.id == 'admin') {
       throw StateError('The built-in Admin role cannot be edited.');
@@ -450,7 +450,7 @@ extension _AppStoreSplitIdentityUsersPart2 on AppStore {
 
   Future<void> deleteRole(String id) async {
     requirePermission(AppPermission.rolesManage);
-    requireSensitiveActionAuthorization(SensitiveAction.rolesManage);
+    _requireSensitiveActionAuthorization(SensitiveAction.rolesManage);
     if (id == 'admin') throw StateError('The Admin role cannot be deleted.');
     if (_users.any((user) => user.roleId == id)) {
       throw StateError('Move users to another role before deleting this role.');

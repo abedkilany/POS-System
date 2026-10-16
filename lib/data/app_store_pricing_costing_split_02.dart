@@ -15,7 +15,7 @@ extension _AppStoreSplitPricingCostingPart2 on AppStore {
     final normalizedWarehouse = warehouseId.trim();
     final fallback = <String, ProductCostSnapshot>{};
     for (final product in productById.values) {
-      final compatibilityCost = productCostFor(product.id);
+      final compatibilityCost = _productCostFor(product.id);
       final referenceCost = _safeUsdCost(product);
       final currentCost = compatibilityCost.averageCost > 0
           ? compatibilityCost.averageCost
@@ -25,7 +25,7 @@ extension _AppStoreSplitPricingCostingPart2 on AppStore {
         currentInventoryUnitCost: currentCost,
         inventoryQuantity: product.trackStock ? max(0.0, product.stock) : 0,
         batchCount: 0,
-        lastPurchaseUnitCost: lastPurchasePriceForProduct(product.id),
+        lastPurchaseUnitCost: _lastPurchasePriceForProduct(product.id),
         referenceUnitCost: referenceCost,
         warehouseId: normalizedWarehouse,
       );
@@ -177,7 +177,7 @@ extension _AppStoreSplitPricingCostingPart2 on AppStore {
           currentInventoryUnitCost: 0,
           inventoryQuantity: 0,
           batchCount: 0,
-          lastPurchaseUnitCost: lastPurchasePriceForProduct(product.id),
+          lastPurchaseUnitCost: _lastPurchasePriceForProduct(product.id),
           referenceUnitCost: _safeUsdCost(product),
           warehouseId: warehouseId.trim(),
         );
@@ -312,7 +312,7 @@ extension _AppStoreSplitPricingCostingPart2 on AppStore {
       final movementQty = (row.data['movement_qty'] as num? ?? 0).toDouble();
       final movementValue =
           (row.data['carrying_value'] as num? ?? 0).toDouble();
-      final current = currentCosts[productId] ?? productCostFor(productId);
+      final current = currentCosts[productId] ?? _productCostFor(productId);
       final fallbackValue = qty *
           (current.averageCost > 0 ? current.averageCost : current.lastCost);
       final movementBasisIsComplete = movementCount > 0 &&
@@ -429,7 +429,7 @@ extension _AppStoreSplitPricingCostingPart2 on AppStore {
       final movementQty = (row.data['movement_qty'] as num? ?? 0).toDouble();
       final movementValue =
           (row.data['carrying_value'] as num? ?? 0).toDouble();
-      final current = currentCosts[productId] ?? productCostFor(productId);
+      final current = currentCosts[productId] ?? _productCostFor(productId);
       final product = _findProductById(productId);
       final fallbackUnitCost = current.averageCost > 0
           ? current.averageCost
@@ -494,9 +494,9 @@ extension _AppStoreSplitPricingCostingPart2 on AppStore {
       );
     }
     final effectiveMethod = _runtimeInventoryCostingMethod(method);
-    await ensureProductCostsLoaded();
-    await ensureCostingMethodHistoryLoaded();
-    await ensureInventoryCostLayersLoaded();
+    await _ensureProductCostsLoaded();
+    await _ensureCostingMethodHistoryLoaded();
+    await _ensureInventoryCostLayersLoaded();
     if (_inventoryCostingMethod == effectiveMethod &&
         _costingMethodHistory.isNotEmpty) {
       return;

@@ -1,16 +1,6 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitBackupRecoveryPart2 on AppStore {
-  Future<List<Map<String, dynamic>>> exportDirectBootstrapSnapshotChunks({
-    int maxItemsPerChunk = 250,
-    int maxEncodedPayloadBytes = 900 * 1024,
-  }) async {
-    return await exportUnifiedSnapshotChunks(
-      kind: 'full_store',
-      maxItemsPerChunk: maxItemsPerChunk,
-      maxEncodedPayloadBytes: maxEncodedPayloadBytes,
-    );
-  }
 
   String currentHostSnapshotGeneration() {
     if (!appIdentity.isHost) return '';
@@ -65,7 +55,7 @@ extension _AppStoreSplitBackupRecoveryPart2 on AppStore {
     int maxItemsPerChunk = 250,
     int maxEncodedPayloadBytes = 900 * 1024,
   }) async {
-    final chunks = await exportUnifiedSnapshotChunks(
+    final chunks = await _exportUnifiedSnapshotChunks(
       kind: kind,
       maxItemsPerChunk: maxItemsPerChunk,
       maxEncodedPayloadBytes: maxEncodedPayloadBytes,

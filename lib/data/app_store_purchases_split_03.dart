@@ -37,7 +37,7 @@ extension _AppStoreSplitPurchasesPart3 on AppStore {
 
     final now = DateTime.now();
     final resolvedWarehouse =
-        resolveWarehouseForPurchase(warehouseId: warehouseId);
+        _resolveWarehouseForPurchase(warehouseId: warehouseId);
     final normalizedStatus = draftService.normalizePaymentStatus(paymentStatus);
     final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
     if (current.isReceived && current.paidAmount > total + 0.000001) {
@@ -321,7 +321,7 @@ extension _AppStoreSplitPurchasesPart3 on AppStore {
             profile: _storeProfile,
             supplier: snapshotSupplier,
             user: _activeUser,
-            role: currentUserRole,
+            role: _currentUserRole,
             displayedPaidAmount: updated.paidAmount,
             displayedPaymentStatus: updated.paymentStatus,
             taxProfileIdByProductId: taxProfileIdByProductId,
@@ -410,7 +410,7 @@ extension _AppStoreSplitPurchasesPart3 on AppStore {
       await refreshAfterDatabaseChange(AppStore._productsKey);
       await refreshAfterDatabaseChange(AppStore._productCostsKey);
       await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
-      await refreshAccountTransactionsFromSqlite();
+      await _refreshAccountTransactionsFromSqlite();
     } else {
       throw StateError('This purchase status cannot be edited.');
     }

@@ -386,7 +386,7 @@ extension _AppStoreSplitInventoryPart2 on AppStore {
     }
     final now = DateTime.now();
     final operationId = '${now.microsecondsSinceEpoch}-$batchId-batch-adjust';
-    final warehouse = resolveWarehouseForPurchase(warehouseId: warehouseId);
+    final warehouse = _resolveWarehouseForPurchase(warehouseId: warehouseId);
     var movement = StockMovement(
       id: operationId,
       productId: product.id,

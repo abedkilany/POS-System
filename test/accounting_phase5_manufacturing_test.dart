@@ -10,24 +10,25 @@ void main() {
   test('actual manufacturing cost flows Raw to WIP to Finished with waste',
       () async {
     final store = await support.readyPhase5SqliteStore();
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'raw-accounting',
       code: 'RAW-A',
       name: 'Actual Raw',
       stock: 0,
       cost: 2,
     ));
-    await store.addOrUpdateProduct(support.phase5Product(
+    await store.catalog.addOrUpdateProduct(support.phase5Product(
       id: 'fg-accounting',
       code: 'FG-A',
       name: 'Actual Finished',
       stock: 0,
       cost: 0,
     ));
-    final rawWarehouse = await store.createWarehouse(name: 'Raw A', code: 'RA');
+    final rawWarehouse =
+        await store.inventory.createWarehouse(name: 'Raw A', code: 'RA');
     final finishedWarehouse =
-        await store.createWarehouse(name: 'Finished A', code: 'FA');
-    await store.adjustStock(
+        await store.inventory.createWarehouse(name: 'Finished A', code: 'FA');
+    await store.inventory.adjustStock(
       productId: 'raw-accounting',
       warehouseId: rawWarehouse.id,
       quantityDelta: 10,

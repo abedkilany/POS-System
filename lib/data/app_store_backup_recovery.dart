@@ -1,7 +1,7 @@
 part of 'app_store.dart';
 
 extension _AppStoreSplitBackupRecovery on AppStore {
-dynamic _businessBackupValue(dynamic value) {
+  dynamic _businessBackupValue(dynamic value) {
     if (value is Map) {
       final cleaned = <String, dynamic>{};
       value.forEach((key, item) {
@@ -17,22 +17,17 @@ dynamic _businessBackupValue(dynamic value) {
     return value;
   }
 
-Map<String, dynamic> _businessBackupJson(dynamic item) {
+  Map<String, dynamic> _businessBackupJson(dynamic item) {
     final raw = item.toJson() as Map<String, dynamic>;
     return Map<String, dynamic>.from(_businessBackupValue(raw) as Map);
   }
 
-Future<void> rebuildProductStockCache(String productId) async {
+  Future<void> rebuildProductStockCache(String productId) async {
     await _refreshProductStockCompatibilityCache(<String>[productId]);
   }
 
-Future<void> rebuildAllProductStockCaches() async {
-    await _refreshProductStockCompatibilityCache(
-      _products.where((item) => !item.isDeleted).map((item) => item.id),
-    );
-  }
 
-void _applyProductStockCompatibilityDeltas(
+  void _applyProductStockCompatibilityDeltas(
     Iterable<StockMovement> movements,
   ) {
     final deltasByProductId = <String, double>{};
@@ -58,14 +53,14 @@ void _applyProductStockCompatibilityDeltas(
     }
   }
 
-Future<void> _refreshProductStockCompatibilityCache(
+  Future<void> _refreshProductStockCompatibilityCache(
     Iterable<String> productIds,
   ) async {
     final uniqueIds =
         productIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
     if (uniqueIds.isEmpty) return;
     for (final productId in uniqueIds) {
-      final total = await totalWarehouseStockFromSqlite(productId);
+      final total = await _totalWarehouseStockFromSqlite(productId);
       final index = _productIndexById[productId];
       if (index == null) continue;
       final updated = _products[index].copyWith(stock: total);
@@ -77,7 +72,7 @@ Future<void> _refreshProductStockCompatibilityCache(
     _touchDataRevisions(products: true);
   }
 
-Map<String, String> _backupSafeLocalDatabaseEntries() {
+  Map<String, String> _backupSafeLocalDatabaseEntries() {
     final entries = Map<String, String>.from(LocalDatabaseService.allEntries());
     const deviceBoundSecrets = <String>{
       'direct_api_token',
@@ -114,7 +109,7 @@ Map<String, String> _backupSafeLocalDatabaseEntries() {
     return entries;
   }
 
-Future<Map<String, dynamic>> _backupPayload({
+  Future<Map<String, dynamic>> _backupPayload({
     List<SyncChange>? changes,
     bool includeDeviceAndSyncState = true,
   }) async {
@@ -158,7 +153,8 @@ Future<Map<String, dynamic>> _backupPayload({
       if (!includeDeviceAndSyncState) 'appVersion': 'stage2',
       if (!includeDeviceAndSyncState) 'platform': appIdentity.platform.name,
       if (!includeDeviceAndSyncState)
-        'themeMode': LocalDatabaseService.getString(AppStore._themeModeKey) ?? 'system',
+        'themeMode':
+            LocalDatabaseService.getString(AppStore._themeModeKey) ?? 'system',
       'invoiceCounter': _invoiceCounter,
       'purchaseCounter': _purchaseCounter,
       'storeProfile': _storeProfile.toJson(),
@@ -320,7 +316,7 @@ Future<Map<String, dynamic>> _backupPayload({
     };
   }
 
-Map<String, dynamic> _unifiedSnapshotManifestJson({
+  Map<String, dynamic> _unifiedSnapshotManifestJson({
     required String jobId,
     required String generatedAt,
     required String kind,
@@ -344,7 +340,7 @@ Map<String, dynamic> _unifiedSnapshotManifestJson({
     ).toJson();
   }
 
-void _attachUnifiedSnapshotChunkMetadata(
+  void _attachUnifiedSnapshotChunkMetadata(
     List<Map<String, dynamic>> chunks, {
     required String kind,
     required String generatedAt,
@@ -395,9 +391,9 @@ void _attachUnifiedSnapshotChunkMetadata(
           : _syncChanges
               .map((item) => item.sequence)
               .reduce((a, b) => a > b ? a : b);
-      chunks[i]['restoreCommandId'] = currentHostRestoreCommandId();
-      chunks[i]['hostRestoreCommandId'] = currentHostRestoreCommandId();
-      chunks[i]['rebuildCommandId'] = currentHostRestoreCommandId();
+      chunks[i]['restoreCommandId'] = _currentHostRestoreCommandId();
+      chunks[i]['hostRestoreCommandId'] = _currentHostRestoreCommandId();
+      chunks[i]['rebuildCommandId'] = _currentHostRestoreCommandId();
       // Legacy progress fields remain collection-based so the current Direct
       // provisioning screen and server responses keep working during phase 1.
       chunks[i]['sectionChunkIndex'] = collectionIndex;
@@ -412,7 +408,7 @@ void _attachUnifiedSnapshotChunkMetadata(
     }
   }
 
-Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
+  Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
     Set<String>? sectionIds,
   }) async {
     // Snapshots are DB-first. The in-memory user/role lists may still be
@@ -446,7 +442,8 @@ Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
     final phase8AccountingRows =
         await LocalDatabaseService.getPhase8AccountingSnapshotRows();
     final productPriceHistory =
-        await LocalDatabaseService.getProductPriceHistoryFromSqlite(limit: 100000);
+        await LocalDatabaseService.getProductPriceHistoryFromSqlite(
+            limit: 100000);
     final exportWarehouses =
         sqliteWarehouses != null && sqliteWarehouses.isNotEmpty
             ? sqliteWarehouses
@@ -534,13 +531,13 @@ Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
     return ordered;
   }
 
-String _encodeUnifiedSnapshotChunkPayload(Map<String, dynamic> payload) {
+  String _encodeUnifiedSnapshotChunkPayload(Map<String, dynamic> payload) {
     final bytes = utf8.encode(jsonEncode(payload));
     final compressed = GZipEncoder().encode(bytes);
     return base64Encode(compressed);
   }
 
-Map<String, dynamic> _decodeUnifiedSnapshotChunkPayload(
+  Map<String, dynamic> _decodeUnifiedSnapshotChunkPayload(
     Map<String, dynamic> chunk,
   ) {
     final encoding = (chunk['encoding'] ?? '').toString();
@@ -555,14 +552,14 @@ Map<String, dynamic> _decodeUnifiedSnapshotChunkPayload(
     return const <String, dynamic>{};
   }
 
-Future<List<Map<String, dynamic>>> exportUnifiedSnapshotChunks({
+  Future<List<Map<String, dynamic>>> exportUnifiedSnapshotChunks({
     String kind = 'full_store',
     Set<String>? sectionIds,
     int maxItemsPerChunk = 250,
     int maxEncodedPayloadBytes = 900 * 1024,
   }) async {
     if (kind != 'login_bootstrap') {
-      await ensureHeavyDataLoaded(failOnError: true);
+      await _ensureHeavyDataLoaded(failOnError: true);
     }
     final identity = appIdentity;
     final generatedAt = DateTime.now().toIso8601String();
@@ -642,7 +639,7 @@ Future<List<Map<String, dynamic>>> exportUnifiedSnapshotChunks({
     return chunks;
   }
 
-Map<String, dynamic> unifiedSnapshotPayloadFromChunks(
+  Map<String, dynamic> unifiedSnapshotPayloadFromChunks(
     List<Map<String, dynamic>> chunks,
   ) {
     final payload = <String, dynamic>{};
@@ -693,7 +690,7 @@ Map<String, dynamic> unifiedSnapshotPayloadFromChunks(
     return payload;
   }
 
-Future<List<Map<String, dynamic>>>
+  Future<List<Map<String, dynamic>>>
       exportDirectLoginBootstrapSnapshotChunks() async {
     return await exportUnifiedSnapshotChunks(
       kind: 'login_bootstrap',

@@ -8,7 +8,7 @@ extension _AppStoreSplitPurchasesPart7 on AppStore {
     bool recordSupplierReturnLedger = true,
   }) async {
     requirePermission(AppPermission.purchasesCancel);
-    requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
+    _requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
     final index = _purchaseIndexForId(id);
     final purchase =
         index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
@@ -236,7 +236,7 @@ extension _AppStoreSplitPurchasesPart7 on AppStore {
       );
       await refreshAfterDatabaseChange(AppStore._inventoryCostLayersKey);
       await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
-      await refreshAccountTransactionsFromSqlite();
+      await _refreshAccountTransactionsFromSqlite();
       _touchPurchasesData();
       notifyListeners();
       return;
@@ -373,7 +373,7 @@ extension _AppStoreSplitPurchasesPart7 on AppStore {
     String reason = '',
   }) async {
     requirePermission(AppPermission.purchasesCancel);
-    requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
+    _requireSensitiveActionAuthorization(SensitiveAction.purchaseReverse);
     final index = _purchaseIndexForId(id);
     final purchase =
         index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
@@ -586,7 +586,7 @@ extension _AppStoreSplitPurchasesPart7 on AppStore {
       );
       await refreshAfterDatabaseChange(AppStore._inventoryCostLayersKey);
       await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
-      await refreshAccountTransactionsFromSqlite();
+      await _refreshAccountTransactionsFromSqlite();
       _touchPurchasesData();
       notifyListeners();
       return;

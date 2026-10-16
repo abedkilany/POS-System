@@ -115,7 +115,8 @@ void main() {
     final store = AppStore();
 
     expect(store.recovery.parseRecoveryFileJson(raw)['storeId'], 'ST-TEST01');
-    expect(store.parseRecoveryFileJson(raw)['recoveryKey'], 'RK-TEST-RECOVERY');
+    expect(store.recovery.parseRecoveryFileJson(raw)['recoveryKey'],
+        'RK-TEST-RECOVERY');
   });
 
   test('typed and compatibility exports retain the backup permission gate', () {
@@ -126,7 +127,7 @@ void main() {
       throwsA(isA<StateError>()),
     );
     expect(
-      () => store.exportRecoveryFileJson(),
+      () => store.recovery.exportRecoveryFileJson(),
       throwsA(isA<StateError>()),
     );
   });

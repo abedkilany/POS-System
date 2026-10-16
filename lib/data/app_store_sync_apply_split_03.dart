@@ -133,7 +133,7 @@ extension _AppStoreSplitSyncApplyPart3 on AppStore {
           final incomingMetadata = Product.fromJson(p);
           final existing = _findProductById(incomingMetadata.id);
           final inventoryProjection = LocalDatabaseService.isSqliteAuthoritative
-              ? await totalWarehouseStockFromSqlite(incomingMetadata.id)
+              ? await _totalWarehouseStockFromSqlite(incomingMetadata.id)
               : (existing?.stock ?? 0.0);
           final incoming =
               incomingMetadata.copyWith(stock: inventoryProjection);
@@ -463,7 +463,7 @@ extension _AppStoreSplitSyncApplyPart3 on AppStore {
           final product = _products[index];
           if (product.trackStock) {
             if (LocalDatabaseService.isSqliteAuthoritative) {
-              await rebuildProductStockCache(productId);
+              await _rebuildProductStockCache(productId);
             } else if (movement.quantity != 0) {
               final at = movement.date;
               _products[index] = product.copyWith(
@@ -664,7 +664,7 @@ extension _AppStoreSplitSyncApplyPart3 on AppStore {
   }
 
   Future<void> settleLegacyLanHostQueue() async {
-    await ensureSyncDataLoaded();
+    await _ensureSyncDataLoaded();
     if (!appIdentity.isHost || appIdentity.isDirectEnabled) return;
     final ids = _syncQueue
         .where((item) => item.target == 'host' && item.status != 'synced')
@@ -677,7 +677,7 @@ extension _AppStoreSplitSyncApplyPart3 on AppStore {
   }
 
   Future<int> settleHostQueueThroughPeerAck() async {
-    await ensureSyncDataLoaded();
+    await _ensureSyncDataLoaded();
     if (!appIdentity.isHost || _syncQueue.isEmpty) return 0;
 
     final safeFloorSequence = _minimumActivePeerAckSequence();
@@ -702,7 +702,7 @@ extension _AppStoreSplitSyncApplyPart3 on AppStore {
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] hostQueue:settledThroughPeerAck '
       'count=${ids.length} safeFloorSequence=$safeFloorSequence '
-      'remainingPending=${pendingSyncQueue.length}',
+      'remainingPending=${_pendingSyncQueue.length}',
     );
     return ids.length;
   }

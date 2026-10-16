@@ -483,7 +483,7 @@ extension _AppStoreSplitPersistenceSyncCorePart2 on AppStore {
     _products.clear();
     _customers
       ..clear()
-      ..add(walkInCustomer);
+      ..add(_walkInCustomer);
     _productPrices.clear();
     _productPriceOverrides.clear();
     _productCosts.clear();
@@ -529,7 +529,7 @@ extension _AppStoreSplitPersistenceSyncCorePart2 on AppStore {
 
   Future<void> resetBusinessData({bool keepStoreProfile = true}) async {
     requirePermission(AppPermission.backupRestore);
-    requireSensitiveActionAuthorization(SensitiveAction.databaseDestructive);
+    _requireSensitiveActionAuthorization(SensitiveAction.databaseDestructive);
     await AuditLogger.record(
       entityType: 'database',
       entityId: appIdentity.storeId,
@@ -551,73 +551,15 @@ extension _AppStoreSplitPersistenceSyncCorePart2 on AppStore {
     _syncChanges.clear();
     _syncQueue.clear();
     _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile);
-    if (wants('syncChanges') ||
-        wants('syncQueue') ||
-        wants('localDatabaseEntries')) {
+    if (_wants('syncChanges') ||
+        _wants('syncQueue') ||
+        _wants('localDatabaseEntries')) {
       await LocalDatabaseService.deleteString('direct_last_pull_cursor');
     }
     await _saveAll();
     notifyListeners();
   }
 
-  Future<void> clearLocalDeviceBusinessData({
-    bool keepStoreProfile = true,
-  }) async {
-    requirePermission(AppPermission.backupRestore);
-    requireSensitiveActionAuthorization(SensitiveAction.databaseDestructive);
-    await AuditLogger.record(
-      entityType: 'database',
-      entityId: appIdentity.storeId,
-      action: 'client_business_clear_started',
-      summary: 'Client local business data clear started',
-      userId: _activeUser?.id ?? '',
-      userName: _activeUser?.username ?? '',
-      storeId: appIdentity.storeId,
-      branchId: appIdentity.branchId,
-      sessionId: _deviceId,
-      traceId: _deviceId,
-      deviceId: _deviceId,
-      sourceModule: 'database',
-      isImportant: true,
-    );
-    // Client-only maintenance operation. This must never create a SyncChange or
-    // deletion event because the Host remains the source of truth. It also
-    // clears pull cursors so the next sync can rebuild from a full Host
-    // snapshot instead of resuming after stale local leftovers.
-    final identity = appIdentity;
-    _syncChanges.clear();
-    _syncQueue.clear();
-    _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile);
-    if (wants('syncChanges') ||
-        wants('syncQueue') ||
-        wants('localDatabaseEntries')) {
-      await LocalDatabaseService.deleteString('direct_last_pull_cursor');
-    }
-    final lanRaw = LocalDatabaseService.getString('lan_sync_settings_v2');
-    if (lanRaw != null && lanRaw.trim().isNotEmpty) {
-      try {
-        final decoded = Map<String, dynamic>.from(jsonDecode(lanRaw) as Map);
-        decoded.remove('lastPullCursor');
-        decoded['lastSyncAt'] = null;
-        await LocalDatabaseService.setString(
-          'lan_sync_settings_v2',
-          jsonEncode(decoded),
-        );
-      } catch (_) {
-        // Keep the data clear even if old LAN settings are malformed.
-      }
-    }
-    _appIdentity = identity.copyWith(
-      deviceId: _deviceId,
-      platform: _detectPlatform(),
-    );
-    await LocalDatabaseService.setString(
-      AppStore._appIdentityKey,
-      jsonEncode(_appIdentity!.toJson()),
-    );
-    await _saveAll();
-    notifyListeners();
-  }
 
   Future<int> clearLocalOnlyPendingSyncChanges() async {
     requirePermission(AppPermission.syncManage);

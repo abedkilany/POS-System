@@ -4,7 +4,7 @@ extension _AppStoreSplitSyncApplyPart4 on AppStore {
   Future<void> markSyncQueueChangesInProgress(
     Iterable<String> changeIds,
   ) async {
-    await ensureSyncDataLoaded();
+    await _ensureSyncDataLoaded();
     final idSet = changeIds.toSet();
     if (idSet.isEmpty) return;
     final now = DateTime.now();
@@ -207,9 +207,6 @@ extension _AppStoreSplitSyncApplyPart4 on AppStore {
     notifyListeners();
   }
 
-  Future<void> retryFailedSyncQueue({String? target}) async {
-    await _retryFailedSyncQueueDomainImpl(target: target);
-  }
 
   Future<void> _retryFailedSyncQueueDomainImpl({String? target}) async {
     await _requestSyncDataLoad();
@@ -223,15 +220,6 @@ extension _AppStoreSplitSyncApplyPart4 on AppStore {
     notifyListeners();
   }
 
-  Future<void> recoverStaleInProgressSyncQueue({
-    String? target,
-    Duration staleAfter = const Duration(seconds: 45),
-  }) async {
-    await _recoverStaleInProgressSyncQueueDomainImpl(
-      target: target,
-      staleAfter: staleAfter,
-    );
-  }
 
   Future<void> _recoverStaleInProgressSyncQueueDomainImpl({
     String? target,
@@ -249,9 +237,6 @@ extension _AppStoreSplitSyncApplyPart4 on AppStore {
     notifyListeners();
   }
 
-  Future<void> recoverSubmittedSyncQueue({String? target}) async {
-    await _recoverSubmittedSyncQueueDomainImpl(target: target);
-  }
 
   Future<void> _recoverSubmittedSyncQueueDomainImpl({String? target}) async {
     final now = DateTime.now();

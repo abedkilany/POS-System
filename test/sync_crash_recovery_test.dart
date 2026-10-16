@@ -36,17 +36,17 @@ Future<AppStore> _openStore({
     'sync_sequence_v1': '0',
   });
   final store = AppStore();
-  await store.initialize();
-  await store.ensureSyncDataLoaded();
+  await store.runtime.initialize();
+  await store.sync.ensureLoaded();
   // Seed the draft through AppStore so the test exercises the same local
   // change persistence path used by the running application. The in-memory
   // test backend has no SQLite sync table for refreshAfterDatabaseChange().
-  await store.applyRemoteSyncChanges(<SyncChange>[change]);
+  await store.sync.applyRemoteChanges(<SyncChange>[change]);
   await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
     'sync_queue_v1',
     <Map<String, dynamic>>[queueItem.toJson()],
   );
-  await store.refreshAfterDatabaseChange('sync_queue_v1');
+  await store.runtime.refreshAfterDatabaseChange('sync_queue_v1');
   return store;
 }
 
@@ -87,8 +87,8 @@ void main() {
         ),
       );
 
-      expect(storeBeforeCrash.syncQueue.single.status, 'inProgress');
-      expect(storeBeforeCrash.syncChanges.single.isSynced, isFalse);
+      expect(storeBeforeCrash.sync.queue.single.status, 'inProgress');
+      expect(storeBeforeCrash.sync.changes.single.isSynced, isFalse);
       storeBeforeCrash.dispose();
 
       // A new AppStore instance represents the next process after a crash.
@@ -104,23 +104,23 @@ void main() {
           updatedAt: crashedAt,
         ),
       );
-      await recovered.recoverStaleInProgressSyncQueue(
+      await recovered.sync.recoverStale(
         target: 'host',
         staleAfter: const Duration(seconds: 45),
       );
 
-      expect(recovered.syncQueue.single.status, 'pending');
-      expect(recovered.pendingSyncChangesForTarget('host', readyOnly: false),
+      expect(recovered.sync.queue.single.status, 'pending');
+      expect(recovered.sync.pendingChangesForTarget('host', readyOnly: false),
           hasLength(1));
-      expect(recovered.syncChanges.single.isSynced, isFalse);
+      expect(recovered.sync.changes.single.isSynced, isFalse);
       recovered.dispose();
 
       final reopened = await _openStore(
         change: change,
-        queueItem: recovered.syncQueue.single,
+        queueItem: recovered.sync.queue.single,
       );
-      expect(reopened.syncQueue.single.status, 'pending');
-      expect(reopened.syncChanges.single.isSynced, isFalse);
+      expect(reopened.sync.queue.single.status, 'pending');
+      expect(reopened.sync.changes.single.isSynced, isFalse);
       reopened.dispose();
     });
 
@@ -141,7 +141,7 @@ void main() {
           updatedAt: submittedAt,
         ),
       );
-      expect(storeBeforeCrash.syncQueue.single.status, 'submitted');
+      expect(storeBeforeCrash.sync.queue.single.status, 'submitted');
       storeBeforeCrash.dispose();
 
       final recovered = await _openStore(
@@ -156,15 +156,15 @@ void main() {
           updatedAt: submittedAt,
         ),
       );
-      expect(recovered.syncChanges.single.isSynced, isFalse);
+      expect(recovered.sync.changes.single.isSynced, isFalse);
 
       // Relay receipt is not Host confirmation. After restart, the draft must
       // be retried until the authoritative event is pulled and applied.
       await recovered.sync.recoverSubmitted(target: 'host');
-      expect(recovered.syncQueue.single.status, 'pending');
-      expect(recovered.pendingSyncChangesForTarget('host', readyOnly: false),
+      expect(recovered.sync.queue.single.status, 'pending');
+      expect(recovered.sync.pendingChangesForTarget('host', readyOnly: false),
           hasLength(1));
-      expect(recovered.syncChanges.single.isSynced, isFalse);
+      expect(recovered.sync.changes.single.isSynced, isFalse);
       recovered.dispose();
     });
   });

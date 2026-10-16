@@ -19,11 +19,13 @@ void _registerAppStoreWorkflowGroup4() {
 
       expect(await store.security.login('admin', 'AdminPass123'), isTrue);
       final raw = await store.recovery.exportBackupJson();
-      final validation = store.validateBackupJson(raw);
+      final validation = store.recovery.validateBackupJson(raw);
       expect(validation.isValid, isTrue);
       expect(validation.summary?.productsCount, 1);
       expect(
-        store.validateBackupJson(await store.recovery.exportBackupJson()).isValid,
+        store.recovery
+            .validateBackupJson(await store.recovery.exportBackupJson())
+            .isValid,
         isTrue,
       );
       expect(
@@ -32,20 +34,22 @@ void _registerAppStoreWorkflowGroup4() {
           isA<DateTime>());
       expect(store.sync.exportChangesJson(), contains('"changes"'));
 
-      final encrypted = await store.exportEncryptedBackupJson('secret-pass');
+      final encrypted =
+          await store.recovery.exportEncryptedBackupJson('secret-pass');
       expect(encrypted, isNot(contains('Coffee')));
-      final decrypted = store.decryptBackupJson(encrypted, 'secret-pass');
+      final decrypted =
+          store.recovery.decryptBackupJson(encrypted, 'secret-pass');
       expect(decrypted, contains('"products"'));
       expect(decrypted, contains('Coffee'));
       expect(decrypted, contains('"syncChanges"'));
-      expect(() => store.decryptBackupJson(encrypted, 'wrong-pass'),
+      expect(() => store.recovery.decryptBackupJson(encrypted, 'wrong-pass'),
           throwsA(isA<ArgumentError>()));
 
       await store.recovery.resetBusinessData();
       expect(store.catalog.products, isEmpty);
       await store.recovery.importBackupJson(raw);
       expect(store.catalog.products.single.name, 'Coffee');
-      expect(store.currentBackupSummary.productsCount, 1);
+      expect(store.recovery.currentBackupSummary.productsCount, 1);
     });
 
     test('partial backup restore only replaces selected business sections',
@@ -86,7 +90,9 @@ void _registerAppStoreWorkflowGroup4() {
       );
 
       expect(
-        store.catalog.products.singleWhere((item) => item.id == 'restore-product').name,
+        store.catalog.products
+            .singleWhere((item) => item.id == 'restore-product')
+            .name,
         'Backup product',
       );
       expect(
@@ -266,7 +272,8 @@ void _registerAppStoreWorkflowGroup4() {
           .getSingle();
       expect(restoredWarehouseCount.read<int>('c') > 0, isTrue);
       final afterFirstRestore =
-          jsonDecode(await store.recovery.exportBackupJson()) as Map<String, dynamic>;
+          jsonDecode(await store.recovery.exportBackupJson())
+              as Map<String, dynamic>;
 
       expect(afterFirstRestore['warehouseInventory'],
           equals(original['warehouseInventory']));
@@ -281,7 +288,8 @@ void _registerAppStoreWorkflowGroup4() {
 
       await store.recovery.importBackupJson(raw);
       final afterSecondRestore =
-          jsonDecode(await store.recovery.exportBackupJson()) as Map<String, dynamic>;
+          jsonDecode(await store.recovery.exportBackupJson())
+              as Map<String, dynamic>;
       expect(afterSecondRestore['warehouseInventory'],
           equals(afterFirstRestore['warehouseInventory']));
       expect(afterSecondRestore['stockOperations'],
@@ -295,31 +303,31 @@ void _registerAppStoreWorkflowGroup4() {
         'merge backup prefers latest data and reports duplicate data conflicts',
         () async {
       final first = await readyStore();
-      await first.addOrUpdateProduct(
+      await first.catalog.addOrUpdateProduct(
           product(id: 'p1', code: 'DUP', name: 'Local', stock: 1));
-      expect(await first.login('admin', 'AdminPass123'), isTrue);
-      final rawLocal = await first.exportBackupJson();
+      expect(await first.security.login('admin', 'AdminPass123'), isTrue);
+      final rawLocal = await first.recovery.exportBackupJson();
 
       final second = await readyStore();
-      await second.addOrUpdateProduct(
+      await second.catalog.addOrUpdateProduct(
           product(id: 'p2', code: 'DUP', name: 'Remote newer', stock: 2));
-      await second.addOrUpdateCustomer(
+      await second.commerce.addOrUpdateCustomer(
           Customer(id: 'c1', name: 'Same', phone: '', address: ''));
-      await second.addOrUpdateCustomer(
+      await second.commerce.addOrUpdateCustomer(
           Customer(id: 'c2', name: 'Same 2', phone: '', address: ''));
-      expect(await second.login('admin', 'AdminPass123'), isTrue);
-      final decoded =
-          jsonDecode(await second.exportBackupJson()) as Map<String, dynamic>;
+      expect(await second.security.login('admin', 'AdminPass123'), isTrue);
+      final decoded = jsonDecode(await second.recovery.exportBackupJson())
+          as Map<String, dynamic>;
       (decoded['customers'] as List<dynamic>)[2]['name'] = 'Same';
       final rawRemote = const JsonEncoder.withIndent('  ').convert(decoded);
 
-      await first.importBackupJson(rawLocal);
-      await first.mergeBackupJson(rawRemote);
+      await first.recovery.importBackupJson(rawLocal);
+      await first.recovery.mergeBackupJson(rawRemote);
 
-      expect(
-          first.products.map((p) => p.id), containsAll(<String>['p1', 'p2']));
-      expect(first.dataConflictCount, greaterThan(0));
-      expect(first.blockingDataConflictCount, greaterThanOrEqualTo(0));
+      expect(first.catalog.products.map((p) => p.id),
+          containsAll(<String>['p1', 'p2']));
+      expect(first.sync.dataConflicts.length, greaterThan(0));
+      expect(first.sync.blockingDataConflictCount, greaterThanOrEqualTo(0));
     });
   });
 }
@@ -330,7 +338,7 @@ void _registerAppStoreWorkflowGroup5() {
         'marks queue rows in progress, failed, retrying, item failed, and synced',
         () async {
       final hostStore = await readyStore();
-      final clientIdentity = hostStore.appIdentity.copyWith(
+      final clientIdentity = hostStore.runtime.identity.copyWith(
         deviceRole: DeviceRole.client,
         syncMode: SyncMode.directConnected,
         activeSyncTransport: 'direct',
@@ -349,14 +357,14 @@ void _registerAppStoreWorkflowGroup5() {
       final store = AppStore();
       await store.runtime.initialize();
       await store.security.applySessionUser(
-        activeUser: hostStore.users.first,
+        activeUser: hostStore.security.users.first,
         currentRole: 'Admin',
         permissions: Set<String>.from(AppPermission.all),
         rememberLogin: true,
       );
       await store.catalog.addOrUpdateProduct(product());
-      final changeIds = store
-          .sync.pendingChangesForTarget('host', readyOnly: false)
+      final changeIds = store.sync
+          .pendingChangesForTarget('host', readyOnly: false)
           .map((c) => c.id)
           .toList();
       expect(changeIds, isNotEmpty);
@@ -376,15 +384,15 @@ void _registerAppStoreWorkflowGroup5() {
       await store.sync.retryFailed();
       expect(store.sync.queue.where((q) => q.status == 'pending'), isNotEmpty);
 
-      await store.sync.markSyncQueueItemFailed(
-          store.sync.queue.first.id, 'single failure');
+      await store.sync
+          .markSyncQueueItemFailed(store.sync.queue.first.id, 'single failure');
       expect(store.sync.queue.first.lastError, 'single failure');
 
       await store.sync.markAcknowledged(changeIds);
-      expect(
-          store.sync.pendingChangesForTarget('host', readyOnly: false), isEmpty);
-      expect(
-          store.sync.pendingSyncQueueForTarget('host', readyOnly: false), isEmpty);
+      expect(store.sync.pendingChangesForTarget('host', readyOnly: false),
+          isEmpty);
+      expect(store.sync.pendingSyncQueueForTarget('host', readyOnly: false),
+          isEmpty);
 
       await store.sync.clearPendingSyncQueue();
       expect(store.sync.pendingQueue.length, 0);
@@ -464,10 +472,13 @@ void _registerAppStoreWorkflowGroup5() {
       expect(store.runtime.profile.name, 'Remote Store');
       expect(store.security.roles.map((r) => r.id), contains(remoteRole.id));
       expect(store.security.users.map((u) => u.id), contains(remoteUser.id));
-      expect(store.catalog.products.singleWhere((p) => p.id == 'remote_p').stock, 4);
+      expect(
+          store.catalog.products.singleWhere((p) => p.id == 'remote_p').stock,
+          4);
       // Remote stock movements change quantity, while reference cost remains
       // the value sent with the product record.
-      expect(store.catalog.products.singleWhere((p) => p.id == 'remote_p').cost, 7);
+      expect(store.catalog.products.singleWhere((p) => p.id == 'remote_p').cost,
+          7);
     });
 
     test(
@@ -491,17 +502,21 @@ void _registerAppStoreWorkflowGroup5() {
       expect(await store.security.login('cashier', 'Cashier123'), isTrue);
       expect(store.security.canSell, isTrue);
       expect(store.security.canManageProducts, isFalse);
-      expect(() => store.security.requirePermission(AppPermission.productsDelete),
+      expect(
+          () => store.security.requirePermission(AppPermission.productsDelete),
           throwsStateError);
       expect(store.catalog.addOrUpdateProduct(product()), throwsStateError);
 
       await store.security.logout();
       expect(store.security.activeUser == null, isTrue);
-      expect(store.security.hasPermission(AppPermission.productsDelete), isFalse);
-      expect(() => store.security.requirePermission(AppPermission.productsDelete),
+      expect(
+          store.security.hasPermission(AppPermission.productsDelete), isFalse);
+      expect(
+          () => store.security.requirePermission(AppPermission.productsDelete),
           throwsStateError);
       expect(await store.security.login('admin', 'AdminPass123'), isTrue);
-      expect(() => store.security.requirePermission(AppPermission.productsDelete),
+      expect(
+          () => store.security.requirePermission(AppPermission.productsDelete),
           returnsNormally);
 
       expect(store.security.deleteRole('admin'), throwsStateError);
@@ -539,25 +554,25 @@ void _registerAppStoreWorkflowGroup5() {
       expect(store.security.rememberLogin, isTrue);
 
       final restarted = AppStore();
-      await restarted.initialize();
-      expect(restarted.activeUser?.username, 'cashier');
-      expect(restarted.currentRole, 'Cashier');
-      expect(restarted.rememberLogin, isTrue);
+      await restarted.runtime.initialize();
+      expect(restarted.security.activeUser?.username, 'cashier');
+      expect(restarted.security.currentRole, 'Cashier');
+      expect(restarted.security.rememberLogin, isTrue);
 
       expect(await AuthRepository.login(restarted, 'admin', 'AdminPass123'),
           isTrue);
-      expect(restarted.activeUser?.username, 'admin');
-      expect(restarted.currentRole, 'Admin');
-      expect(restarted.rememberLogin, isFalse);
+      expect(restarted.security.activeUser?.username, 'admin');
+      expect(restarted.security.currentRole, 'Admin');
+      expect(restarted.security.rememberLogin, isFalse);
 
       await AuthRepository.logout(restarted);
-      expect(restarted.activeUser == null, isTrue);
-      expect(restarted.rememberLogin, isFalse);
+      expect(restarted.security.activeUser == null, isTrue);
+      expect(restarted.security.rememberLogin, isFalse);
 
       final afterLogoutRestart = AppStore();
-      await afterLogoutRestart.initialize();
-      expect(afterLogoutRestart.activeUser == null, isTrue);
-      expect(afterLogoutRestart.rememberLogin, isFalse);
+      await afterLogoutRestart.runtime.initialize();
+      expect(afterLogoutRestart.security.activeUser == null, isTrue);
+      expect(afterLogoutRestart.security.rememberLogin, isFalse);
     });
 
     test(
@@ -595,7 +610,10 @@ void _registerAppStoreWorkflowGroup5() {
       );
 
       await store.runtime.refreshAfterDatabaseChange('users_v1');
-      expect(store.security.users.singleWhere((u) => u.username == 'cashier').fullName,
+      expect(
+          store.security.users
+              .singleWhere((u) => u.username == 'cashier')
+              .fullName,
           'Cashier Reloaded');
       expect(store.security.activeUser?.fullName, 'Cashier Reloaded');
     });
@@ -612,13 +630,13 @@ void _registerAppStoreWorkflowGroup5() {
       SharedPreferences.setMockInitialValues(const <String, Object>{});
       LocalDatabaseService.useInMemoryStoreForTesting(const <String, String>{});
       final setup = AppStore();
-      await setup.initialize();
-      expect(setup.needsInitialAdminSetup, isTrue);
-      await setup.completeInitialAdminSetup(
+      await setup.runtime.initialize();
+      expect(setup.security.needsInitialAdminSetup, isTrue);
+      await setup.security.completeInitialAdminSetup(
           fullName: 'Owner', username: 'owner', password: 'owner123');
-      expect(setup.needsInitialAdminSetup, isFalse);
-      expect(await setup.login('owner', 'owner123'), isTrue);
-      expect(() => setup.setCurrentRole('cashier'), throwsStateError);
+      expect(setup.security.needsInitialAdminSetup, isFalse);
+      expect(await setup.security.login('owner', 'owner123'), isTrue);
+      expect(setup.security.currentRole, 'Admin');
     });
   });
 }

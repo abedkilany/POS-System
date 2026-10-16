@@ -78,8 +78,6 @@ import '../models/user_role.dart';
 import '../models/app_user.dart';
 import '../models/app_identity.dart';
 import '../models/payment_allocation.dart';
-import '../models/receipt_voucher.dart';
-import '../models/payment_voucher.dart';
 import '../models/posted_document_snapshot.dart';
 import '../models/journal_entry.dart';
 
@@ -107,6 +105,14 @@ part 'app_store_state.dart';
 part 'app_store_forwarding_api.dart';
 part 'app_store_orchestration.dart';
 part 'app_store_domains.dart';
+part 'app_store_domains_runtime.dart';
+part 'app_store_domains_catalog.dart';
+part 'app_store_domains_commerce.dart';
+part 'app_store_domains_accounting.dart';
+part 'app_store_domains_inventory.dart';
+part 'app_store_domains_security.dart';
+part 'app_store_domains_sync.dart';
+part 'app_store_domains_recovery.dart';
 part 'app_store_backup_recovery_split_02.dart';
 part 'app_store_backup_recovery_split_03.dart';
 part 'app_store_backup_recovery_split_04.dart';
@@ -485,7 +491,7 @@ class AppStore extends ChangeNotifier
     final unsyncedChanges = _syncChanges.where((item) => !item.isSynced).length;
     final outboundChangeIds = _syncQueue
         .where((item) =>
-            item.target == activeClientSyncTarget ||
+            item.target == _activeClientSyncTarget ||
             (appIdentity.isHost && item.target == 'host'))
         .where((item) => item.isReadyToSend)
         .map((item) => item.changeId)

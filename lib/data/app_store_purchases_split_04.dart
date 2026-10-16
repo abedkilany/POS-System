@@ -65,7 +65,7 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
             productPreviews[item.productId] ?? _findProductById(item.productId);
         if (product == null || !product.trackStock) continue;
         final currentCost = productCostPreviews[item.productId] ??
-            productCostFor(item.productId);
+            _productCostFor(item.productId);
         final receivedQty = item.baseQuantity;
         final unitCost = _purchaseInventoryUnitCostPerBase(
           item,
@@ -73,7 +73,7 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
         );
         final stockBefore = productPreviews.containsKey(item.productId)
             ? max(0.0, product.stock)
-            : max(0.0, await totalWarehouseStockFromSqlite(item.productId));
+            : max(0.0, await _totalWarehouseStockFromSqlite(item.productId));
         final stockAfter = stockBefore + receivedQty;
         final averageCost = stockAfter <= 0
             ? unitCost
@@ -174,7 +174,7 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
             profile: _storeProfile,
             supplier: snapshotSupplier,
             user: _activeUser,
-            role: currentUserRole,
+            role: _currentUserRole,
             displayedPaidAmount: plannedPayment,
             displayedPaymentStatus:
                 plannedPayment >= received.subtotal - 0.000001
@@ -284,7 +284,7 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
       await refreshAfterDatabaseChange(AppStore._inventoryCostLayersKey);
       await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
       if (plannedPayment > 0) {
-        received = await settlePurchasePayment(
+        received = await _settlePurchasePayment(
           purchaseId: received.id,
           amount: plannedPayment,
           paymentMethod: purchase.paymentMethod,
@@ -293,7 +293,7 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
           date: now,
         );
       }
-      if (postAccounting) await refreshAccountTransactionsFromSqlite();
+      if (postAccounting) await _refreshAccountTransactionsFromSqlite();
       _touchPurchasesData();
       notifyListeners();
       return;
@@ -428,21 +428,6 @@ extension _AppStoreSplitPurchasesPart4 on AppStore {
     notifyListeners();
   }
 
-  Future<void> permanentlyDeleteCancelledPurchase(String id) async {
-    requirePermission(AppPermission.databaseManage);
-    final index = _purchaseIndexForId(id);
-    final purchase =
-        index == -1 ? await _purchaseByIdFromSqlite(id) : _purchases[index];
-    if (purchase == null) return;
-    if (purchase.status.toLowerCase() != 'cancelled') {
-      throw StateError(
-        'Only cancelled purchase invoices can reach this audit guard.',
-      );
-    }
-    throw StateError(
-      'Posted/cancelled purchase invoices are retained for audit and cannot be permanently deleted. Use return/reversal and a new document instead.',
-    );
-  }
 
   Future<int> _activePostedJournalCountInTransaction(
     dynamic sqliteDb, {

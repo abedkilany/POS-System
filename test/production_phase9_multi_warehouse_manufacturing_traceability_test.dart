@@ -38,17 +38,17 @@ void main() {
           expiryTrackingEnabled: true,
           expiryEntryRequired: true,
         );
-    await store.addOrUpdateProduct(raw);
-    await store.addOrUpdateProduct(finished);
+    await store.catalog.addOrUpdateProduct(raw);
+    await store.catalog.addOrUpdateProduct(finished);
 
-    final receiving =
-        await store.createWarehouse(name: 'P9 Receiving', code: 'P9-RCV');
-    final production =
-        await store.createWarehouse(name: 'P9 Production', code: 'P9-PRD');
-    final retail =
-        await store.createWarehouse(name: 'P9 Retail', code: 'P9-RTL');
+    final receiving = await store.inventory
+        .createWarehouse(name: 'P9 Receiving', code: 'P9-RCV');
+    final production = await store.inventory
+        .createWarehouse(name: 'P9 Production', code: 'P9-PRD');
+    final retail = await store.inventory
+        .createWarehouse(name: 'P9 Retail', code: 'P9-RTL');
 
-    await store.adjustStock(
+    await store.inventory.adjustStock(
       productId: raw.id,
       warehouseId: receiving.id,
       quantityDelta: 10,
@@ -70,7 +70,7 @@ void main() {
       ],
     );
 
-    await store.transferStock(
+    await store.inventory.transferStock(
       productId: raw.id,
       fromWarehouseId: receiving.id,
       toWarehouseId: production.id,
@@ -88,7 +88,7 @@ void main() {
       ORDER BY batch_id
       ''',
       variables: <Variable<Object>>[
-        Variable<String>(store.appIdentity.storeId),
+        Variable<String>(store.runtime.identity.storeId),
         Variable<String>(production.id),
         Variable<String>(raw.id),
       ],
@@ -110,7 +110,7 @@ void main() {
         ),
       ],
     );
-    final order = await store.completeManufacturingOrder(
+    final order = await store.inventory.completeManufacturingOrder(
       bomId: bom.id,
       quantity: 1,
       rawMaterialsWarehouseId: production.id,
@@ -142,7 +142,7 @@ void main() {
     expect(consumed.single.read<String>('batchId'), 'p9-raw-early');
     expect(consumed.single.read<double>('quantity'), 3);
 
-    await store.transferStock(
+    await store.inventory.transferStock(
       productId: finished.id,
       fromWarehouseId: production.id,
       toWarehouseId: retail.id,
@@ -150,7 +150,7 @@ void main() {
       notes: 'Finished batch to retail',
     );
 
-    final trace = await store.traceInventoryBatch('p9-finished-batch');
+    final trace = await store.inventory.traceBatch('p9-finished-batch');
     final edges = (trace['manufacturingEdges'] as List<dynamic>)
         .whereType<Map>()
         .map((item) => Map<String, dynamic>.from(item))
@@ -189,7 +189,7 @@ void main() {
       WHERE store_id = ? AND warehouse_id = ? AND product_id = ? AND batch_id = ?
       ''',
       variables: <Variable<Object>>[
-        Variable<String>(store.appIdentity.storeId),
+        Variable<String>(store.runtime.identity.storeId),
         Variable<String>(retail.id),
         Variable<String>(finished.id),
         const Variable<String>('p9-finished-batch'),
@@ -197,7 +197,7 @@ void main() {
     ).getSingle();
     expect(retailBatch.read<double>('quantity'), 1);
 
-    final integrity = await store.verifyInventoryTraceabilityIntegrity();
+    final integrity = await store.inventory.verifyTraceabilityIntegrity();
     expect(integrity['healthy'], isTrue,
         reason: integrity['issues'].toString());
     expect(integrity['issueCount'], 0);

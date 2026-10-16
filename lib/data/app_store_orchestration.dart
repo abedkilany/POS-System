@@ -16,56 +16,16 @@ mixin _AppStoreOrchestration
         _AppStoreForwardingApiPart5 {
   SecurityDomainPort get security;
 
-  bool get sqliteSourceOfTruth => LocalDatabaseService.isSqliteAuthoritative;
-
-  StorageLayerSnapshot get storageLayerSnapshot => StorageLayerSnapshot(
-        sqliteAuthoritative: sqliteSourceOfTruth,
-        productCacheCount: _cachedProducts?.length ?? 0,
-        salesCacheCount: _cachedSales?.length ?? 0,
-        supplierCacheCount: _cachedSuppliers?.length ?? 0,
-        derivedCacheCount: [
-          _cachedSaleQuotations,
-          _cachedDeliveryNotes,
-          _cachedBillsOfMaterials,
-          _cachedManufacturingOrders,
-          _cachedSupplierProductPrices,
-          _cachedPriceLists,
-          _cachedProductPrices,
-          _cachedProductPriceOverrides,
-          _cachedProductCosts,
-          _cachedCostingMethodHistory,
-          _cachedInventoryCostLayers,
-          _cachedPurchasesOverview,
-          _cachedExpensesOverview,
-        ].where((item) => item != null).length,
-        syncChangeCount: _syncChanges.length,
-        syncQueueCount: _syncQueue.length,
-      );
-
-  Customer get walkInCustomer => Customer(
+  Customer get _walkInCustomer => Customer(
         id: AppStore.walkInCustomerId,
         name: AppStore.walkInCustomerName,
         phone: '',
         address: '',
       );
 
-  bool get isReady => _isReady;
-  int get productsRevision => _productsRevision;
-  int get customersRevision => _customersRevision;
-  int get salesRevision => _salesRevision;
-  int get deliveryNotesRevision => _deliveryNotesRevision;
-  int get suppliersRevision => _suppliersRevision;
-  int get supplierProductPricesRevision => _supplierProductPricesRevision;
-  int get purchasesRevision => _purchasesRevision;
-  int get expensesRevision => _expensesRevision;
-  int get stockMovementsRevision => _stockMovementsRevision;
-  int get inventoryCountsRevision => _inventoryCountsRevision;
-  int get warehousesRevision => _warehousesRevision;
-  int get accountTransactionsRevision => _accountTransactionsRevision;
-  int get _accountingRevisionReadImpl => accountingRevision;
-  int get _inventoryRevisionReadImpl => inventoryRevision;
-  int get storeProfileRevision => _storeProfileRevision;
-  int get accountingRevision => Object.hashAll(<Object?>[
+  int get _accountingRevisionReadImpl => _accountingRevision;
+  int get _inventoryRevisionReadImpl => _inventoryRevision;
+  int get _accountingRevision => Object.hashAll(<Object?>[
         _customersRevision,
         _suppliersRevision,
         _salesRevision,
@@ -74,7 +34,6 @@ mixin _AppStoreOrchestration
         _accountTransactionsRevision,
         _storeProfileRevision,
       ]);
-  int get dashboardRevision => _dashboardRevisionReadImpl;
   int get _dashboardRevisionReadImpl => Object.hashAll(<Object?>[
         _productsRevision,
         _customersRevision,
@@ -87,7 +46,6 @@ mixin _AppStoreOrchestration
         _storeProfileRevision,
         _syncSequence,
       ]);
-  int get reportsRevision => _reportsRevisionReadImpl;
   int get _reportsRevisionReadImpl => Object.hashAll(<Object?>[
         _productsRevision,
         _customersRevision,
@@ -99,35 +57,16 @@ mixin _AppStoreOrchestration
         _accountTransactionsRevision,
         _storeProfileRevision,
       ]);
-  int get inventoryRevision => Object.hashAll(<Object?>[
+  int get _inventoryRevision => Object.hashAll(<Object?>[
         _productsRevision,
         _stockMovementsRevision,
         _inventoryCountsRevision,
         _warehousesRevision,
       ]);
-  int get salesPageRevision => Object.hashAll(<Object?>[
-        _productsRevision,
-        _customersRevision,
-        _salesRevision,
-        _deliveryNotesRevision,
-        _storeProfileRevision,
-      ]);
-  int get productsPageRevision => Object.hashAll(<Object?>[
-        _productsRevision,
-        _purchasesRevision,
-        _storeProfileRevision,
-      ]);
-  bool get isCoreDataLoaded => _isReady;
-  bool get isLedgerDataLoaded => _isReady;
-  bool get isSyncDataLoaded => _syncDataLoadCompleted;
-  bool get isHeavyDataLoaded =>
-      _heavyDataLoadCompleted &&
-      _ledgerDataLoadCompleted &&
-      _syncDataLoadCompleted;
 
-  Future<void> ensureSyncDataLoaded() => _requestSyncDataLoad();
+  Future<void> _ensureSyncDataLoaded() => _requestSyncDataLoad();
 
-  Future<void> ensureProductsLoaded() => _ensureProductsLoadedImpl();
+  Future<void> _ensureProductsLoaded() => _ensureProductsLoadedImpl();
 
   Future<void> _ensureProductsLoadedImpl() => _loadDeferredGroup<Product>(
         key: AppStore._productsKey,
@@ -147,7 +86,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureCustomersLoaded() => _ensureCustomersLoadedImpl();
+  Future<void> _ensureCustomersLoaded() => _ensureCustomersLoadedImpl();
 
   Future<void> _ensureCustomersLoadedImpl() => _loadDeferredGroup<Customer>(
         key: AppStore._customersKey,
@@ -160,7 +99,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureSalesLoaded() => _loadDeferredGroup<Sale>(
+  Future<void> _ensureSalesLoaded() => _loadDeferredGroup<Sale>(
         key: AppStore._salesKey,
         loader: _loadSalesForStartup,
         target: _sales,
@@ -170,14 +109,14 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureSaleQuotationsLoaded() =>
+  Future<void> _ensureSaleQuotationsLoaded() =>
       _loadDeferredGroup<SaleQuotation>(
         key: AppStore._saleQuotationsKey,
         loader: _loadSaleQuotationsForStartup,
         target: _saleQuotations,
       );
 
-  Future<void> ensureDeliveryNotesLoaded() => _loadDeferredGroup<DeliveryNote>(
+  Future<void> _ensureDeliveryNotesLoaded() => _loadDeferredGroup<DeliveryNote>(
         key: AppStore._deliveryNotesKey,
         loader: _loadDeliveryNotesForStartup,
         target: _deliveryNotes,
@@ -187,21 +126,21 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureBillsOfMaterialsLoaded() =>
+  Future<void> _ensureBillsOfMaterialsLoaded() =>
       _loadDeferredGroup<BillOfMaterials>(
         key: AppStore._billsOfMaterialsKey,
         loader: _loadBillsOfMaterialsForStartup,
         target: _billsOfMaterials,
       );
 
-  Future<void> ensureManufacturingOrdersLoaded() =>
+  Future<void> _ensureManufacturingOrdersLoaded() =>
       _loadDeferredGroup<ManufacturingOrder>(
         key: AppStore._manufacturingOrdersKey,
         loader: _loadManufacturingOrdersForStartup,
         target: _manufacturingOrders,
       );
 
-  Future<void> ensureSuppliersLoaded() => _ensureSuppliersLoadedImpl();
+  Future<void> _ensureSuppliersLoaded() => _ensureSuppliersLoadedImpl();
 
   Future<void> _ensureSuppliersLoadedImpl() => _loadDeferredGroup<Supplier>(
         key: AppStore._suppliersKey,
@@ -213,7 +152,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureSupplierProductPricesLoaded() =>
+  Future<void> _ensureSupplierProductPricesLoaded() =>
       _loadDeferredGroup<SupplierProductPrice>(
         key: AppStore._supplierProductPricesKey,
         loader: _loadSupplierProductPricesForStartup,
@@ -223,7 +162,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensurePriceListsLoaded() => _loadDeferredGroup<PriceList>(
+  Future<void> _ensurePriceListsLoaded() => _loadDeferredGroup<PriceList>(
         key: AppStore._priceListsKey,
         loader: _loadPriceListsForStartup,
         target: _priceLists,
@@ -233,9 +172,6 @@ mixin _AppStoreOrchestration
           _ensureDefaultProductPriceEntries();
         },
       );
-
-  Future<void> ensureProductPricesLoaded() =>
-      _ensureProductPricesLoadedImpl();
 
   Future<void> _ensureProductPricesLoadedImpl() =>
       _loadDeferredGroup<ProductPrice>(
@@ -248,7 +184,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureProductPriceOverridesLoaded() =>
+  Future<void> _ensureProductPriceOverridesLoaded() =>
       _loadDeferredGroup<ProductPriceOverride>(
         key: AppStore._productPriceOverridesKey,
         loader: _loadProductPriceOverridesForStartup,
@@ -258,7 +194,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureProductCostsLoaded() => _ensureProductCostsLoadedImpl();
+  Future<void> _ensureProductCostsLoaded() => _ensureProductCostsLoadedImpl();
 
   Future<void> _ensureProductCostsLoadedImpl() =>
       _loadDeferredGroup<ProductCost>(
@@ -271,7 +207,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureCostingMethodHistoryLoaded() =>
+  Future<void> _ensureCostingMethodHistoryLoaded() =>
       _loadDeferredGroup<CostingMethodHistory>(
         key: AppStore._costingMethodHistoryKey,
         loader: _loadCostingMethodHistoryForStartup,
@@ -281,14 +217,14 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureInventoryCostLayersLoaded() =>
+  Future<void> _ensureInventoryCostLayersLoaded() =>
       _loadDeferredGroup<InventoryCostLayer>(
         key: AppStore._inventoryCostLayersKey,
         loader: _loadInventoryCostLayersForStartup,
         target: _inventoryCostLayers,
       );
 
-  Future<void> ensureExpensesLoaded() => _loadDeferredGroup<Expense>(
+  Future<void> _ensureExpensesLoaded() => _loadDeferredGroup<Expense>(
         key: AppStore._expensesKey,
         loader: _loadExpensesForStartup,
         target: _expenses,
@@ -298,7 +234,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensurePurchasesLoaded() => _loadDeferredGroup<Purchase>(
+  Future<void> _ensurePurchasesLoaded() => _loadDeferredGroup<Purchase>(
         key: AppStore._purchasesKey,
         loader: _loadPurchasesForStartup,
         target: _purchases,
@@ -308,7 +244,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureStockMovementsLoaded() =>
+  Future<void> _ensureStockMovementsLoaded() =>
       _loadDeferredGroup<StockMovement>(
         key: AppStore._stockMovementsKey,
         loader: _loadStockMovementsForStartup,
@@ -322,7 +258,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureInventoryCountsLoaded() =>
+  Future<void> _ensureInventoryCountsLoaded() =>
       _loadDeferredGroup<InventoryCountSession>(
         key: AppStore._inventoryCountsKey,
         loader: _loadInventoryCountsForStartup,
@@ -332,7 +268,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureWarehousesLoaded() => _ensureWarehousesLoadedImpl();
+  Future<void> _ensureWarehousesLoaded() => _ensureWarehousesLoadedImpl();
 
   Future<void> _ensureWarehousesLoadedImpl() => _loadDeferredGroup<Warehouse>(
         key: AppStore._warehousesKey,
@@ -344,7 +280,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  Future<void> ensureAccountTransactionsLoaded() =>
+  Future<void> _ensureAccountTransactionsLoaded() =>
       _ensureAccountTransactionsLoadedImpl();
 
   Future<void> _ensureAccountTransactionsLoadedImpl() =>
@@ -359,82 +295,7 @@ mixin _AppStoreOrchestration
         },
       );
 
-  List<Product> get products =>
-      _AppStoreCatalogRead(this as AppStore)._productsReadImpl;
-
-  Product? productById(String id) =>
-      _AppStoreCatalogRead(this as AppStore)._productByIdReadImpl(id);
-
-  List<Product> get allProductsForDiagnostics =>
-      _AppStoreCatalogRead(this as AppStore)._allProductsForDiagnosticsReadImpl;
-  List<Customer> get allCustomersForDiagnostics =>
-      _AppStorePartyRead(this as AppStore)._allCustomersForDiagnosticsReadImpl;
-  List<Supplier> get allSuppliersForDiagnostics =>
-      _AppStorePartyRead(this as AppStore)._allSuppliersForDiagnosticsReadImpl;
-  List<Customer> get customers =>
-      _AppStorePartyRead(this as AppStore)._customersReadImpl;
-
-  List<CreditNote> get creditNotes => List.unmodifiable(_creditNotes);
-
-  List<Supplier> get suppliers =>
-      _AppStorePartyRead(this as AppStore)._suppliersReadImpl;
-
-  List<SupplierProductPrice> get supplierProductPrices =>
-      _AppStorePartyRead(this as AppStore)._supplierProductPricesReadImpl;
-
-  List<PriceList> get priceLists =>
-      _AppStoreCatalogRead(this as AppStore)._priceListsReadImpl;
-
-  List<ProductPrice> get productPrices =>
-      _AppStoreCatalogRead(this as AppStore)._productPricesReadImpl;
-
-  List<ProductPriceOverride> get productPriceOverrides =>
-      _AppStoreCatalogRead(this as AppStore)._productPriceOverridesReadImpl;
-
-  List<ProductCost> get productCosts =>
-      _AppStoreCatalogRead(this as AppStore)._productCostsReadImpl;
-
-  List<CostingMethodHistory> get costingMethodHistory =>
-      _AppStoreCatalogRead(this as AppStore)._costingMethodHistoryReadImpl;
   InventoryCostingMethod get inventoryCostingMethod => _inventoryCostingMethod;
-
-  List<InventoryCostLayer> get inventoryCostLayers =>
-      _AppStoreCatalogRead(this as AppStore)._inventoryCostLayersReadImpl;
-
-  List<SupplierProductPrice> get allSupplierProductPricesForDiagnostics =>
-      _AppStorePartyRead(this as AppStore)
-          ._allSupplierProductPricesForDiagnosticsReadImpl;
-  List<CatalogItem> get categories =>
-      _AppStoreCatalogRead(this as AppStore)._categoriesReadImpl;
-
-  List<CatalogItem> get brands =>
-      _AppStoreCatalogRead(this as AppStore)._brandsReadImpl;
-
-  List<CatalogItem> get units =>
-      _AppStoreCatalogRead(this as AppStore)._unitsReadImpl;
-
-  int get dataConflictCount => dataConflicts.length;
-  int get blockingDataConflictCount =>
-      dataConflicts.where((item) => item.blocking).length;
-
-  List<StockMovement> get autoCorrectionMovements => List.unmodifiable(
-        _stockMovements
-            .where((movement) => movement.type == 'auto_correction')
-            .toList()
-            .reversed,
-      );
-  List<StockMovement> get pendingAutoCorrectionMovements => List.unmodifiable(
-        _stockMovements
-            .where(
-              (movement) =>
-                  movement.type == 'auto_correction' && !movement.isReviewed,
-            )
-            .toList()
-            .reversed,
-      );
-  int get pendingAutoCorrectionCount => pendingAutoCorrectionMovements.length;
-
-  int get storeRevision => _storeRevision;
 
   bool _isDerivedCacheCurrent(int generation) =>
       generation == _derivedListCacheGeneration;
@@ -442,149 +303,39 @@ mixin _AppStoreOrchestration
   String _accountLedgerKey(String accountType, String accountId) =>
       const AccountLedgerReadService().accountKey(accountType, accountId);
 
-  int get currentSyncSequence => _syncSequence;
-  int get latestStoredAuthoritativeSequence =>
-      _latestStoredAuthoritativeSequence();
-
-  bool hasOutstandingSyncWorkForTarget(String target) =>
-      outstandingSyncQueueCountForTarget(target) > 0;
   String get deviceId => _deviceId;
-  int get pendingSyncCount => pendingSyncQueue.length;
-  int get pendingSyncQueueCount => pendingSyncQueue.length;
+  int get _pendingSyncCount => _pendingSyncQueue.length;
   StoreProfile get storeProfile => _storeProfile;
-  String get currentRole => currentUserRole?.name ?? _currentRole;
-  List<UserRole> get roles => List.unmodifiable(_roles);
-  List<AppUser> get users => List.unmodifiable(_users);
+  String get currentRole => _currentUserRole?.name ?? _currentRole;
   AppUser? get activeUser => _activeUser;
-  bool get rememberLogin => _rememberLogin;
-  AppUser? get currentUser => _activeUser;
   AppIdentity get appIdentity =>
       _appIdentity ??
       AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
-  UserRole? get currentUserRole =>
-      _activeUser == null ? null : roleById(_activeUser!.roleId);
-  bool get isAdmin =>
-      _activeUser?.roleId == 'admin' || currentUserRole?.isAdmin == true;
-  bool hasAnyPermission(Iterable<String> permissions) =>
+  UserRole? get _currentUserRole =>
+      _activeUser == null ? null : _roleById(_activeUser!.roleId);
+  bool get _isAdmin =>
+      _activeUser?.roleId == 'admin' || _currentUserRole?.isAdmin == true;
+  bool _hasAnyPermission(Iterable<String> permissions) =>
       permissions.any(hasPermission);
-  bool hasAllPermissions(Iterable<String> permissions) =>
-      permissions.every(hasPermission);
 
-  bool get canViewDashboard => security.canViewDashboard;
-  bool get canViewProducts => security.canViewProducts;
-  bool get canManageProducts => security.canManageProducts;
-  bool get canViewCustomers => security.canViewCustomers;
-  bool get canManageCustomers => security.canManageCustomers;
-  bool get canManageCustomerPayments => security.canManageCustomerPayments;
-  bool get canViewSuppliers => security.canViewSuppliers;
-  bool get canManageSuppliers => security.canManageSuppliers;
-  bool get canManageSupplierPayments => security.canManageSupplierPayments;
-  bool get canViewSales => security.canViewSales;
-  bool get canSell => security.canSell;
-  bool get canViewQuotations => security.canViewQuotations;
-  bool get canManageQuotations => security.canManageQuotations;
-  bool get canViewDeliveryNotes => security.canViewDeliveryNotes;
-  bool get canManageDeliveryNotes => security.canManageDeliveryNotes;
-  bool get canViewPurchases => security.canViewPurchases;
-  bool get canManagePurchases => security.canManagePurchases;
-  bool get canViewExpenses => security.canViewExpenses;
-  bool get canManageExpenses => security.canManageExpenses;
-  bool get canViewAccounting => security.canViewAccounting;
-  bool get canManageAccounting => security.canManageAccounting;
-  bool get canManageCashBox => security.canManageCashBox;
-  bool get canViewInventory => security.canViewInventory;
-  bool get canManageInventory => security.canManageInventory;
-  bool get canViewReports => security.canViewReports;
-  bool get canViewCashBox => security.canViewCashBox;
-  bool get canViewSettings => security.canViewSettings;
-  bool get canViewDatabase => security.canViewDatabase;
-  bool get canViewMaintenance => security.canViewMaintenance;
-  bool get canManageMaintenance => security.canManageMaintenance;
-  bool get canManageUsers => security.canManageUsers;
-  bool get canManageUsersPage => security.canManageUsersPage;
-  bool get canManageDatabase => security.canManageDatabase;
-  bool get canDeleteOrCancel => security.canDeleteOrCancel;
-  bool get needsInitialAdminSetup =>
-      _users.isEmpty || _hasOnlyLegacyDefaultAdminUser;
-  bool get hasLocalAdminUser =>
-      _users.any((item) => item.roleId == 'admin' && item.isActive);
-
-  bool get isSuspendedByHost =>
+  bool get _isSuspendedByHost =>
       appIdentity.isClient && ClientSuspensionStateStore.isSuspended;
-  String get suspendedByHostReason => ClientSuspensionStateStore.reason;
 
-  double get totalExpensesAmount => expensesOverview.totalExpensesAmount;
-  double get totalPurchasesAmount => purchasesOverview.totalPurchasesAmount;
-  int get pendingPurchaseCount => purchasesOverview.pendingPurchaseCount;
-
-  PurchasesOverview get purchasesOverview =>
-      _AppStorePurchaseInsights(this as AppStore)._purchasesOverviewImpl;
+  double get _totalExpensesAmount => _expensesOverview.totalExpensesAmount;
 
   void _ensurePurchaseInsightsCache() =>
       _AppStorePurchaseInsights(this as AppStore)
           ._ensurePurchaseInsightsCacheImpl();
 
-  List<SupplierPurchasePrice> purchasePriceHistoryForProduct(
-    String productId,
-  ) =>
-      _AppStorePurchaseInsights(this as AppStore)
-          ._purchasePriceHistoryForProductImpl(productId);
-
-  List<SupplierPurchasePrice> supplierPriceComparisonForProduct(
-    String productId,
-  ) =>
-      _AppStorePurchaseInsights(this as AppStore)
-          ._supplierPriceComparisonForProductImpl(productId);
-
-  double? lastPurchasePriceFor({
-    required String productId,
-    required String supplierId,
-  }) =>
-      _AppStorePurchaseInsights(this as AppStore)._lastPurchasePriceForImpl(
-        productId: productId,
-        supplierId: supplierId,
-      );
-
-  double? lastPurchasePriceForProduct(String productId) =>
+  double? _lastPurchasePriceForProduct(String productId) =>
       _AppStorePurchaseInsights(this as AppStore)
           ._lastPurchasePriceForProductImpl(productId);
-
-  PurchaseItem? lastPurchaseItemFor({
-    required String productId,
-    required String supplierId,
-  }) =>
-      _AppStorePurchaseInsights(this as AppStore)._lastPurchaseItemForImpl(
-        productId: productId,
-        supplierId: supplierId,
-      );
-
-  PurchaseItem? lastPurchaseItemForProduct(String productId) =>
-      _AppStorePurchaseInsights(this as AppStore)
-          ._lastPurchaseItemForProductImpl(productId);
-
-  double averagePurchaseCostForProduct(String productId) =>
-      _AppStorePurchaseInsights(this as AppStore)
-          ._averagePurchaseCostForProductImpl(productId);
 
   String _normalizeLegacySupplierName(String value) =>
       value.trim().toLowerCase();
 
-  int get lowStockCount => products
-      .where((product) => product.trackStock && product.isLowStock)
-      .length;
-  List<Product> get stockTrackedProducts =>
+  List<Product> get _stockTrackedProducts =>
       _AppStoreCatalogRead(this as AppStore)._stockTrackedProductsReadImpl;
-
-  double get totalUnitsInStock =>
-      stockTrackedProducts.fold<double>(0, (sum, item) => sum + item.stock);
-  double get inventoryRetailValue => stockTrackedProducts.fold<double>(
-        0,
-        (sum, item) => sum + (item.usdPrice * item.stock),
-      );
-  double get inventoryCostValue => stockTrackedProducts.fold<double>(
-        0,
-        (sum, item) => sum + (_safeUsdCost(item) * item.stock),
-      );
 
   Future<List<Product>> _loadProductsForStartup() async =>
       _loadTypedEntityList<Product>(
@@ -736,11 +487,6 @@ mixin _AppStoreOrchestration
         InventoryCostLayer.fromJson,
       );
 
-  String get approvedHostTransferDeviceId =>
-      LocalDatabaseService.getString(AppStore._hostTransferApprovedDeviceKey)
-          ?.trim() ??
-      '';
-
   int _stockMovementIndexForId(String id) =>
       _stockMovementIndexById[id.trim()] ?? -1;
 
@@ -750,14 +496,6 @@ mixin _AppStoreOrchestration
 
   int _accountTransactionIndexForId(String id) =>
       _accountTransactionIndexById[id.trim()] ?? -1;
-
-  String resolveCustomerName(String? customerId) =>
-      _AppStorePartyRead(this as AppStore)
-          ._resolveCustomerNameReadImpl(customerId);
-
-  String sanitizeSelectedCustomerId(String? customerId) =>
-      _AppStorePartyRead(this as AppStore)
-          ._sanitizeSelectedCustomerIdReadImpl(customerId);
 
   Product? _findProductById(String id) =>
       _AppStoreCatalogRead(this as AppStore)._findProductByIdReadImpl(id);
@@ -779,10 +517,7 @@ mixin _AppStoreOrchestration
   // Default import-section selector for internal full-replace/reset paths.
   // The manual Backup Import flow defines a local `wants` function that
   // shadows this method and uses the user-selected section IDs.
-  bool wants(String id) => true;
-
-  Product? findProductByCode(String code) =>
-      _AppStoreCatalogRead(this as AppStore)._findProductByCodeReadImpl(code);
+  bool _wants(String id) => true;
 
   double _safeAccountAmount(double value) =>
       value.isFinite && value > 0 ? value : 0;
@@ -810,8 +545,6 @@ mixin _AppStoreOrchestration
 
   String _catalogReferenceValue(CatalogItem item) =>
       item.code.trim().isNotEmpty ? item.code.trim() : item.nameEn.trim();
-
-  Future<void> deleteExpense(String id) => deleteDraftExpense(id);
 
   String get _purchaseDevicePrefix => _deviceId.isEmpty
       ? 'LOCAL'

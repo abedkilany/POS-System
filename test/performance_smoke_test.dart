@@ -138,10 +138,10 @@ void main() {
 
       final store = AppStore();
       final stopwatch = Stopwatch()..start();
-      await store.initialize();
+      await store.runtime.initialize();
       stopwatch.stop();
 
-      expect(store.products.length, 2500);
+      expect(store.catalog.products.length, 2500);
       expect(stopwatch.elapsedMilliseconds, lessThan(3000));
       store.dispose();
     });

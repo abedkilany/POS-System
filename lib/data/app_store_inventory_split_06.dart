@@ -17,7 +17,7 @@ extension _AppStoreSplitInventoryPart6 on AppStore {
                     item.reversalOfMovementId.isEmpty)
                 .length >
             1) {
-      return reverseWasteLossGroup(movementId);
+      return _reverseWasteLossGroup(movementId);
     }
     if (original.reversalOfMovementId.isNotEmpty ||
         _stockMovements.any(

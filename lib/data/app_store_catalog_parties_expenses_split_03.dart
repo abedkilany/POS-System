@@ -303,7 +303,7 @@ extension _AppStoreSplitCatalogPartiesExpensesPart3 on AppStore {
       operation: 'posted_edit',
       payload: edited.toJson(),
     );
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     await _saveDirty(expenses: false, accountTransactions: false, sync: true);
     _touchExpensesData();
     notifyListeners();
@@ -481,7 +481,7 @@ extension _AppStoreSplitCatalogPartiesExpensesPart3 on AppStore {
     bool paidInCash = true,
     double? cashPaidAmount,
   }) async {
-    requireAnyPermission(<String>{
+    _requireAnyPermission(<String>{
       AppPermission.expensesManage,
       AppPermission.expensesApprove,
     });
@@ -524,7 +524,7 @@ extension _AppStoreSplitCatalogPartiesExpensesPart3 on AppStore {
       payload: posted.toJson(),
     );
     await _saveDirty(expenses: false, accountTransactions: false, sync: true);
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
     _touchExpensesData();
     notifyListeners();
   }
@@ -614,7 +614,7 @@ extension _AppStoreSplitCatalogPartiesExpensesPart3 on AppStore {
   }
 
   Future<void> deleteDraftExpense(String id) async {
-    requireAnyPermission(<String>{
+    _requireAnyPermission(<String>{
       AppPermission.expensesManage,
       AppPermission.expensesDelete,
     });
@@ -648,7 +648,7 @@ extension _AppStoreSplitCatalogPartiesExpensesPart3 on AppStore {
   }
 
   Future<void> cancelExpense(String id, {String reason = ''}) async {
-    requireAnyPermission(<String>{
+    _requireAnyPermission(<String>{
       AppPermission.expensesManage,
       AppPermission.expensesCancel,
     });

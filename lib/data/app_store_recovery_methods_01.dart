@@ -6,7 +6,7 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
     Set<String>? selectedSectionIds,
   }) async {
     store.requirePermission(AppPermission.backupRestore);
-    store.requireSensitiveActionAuthorization(SensitiveAction.backupRestore);
+    store._requireSensitiveActionAuthorization(SensitiveAction.backupRestore);
     if (store.appIdentity.isClient) {
       throw StateError('Import Backup is only available on the Host device.');
     }
@@ -416,7 +416,7 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
     }
 
     await _refreshRuntimeAfterRecovery(loadStoreProfile: true);
-    await store.reloadAllAfterDatabaseChange();
+    await store._reloadAllAfterDatabaseChange();
     await _refreshSummaryTables();
 
     if (store.appIdentity.isHost) {
@@ -475,7 +475,7 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
       isImportant: true,
     );
 
-    store.refreshUi();
+    store._refreshUi();
   }
 
   Future<void> mergeBackupJson(
@@ -636,7 +636,7 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
             );
           }
 
-          final mergedSyncChanges = <SyncChange>[...store.syncChanges];
+          final mergedSyncChanges = <SyncChange>[...store._syncChanges];
           final incomingSyncChanges =
               (decoded['syncChanges'] as List<dynamic>? ?? const <dynamic>[])
                   .map(
@@ -710,7 +710,7 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
 
     await _refreshRuntimeAfterRecovery(loadStoreProfile: true);
     await _refreshSummaryTables();
-    store.refreshUi();
+    store._refreshUi();
   }
 
   Future<void> importSyncSnapshotJson(String rawJson) async {
@@ -722,7 +722,7 @@ extension AppStoreRecoveryServiceSplitPart1 on AppStoreRecoveryService {
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
     final unifiedChunks = decoded['snapshotChunks'];
     final payload = unifiedChunks is List
-        ? store.unifiedSnapshotPayloadFromChunks(
+        ? store._unifiedSnapshotPayloadFromChunks(
             unifiedChunks
                 .whereType<Map>()
                 .map((item) => Map<String, dynamic>.from(item))

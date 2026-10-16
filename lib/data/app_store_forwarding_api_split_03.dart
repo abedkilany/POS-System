@@ -71,16 +71,6 @@ mixin _AppStoreForwardingApiPart3
           ._persistAccountTransactionInExistingTransaction(
               sqliteDb, transaction);
 
-  Future<void> addOrUpdateAccountTransaction(
-    AccountTransaction transaction,
-  ) =>
-      _AppStoreSplitPersistenceSyncCorePart5(this as AppStore)
-          .addOrUpdateAccountTransaction(transaction);
-
-  Future<void> deleteAccountTransaction(String id) =>
-      _AppStoreSplitPersistenceSyncCorePart5(this as AppStore)
-          .deleteAccountTransaction(id);
-
   Future<void> _recordPurchaseLedger(Purchase purchase, DateTime now) =>
       _AppStoreSplitPersistenceSyncCorePart5(this as AppStore)
           ._recordPurchaseLedger(purchase, now);
@@ -137,72 +127,6 @@ mixin _AppStoreForwardingApiPart3
       _AppStoreSplitPricingCosting(this as AppStore)
           ._ensureDefaultProductPriceEntries(product: product);
 
-  Future<void> setDefaultProductBasePrice(
-          {required String productId,
-          required String unitId,
-          required double amount,
-          required String currencyCode}) =>
-      _AppStoreSplitPricingCosting(this as AppStore).setDefaultProductBasePrice(
-          productId: productId,
-          unitId: unitId,
-          amount: amount,
-          currencyCode: currencyCode);
-
-  Future<void> setProductBasePriceForList({
-    required String productId,
-    required String priceListId,
-    required double amount,
-    required String currencyCode,
-    String unitId = 'base',
-  }) =>
-      _AppStoreSplitPricingCosting(this as AppStore).setProductBasePriceForList(
-          productId: productId,
-          priceListId: priceListId,
-          amount: amount,
-          currencyCode: currencyCode,
-          unitId: unitId);
-
-  Future<BulkPriceAdjustmentResult> bulkAdjustProductPrices({
-    required Iterable<String> productIds,
-    required String priceListId,
-    required double percentage,
-    required bool increase,
-    String unitId = 'base',
-  }) =>
-      _AppStoreSplitPricingCosting(this as AppStore).bulkAdjustProductPrices(
-        productIds: productIds,
-        priceListId: priceListId,
-        percentage: percentage,
-        increase: increase,
-        unitId: unitId,
-      );
-
-  Future<List<ProductPriceHistoryEntry>> productPriceHistoryForProduct(
-    String productId, {
-    int limit = 200,
-  }) =>
-      _AppStoreSplitPricingCosting(this as AppStore)
-          .productPriceHistoryForProduct(productId, limit: limit);
-
-  Future<void> setProductPriceOverride({
-    required String productPriceId,
-    required String currencyCode,
-    required double amount,
-    ProductPriceOverrideMode mode = ProductPriceOverrideMode.fixed,
-    bool isActive = true,
-  }) =>
-      _AppStoreSplitPricingCosting(this as AppStore).setProductPriceOverride(
-          productPriceId: productPriceId,
-          currencyCode: currencyCode,
-          amount: amount,
-          mode: mode,
-          isActive: isActive);
-
-  Future<void> removeProductPriceOverride(
-          String productPriceId, String currencyCode) =>
-      _AppStoreSplitPricingCosting(this as AppStore)
-          .removeProductPriceOverride(productPriceId, currencyCode);
-
   void _ensureProductCostEntries({Product? product}) =>
       _AppStoreSplitPricingCostingPart2(this as AppStore)
           ._ensureProductCostEntries(product: product);
@@ -219,11 +143,6 @@ mixin _AppStoreForwardingApiPart3
   DateTime? _currentOpenFifoEffectiveFrom() =>
       _AppStoreSplitPricingCostingPart2(this as AppStore)
           ._currentOpenFifoEffectiveFrom();
-
-  Future<void> setInventoryCostingMethod(InventoryCostingMethod method,
-          {String reason = ''}) =>
-      _AppStoreSplitPricingCostingPart2(this as AppStore)
-          .setInventoryCostingMethod(method, reason: reason);
 
   ProductCost _upsertProductCostFromPurchase({
     required Product product,
@@ -336,200 +255,16 @@ mixin _AppStoreForwardingApiPart3
       _AppStoreSplitPricingCostingPart3(this as AppStore)
           ._closeInventoryCostLayersForPurchase(purchaseId, now);
 
-  Future<void> addOrUpdateProduct(Product product) =>
-      _AppStoreSplitCatalogPartiesExpenses(this as AppStore)
-          .addOrUpdateProduct(product);
-
-  Future<void> addOrUpdateProductsBulk(List<Product> products) =>
-      _AppStoreSplitCatalogPartiesExpenses(this as AppStore)
-          .addOrUpdateProductsBulk(products);
-
-  bool isProductReferenced(String productId) =>
+  bool _isProductReferenced(String productId) =>
       _AppStoreSplitCatalogPartiesExpenses(this as AppStore)
           .isProductReferenced(productId);
-
-  Future<void> deleteProduct(String id) =>
-      _AppStoreSplitCatalogPartiesExpenses(this as AppStore).deleteProduct(id);
-
-  Future<void> addOrUpdateCustomer(Customer customer) =>
-      _AppStoreSplitCatalogPartiesExpenses(this as AppStore)
-          .addOrUpdateCustomer(customer);
-
-  Future<void> addOrUpdateCustomersBulk(List<Customer> customers) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .addOrUpdateCustomersBulk(customers);
-
-  Future<void> deleteCustomer(String id) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .deleteCustomer(id);
-
-  Future<void> addOrUpdateSupplier(Supplier supplier) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .addOrUpdateSupplier(supplier);
-
-  Future<void> addOrUpdateSuppliersBulk(List<Supplier> suppliers) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .addOrUpdateSuppliersBulk(suppliers);
-
-  Future<void> deleteSupplier(String id) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .deleteSupplier(id);
-
-  Future<void> addOrUpdateCategory(CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .addOrUpdateCategory(item);
-
-  Future<void> addOrUpdateBrand(CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .addOrUpdateBrand(item);
-
-  Future<void> addOrUpdateUnit(CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .addOrUpdateUnit(item);
-
-  int productsUsingCatalogItem(String type, CatalogItem item) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .productsUsingCatalogItem(type, item);
-
-  Future<void> replaceAndDeleteCatalogItem({
-    required String type,
-    required CatalogItem item,
-    CatalogItem? replacement,
-  }) =>
-      _AppStoreSplitCatalogPartiesExpensesPart2(this as AppStore)
-          .replaceAndDeleteCatalogItem(
-              type: type, item: item, replacement: replacement);
-
-  Future<Expense> editPostedExpense({
-    required String expenseId,
-    required int expectedVersion,
-    String? title,
-    String? category,
-    double? amount,
-    double? originalAmount,
-    String? originalCurrency,
-    double? exchangeRateAtEntry,
-    DateTime? date,
-    String? notes,
-  }) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(this as AppStore)
-          .editPostedExpense(
-        expenseId: expenseId,
-        expectedVersion: expectedVersion,
-        title: title,
-        category: category,
-        amount: amount,
-        originalAmount: originalAmount,
-        originalCurrency: originalCurrency,
-        exchangeRateAtEntry: exchangeRateAtEntry,
-        date: date,
-        notes: notes,
-      );
-
-  Future<void> addOrUpdateExpense(Expense expense) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(this as AppStore)
-          .addOrUpdateExpense(expense);
-
-  Future<void> postExpense(
-    String id, {
-    bool paidInCash = true,
-    double? cashPaidAmount,
-  }) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(this as AppStore).postExpense(
-        id,
-        paidInCash: paidInCash,
-        cashPaidAmount: cashPaidAmount,
-      );
-
-  Future<void> createAndPostExpensesBulk(List<Expense> expenses) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(this as AppStore)
-          .createAndPostExpensesBulk(expenses);
-
-  Future<void> deleteDraftExpense(String id) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(this as AppStore)
-          .deleteDraftExpense(id);
-
-  Future<void> cancelExpense(String id, {String reason = ''}) =>
-      _AppStoreSplitCatalogPartiesExpensesPart3(this as AppStore)
-          .cancelExpense(id, reason: reason);
-
-  Future<void> permanentlyDeleteCancelledExpense(String id) =>
-      _AppStoreSplitCatalogPartiesExpensesPart4(this as AppStore)
-          .permanentlyDeleteCancelledExpense(id);
 
   int _loadPurchaseCounter() =>
       _AppStoreSplitWarehouseCash(this as AppStore)._loadPurchaseCounter();
 
-  Future<Warehouse> createWarehouse({
-    required String name,
-    String code = '',
-    String location = '',
-  }) =>
-      _AppStoreSplitWarehouseCash(this as AppStore)
-          .createWarehouse(name: name, code: code, location: location);
-
-  Future<WarehouseTransferOrder> editWarehouseTransferOrder({
-    required String orderId,
-    required int expectedVersion,
-    required String fromWarehouseId,
-    required String toWarehouseId,
-    required List<WarehouseTransferOrderItem> items,
-    String? notes,
-    DateTime? date,
-  }) =>
-      _AppStoreSplitWarehouseCashPart2(this as AppStore)
-          .editWarehouseTransferOrder(
-        orderId: orderId,
-        expectedVersion: expectedVersion,
-        fromWarehouseId: fromWarehouseId,
-        toWarehouseId: toWarehouseId,
-        items: items,
-        notes: notes,
-        date: date,
-      );
-
-  Future<List<WarehouseTransferOrder>> recentWarehouseTransferOrders({
-    int limit = 100,
-  }) =>
-      _AppStoreSplitWarehouseCash(this as AppStore)
-          .recentWarehouseTransferOrders(limit: limit);
-
-  Future<WarehouseTransferOrder> createWarehouseTransferOrder({
-    required String fromWarehouseId,
-    required String toWarehouseId,
-    required List<WarehouseTransferOrderItem> items,
-    String notes = '',
-  }) =>
-      _AppStoreSplitWarehouseCash(this as AppStore)
-          .createWarehouseTransferOrder(
-              fromWarehouseId: fromWarehouseId,
-              toWarehouseId: toWarehouseId,
-              items: items,
-              notes: notes);
-
-  Future<void> transferStock({
-    required String productId,
-    required String fromWarehouseId,
-    required String toWarehouseId,
-    required double quantity,
-    String notes = '',
-  }) =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore).transferStock(
-          productId: productId,
-          fromWarehouseId: fromWarehouseId,
-          toWarehouseId: toWarehouseId,
-          quantity: quantity,
-          notes: notes);
-
   /// Returns the complete trace graph for one Unified Batch, including
   /// warehouse movements, purchase/manufacturing origin and manufacturing
   /// ancestors/descendants.
-  Future<Map<String, dynamic>> traceInventoryBatch(
-    String batchId, {
-    int maxDepth = 8,
-  }) =>
-      _traceInventoryBatchDomainImpl(batchId, maxDepth: maxDepth);
-
   Future<Map<String, dynamic>> _traceInventoryBatchDomainImpl(
     String batchId, {
     int maxDepth = 8,
@@ -549,9 +284,6 @@ mixin _AppStoreForwardingApiPart3
   }
 
   /// Phase 9 invariant audit used by the health dashboard/final release gate.
-  Future<Map<String, dynamic>> verifyInventoryTraceabilityIntegrity() =>
-      _verifyInventoryTraceabilityIntegrityDomainImpl();
-
   Future<Map<String, dynamic>>
       _verifyInventoryTraceabilityIntegrityDomainImpl() async {
     (this as AppStore)._requirePermissionReadImpl(
@@ -566,75 +298,4 @@ mixin _AppStoreForwardingApiPart3
       storeId: (this as AppStore).appIdentity.storeId,
     );
   }
-
-  Future<double> refundableSaleCashAmount(String saleId) =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore)
-          .refundableSaleCashAmount(saleId);
-
-  Future<void> normalizeRefundAllocations() =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore)
-          .normalizeRefundAllocations();
-
-  Future<double> refundablePurchaseCashAmount(String purchaseId) =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore)
-          .refundablePurchaseCashAmount(purchaseId);
-
-  Future<double> refundablePurchaseReturnCashAmount(String purchaseReturnId) =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore)
-          .refundablePurchaseReturnCashAmount(purchaseReturnId);
-
-  Future<double> refundSaleCash({
-    required String saleId,
-    double? amount,
-    String notes = '',
-    String idempotencyKey = '',
-    DateTime? date,
-  }) =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore).refundSaleCash(
-          saleId: saleId,
-          amount: amount,
-          notes: notes,
-          idempotencyKey: idempotencyKey,
-          date: date);
-
-  Future<double> refundPurchaseCash({
-    required String purchaseId,
-    double? amount,
-    String notes = '',
-    String idempotencyKey = '',
-    DateTime? date,
-  }) =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore).refundPurchaseCash(
-          purchaseId: purchaseId,
-          amount: amount,
-          notes: notes,
-          idempotencyKey: idempotencyKey,
-          date: date);
-
-  Future<double> refundPurchaseReturnCash({
-    required String purchaseReturnId,
-    double? amount,
-    String notes = '',
-    String idempotencyKey = '',
-    DateTime? date,
-  }) =>
-      _AppStoreSplitWarehouseCashPart3(this as AppStore)
-          .refundPurchaseReturnCash(
-              purchaseReturnId: purchaseReturnId,
-              amount: amount,
-              notes: notes,
-              idempotencyKey: idempotencyKey,
-              date: date);
-
-  Future<double> refundableExpenseCashAmount(String expenseId) =>
-      _AppStoreSplitWarehouseCashPart4(this as AppStore)
-          .refundableExpenseCashAmount(expenseId);
-
-  Future<double> refundExpenseCash({
-    required String expenseId,
-    double? amount,
-    String notes = '',
-  }) =>
-      _AppStoreSplitWarehouseCashPart4(this as AppStore).refundExpenseCash(
-          expenseId: expenseId, amount: amount, notes: notes);
 }

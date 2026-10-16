@@ -80,7 +80,7 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
       deviceId: _deviceId,
       branchId: appIdentity.branchId,
     );
-    final resolvedWarehouse = resolveWarehouseForPurchase(
+    final resolvedWarehouse = _resolveWarehouseForPurchase(
       warehouseId: warehouseId,
     );
     final normalizedWarehouseName = warehouseName.trim().isEmpty
@@ -133,7 +133,7 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
               _findProductById(item.productId);
           if (product == null || !product.trackStock) continue;
           final currentCost = productCostPreviews[item.productId] ??
-              productCostFor(item.productId);
+              _productCostFor(item.productId);
           final receivedQty = item.baseQuantity;
           final unitCost = _purchaseInventoryUnitCostPerBase(
             item,
@@ -141,7 +141,7 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
           );
           final stockBefore = productPreviews.containsKey(item.productId)
               ? max(0.0, product.stock)
-              : max(0.0, await totalWarehouseStockFromSqlite(item.productId));
+              : max(0.0, await _totalWarehouseStockFromSqlite(item.productId));
           final stockAfter = stockBefore + receivedQty;
           final averageCost = stockAfter <= 0
               ? unitCost
@@ -240,7 +240,7 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
                 profile: _storeProfile,
                 supplier: snapshotSupplier,
                 user: _activeUser,
-                role: currentUserRole,
+                role: _currentUserRole,
                 displayedPaidAmount: normalizedPaidAmount,
                 displayedPaymentStatus:
                     normalizedPaidAmount >= purchaseTotal - 0.000001
@@ -339,7 +339,7 @@ extension _AppStoreSplitPurchasesPart2 on AppStore {
         await refreshAfterDatabaseChange(AppStore._inventoryCostLayersKey);
         await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
         if (normalizedPaidAmount > 0) {
-          purchase = await settlePurchasePayment(
+          purchase = await _settlePurchasePayment(
             purchaseId: purchase.id,
             amount: normalizedPaidAmount,
             paymentMethod: normalizedPaymentMethod,

@@ -22,7 +22,7 @@ extension _AppStoreSplitInventoryPart5 on AppStore {
       throw StateError('This product does not track stock.');
     }
     final resolvedWarehouse =
-        resolveWarehouseForPurchase(warehouseId: warehouseId);
+        _resolveWarehouseForPurchase(warehouseId: warehouseId);
     if (LocalDatabaseService.isSqliteAuthoritative &&
         SqliteMigrationManager.database != null) {
       final sqliteDb = SqliteMigrationManager.database!;
@@ -368,7 +368,7 @@ extension _AppStoreSplitInventoryPart5 on AppStore {
     }
     final now = DateTime.now();
     final operationId = '${now.microsecondsSinceEpoch}-$productId-waste';
-    final warehouse = resolveWarehouseForSale(warehouseId: warehouseId);
+    final warehouse = _resolveWarehouseForSale(warehouseId: warehouseId);
     var movement = StockMovement(
       id: '$operationId-movement',
       productId: product.id,

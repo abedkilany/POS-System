@@ -46,8 +46,8 @@ extension _AppStoreSplitSalesReturnsPart3 on AppStore {
       }
     }
 
-    await ensureCreditNotesLoaded();
-    await ensureDeliveryNotesLoaded();
+    await _ensureCreditNotesLoaded();
+    await _ensureDeliveryNotesLoaded();
     final sqliteDb = SqliteMigrationManager.database!;
     final now = DateTime.now();
     final stockService = StockTransactionService(
@@ -123,7 +123,7 @@ extension _AppStoreSplitSalesReturnsPart3 on AppStore {
               }
             }
           }
-          final deliveryNote = deliveryNoteForSale(current.id);
+          final deliveryNote = _deliveryNoteForSale(current.id);
           if (deliveryNote != null && !deliveryNote.isDeleted) {
             throw StateError(
               'Cannot edit ${current.invoiceNo} while a delivery note is linked to it. Remove/reverse the delivery note first.',
@@ -377,7 +377,7 @@ extension _AppStoreSplitSalesReturnsPart3 on AppStore {
                         : current.warehouseName.trim(),
                   ),
                 )
-              : resolveWarehouseForSale(warehouseId: requestedWarehouseId);
+              : _resolveWarehouseForSale(warehouseId: requestedWarehouseId);
           final normalizedItems = items
               .map((item) => SaleItem(
                     productId: item.productId,
@@ -657,7 +657,7 @@ extension _AppStoreSplitSalesReturnsPart3 on AppStore {
               profile: _storeProfile,
               customer: snapshotCustomer,
               user: _activeUser,
-              role: currentUserRole,
+              role: _currentUserRole,
               displayedPaidAmount: candidate.paidAmount
                   .clamp(0, candidate.invoiceTotal)
                   .toDouble(),
@@ -752,7 +752,7 @@ extension _AppStoreSplitSalesReturnsPart3 on AppStore {
     await refreshAfterDatabaseChange(AppStore._productsKey);
     await refreshAfterDatabaseChange(AppStore._inventoryCostLayersKey);
     await refreshAfterDatabaseChange(AppStore._stockMovementsKey);
-    await refreshAccountTransactionsFromSqlite();
+    await _refreshAccountTransactionsFromSqlite();
 
     final index = _sales.indexWhere((sale) => sale.id == updated.id);
     if (index == -1) {

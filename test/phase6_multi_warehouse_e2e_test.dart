@@ -106,8 +106,8 @@ Future<AppStore> _readyPhase6SqliteStore({
   });
 
   final store = AppStore();
-  await store.initialize();
-  await store.recoverOnlineStoreOwnerIdentity(
+  await store.runtime.initialize();
+  await store.security.recoverOnlineStoreOwnerIdentity(
     storeId: storeId,
     branchId: branchId,
     storeName: storeName,
@@ -116,9 +116,9 @@ Future<AppStore> _readyPhase6SqliteStore({
     deviceRole: deviceRole,
     syncMode: SyncMode.localOnly,
   );
-  expect(await store.login('owner', 'OwnerPass123'), isTrue);
-  await store.applySessionUser(
-    activeUser: store.activeUser!,
+  expect(await store.security.login('owner', 'OwnerPass123'), isTrue);
+  await store.security.applySessionUser(
+    activeUser: store.security.activeUser!,
     currentRole: 'Admin',
     permissions: Set<String>.from(AppPermission.all),
     rememberLogin: true,
@@ -151,21 +151,21 @@ void main() {
         'covers purchase, transfer, sale, return, manufacturing, count, backup and replay',
         () async {
       final store = await _readyPhase6SqliteStore();
-      await store.addOrUpdateProduct(
+      await store.catalog.addOrUpdateProduct(
           _product(id: 'raw-1', code: 'RAW-1', name: 'Raw Product', cost: 2));
-      await store.addOrUpdateProduct(_product(
+      await store.catalog.addOrUpdateProduct(_product(
           id: 'fg-1', code: 'FG-1', name: 'Finished Product', cost: 0));
-      await store.addOrUpdateCustomer(
+      await store.commerce.addOrUpdateCustomer(
           Customer(id: 'c1', name: 'Alice', phone: '1', address: 'A'));
-      await store.addOrUpdateSupplier(Supplier(
+      await store.commerce.addOrUpdateSupplier(Supplier(
           id: 's1', name: 'Supplier', phone: '2', address: 'B', notes: ''));
-      final warehouseA =
-          await store.createWarehouse(name: 'Warehouse A', code: 'WA');
+      final warehouseA = await store.inventory
+          .createWarehouse(name: 'Warehouse A', code: 'WA');
       await Future<void>.delayed(const Duration(milliseconds: 1));
-      final warehouseB =
-          await store.createWarehouse(name: 'Warehouse B', code: 'WB');
+      final warehouseB = await store.inventory
+          .createWarehouse(name: 'Warehouse B', code: 'WB');
 
-      final purchase = await store.createPurchase(
+      final purchase = await store.commerce.createPurchase(
         supplierId: 's1',
         supplierName: 'Supplier',
         items: const [
@@ -182,13 +182,13 @@ void main() {
         warehouseId: warehouseA.id,
         warehouseName: warehouseA.name,
       );
-      await store.transferStock(
+      await store.inventory.transferStock(
         productId: 'raw-1',
         fromWarehouseId: warehouseA.id,
         toWarehouseId: warehouseB.id,
         quantity: 4,
       );
-      final sale = await store.createSale(
+      final sale = await store.commerce.createSale(
         customerId: 'c1',
         customerName: 'Alice',
         warehouseId: warehouseB.id,
@@ -204,9 +204,9 @@ void main() {
           ),
         ],
       );
-      await store.returnSale(sale.id);
+      await store.commerce.returnSale(sale.id);
 
-      final bom = await store.createBillOfMaterials(
+      final bom = await store.inventory.createBillOfMaterials(
         name: 'Finished Product BOM',
         outputProductId: 'fg-1',
         outputQuantity: 1,
@@ -219,7 +219,7 @@ void main() {
           ),
         ],
       );
-      await store.completeManufacturingOrder(
+      await store.inventory.completeManufacturingOrder(
         bomId: bom.id,
         quantity: 1,
         rawMaterialsWarehouseId: warehouseA.id,
@@ -228,23 +228,23 @@ void main() {
         finishedGoodsWarehouseName: warehouseB.name,
       );
 
-      final countSession = await store.createInventoryCountSession(
+      final countSession = await store.inventory.createInventoryCountSession(
         warehouseId: warehouseB.id,
         warehouseName: warehouseB.name,
       );
       final countedFg = await _warehouseQty('fg-1', warehouseB.id);
-      await store.countInventoryLine(
+      await store.inventory.countInventoryLine(
         sessionId: countSession.id,
         productId: 'fg-1',
         countedQty: countedFg,
       );
-      await store.approveInventoryCount(countSession.id);
+      await store.inventory.approveInventoryCount(countSession.id);
 
-      final backupJson = await store.exportBackupJson();
+      final backupJson = await store.recovery.exportBackupJson();
 
       final restored = await _readyPhase6SqliteStore();
-      await restored.importBackupJson(backupJson);
-      await restored.importBackupJson(backupJson);
+      await restored.recovery.importBackupJson(backupJson);
+      await restored.recovery.importBackupJson(backupJson);
 
       expect(
           await _warehouseQty('raw-1', warehouseA.id), greaterThanOrEqualTo(0));
@@ -252,10 +252,10 @@ void main() {
           await _warehouseQty('raw-1', warehouseB.id), greaterThanOrEqualTo(0));
       expect(
           await _warehouseQty('fg-1', warehouseB.id), greaterThanOrEqualTo(0));
-      expect(await restored.totalWarehouseStockFromSqlite('raw-1'),
-          await store.totalWarehouseStockFromSqlite('raw-1'));
-      expect(await restored.totalWarehouseStockFromSqlite('fg-1'),
-          await store.totalWarehouseStockFromSqlite('fg-1'));
+      expect(await restored.inventory.totalStockFromSqlite('raw-1'),
+          await store.inventory.totalStockFromSqlite('raw-1'));
+      expect(await restored.inventory.totalStockFromSqlite('fg-1'),
+          await store.inventory.totalStockFromSqlite('fg-1'));
       final db = SqliteMigrationManager.database!;
       final movementCount = await db.customSelect(
         'SELECT COUNT(*) AS c FROM stock_movements WHERE store_id = ?',
@@ -274,10 +274,10 @@ void main() {
       expect(
         await StockTransactionService(
           db,
-          defaultStoreId: restored.appIdentity.storeId,
-          defaultBranchId: restored.appIdentity.branchId,
-          deviceId: restored.appIdentity.deviceId,
-        ).checkIntegrity(storeId: restored.appIdentity.storeId),
+          defaultStoreId: restored.runtime.identity.storeId,
+          defaultBranchId: restored.runtime.identity.branchId,
+          deviceId: restored.runtime.identity.deviceId,
+        ).checkIntegrity(storeId: restored.runtime.identity.storeId),
         isA<StockIntegrityReport>(),
       );
 

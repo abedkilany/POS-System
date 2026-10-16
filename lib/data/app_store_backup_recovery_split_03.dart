@@ -4,7 +4,7 @@ extension _AppStoreSplitBackupRecoveryPart3 on AppStore {
   Future<void> importBackupJson(String rawJson,
       {Set<String>? selectedSectionIds}) async {
     requirePermission(AppPermission.backupRestore);
-    requireSensitiveActionAuthorization(SensitiveAction.backupRestore);
+    _requireSensitiveActionAuthorization(SensitiveAction.backupRestore);
     if (appIdentity.isClient) {
       throw StateError('Import Backup is only available on the Host device.');
     }
@@ -576,7 +576,7 @@ extension _AppStoreSplitBackupRecoveryPart3 on AppStore {
           }
         }
       }
-      await reloadAllAfterDatabaseChange();
+      await _reloadAllAfterDatabaseChange();
     }
 
     if (appIdentity.isHost) {

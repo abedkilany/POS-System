@@ -183,7 +183,7 @@ extension _AppStoreSplitPersistenceSyncCorePart4 on AppStore {
 
   Future<void> recoverPhase8AccountingSyncAfterStartup() async {
     if (SqliteMigrationManager.database == null) return;
-    await ensureSyncDataLoaded();
+    await _ensureSyncDataLoaded();
     final storedCursor = _loadPhase8AccountingSyncCursor();
     if (storedCursor == null) {
       await _persistPhase8AccountingSyncCursor(DateTime.now().toUtc());
