@@ -1,22 +1,36 @@
 name: Deploy VPS
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - Quality checks
+    types:
+      - completed
     branches:
       - main
-  workflow_dispatch:
 
 concurrency:
   group: deploy-vps
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy to VPS
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -39,9 +53,9 @@ jobs:
           flutter build web --release --dart-define=APP_VERSION="$APP_VERSION"
           grep -q "$APP_VERSION" build/web/main.dart.js
           printf '{"version":"%s","commit":"%s","builtAt":"%s"}\n' \
-            "$APP_VERSION" "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "$APP_VERSION" "$DEPLOY_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > build/web/version.json
-          printf '%s\n' "$GITHUB_SHA" > build/web/.last_build_id
+          printf '%s\n' "$DEPLOY_SHA" > build/web/.last_build_id
 
       - name: Configure SSH
         env:

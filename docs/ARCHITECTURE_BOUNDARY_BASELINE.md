@@ -78,9 +78,9 @@ analysis, full test suite, and coverage threshold on Linux; Windows integration
 remains in the local Windows gate.
 
 That verification predates the final interface reduction described above. The
-GitHub `main` branch now requires the quality workflow's
-`Flutter analysis, tests, and coverage` status check; final focused verification
-after the reduction is recorded below.
+GitHub quality workflow and VPS deployment gate are configured so a push can
+start quality checks, while deployment waits for their successful completion;
+the current behavior is recorded below.
 
 ### Phase-three final verification after API reduction (2026-10-16)
 
@@ -105,9 +105,12 @@ Final local checks passed:
 The full Flutter test suite, full coverage run, Windows integration suite, and
 application build were not run locally. The GitHub quality workflow runs
 analysis, the full suite, and the 40% coverage threshold on pull requests and
-pushes to `main`; its `Flutter analysis, tests, and coverage` status is required
-on `main`. Admin enforcement is enabled, while branch-up-to-date and PR review
-requirements are disabled. See the [quality workflow](../.github/workflows/quality.yml).
+pushes to `main`. The VPS deployment workflow waits for a successful `Quality
+checks` run triggered by a push to `main`, then checks out and deploys that same
+commit. A failed, cancelled, or incomplete quality run does not deploy. The
+required status check was removed from `main` protection so it cannot block the
+push before the post-push workflow starts. See the [quality workflow](../.github/workflows/quality.yml)
+and [VPS deployment workflow](../.github/workflows/deploy-vps.yml).
 
 The traceability report and full-snapshot test use `store.inventory` for batch
 tracing and integrity audits. Their unused AppStore forwarding methods were
@@ -303,6 +306,8 @@ Run `python tool/check_architecture_boundaries.py` to compare source against the
 
 `.github/workflows/quality.yml` runs the architecture check, `flutter analyze`,
 the full test suite with coverage, and the configured coverage gate for pull
-requests and pushes to `main`. `deploy-vps.yml` remains a separate deployment
-workflow. Select the quality job in GitHub branch-protection rules to require
-it before merge.
+requests and pushes to `main`. A push to `main` starts quality checks; the
+separate `deploy-vps.yml` workflow waits for that push-triggered quality run to
+succeed and deploys the same commit. The quality status is intentionally not a
+required branch-protection check, so GitHub can accept the push before running
+the post-push gate.
